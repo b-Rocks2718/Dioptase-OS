@@ -5,10 +5,13 @@
 SHELL := /bin/sh
 MAKEFLAGS += --no-print-directory
 
+# version can be set to "debug" or "release"
+VERSION ?= release
+
 # Toolchain paths are relative to the Dioptase-OS directory.
-BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/debug/bcc
-BASM := ../Dioptase-Assembler/build/debug/basm
-EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/debug/Dioptase-Emulator-Full
+BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
+BASM := ../Dioptase-Assembler/build/$(VERSION)/basm
+EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Dioptase-Emulator-Full
 
 # configuration
 NUM_CORES ?= 1

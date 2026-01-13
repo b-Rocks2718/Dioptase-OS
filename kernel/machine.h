@@ -5,6 +5,8 @@ extern int putchar(int c);
 
 extern int get_core_id(void);
 
+extern int get_cr0(void);
+
 extern int wakeup_core(int core_num);
 
 extern int __atomic_exchange_n(int *ptr, int val);

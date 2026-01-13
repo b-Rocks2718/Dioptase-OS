@@ -13,6 +13,11 @@ get_core_id:
   mov r1, cid
   ret
 
+  .global get_cr0
+get_cr0:
+  mov r1, cr0
+  ret
+
   .global __atomic_exchange_n
 __atomic_exchange_n:
   # atomic exchange: swap value in r1 with value in r2
