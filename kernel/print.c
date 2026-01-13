@@ -1,6 +1,8 @@
 #include "print.h"
 #include "machine.h"
 
+int print_lock = 0;
+
 static int ZERO_CHAR = 48;
 static int MINUS_CHAR = 45;
 

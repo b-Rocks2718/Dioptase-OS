@@ -14,6 +14,8 @@ _start:
   call umul
   sub  sp, sp, r1
 
+  call wakeup_all
+
   call kernel_entry
 
   mode halt

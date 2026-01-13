@@ -1,4 +1,6 @@
 
+extern int print_lock;
+
 // print the number n to the console in decimal
 // returns the number of characters printed
 int print_num(int n);

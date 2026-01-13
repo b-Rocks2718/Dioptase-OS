@@ -20,6 +20,13 @@ __atomic_exchange_n:
   swpa r1, r2, [r1]
   ret
 
+  .global __atomic_fetch_add
+__atomic_fetch_add:
+  # atomic fetch add: add value in r2 to value stored at r1
+  # put old value in r1
+  fada r1, r2, [r1]
+  ret
+
   .global wakeup_core
 wakeup_core:
   # wake up other cores based on number in r1

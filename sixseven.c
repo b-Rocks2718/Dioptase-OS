@@ -47,6 +47,10 @@ unsigned print_collatz_seq(unsigned x){
 }
 
 int kernel_entry(void) {
-  print_collatz_seq(67);
+  if (get_core_id() == 0){
+    print_collatz_seq(67);
+  } else {
+    while (1);
+  }
   return 67;
 }
