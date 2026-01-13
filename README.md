@@ -24,7 +24,6 @@ These tools are expected to be built already:
 
 ### Notes
 
-- Temporary assembly files are named `*.s.tmp` and are removed after assembly.
-- Kernel C temporary outputs live under `build/kernel/` to keep them separate
-  from the root test's temporary file.
-
+- Generated assembly files are named `*.s` and kept after assembly.
+- Kernel C assembly outputs live under `build/kernel/` to keep them separate
+  from the root test's assembly file.
