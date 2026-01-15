@@ -50,16 +50,16 @@ $(TEST_NAMES): %: $(BUILD_DIR)/%.hex
 # Assemble a kernel image from the test asm, kernel C asm, and kernel asm.
 $(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) | $(BUILD_DIR)
 	@status=0; \
-	"$(BASM)" -kernel -o "$@" $^ -DNUM_CORES=$(NUM_CORES) -debug || status=$$?; \
+	"$(BASM)" -kernel -o "$@" $^ -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
 	exit $$status
 
 # Compile the root test C file to assembly.
 $(BUILD_DIR)/%.s: %.c | $(BUILD_DIR)
-	"$(BCC)" -s -kernel -o "$@" "$<"
+	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
 $(KERNEL_ASM_DIR)/%.s: kernel/%.c | $(KERNEL_ASM_DIR)
-	"$(BCC)" -s -kernel -o "$@" "$<" 
+	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
 $(BUILD_DIR):
