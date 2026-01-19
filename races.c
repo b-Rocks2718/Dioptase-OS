@@ -41,67 +41,17 @@ int kernel_entry(void) {
   unsafe_test();
 
   if (get_core_id() == 0) {
-    // print "spinlock_counter: <value>\n"
-    putchar(115); // s
-    putchar(112); // p
-    putchar(105); // i
-    putchar(110); // n
-    putchar(108); // l
-    putchar(111); // o
-    putchar(99); // c
-    putchar(107); // k
-    putchar(95); // _
-    putchar(99); // c
-    putchar(111); // o
-    putchar(117); // u
-    putchar(110); // n
-    putchar(116); // t
-    putchar(101); // e
-    putchar(114); // r
-    putchar(58); // :
-    putchar(32); // space
+    puts("spinlock_counter: ");
     print_num(spinlock_counter);
-    putchar(10); // newline
+    putchar('\n');
 
-    // print "atomic_counter: <value>\n"
-    putchar(97); // a
-    putchar(116); // t
-    putchar(111); // o
-    putchar(109); // m
-    putchar(105); // i
-    putchar(99); // c
-    putchar(95); // _
-    putchar(99); // c
-    putchar(111); // o
-    putchar(117); // u
-    putchar(110); // n
-    putchar(116); // t
-    putchar(101); // e
-    putchar(114); // r
-    putchar(58); // :
-    putchar(32); // space
+    puts("atomic_counter: ");
     print_num(atomic_counter);
-    putchar(10); // newline
+    putchar('\n');
 
-    // print "unsafe_counter: <value>\n"
-    putchar(117); // u
-    putchar(110); // n
-    putchar(115); // s
-    putchar(97); // a
-    putchar(102); // f
-    putchar(101); // e
-    putchar(95); // _
-    putchar(99); // c
-    putchar(111); // o
-    putchar(117); // u
-    putchar(110); // n
-    putchar(116); // t
-    putchar(101); // e
-    putchar(114); // r
-    putchar(58); // :
-    putchar(32); // space
+    puts("unsafe_counter: ");
     print_num(unsafe_counter);
-    putchar(10); // newline
+    putchar('\n');
   } else {
     while (1);
   }

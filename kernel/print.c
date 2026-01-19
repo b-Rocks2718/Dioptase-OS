@@ -3,16 +3,23 @@
 
 int print_lock = 0;
 
-static int ZERO_CHAR = 48;
-static int MINUS_CHAR = 45;
+int puts(char* str){
+  int count = 0;
+  while (*str != '\0'){
+    putchar(*str);
+    ++str;
+    ++count;
+  }
+  return count;
+}
 
 int print_num(int n){
   if(n == 0){
-      putchar(ZERO_CHAR);
+      putchar('0');
       return 1;
   }
   if(n < 0){
-      putchar(MINUS_CHAR);
+      putchar('-');
       n = -n;
   }
 
@@ -24,7 +31,7 @@ int print_num(int n){
   if (n != 0){
     count += print_num(n);
   } 
-  putchar(ZERO_CHAR + d);
+  putchar('0' + d);
   
   // return number of characters printed
   return count;

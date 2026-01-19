@@ -1,7 +1,7 @@
 
 extern int halt(void);
 
-extern int putchar(int c);
+extern int putchar(char c);
 
 extern int get_core_id(void);
 
