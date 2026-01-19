@@ -327,3 +327,35 @@ urs_loop: # repeated shift
 	jmp urs_loop
 urs_end:
 	ret
+
+	.global strcmp
+strcmp:
+	# Purpose: Compare two NUL-terminated byte strings lexicographically.
+	# Inputs: r1 = s1 (pointer to first string), r2 = s2 (pointer to second string).
+	# Outputs: r1 = signed difference of first mismatched bytes (0 if equal).
+	# Preconditions: s1 and s2 point to readable, NUL-terminated byte strings.
+	# Postconditions: r1 < 0 if s1 < s2, r1 == 0 if s1 == s2, r1 > 0 if s1 > s2.
+	# Invariants: r0 remains zero; memory is read-only; no stack usage.
+	# CPU state assumptions: executes in caller mode; interrupts and MMU state
+	# are unchanged and must allow reads of s1/s2; core count is irrelevant but
+	# callers must avoid concurrent mutation of the string data.
+strcmp_loop:
+	# Load current bytes (zero-extended) from each string.
+	lba r3 [r1]
+	lba r4 [r2]
+	# If bytes differ, return their signed difference.
+	cmp r3 r4
+	bz  strcmp_check_end
+	sub r1 r3 r4
+	ret
+strcmp_check_end:
+	# If both bytes are NUL, strings match.
+	cmp r3 r0
+	bz  strcmp_equal
+	# Advance to next byte and continue.
+	add r1 r1 1
+	add r2 r2 1
+	jmp strcmp_loop
+strcmp_equal:
+	mov r1 r0
+	ret
