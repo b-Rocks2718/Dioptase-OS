@@ -8,7 +8,6 @@ static int awake_cores = 0;
 int wakeup_all(void) {
   get_spinlock(&print_lock);
 
-  // print "core <n> awake\n";
   puts("core ");
   print_num(get_core_id());
   puts(" awake\n");
@@ -18,8 +17,8 @@ int wakeup_all(void) {
   __atomic_fetch_add(&awake_cores, 1);
 
   // get number of cores from config
-  int num_cores = CONFIG; // CONFIG[0] once i get arrays working
-  
+  int num_cores = CONFIG[0];
+   
   if (get_core_id() == 0) {
 
     // initialize other cores

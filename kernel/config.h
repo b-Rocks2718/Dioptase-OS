@@ -1,2 +1,2 @@
 
-extern int CONFIG;
+extern int CONFIG[1];
