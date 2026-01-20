@@ -8,3 +8,8 @@ _start:
 loop:
 	sys EXIT
 	jmp loop
+
+.global exit
+exit:
+  sys EXIT
+  jmp exit

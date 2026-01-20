@@ -1,6 +1,4 @@
 
-int get_spinlock(int* lock);
+extern void get_spinlock(int* lock);
 
-int release_spinlock(int* lock);
-
-
+extern void release_spinlock(int* lock);

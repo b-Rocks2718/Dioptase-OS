@@ -12,6 +12,7 @@ VERSION ?= release
 BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM := ../Dioptase-Assembler/build/$(VERSION)/basm
 EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Dioptase-Emulator-Full
+EMULATOR_DIR := ../Dioptase-Emulators/Dioptase-Emulator-Full
 
 # configuration
 NUM_CORES ?= 1
@@ -44,21 +45,21 @@ $(HEX_TARGETS): %.hex: $(BUILD_DIR)/%.hex
 	@:
 
 # Run alias so `make test` builds and runs the emulator.
-$(TEST_NAMES): %: $(BUILD_DIR)/%.hex
+$(TEST_NAMES): %: $(BUILD_DIR)/%.hex $(EMULATOR)
 	"$(EMULATOR)" "$<" --cores $(NUM_CORES)
 
 # Assemble a kernel image from the test asm, kernel C asm, and kernel asm.
-$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) | $(BUILD_DIR)
+$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) | $(BUILD_DIR) $(BASM)
 	@status=0; \
-	"$(BASM)" -kernel -o "$@" $^ -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
+	"$(BASM)" -kernel -o "$@" $(BUILD_DIR)/$*.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
 	exit $$status
 
 # Compile the root test C file to assembly.
-$(BUILD_DIR)/%.s: %.c | $(BUILD_DIR)
+$(BUILD_DIR)/%.s: %.c $(BCC) | $(BUILD_DIR)
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
-$(KERNEL_ASM_DIR)/%.s: kernel/%.c | $(KERNEL_ASM_DIR)
+$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) | $(KERNEL_ASM_DIR)
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
@@ -67,6 +68,17 @@ $(BUILD_DIR):
 
 $(KERNEL_ASM_DIR): | $(BUILD_DIR)
 	mkdir -p "$@"
+
+$(BCC):
+	$(MAKE) -C ../Dioptase-Languages/Dioptase-C-Compiler $(VERSION)
+
+$(BASM):
+	$(MAKE) -C ../Dioptase-Assembler $(VERSION)
+
+$(EMULATOR):
+	@build_cmd="cargo build"; \
+	if [ "$(VERSION)" = "release" ]; then build_cmd="cargo build --release"; fi; \
+	$$build_cmd --manifest-path "$(EMULATOR_DIR)/Cargo.toml"
 
 # Cleanup for build artifacts; does not delete source files.
 clean:

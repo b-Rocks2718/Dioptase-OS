@@ -5,7 +5,7 @@
 
 static int awake_cores = 0;
 
-int wakeup_all(void) {
+void wakeup_all(void) {
   get_spinlock(&print_lock);
 
   puts("core ");
@@ -29,6 +29,4 @@ int wakeup_all(void) {
 
   // wait until all cores are awake
   while (awake_cores < num_cores);
-
-  return 0;
 }

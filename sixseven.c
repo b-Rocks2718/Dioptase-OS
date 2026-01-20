@@ -11,7 +11,7 @@ unsigned next_collatz(unsigned x){
   }
 }
 
-unsigned print_collatz_seq(unsigned x){
+void print_collatz_seq(unsigned x){
   unsigned max = x;
   unsigned i = 0;
 
