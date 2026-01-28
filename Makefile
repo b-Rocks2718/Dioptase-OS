@@ -25,6 +25,8 @@ KERNEL_ASM_DIR := $(BUILD_DIR)/kernel
 KERNEL_C_SRCS := $(wildcard kernel/*.c)
 KERNEL_C_ASMS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s,$(KERNEL_C_SRCS))
 KERNEL_ASM_SRCS := $(wildcard kernel/*.s)
+KERNEL_ASM_INIT := $(wildcard kernel/init.s)
+KERNEL_ASM_SRCS_ORDERED := $(KERNEL_ASM_INIT) $(filter-out $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS))
 
 # Test sources are any C files in the Dioptase-OS root.
 TEST_C_SRCS := $(wildcard *.c)
@@ -49,9 +51,11 @@ $(TEST_NAMES): %: $(BUILD_DIR)/%.hex $(EMULATOR)
 	"$(EMULATOR)" "$<" --cores $(NUM_CORES)
 
 # Assemble a kernel image from the test asm, kernel C asm, and kernel asm.
-$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) | $(BUILD_DIR) $(BASM)
+# init.s must be first so its .origin establishes the kernel entry point.
+$(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 	@status=0; \
-	"$(BASM)" -kernel -o "$@" $(BUILD_DIR)/$*.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS) -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
+	"$(BASM)" -kernel -o "$@" $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s $(KERNEL_C_ASMS) \
+	  $(filter-out $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
 	exit $$status
 
 # Compile the root test C file to assembly.

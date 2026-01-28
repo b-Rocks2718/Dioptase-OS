@@ -62,6 +62,3 @@ wakeup_core_3:
 wakeup_core_error:
   movi r1, 0xEEEE
   mode halt
-
-INT_IPI:
-  jmp _start
