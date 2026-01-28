@@ -1,3 +1,5 @@
+#ifndef MACHINE_H
+#define MACHINE_H
 
 extern void halt(void);
 
@@ -14,3 +16,5 @@ extern void wakeup_all(void);
 extern int __atomic_exchange_n(int *ptr, int val);
 
 extern int __atomic_fetch_add(int* ptr, int val);
+
+#endif // MACHINE_H

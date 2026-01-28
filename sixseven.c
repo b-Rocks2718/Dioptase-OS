@@ -30,7 +30,7 @@ void print_collatz_seq(unsigned x){
   putchar('\n');
 }
 
-int kernel_entry(void) {
+int kernel_main(void) {
   if (get_core_id() == 0){
     print_collatz_seq(67);
   } else {

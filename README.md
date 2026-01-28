@@ -27,3 +27,4 @@ These tools are expected to be built already:
 - Generated assembly files are named `*.s` and kept after assembly.
 - Kernel C assembly outputs live under `build/kernel/` to keep them separate
   from the root test's assembly file.
+- The makefile also compiles the BIOS. The emulator is run with the BIOS in ram and the kernel on the sd card, the bios loads the kernel and then jumps to it

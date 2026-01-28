@@ -6,7 +6,6 @@
 .define IPI_IVT_OFFSET, 0x3D4
 
 # kernel entry point
-  .origin 0x400
   .global _start
 _start:
   # register ipi handler
@@ -26,6 +25,7 @@ _start:
   call kernel_entry
 
   mode halt
+
 
 ipi_handler_:
   jmp _start

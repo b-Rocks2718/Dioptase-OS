@@ -8,7 +8,7 @@ static int awake_cores = 0;
 void wakeup_all(void) {
   get_spinlock(&print_lock);
 
-  puts("core ");
+  puts("| core ");
   print_num(get_core_id());
   puts(" awake\n");
 
