@@ -3,6 +3,22 @@
 # add, div, and mod can probably be more efficient using shifts
 # shl and shr should check if second parameter is >16 and return 0 if so
 # but im lazy and this works for now
+
+# ---- Constants for CRT memory helpers ----
+# HEAP_ALIGN_BYTES: Heap allocations are rounded up to 4 bytes for word alignment.
+# HEAP_ALIGN_MASK: Mask for alignment (HEAP_ALIGN_BYTES - 1).
+# HEAP_ALIGN_NEG_MASK: Bitwise mask for clearing low alignment bits.
+# HEAP_SIZE_BYTES: Size of the CRT bump-allocator heap in bytes.
+# BYTE_STRIDE: Per-byte increment used for byte-wise loops.
+# DEC_ONE: Decrement constant for loop counters.
+# BYTE_MASK: Mask to zero-extend byte loads for memcmp.
+	.define HEAP_ALIGN_BYTES 4
+	.define HEAP_ALIGN_MASK 3
+	.define HEAP_ALIGN_NEG_MASK -4
+	.define HEAP_SIZE_BYTES 65536
+	.define BYTE_STRIDE 1
+	.define DEC_ONE -1
+	.define BYTE_MASK 0xFF
 	
 # args passed in r1 and r2
 # result returned in r1
@@ -359,3 +375,151 @@ strcmp_check_end:
 strcmp_equal:
 	mov r1 r0
 	ret
+
+	.global malloc
+malloc:
+	# Purpose: Simple bump allocator for the CRT heap.
+	# Inputs: r1 = size in bytes (low 32 bits used).
+	# Outputs: r1 = pointer to allocated block, or 0 on failure/size==0.
+	# Preconditions: __heap_ptr is a word in .bss; __heap_base/__heap_end bound a
+	# heap region. Caller must serialize allocations (not thread-safe).
+	# Postconditions: On success, __heap_ptr advances by aligned size.
+	# Invariants: r0 remains zero; heap pointer stays HEAP_ALIGN_BYTES-aligned.
+	# CPU state assumptions: Executes in caller mode; interrupts/MMU unchanged;
+	# no concurrent heap mutation across cores.
+	cmp r1 r0
+	bz  malloc_return_zero
+
+	# Align size: size = (size + HEAP_ALIGN_MASK) & HEAP_ALIGN_NEG_MASK
+	mov r2 r1
+	add r2 r2 HEAP_ALIGN_MASK
+	movi r3 HEAP_ALIGN_NEG_MASK
+	and r2 r2 r3
+
+	# Load __heap_ptr into r3.
+	movi r4 __heap_ptr
+	br r5 r0
+	add r4 r4 r5
+	lwa r3 [r4, 0]
+
+	# Initialize heap pointer on first use.
+	cmp r3 r0
+	bnz malloc_have_ptr
+	movi r6 __heap_base
+	br r5 r0
+	add r6 r6 r5
+	mov r3 r6
+	swa r3 [r4, 0]
+malloc_have_ptr:
+	# Compute new_ptr = heap_ptr + aligned_size.
+	add r6 r3 r2
+
+	# Load heap end address.
+	movi r7 __heap_end
+	br r5 r0
+	add r7 r7 r5
+
+	# Fail if new_ptr > __heap_end (unsigned compare).
+	cmp r6 r7
+	ba  malloc_fail
+
+	# Commit allocation and return old heap pointer.
+	swa r6 [r4, 0]
+	mov r1 r3
+	ret
+malloc_fail:
+	mov r1 r0
+	ret
+malloc_return_zero:
+	mov r1 r0
+	ret
+
+	.global calloc
+calloc:
+	# Purpose: Allocate and zero-initialize nmemb * size bytes.
+	# Inputs: r1 = nmemb, r2 = size (low 32 bits used).
+	# Outputs: r1 = pointer to zeroed block, or 0 on failure/zero size.
+	# Preconditions: malloc is available; heap state is initialized as needed.
+	# Postconditions: On success, returned block is zero-filled.
+	# Invariants: r0 remains zero; heap pointer remains aligned.
+	# CPU state assumptions: Executes in caller mode; interrupts/MMU unchanged;
+	# no concurrent heap mutation across cores.
+	# Saves/Restores: ra is saved on the stack because calloc calls helpers.
+	push ra
+	cmp r1 r0
+	bz  calloc_return_zero
+	cmp r2 r0
+	bz  calloc_return_zero
+
+	# total = nmemb * size
+	call umul
+	cmp r1 r0
+	bz  calloc_return_zero
+
+	# Preserve total across malloc using a caller-saved register to avoid stack.
+	mov r8 r1
+	call malloc
+	mov r2 r8
+	cmp r1 r0
+	bz  calloc_return
+
+	# Zero-fill the allocation.
+	mov r3 r1
+	mov r4 r2
+calloc_zero_loop:
+	cmp r4 r0
+	bz  calloc_done
+	sba r0 [r3, 0]
+	add r3 r3 BYTE_STRIDE
+	add r4 r4 DEC_ONE
+	jmp calloc_zero_loop
+calloc_done:
+	jmp calloc_return
+calloc_return_zero:
+	mov r1 r0
+calloc_return:
+	pop ra
+	ret
+
+	.global memcmp
+memcmp:
+	# Purpose: Compare two byte arrays lexicographically.
+	# Inputs: r1 = s1 pointer, r2 = s2 pointer, r3 = length in bytes.
+	# Outputs: r1 = 0 if equal, <0 if s1<s2, >0 if s1>s2.
+	# Preconditions: s1/s2 are valid for r3 bytes; buffers may overlap.
+	# Postconditions: r1 holds the first byte difference (unsigned compare).
+	# Invariants: r0 remains zero; memory is read-only.
+	# CPU state assumptions: Executes in caller mode; interrupts/MMU unchanged;
+	# no concurrent mutation of compared memory.
+	cmp r3 r0
+	bz  memcmp_equal
+	movi r6 BYTE_MASK
+memcmp_loop:
+	lba r4 [r1, 0]
+	lba r5 [r2, 0]
+	and r4 r4 r6
+	and r5 r5 r6
+	cmp r4 r5
+	bz  memcmp_next
+	sub r1 r4 r5
+	ret
+memcmp_next:
+	add r1 r1 BYTE_STRIDE
+	add r2 r2 BYTE_STRIDE
+	add r3 r3 DEC_ONE
+	bnz memcmp_loop
+memcmp_equal:
+	mov r1 r0
+	ret
+
+	.data
+	.align HEAP_ALIGN_BYTES
+# Purpose: Heap storage for malloc/calloc bump allocator.
+# Address range: __heap_base .. __heap_end (exclusive).
+# Side effects: malloc/calloc update __heap_ptr; no reuse or free support.
+# Timing/ordering: Allocations must be serialized; no concurrent mutation.
+__heap_ptr:
+	.fill 0
+__heap_base:
+	.space HEAP_SIZE_BYTES
+__heap_end:
