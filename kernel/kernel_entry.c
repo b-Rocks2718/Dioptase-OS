@@ -65,12 +65,19 @@ void kernel_entry(void){
 
   // have the final core run kernel_main
   if (me == num_cores - 1){
+    get_spinlock(&print_lock);
     puts("| Entering kernel_main...\n");
+    release_spinlock(&print_lock);
+
     kernel_main();
+    
+    get_spinlock(&print_lock);
     puts("| kernel_main finished in ");
     print_num(jiffies);
     puts(" jiffies\n");
     puts("| Halting...\n");
+    release_spinlock(&print_lock);
+    
     shutdown();
   } else {
     while (1);
