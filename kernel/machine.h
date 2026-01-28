@@ -1,13 +1,15 @@
 #ifndef MACHINE_H
 #define MACHINE_H
 
-extern void halt(void);
+extern void shutdown(void);
 
 extern void putchar(char c);
 
-extern int get_core_id(void);
+extern unsigned get_core_id(void);
 
-extern int get_cr0(void);
+extern unsigned get_cr0(void);
+
+extern unsigned get_pc(void);
 
 extern void wakeup_core(int core_num);
 

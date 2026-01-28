@@ -1,2 +1,6 @@
 
-extern int CONFIG[1];
+struct Config {
+  unsigned num_cores;
+};
+
+extern struct Config CONFIG;

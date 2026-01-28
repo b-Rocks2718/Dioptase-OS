@@ -1,9 +1,14 @@
+#include "sd_driver.h"
+#include "atomic.h"
+
 
 int* DMA_MEM_REG =  (int*)0x7FE58F0;
 int* DMA_BLOCK_REG = (int*)0x7FE58F4;
 int* DMA_LEN_REG =   (int*)0x7FE58F8;
 int* DMA_CTRL_REG =  (int*)0x7FE58FC;
 int* DMA_STATUS_REG = (int*)0x7FE5900;
+
+static int sd_lock = 0;
 
 int sd_read_block(int block_num, void* dest){
   // Set up DMA to read from SD card to memory
@@ -19,9 +24,11 @@ int sd_read_block(int block_num, void* dest){
 }
 
 int sd_read_blocks(int start_block, int num_blocks, void* dest){
+  get_spinlock(&sd_lock);
   for(int i = 0; i < num_blocks; i++){
     sd_read_block(start_block + i, (char*)dest + (i * 512));
   }
+  release_spinlock(&sd_lock);
   return 0; // Success
 }
 
@@ -39,8 +46,10 @@ int sd_write_block(int block_num, void* src){
 }
 
 int sd_write_blocks(int start_block, int num_blocks, void* src){
+  get_spinlock(&sd_lock);
   for(int i = 0; i < num_blocks; i++){
     sd_write_block(start_block + i, (char*)src + (i * 512));
   }
+  release_spinlock(&sd_lock);
   return 0; // Success
 }

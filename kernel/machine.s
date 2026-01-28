@@ -18,6 +18,11 @@ get_cr0:
   mov r1, cr0
   ret
 
+  .global get_pc
+get_pc:
+  adpc r1, 0
+  ret
+
   .global __atomic_exchange_n
 __atomic_exchange_n:
   # atomic exchange: swap value in r1 with value in r2
@@ -61,4 +66,8 @@ wakeup_core_3:
   ret
 wakeup_core_error:
   movi r1, 0xEEEE
+  mode halt
+
+  .global shutdown
+shutdown:
   mode halt

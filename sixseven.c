@@ -1,40 +1,79 @@
 #include "kernel/machine.h"
 #include "kernel/print.h"
+#include "kernel/heap.h"
 
-unsigned next_collatz(unsigned x){
-  if (x & 1){
-    // if x is odd, return 3 * x + 1
-    return x + x + x + 1;
+#define NULL 0
+
+struct IntList {
+  struct IntList* next;
+  int val;
+};
+
+struct IntList* make_int_list(int x){
+  struct IntList* node = malloc(sizeof(struct IntList));
+
+  node->next = NULL;
+  node->val = x;
+
+  return node;
+}
+
+void int_list_append(struct IntList** head, struct IntList** tail, struct IntList* node){
+  if (*head == NULL){
+    *head = node;
+    *tail = node;
+    return;
   } else {
-    // if x is even, return x/2
-    return x >> 1;
+    (*tail)->next = node;
+    *tail = node;
   }
 }
 
-void print_collatz_seq(unsigned x){
-  unsigned max = x;
-  unsigned i = 0;
+void print_int_list(struct IntList* seq){
+  print_num(seq->val);
+  putchar(',');
+  if (seq->next != NULL){
+    print_int_list(seq->next);
+  }
+}
 
-  puts("Collatz sequence:\n");
+void free_int_list(struct IntList* seq){
+  if (seq->next != NULL){
+    free_int_list(seq->next);
+  }
+  free(seq);
+}
+
+unsigned next_collatz(unsigned x){
+  return (x & 1) ? (3 * x + 1) : (x / 2);
+}
+
+struct IntList* collatz_seq(unsigned x){
+  struct IntList* head = 0;
+  struct IntList* tail = 0;
   
   while (x != 1){
-    print_num(x);
-    putchar(',');
+    struct IntList* node = make_int_list(x);
+
+    int_list_append(&head, &tail, node);
+
     x = next_collatz(x);
-    if (x > max) max = x;
-    ++i;
   }
-  print_num(x);
-  puts("\n\nMax: ");
-  print_num(max);
-  putchar('\n');
+
+  struct IntList* node = make_int_list(x);
+  int_list_append(&head, &tail, node);
+
+  return head;
 }
 
 int kernel_main(void) {
-  if (get_core_id() == 0){
-    print_collatz_seq(67);
-  } else {
-    while (1);
-  }
+  struct IntList* seq = collatz_seq(67);
+
+  puts("Collatz sequence:\n");
+  print_int_list(seq);
+  putchar('\n');
+
+  free_int_list(seq);
+
   return 67;
 }

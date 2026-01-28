@@ -28,3 +28,6 @@ These tools are expected to be built already:
 - Kernel C assembly outputs live under `build/kernel/` to keep them separate
   from the root test's assembly file.
 - The makefile also compiles the BIOS. The emulator is run with the BIOS in ram and the kernel on the sd card, the bios loads the kernel and then jumps to it
+
+### Third-Party Code
+- [heap_allocator](https://github.com/CCareaga/heap_allocator/blob/master/commented_heap.c) by CCareaga (MIT)
