@@ -2,7 +2,7 @@
 #include "machine.h"
 #include "atomic.h"
 
-int print_lock = 0;
+struct SpinLock print_lock = { 0 };
 
 unsigned puts(char* str){
   unsigned count = 0;

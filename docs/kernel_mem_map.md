@@ -6,8 +6,17 @@ Interrupt Vector Table
 ### 0x400 - ...
 Where BIOS code is loaded (64KB reserved). Can overwrite once kernel is entered. 
 
-### 0x10000 - ...
-Kernel Code (~1MB reserved for now)
+### 0x10000 - 0x90000
+Kernel text (512KB reserved for now)
+
+### 0x90000 - 0xA0000
+Kernel data (64KB)
+
+### 0xA0000 - 0xB0000
+Kernel rodata (64KB)
+
+### 0xB0000 - 0xE0000
+Kernel bss (192KB)
 
 ### 0xE0000 - 0xF0000
 Interrupt Stacks (16KB each)   

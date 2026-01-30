@@ -1,4 +1,5 @@
   .align 4
+  .data
   .global CONFIG
 CONFIG:
   .fill NUM_CORES

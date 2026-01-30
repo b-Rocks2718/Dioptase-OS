@@ -8,7 +8,7 @@ int* DMA_LEN_REG =   (int*)0x7FE58F8;
 int* DMA_CTRL_REG =  (int*)0x7FE58FC;
 int* DMA_STATUS_REG = (int*)0x7FE5900;
 
-static int sd_lock = 0;
+static struct SpinLock sd_lock = { 0 };
 
 int sd_read_block(int block_num, void* dest){
   // Set up DMA to read from SD card to memory

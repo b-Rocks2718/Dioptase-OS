@@ -2,11 +2,12 @@
 #define QUEUE_H
 
 #include "TCB.h"
+#include "atomic.h"
 
 struct SpinQueue {
   struct TCB* head;
   struct TCB* tail;
-  int spinlock;
+  struct SpinLock spinlock;
   int size;
 };
 

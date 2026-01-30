@@ -16,14 +16,34 @@ int bios_entry(void){
   }
 
   puts("| Valid MBR found. Loading kernel...\n");
-  unsigned kernel_start_block = ((unsigned*)MBR_LOAD_ADDRESS)[0];
-  unsigned kernel_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[1];
-  unsigned kernel_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[2];
+  unsigned text_start_block = ((unsigned*)MBR_LOAD_ADDRESS)[0];
+  unsigned text_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[1];
+  unsigned text_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[2];
 
-  sd_read_blocks(kernel_start_block, kernel_num_blocks, (unsigned char*)kernel_load_address);
+  unsigned data_start_block = ((unsigned*)MBR_LOAD_ADDRESS)[3];
+  unsigned data_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[4];
+  unsigned data_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[5];
+
+  unsigned rodata_start_block = ((unsigned*)MBR_LOAD_ADDRESS)[6];
+  unsigned rodata_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[7];
+  unsigned rodata_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[8];
+
+  unsigned bss_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[9];
+  unsigned bss_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[10];
+
+  sd_read_blocks(text_start_block, text_num_blocks, (unsigned char*)text_load_address);
+  sd_read_blocks(data_start_block, data_num_blocks, (unsigned char*)data_load_address);
+  sd_read_blocks(rodata_start_block, rodata_num_blocks, (unsigned char*)rodata_load_address);
+
+  // zero out bss
+  unsigned bss_size = bss_num_blocks * 512;
+  unsigned char* bss_ptr = (unsigned char*)bss_load_address;
+  for (unsigned i = 0; i < bss_size; ++i){
+    bss_ptr[i] = 0;
+  }
 
   puts("| Entering kernel...\n");
-  enter_kernel((void*)kernel_load_address);
+  enter_kernel((void*)text_load_address);
 
   return 0;
 }

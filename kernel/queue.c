@@ -9,7 +9,7 @@ struct SpinQueue* create_spin_queue(){
 
   queue->head = NULL;
   queue->tail = NULL;
-  queue->spinlock = 0;
+  queue->spinlock.the_lock = 0 ;
   queue->size = 0;
 
   return queue;

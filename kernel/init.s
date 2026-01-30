@@ -5,10 +5,20 @@
 .define KERNEL_STACK_SIZE, 0x4000
 .define IPI_IVT_OFFSET, 0x3D4
 
+# Section load addresses must match the kernel memory map so pc-relative
+# immediates resolve to runtime addresses.
+  .text_load TEXT_LOAD_ADDR
+  .rodata_load RODATA_LOAD_ADDR
+  .data_load DATA_LOAD_ADDR
+  .bss_load BSS_LOAD_ADDR
+
 # kernel entry point
-  .align 4
+  .text
   .global _start
 _start:
+  # set imr to disable all interrupts
+  mov imr, r0
+
   # clear isr so no pending interrupts
   mov  isr, r0
 

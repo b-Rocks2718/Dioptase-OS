@@ -1,9 +1,19 @@
 #ifndef ATOMIC_H
 #define ATOMIC_H
 
-extern void spin_lock_get(int* lock);
+#include "constants.h"
 
-extern void spin_lock_release(int* lock);
+struct SpinLock {
+  bool the_lock;
+  int  interrupt_state;
+};
+
+// will disable interrupt on each attempt at getting the lock
+// when it returns, interrupts are disabled
+extern void spin_lock_get(struct SpinLock* lock);
+
+// restores interrupt state
+extern void spin_lock_release(struct SpinLock* lock);
 
 extern int* make_spin_barrier(int count);
 

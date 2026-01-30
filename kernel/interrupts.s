@@ -1,4 +1,5 @@
-
+  .align 4
+  .text
   .global restore_interrupts
 restore_interrupts:
   # r1 has mask to restore

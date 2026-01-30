@@ -1,6 +1,7 @@
   
 .define UART_PADDR 0x7FE5802
   .align 4
+  .text
   .global putchar
 putchar:
   # write character in r1 to UART
@@ -22,6 +23,56 @@ get_cr0:
   .global get_pc
 get_pc:
   adpc r1, 0
+  ret
+
+  .global get_return_address
+get_return_address:
+  # Purpose: return the caller address using the current frame pointer.
+  # Inputs: none.
+  # Outputs: r1 = return address of the current function's caller.
+  # Preconditions: ABI prologue has saved ra at [bp, 4].
+  # Postconditions: no state changes besides r1.
+  # CPU state assumptions: kernel mode; interrupts may be enabled.
+  lwa  r1, [bp, 4]
+  ret
+
+  .global get_caller_return_address
+get_caller_return_address:
+  # Purpose: return the caller's caller address using chained frame pointers.
+  # Inputs: none.
+  # Outputs: r1 = return address two frames up (caller of caller).
+  # Preconditions: ABI prologues have saved bp/ra for the two callers.
+  # Postconditions: no state changes besides r1.
+  # CPU state assumptions: kernel mode; interrupts may be enabled.
+  mov  r1, bp
+  lwa  r1, [r1]     # caller bp
+  lwa  r1, [r1]     # caller's caller bp
+  lwa  r1, [r1, 4]  # caller's caller ra
+  ret
+
+  .global get_isr
+get_isr:
+  mov r1, isr
+  ret
+
+  .global get_imr
+get_imr:
+  mov r1, imr
+  ret
+
+  .global get_epc
+get_epc:
+  mov r1, epc
+  ret
+
+  .global get_efg
+get_efg:
+  mov r1, efg
+  ret
+
+  .global get_tlb_addr
+get_tlb_addr:
+  mov r1, cr7
   ret
 
   .global __atomic_exchange_n
@@ -90,51 +141,65 @@ sleep:
   mode sleep
   ret
 
-  .global context_switch # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg)
+  .global context_switch # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread)
 context_switch:
   # save current state
-  swa  r20, [r1, 0]
-  swa  r21, [r1, 4]
-  swa  r22, [r1, 8]
-  swa  r23, [r1, 12]
-  swa  r24, [r1, 16]
-  swa  r25, [r1, 20]
-  swa  r26, [r1, 24]
-  swa  r27, [r1, 28]
+  swa  r20, [r1, 76]
+  swa  r21, [r1, 80]
+  swa  r22, [r1, 84]
+  swa  r23, [r1, 88]
+  swa  r24, [r1, 92]
+  swa  r25, [r1, 96]
+  swa  r26, [r1, 100]
+  swa  r27, [r1, 104]
+  swa  r28, [r1, 108]
 
-  swa  sp,  [r1, 32]
-  swa  bp,  [r1, 36]
+  swa  sp,  [r1, 112]
+  swa  bp,  [r1, 116]
 
   # use r9 as scratch
   mov  r9, flg
-  swa  r9,  [r1, 40]
+  swa  r9,  [r1, 120]
 
-  swa  ra,  [r1, 44]
+  swa  ra,  [r1, 124]
 
-  mov  r9, imr # save interrupt flags in r9
+  mov  r9, psr
+  swa  r9,  [r1, 128]
+
+  mov  r9, imr
+  swa  r9,  [r1, 132]
+
   mov  imr, r0 # temporarily disable interrupts
 
   # restore old state
-  lwa  r20, [r2, 0]
-  lwa  r21, [r2, 4]
-  lwa  r22, [r2, 8]
-  lwa  r23, [r2, 12]
-  lwa  r24, [r2, 16]
-  lwa  r25, [r2, 20]
-  lwa  r26, [r2, 24]
-  lwa  r27, [r2, 28]
+  lwa  r20, [r2, 76]
+  lwa  r21, [r2, 80]
+  lwa  r22, [r2, 84]
+  lwa  r23, [r2, 88]
+  lwa  r24, [r2, 92]
+  lwa  r25, [r2, 96]
+  lwa  r26, [r2, 100]
+  lwa  r27, [r2, 104]
+  lwa  r28, [r2, 108]
 
-  lwa  sp,  [r2, 32]
-  lwa  bp,  [r2, 36]
+  lwa  sp,  [r2, 112]
+  lwa  bp,  [r2, 116]
 
   # use r10 as scratch
-  lwa  r10, [r2, 40]
+  lwa  r10, [r2, 120]
   mov  flg, r10
 
-  lwa  r10, [r2, 44] # r10 holds our return address
+  lwa  r10, [r2, 128]
+  mov  psr, r10
+
+  lwa  r10, [r2, 124] # r10 holds our return address
   push r10
 
+  # update current thread
+  swa  r2,  [r5]
+
 	# restore interrupt flags
+  lwa  r9,  [r2, 132]
   mov  imr, r9
 
   # call the function we were passed, after the switch

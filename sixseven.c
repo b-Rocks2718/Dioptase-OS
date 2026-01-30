@@ -40,6 +40,7 @@ void print_int_list(struct IntList* seq){
     putchar(',');
     seq = next;
   }
+  putchar('\n');
   spin_lock_release(&print_lock);
 }
 
@@ -79,7 +80,6 @@ int kernel_main(void) {
 
   say("***Collatz sequence:\n", NULL);
   print_int_list(seq);
-  putchar('\n');
 
   free_int_list(seq);
 

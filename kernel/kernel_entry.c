@@ -7,6 +7,7 @@
 #include "pit.h"
 #include "threads.h"
 #include "debug.h"
+#include "per_core.h"
 
 unsigned HEAP_START = 0x200000;
 unsigned HEAP_SIZE = 0x600000;
@@ -16,6 +17,7 @@ extern void kernel_main(void);
 int start_barrier = 0;
 
 void kernel_entry(void){
+
   int me = get_core_id();
   say("| Core %d starting up...\n", &me);
 
@@ -56,21 +58,25 @@ void kernel_entry(void){
 
   say("| Core %d enabling interrupts...\n", &me);
 
-  restore_interrupts(0x80000001); // only PIT interrupt enabled for now
-
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();
 
+  //restore_interrupts(0x80000001); // only PIT interrupt enabled for now
+
   // wait for all cores to be awake and set up
+  say("| Core %d waiting at start barrier...\n", &me);
   spin_barrier_sync(&start_barrier);
 
   // have the final core run kernel_main
   if (me == num_cores - 1) {
+    say("| Core %d starting kernel main thread...\n", &me);
     struct Fun* kernel_main_fun = malloc(sizeof (struct Fun));
     kernel_main_fun->arg = NULL;
     kernel_main_fun->func = (void (*)(void*))kernel_main;
     thread(kernel_main_fun);
   }
+
+  say("| Core %d entering event loop...\n", &me);
 
   event_loop();
 

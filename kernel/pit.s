@@ -1,4 +1,5 @@
   .align 4
+  .text
   .global mark_pit_handled
 mark_pit_handled:
   mov r1, isr
@@ -14,70 +15,94 @@ pit_handler_:
   # so nested interrupts are disabled on entry; stack pointer (r31/ksp) valid.
   # Postconditions: ISR status bit cleared by callee; IMR top bit re-enabled by rfi.
 
-  # Save GPRs. Do not push r31: it is the stack pointer in kernel mode.
-  push r1
-  push r2
-  push r3
-  push r4
-  push r5
-  push r6
-  push r7
-  push r8
-  push r9
-  push r10
-  push r11
-  push r12
-  push r13
-  push r14
-  push r15
-  push r16
-  push r17
-  push r18
-  push r19
-  push r20
-  push r21
-  push r22
-  push r23
-  push r24
-  push r25
-  push r26
-  push r27
-  push r28
-  push r29
-  push r30
+  # Save caller-saved registers
+  swa  r1, [sp, -4]
+  swa  r2, [sp, -8]
+  swa  r3, [sp, -12]
+  swa  r4, [sp, -16]
+  swa  r5, [sp, -20]
+  swa  r6, [sp, -24]
+  swa  r7, [sp, -28]
+  swa  r8, [sp, -32]
+  swa  r9, [sp, -36]
+  swa  r10, [sp, -40]
+  swa  r11, [sp, -44]
+  swa  r12, [sp, -48]
+  swa  r13, [sp, -52]
+  swa  r14, [sp, -56]
+  swa  r15, [sp, -60]
+  swa  r16, [sp, -64]
+  swa  r17, [sp, -68]
+  swa  r18, [sp, -72]
+  swa  r19, [sp, -76]
+
+  mov  r1, epc
+  swa  r1, [sp, -80] # save return address
+
+  mov  r1, efg
+  swa  r1, [sp, -84] # save flags
+
+  mov  r1, ksp # save kernel stack pointer
+  swa  r1, [sp, -88]
+
+  # save bp and ra
+  swa  bp,  [sp, -92]
+  swa  ra,  [sp, -96]
+
+  mov  r1, isp # pass stack pointer to pit_handler
+
+  # switch to kernel stack
+  mov  isp, ksp
+
+  # align to 4 bytes
+  movi r2, 0xFFFFFFFC
+  and  sp, r2, sp
 
   call pit_handler
 
-  # Restore GPRs in reverse order.
-  pop r30
-  pop r29
-  pop r28
-  pop r27
-  pop r26
-  pop r25
-  pop r24
-  pop r23
-  pop r22
-  pop r21
-  pop r20
-  pop r19
-  pop r18
-  pop r17
-  pop r16
-  pop r15
-  pop r14
-  pop r13
-  pop r12
-  pop r11
-  pop r10
-  pop r9
-  pop r8
-  pop r7
-  pop r6
-  pop r5
-  pop r4
-  pop r3
-  pop r2
-  pop r1
+  # restore interrupt stack pointer
+  # calculate from core id
+  mov  r2, cid
+  lsl  r2, r2, 14 # core stack size is 16KB bytes
+  movi r3, 0xF0000
+  sub  r3, r3, r2
 
-  rfi # return address should still be in epc, flags in efg
+  mov  isp, r3
+
+  # r1 contains TCB* so we can restore everything
+  lwa  r2, [r1, 136] # restore return address
+  mov  epc, r2
+
+  lwa  r2, [r1, 140] # restore flags
+  mov  efg, r2
+
+  # restore kernel stack pointer
+  lwa  r2, [r1, 144]
+  mov  ksp, r2
+
+  lwa  r2, [r1, 4]
+  lwa  r3, [r1, 8]
+  lwa  r4, [r1, 12]
+  lwa  r5, [r1, 16]
+  lwa  r6, [r1, 20]
+  lwa  r7, [r1, 24]
+  lwa  r8, [r1, 28]
+  lwa  r9, [r1, 32]
+  lwa  r10, [r1, 36]
+  lwa  r11, [r1, 40]
+  lwa  r12, [r1, 44]
+  lwa  r13, [r1, 48]
+  lwa  r14, [r1, 52]
+  lwa  r15, [r1, 56]
+  lwa  r16, [r1, 60]
+  lwa  r17, [r1, 64]
+  lwa  r18, [r1, 68]
+  lwa  r19, [r1, 72]
+
+  # restore bp and ra
+  lwa  bp,  [r1, 148]
+  lwa  ra,  [r1, 152]
+
+  lwa  r1, [r1, 0] # last so we don't clobber r1 early
+
+  rfi

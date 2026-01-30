@@ -1,11 +1,13 @@
 #ifndef PIT_H
 #define PIT_H
 
+#include "TCB.h"
+
 extern unsigned jiffies;
 
 void pit_init(unsigned hertz);
 
-void pit_handler(void);
+struct TCB* pit_handler(unsigned* sp);
 
 extern void pit_handler_(void);
 

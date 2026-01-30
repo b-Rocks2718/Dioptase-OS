@@ -2,8 +2,9 @@
 #define PRINT_H
 
 #include "constants.h"
+#include "atomic.h"
 
-extern int print_lock;
+extern struct SpinLock print_lock;
 
 // print the number n to the console in decimal
 // returns the number of characters printed

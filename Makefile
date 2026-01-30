@@ -3,9 +3,9 @@
 # from a root test C file plus kernel sources, and optionally run the emulator.
 
 # configuration
-NUM_CORES ?= 1
-TEST_RUNS ?= 20
-TIMEOUT_SECONDS ?= 10
+NUM_CORES ?= 4
+TEST_RUNS ?= 100
+TIMEOUT_SECONDS ?= 5
 SCHEDULER ?= free
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER) #--trace-ints
 
@@ -44,7 +44,10 @@ KERNEL_ASM_SRCS_ORDERED := $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) \
 
 KERNEL_BLOCK_SIZE := 512
 KERNEL_START_BLOCK := 1
-KERNEL_LOAD_ADDR := 0x10000
+TEXT_LOAD_ADDR := 0x10000
+DATA_LOAD_ADDR := 0x90000
+RODATA_LOAD_ADDR := 0xA0000
+BSS_LOAD_ADDR := 0xB0000
 KERNEL_START_OFFSET := $(shell expr $(KERNEL_START_BLOCK) \* $(KERNEL_BLOCK_SIZE))
 
 # Test sources are any C files in the Dioptase-OS root.
@@ -163,35 +166,69 @@ $(BIOS_HEX): $(BIOS_C_ASMS) $(BIOS_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 
 # Assemble a kernel binary from the test asm, kernel C asm, and kernel asm.
 # mbr.s must be first so it lands at address 0; init.s must come next for .origin 0x400.
+# This is a two-pass build: pass 1 emits a temp hex file to compute section offsets,
+# then pass 2 reassembles with correct MBR macros.
 $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 	@status=0; \
-	tmp_bin="$(BUILD_DIR)/$*.tmp.bin"; \
-	"$(BASM)" -kernel -bin -o "$$tmp_bin" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
+	tmp_hex="$(BUILD_DIR)/$*.tmp.hex"; \
+	"$(BASM)" -kernel -g -o "$$tmp_hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
 	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
-	  -DKERNEL_NUM_BLOCKS=0 -DKERNEL_START_BLOCK=$(KERNEL_START_BLOCK) -DKERNEL_LOAD_ADDR=$(KERNEL_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DTEXT_START_BLOCK=0 -DTEXT_NUM_BLOCKS=0 -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
+	  -DDATA_START_BLOCK=0 -DDATA_NUM_BLOCKS=0 -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
+	  -DRODATA_START_BLOCK=0 -DRODATA_NUM_BLOCKS=0 -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
+	  -DBSS_NUM_BLOCKS=0 -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	tmp_size=$$(wc -c < "$$tmp_bin"); \
-	if [ $$tmp_size -lt $(KERNEL_START_OFFSET) ]; then \
-	  echo "Kernel build error: image size $$tmp_size is smaller than start offset $(KERNEL_START_OFFSET)" >&2; \
+	set -- $$(grep '^@' "$$tmp_hex" | head -n 6 | sed 's/^@//'); \
+	if [ $$# -ne 6 ]; then \
+	  echo "Kernel build error: expected 6 section markers in $$tmp_hex, found $$#." >&2; \
 	  exit 1; \
 	fi; \
-	payload_bytes=$$((tmp_size - $(KERNEL_START_OFFSET))); \
-	kernel_blocks=$$(( (payload_bytes + $(KERNEL_BLOCK_SIZE) - 1) / $(KERNEL_BLOCK_SIZE) )); \
+	implicit_base=$$((0x$$1 * 4)); \
+	text_base=$$((0x$$2 * 4)); \
+	rodata_base=$$((0x$$3 * 4)); \
+	data_base=$$((0x$$4 * 4)); \
+	bss_base=$$((0x$$5 * 4)); \
+	end_base=$$((0x$$6 * 4)); \
+	if [ $$((text_base % $(KERNEL_BLOCK_SIZE))) -ne 0 ] || \
+	   [ $$((rodata_base % $(KERNEL_BLOCK_SIZE))) -ne 0 ] || \
+	   [ $$((data_base % $(KERNEL_BLOCK_SIZE))) -ne 0 ] || \
+	   [ $$((bss_base % $(KERNEL_BLOCK_SIZE))) -ne 0 ] || \
+	   [ $$((end_base % $(KERNEL_BLOCK_SIZE))) -ne 0 ]; then \
+	  echo "Kernel build error: section bases are not aligned to $(KERNEL_BLOCK_SIZE) bytes." >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$rodata_base -lt $$text_base ] || [ $$data_base -lt $$rodata_base ] || [ $$bss_base -lt $$data_base ] || [ $$end_base -lt $$bss_base ]; then \
+	  echo "Kernel build error: section bases are not ordered text->rodata->data->bss->end." >&2; \
+	  exit 1; \
+	fi; \
+	text_start_block=$$((text_base / $(KERNEL_BLOCK_SIZE))); \
+	rodata_start_block=$$((rodata_base / $(KERNEL_BLOCK_SIZE))); \
+	data_start_block=$$((data_base / $(KERNEL_BLOCK_SIZE))); \
+	text_num_blocks=$$(((rodata_base - text_base) / $(KERNEL_BLOCK_SIZE))); \
+	rodata_num_blocks=$$(((data_base - rodata_base) / $(KERNEL_BLOCK_SIZE))); \
+	data_num_blocks=$$(((bss_base - data_base) / $(KERNEL_BLOCK_SIZE))); \
+	bss_num_blocks=$$(((end_base - bss_base) / $(KERNEL_BLOCK_SIZE))); \
 	"$(BASM)" -kernel -bin -o "$@" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
 	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
-	  -DKERNEL_NUM_BLOCKS=$$kernel_blocks -DKERNEL_START_BLOCK=$(KERNEL_START_BLOCK) -DKERNEL_LOAD_ADDR=$(KERNEL_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DTEXT_START_BLOCK=$$text_start_block -DTEXT_NUM_BLOCKS=$$text_num_blocks -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
+	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
+	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
+	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	"$(BASM)" -kernel -g -o "$(BUILD_DIR)/$*.hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
 	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
-	  -DKERNEL_NUM_BLOCKS=$$kernel_blocks -DKERNEL_START_BLOCK=$(KERNEL_START_BLOCK) -DKERNEL_LOAD_ADDR=$(KERNEL_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DTEXT_START_BLOCK=$$text_start_block -DTEXT_NUM_BLOCKS=$$text_num_blocks -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
+	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
+	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
+	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	grep '^#' "$(BUILD_DIR)/$*.hex" > "$(BUILD_DIR)/$*.labels" || true; \
 	cat $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s $(KERNEL_C_ASMS) \
 	  $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) > "$(BUILD_DIR)/$*.all.s"; \
-	rm -f "$$tmp_bin"; \
+	rm -f "$$tmp_hex"; \
 	exit $$status
 
 # Compile the root test C file to assembly.
