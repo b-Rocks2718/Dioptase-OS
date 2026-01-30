@@ -70,14 +70,14 @@ pit_handler_:
   mov  isp, r3
 
   # r1 contains TCB* so we can restore everything
-  lwa  r2, [r1, 136] # restore return address
+  lwa  r2, [r1, 140] # restore return address
   mov  epc, r2
 
-  lwa  r2, [r1, 140] # restore flags
+  lwa  r2, [r1, 144] # restore flags
   mov  efg, r2
 
   # restore kernel stack pointer
-  lwa  r2, [r1, 144]
+  lwa  r2, [r1, 148]
   mov  ksp, r2
 
   lwa  r2, [r1, 4]
@@ -100,8 +100,8 @@ pit_handler_:
   lwa  r19, [r1, 72]
 
   # restore bp and ra
-  lwa  bp,  [r1, 148]
-  lwa  ra,  [r1, 152]
+  lwa  bp,  [r1, 152]
+  lwa  ra,  [r1, 156]
 
   lwa  r1, [r1, 0] # last so we don't clobber r1 early
 

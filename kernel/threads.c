@@ -69,8 +69,10 @@ static struct TCB* make_tcb(void){
   tcb->r27 = 0;
   tcb->r28 = 0;
 
+  tcb->cr13 = 0;
+
   // interrupts enabled, timer interrupt enabled
-  tcb->imr = 0;
+  tcb->imr = 0x80000001;
 
   tcb->next = NULL;
 
@@ -213,6 +215,7 @@ void bootstrap(void){
   tcb->ret_addr = 0;
   tcb->psr = 1;
   tcb->imr = 0;
+  tcb->cr13 = 0;
 
   tcb->stack = (unsigned*)(0x10000 - (get_core_id() * 0x4000));
 

@@ -169,7 +169,16 @@ context_switch:
   mov  r9, imr
   swa  r9,  [r1, 132]
 
+  mov  r9, cr13
+  swa  r9,  [r1, 136]
+
   mov  imr, r0 # temporarily disable interrupts
+
+  lwa  r9,  [r2, 136]
+  mov  cr13, r9
+
+  lwa  r9, [r2, 128]
+  mov  psr, r9
 
   # restore old state
   lwa  r20, [r2, 76]
@@ -188,9 +197,6 @@ context_switch:
   # use r10 as scratch
   lwa  r10, [r2, 120]
   mov  flg, r10
-
-  lwa  r10, [r2, 128]
-  mov  psr, r10
 
   lwa  r10, [r2, 124] # r10 holds our return address
   push r10
