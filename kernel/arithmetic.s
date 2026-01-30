@@ -4,6 +4,7 @@
 	
 # args passed in r1 and r2
 # result returned in r1
+  .align 4
 	.global smul
 smul:
 	# Signed multiply using shift/add on absolute values.

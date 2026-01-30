@@ -11,17 +11,25 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef HEAP_H
-#define HEAP_H
+#ifndef THREADS_H
+#define THREADS_H
 
-void heap_init(void* start, unsigned size);
+#include "TCB.h"
 
-void* malloc(unsigned size);
+bool block(bool must, void (*func)(void *), void *arg);
 
-void* leak(unsigned size);
+void thread_entry(void);
 
-void free(void* p);
+void event_loop(void);
 
-void check_leaks(void);
+void thread(struct Fun* thread_fun);
 
-#endif // HEAP_H
+void bootstrap(void);
+
+void add_tcb(void* tcb);
+
+void yield(void);
+
+void stop(void);
+
+#endif // THREADS_H

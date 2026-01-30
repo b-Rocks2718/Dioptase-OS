@@ -1,278 +1,263 @@
+/* Copyright (C) 2025 Ahmed Gheith and contributors.
+ *
+ * Use restricted to classroom projects.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 #include "heap.h"
-
 #include "atomic.h"
+#include "print.h"
+#include "machine.h"
+#include "constants.h"
+#include "debug.h"
 
-#define MIN_ALLOC_SZ 4
+static unsigned n_malloc = 0;
+static unsigned n_free = 0;
+static unsigned n_leak = 0;
 
-#define MIN_WILDERNESS 0x2000
-#define MAX_WILDERNESS 0x1000000
+static unsigned *array;
+static unsigned len;
+static bool safe = false;
+static unsigned avail = 0; // index 0 will not be available by design
+static int theLock = 0;
 
-#define BIN_COUNT 9
-#define BIN_MAX_IDX 8 // 9 - 1
+static void makeTaken(unsigned i, unsigned entries);
+static void makeAvail(unsigned i, unsigned entries);
 
-static int heap_lock = 0;
+static bool isTaken(unsigned i) { return array[i] & 1; }
+static bool isAvail(unsigned i) { return !(array[i] & 1); }
+static unsigned size(unsigned i) { return array[i] & ~(unsigned)(1); }
 
-struct node_t {
-  unsigned hole;
-  unsigned size;
-  struct node_t* next;
-  struct node_t* prev;
-};
+unsigned headerFromFooter(unsigned i) { return i - size(i) + 1; }
 
-struct footer_t { 
-  struct node_t* header;
-};
+unsigned footerFromHeader(unsigned i) { return i + size(i) - 1; }
 
-struct bin_t {
-  struct node_t* head;
-};
-
-struct heap_t {
-  int start;
-  int end;
-  struct bin_t* bins[BIN_COUNT];
-};
-
-static unsigned overhead = sizeof(struct footer_t) + sizeof(struct node_t);
-
-static unsigned offset = 8;
-
-static struct heap_t global_heap;
-
-static unsigned get_bin_index(unsigned sz);
-static void create_foot(struct node_t* head);
-static struct footer_t* get_foot(struct node_t* head);
-
-static void add_node(struct bin_t *bin, struct node_t *node);
-
-static void remove_node(struct bin_t *bin, struct node_t *node);
-
-static struct node_t* get_best_fit(struct bin_t* list, unsigned size);
-static struct node_t* get_last_node(struct bin_t* list);
-
-static struct node_t* next(struct node_t* current);
-static struct node_t* prev(struct node_t* current);
-
-void add_node(struct bin_t* bin, struct node_t* node) {
-  node->next = 0;
-  node->prev = 0;
-
-  struct node_t* temp = bin->head;
-
-  if (bin->head == 0) {
-    bin->head = node;
-    return;
-  }
-  
-  // we need to save next and prev while we iterate
-  struct node_t* current = bin->head;
-  struct node_t* previous = 0;
-  // iterate until we get the the end of the list or we find a 
-  // node whose size is
-  while (current != 0 && current->size <= node->size) {
-    previous = current;
-    current = current->next;
-  }
-
-  if (current == 0) { // we reached the end of the list
-    previous->next = node;
-    node->prev = previous;
-  }
-  else {
-    if (previous != 0) { // middle of list, connect all links!
-      node->next = current;
-      previous->next = node;
-
-      node->prev = previous;
-      current->prev = node;
-    }
-    else { // head is the only element
-      node->next = bin->head;
-      bin->head->prev = node;
-      bin->head = node;
-    }
-  }
-}
-
-void remove_node(struct bin_t * bin, struct node_t *node) {
-  if (bin->head == 0) return; 
-  if (bin->head == node) { 
-      bin->head = bin->head->next;
-      return;
-  }
-  
-  struct node_t* temp = bin->head->next;
-  while (temp != 0) {
-    if (temp == node) { // found the node
-      if (temp->next == 0) { // last item
-        temp->prev->next = 0;
-      }
-      else { // middle item
-        temp->prev->next = temp->next;
-        temp->next->prev = temp->prev;
-      }
-      // we dont worry about deleting the head here because we already checked that
-      return;
-    }
-    temp = temp->next;
-  }
-}
-
-struct node_t* get_best_fit(struct bin_t *bin, unsigned size) {
-  if (bin->head == 0) return 0; // empty list!
-
-  struct node_t* temp = bin->head;
-
-  while (temp != 0) {
-    if (temp->size >= size) {
-      return temp; // found a fit!
-    }
-    temp = temp->next;
-  }
-  return 0; // no fit!
-}
-
-struct node_t *get_last_node(struct bin_t *bin) {
-  struct node_t *temp = bin->head;
-
-  while (temp->next != 0) {
-      temp = temp->next;
-  }
-  return temp;
-}
-
-void heap_init(void* start, unsigned size) {
-  get_spinlock(&heap_lock);
-
-  for (unsigned i = 0; i < BIN_COUNT; i++) {
-    global_heap.bins[i] = (struct bin_t*)((unsigned)start - 4 * (i + 1)); // reserve a struct bin_t (4 bytes)
-    global_heap.bins[i]->head = 0;
-  }
-
-  struct node_t *init_region = (struct node_t*) start;
-  init_region->hole = 1;
-  init_region->size = size - sizeof(struct node_t) - sizeof(struct footer_t);
-
-  create_foot(init_region);
-
-  add_node(global_heap.bins[get_bin_index(init_region->size)], init_region);
-
-  global_heap.start = (unsigned)start;
-  global_heap.end   = (unsigned)(start) + size;
-
-  release_spinlock(&heap_lock);
-}
-
-void* malloc(unsigned size) {
-  get_spinlock(&heap_lock);
-
-  unsigned index = get_bin_index(size);
-  struct bin_t* temp = (struct bin_t*)global_heap.bins[index];
-  struct node_t* found = get_best_fit(temp, size);
-
-  while (found == 0) {
-    if (index + 1 >= BIN_COUNT){
-      release_spinlock(&heap_lock);
+unsigned sanity(unsigned i) {
+  if (safe) {
+    if (i == 0)
       return 0;
+    if (i >= len) {
+      panic("bad header index\n");
     }
+    unsigned footer = footerFromHeader(i);
+    if (footer >= len) {
+      panic("bad footer index\n");
+    }
+    unsigned hv = array[i];
+    unsigned fv = array[footer];
 
-    temp = global_heap.bins[++index];
-    found = get_best_fit(temp, size);
+    if (hv != fv) {
+      panic("bad block\n"); // at i, hv, fv
+    }
   }
 
-  if ((found->size - size) > (overhead + MIN_ALLOC_SZ)) {
-    struct node_t* split = (struct node_t*)(((char *) found + sizeof(struct node_t) + sizeof(struct footer_t)) + size);
-    split->size = found->size - size - sizeof(struct node_t) - sizeof(struct footer_t);
-    split->hole = 1;
-  
-    create_foot(split);
+  return i;
+}
 
-    unsigned new_idx = get_bin_index(split->size);
+static unsigned left(unsigned i) { return sanity(headerFromFooter(i - 1)); }
 
-    add_node(global_heap.bins[new_idx], split); 
+static unsigned right(unsigned i) { return sanity(i + size(i)); }
 
-    found->size = size; 
-    create_foot(found); 
+static unsigned next(unsigned i) { return sanity(array[i + 1]); }
+
+static unsigned prev(unsigned i) { return sanity(array[i + 2]); }
+
+static void setNext(unsigned i, unsigned x) { array[i + 1] = x; }
+
+static void setPrev(unsigned i, unsigned x) { array[i + 2] = x; }
+
+static void remove(unsigned i) {
+  unsigned prevIndex = prev(i);
+  unsigned nextIndex = next(i);
+
+  if (prevIndex == 0) {
+    /* at head */
+    avail = nextIndex;
+  } else {
+    /* in the middle */
+    setNext(prevIndex, nextIndex);
+  }
+  if (nextIndex != 0) {
+    setPrev(nextIndex, prevIndex);
+  }
+}
+
+static void makeAvail(unsigned i, unsigned entry_count) {
+  assert((entry_count & 1) == 0, "making avail with odd entry count\n");
+  array[i] = entry_count;
+  array[footerFromHeader(i)] = entry_count;
+  setNext(i, avail);
+  setPrev(i, 0);
+  if (avail != 0) {
+    setPrev(avail, i);
+  }
+  avail = i;
+}
+
+static void makeTaken(unsigned i, unsigned entry_count) {
+  assert((entry_count & 1) == 0, "making taken with odd entry count\n");
+  array[i] = entry_count + 1;
+  array[footerFromHeader(i)] = entry_count + 1;
+}
+
+void check_leaks() {
+  spin_lock_get(&theLock);
+  int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
+  if (n_free + n_leak != n_malloc) {
+    say("| Heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
+  } else {
+    say("| No heap leaks detected: (n_free:%d+n_leak:%d) == n_malloc:%d\n", args);
+  }
+  spin_lock_release(&theLock);
+}
+
+void heap_init(void* base, unsigned bytes) {
+  {
+    int args[2] = {(int)base, bytes};
+    say("| Heap init (start=0x%X, size=0x%X)\n", args); 
   }
 
-  found->hole = 0; 
-  remove_node(global_heap.bins[index], found); 
+  unsigned alignedBase = ((unsigned)base + 4 + 3) / 4 * 4 - 4;
+  assert((alignedBase % 4) == 0, "heap base not aligned to 4 bytes after alignment\n");
+  assert(alignedBase >= (unsigned)base, "aligned base is less than base\n");
+  unsigned delta = alignedBase - (unsigned)base;
+  assert(delta < 4, "delta is too large\n");
 
-  found->prev = 0;
-  found->next = 0;
+  base = (void *)alignedBase;
 
-  release_spinlock(&heap_lock);
+  assert(bytes >= delta, "bytes is less than delta\n");
+  bytes -= delta;
 
-  return &found->next; 
+  bytes = bytes / 4 * 4;
+  assert((bytes % 4) == 0, "bytes is not a multiple of 4\n");
+
+  assert(bytes >
+         32, "bytes is too small\n"); // 8 (start marker) + 16 (one available node) + 8 (end marker)
+
+  {
+    int args[2] = {(int)base, (int)(base) + bytes};
+    say("| Heap range 0x%X - 0x%X\n", args);
+  }
+
+  /* can't say new becasue we're initializing the heap */
+  array = (unsigned *)base;
+
+  len = bytes / 4;
+  makeTaken(0, 2);
+  makeAvail(2, len - 4);
+  makeTaken(len - 2, 2);
+}
+
+void *malloc(unsigned bytes) {
+  // say("malloc(%d)\n", &bytes);
+  if (bytes == 0)
+    return (void *)array;
+
+  unsigned entries = ((bytes + 3) / 4) + 4;
+  if (entries < 4)
+    entries = 4;
+
+  if (entries & 1) {
+    entries++;
+  }
+
+  spin_lock_get(&theLock);
+
+  void *res = 0;
+
+  unsigned mx = UINT_MAX;
+  unsigned it = 0;
+
+  {
+    int countDown = 20;
+    unsigned p = avail;
+    while (p != 0) {
+      if (isTaken(p)) {
+        say("| block is taken in malloc 0x%X\n", (int*)&p);
+        panic("heap corruption detected\n");
+      }
+      unsigned sz = size(p);
+
+      if (sz >= entries) {
+        if (sz < mx) {
+          mx = sz;
+          it = p;
+        }
+        countDown--;
+        if ((countDown == 0) || (sz == entries))
+          break;
+      }
+      p = next(p);
+    }
+  }
+
+  if (it != 0) {
+    remove(it);
+    int extra = mx - entries;
+    if (extra >= 4) {
+      makeTaken(it, entries);
+      makeAvail(it + entries, extra);
+    } else {
+      makeTaken(it, mx);
+    }
+    res = &array[it + 3];
+  }
+
+  if (res != NULL) {
+    n_malloc += 1;
+  }
+
+  spin_lock_release(&theLock);
+
+  return res;
+}
+
+void* leak(unsigned bytes){
+  __atomic_fetch_add((int*)&n_leak, 1);
+  return malloc(bytes);
 }
 
 void free(void *p) {
-  get_spinlock(&heap_lock);
+  if (p == 0)
+    return;
+  if (p == (void *)array)
+    return;
 
-  struct bin_t *list;
-  struct footer_t *new_foot;
-  struct footer_t *old_foot;
+  spin_lock_get(&theLock);
 
-  struct node_t *head = (struct node_t*) ((char *) p - offset);
-  if (head == (struct node_t*)global_heap.start) {
-      head->hole = 1; 
-      add_node(global_heap.bins[get_bin_index(head->size)], head);
-      release_spinlock(&heap_lock);
-      return;
+  n_free += 1;
+  int idx = ((((unsigned)p) - ((unsigned)array)) / 4) - 3;
+  sanity(idx);
+  if (isAvail(idx)) {
+    int args[2] = { (int)p, idx };
+    say("| freeing free block, p:0x%X idx:%d\n", args);
+    panic("double free detected\n");
   }
 
-  struct node_t *next = (struct node_t *) ((char *) get_foot(head) + sizeof(struct footer_t));
-  struct footer_t *f = (struct footer_t *) ((char *) head - sizeof(struct footer_t));
-  struct node_t *prev = f->header;
-  
-  if (prev->hole) {
-    list = global_heap.bins[get_bin_index(prev->size)];
-    remove_node(list, prev);
+  int sz = size(idx);
 
-    prev->size += overhead + head->size;
-    new_foot = get_foot(head);
-    new_foot->header = prev;
+  int leftIndex = left(idx);
+  int rightIndex = right(idx);
 
-    head = prev;
+  if (isAvail(leftIndex)) {
+    remove(leftIndex);
+    idx = leftIndex;
+    sz += size(leftIndex);
   }
 
-  if (next->hole) {
-    list = global_heap.bins[get_bin_index(next->size)];
-    remove_node(list, next);
-
-    head->size += overhead + next->size;
-
-    old_foot = get_foot(next);
-    old_foot->header = 0;
-    next->size = 0;
-    next->hole = 0;
-    
-    new_foot = get_foot(head);
-    new_foot->header = head;
+  if (isAvail(rightIndex)) {
+    remove(rightIndex);
+    sz += size(rightIndex);
   }
 
-  head->hole = 1;
-  add_node(global_heap.bins[get_bin_index(head->size)], head);
+  makeAvail(idx, sz);
 
-  release_spinlock(&heap_lock);
-}
-
-static unsigned get_bin_index(unsigned sz) {
-  unsigned index = 0;
-  sz = sz < 4 ? 4 : sz;
-
-  while (sz >>= 1) index++; 
-  index -= 2; 
-    
-  if (index > BIN_MAX_IDX) index = BIN_MAX_IDX; 
-  return index;
-}
-
-static void create_foot(struct node_t *head) {
-  struct footer_t *foot = get_foot(head);
-  foot->header = head;
-}
-
-static struct footer_t *get_foot(struct node_t *node) {
-  return (struct footer_t*) ((char*) node + sizeof(struct node_t) + node->size);
+  spin_lock_release(&theLock);
 }

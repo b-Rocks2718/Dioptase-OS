@@ -5,22 +5,19 @@
 #include "heap.h"
 #include "interrupts.h"
 #include "pit.h"
+#include "threads.h"
+#include "debug.h"
 
 unsigned HEAP_START = 0x200000;
-unsigned HEAP_SIZE = 0x500000;
+unsigned HEAP_SIZE = 0x600000;
 
 extern void kernel_main(void);
 
+int start_barrier = 0;
+
 void kernel_entry(void){
   int me = get_core_id();
-
-  get_spinlock(&print_lock);
-
-  puts("| Core ");
-  print_num(me);
-  puts(" awake\n");
-
-  release_spinlock(&print_lock);
+  say("| Core %d starting up...\n", &me);
 
   // get number of cores from config
   int num_cores = CONFIG.num_cores;
@@ -29,57 +26,53 @@ void kernel_entry(void){
   __atomic_fetch_add(&awake_cores, 1);
 
   if (me == 0){
-    puts("| Hello from Dioptase Kernel!\n");
+    say("| Hello from Dioptase Kernel!\n", NULL);
 
-    puts("| Num cores: ");
-    print_num(num_cores);
-    putchar('\n');
+    say("| Num cores: %d\n", &num_cores);
 
-    puts("| Mem size: ");
-    print_num(128);
-    puts("MiB\n");
+    say("| Mem size: 128MiB\n", NULL);
 
-    puts("| Initializing heap...\n");
+    say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
 
-    register_spurious_handlers(); // register spurious interrupt handlers
+    say("| Registering spurious interrupt handlers...\n", NULL);
+    register_spurious_handlers();
 
-    puts("| Initializing PIT...\n");
+    say("| Initializing PIT...\n", NULL);
     pit_init(1000); // trigger interrupts at 1000Hz
 
+    // create barrier for all cores to sync on
+    start_barrier = num_cores;
+
     // initialize other cores
-    puts("| Waking up other cores...\n");
+    say("| Waking up other cores...\n", NULL);
     for (int i = 1; i < num_cores; ++i) {
       wakeup_core(i);
     }
   }
 
-  get_spinlock(&print_lock);
-  puts("| Core "); 
-  print_num(me);
-  puts(" enabling interrupts...\n");
-  release_spinlock(&print_lock);
+  say("| Core %d initializing interrupts...\n", &me);
+  interrupts_init();
 
-  clear_isr(); // clear interrupt status register
+  say("| Core %d enabling interrupts...\n", &me);
+
   restore_interrupts(0x80000001); // only PIT interrupt enabled for now
 
-  // have the final core run kernel_main
-  if (me == num_cores - 1){
-    get_spinlock(&print_lock);
-    puts("| Entering kernel_main...\n");
-    release_spinlock(&print_lock);
+  say("| Core %d creating idle thread context...\n", &me);
+  bootstrap();
 
-    kernel_main();
-    
-    get_spinlock(&print_lock);
-    puts("| kernel_main finished in ");
-    print_num(jiffies);
-    puts(" jiffies\n");
-    puts("| Halting...\n");
-    release_spinlock(&print_lock);
-    
-    shutdown();
-  } else {
-    while (1);
+  // wait for all cores to be awake and set up
+  spin_barrier_sync(&start_barrier);
+
+  // have the final core run kernel_main
+  if (me == num_cores - 1) {
+    struct Fun* kernel_main_fun = malloc(sizeof (struct Fun));
+    kernel_main_fun->arg = NULL;
+    kernel_main_fun->func = (void (*)(void*))kernel_main;
+    thread(kernel_main_fun);
   }
+
+  event_loop();
+
+  panic("event loop returned"); 
 }

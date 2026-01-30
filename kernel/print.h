@@ -1,12 +1,25 @@
 #ifndef PRINT_H
 #define PRINT_H
 
+#include "constants.h"
+
 extern int print_lock;
 
 // print the number n to the console in decimal
 // returns the number of characters printed
-int print_num(int n);
+unsigned print_signed(int n);
 
-int puts(char* str);
+unsigned print_unsigned(unsigned n);
+
+unsigned print_hex(unsigned n, bool uppercase);
+
+unsigned puts(char* str);
+
+// simple printf implementation supporting %d, %u, %x, %X
+// accepts an array instead of variadic arguments
+unsigned printf(char* fmt, int* arr);
+
+// printf with locking
+unsigned say(char* fmt, int* arr);
 
 #endif // PRINT_H

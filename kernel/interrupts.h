@@ -1,17 +1,23 @@
 #ifndef INTERRUPTS_H
 #define INTERRUPTS_H
 
+#include "constants.h"
+
 // returns current isr value
-unsigned clear_isr(void);
+extern unsigned clear_isr(void);
+
+extern void set_isp(unsigned isp);
 
 // restores imr to prev, returns value that was in imr
-unsigned restore_interrupts(unsigned prev);
+extern unsigned restore_interrupts(unsigned prev);
 
 // returns current imr value
-unsigned disable_interrupts(void);
+extern unsigned disable_interrupts(void);
+
+extern void register_spurious_handlers(void);
 
 void register_handler(void* func, void* ivt_entry);
 
-void register_spurious_handlers(void);
+void interrupts_init(void);
 
 #endif // INTERRUPTS_H

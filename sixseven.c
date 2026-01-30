@@ -1,6 +1,8 @@
 #include "kernel/machine.h"
 #include "kernel/print.h"
 #include "kernel/heap.h"
+#include "kernel/constants.h"
+#include "kernel/atomic.h"
 
 #define NULL 0
 
@@ -30,18 +32,24 @@ void int_list_append(struct IntList** head, struct IntList** tail, struct IntLis
 }
 
 void print_int_list(struct IntList* seq){
-  print_num(seq->val);
-  putchar(',');
-  if (seq->next != NULL){
-    print_int_list(seq->next);
+  spin_lock_get(&print_lock);
+  puts("***");
+  while (seq) {
+    struct IntList* next = seq->next;
+    print_signed(seq->val);
+    putchar(',');
+    seq = next;
   }
+  spin_lock_release(&print_lock);
 }
 
 void free_int_list(struct IntList* seq){
-  if (seq->next != NULL){
-    free_int_list(seq->next);
+  while (seq) {
+    int args[2] = {seq->val, (int)seq};
+    struct IntList* next = seq->next;
+    free(seq);
+    seq = next;
   }
-  free(seq);
 }
 
 unsigned next_collatz(unsigned x){
@@ -69,7 +77,7 @@ struct IntList* collatz_seq(unsigned x){
 int kernel_main(void) {
   struct IntList* seq = collatz_seq(67);
 
-  puts("Collatz sequence:\n");
+  say("***Collatz sequence:\n", NULL);
   print_int_list(seq);
   putchar('\n');
 

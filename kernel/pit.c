@@ -3,14 +3,15 @@
 #include "print.h"
 #include "machine.h"
 #include "atomic.h"
+#include "TCB.h"
+#include "threads.h"
+#include "per_core.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
 static unsigned CLOCK_FREQ = 100000000; // 100MHz clock
 static void* PIT_IVT_ENTRY = (void*)0x3C0;
 
 unsigned jiffies = 0;
-
-extern void pit_handler_(void);
 
 void pit_handler(void){
   mark_pit_handled();
@@ -20,6 +21,13 @@ void pit_handler(void){
   if (me == 0){
     jiffies++;
   }
+
+  struct PerCore* per_core = get_per_core();
+
+  struct TCB* tcb = per_core->current_thread;
+  //if (tcb->can_preempt) {
+  //  block(false, add_tcb, tcb);
+  //}
 }
 
 void pit_init(unsigned hertz){

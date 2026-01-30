@@ -1,4 +1,4 @@
-
+  .align 4
   .global mark_pit_handled
 mark_pit_handled:
   mov r1, isr
@@ -10,14 +10,9 @@ mark_pit_handled:
   .global pit_handler_
 pit_handler_:
   # Purpose: ISR wrapper for PIT that preserves interrupted CPU state.
-  # Inputs: None (entered via interrupt).
-  # Outputs: Returns to EPC via rfi with original GPRs restored.
-  # Preconditions: Executing in kernel mode; IMR top bit already cleared by HW
+  # Preconditions: IMR top bit already cleared by HW
   # so nested interrupts are disabled on entry; stack pointer (r31/ksp) valid.
   # Postconditions: ISR status bit cleared by callee; IMR top bit re-enabled by rfi.
-  # Invariants: r0 remains zero; stack pointer restored to entry value.
-  # CPU state assumptions: Single-core or multicore; PIT interrupt delivered to
-  # each core; no concurrent stack use on this core while in ISR.
 
   # Save GPRs. Do not push r31: it is the stack pointer in kernel mode.
   push r1
@@ -51,15 +46,7 @@ pit_handler_:
   push r29
   push r30
 
-  # save flags
-  mov  r30, flg
-  push r30
-
   call pit_handler
-
-  # restore flags
-  pop  r30
-  mov  flg, r30
 
   # Restore GPRs in reverse order.
   pop r30
@@ -93,4 +80,4 @@ pit_handler_:
   pop r2
   pop r1
 
-  rfi # return address should still be in epc
+  rfi # return address should still be in epc, flags in efg

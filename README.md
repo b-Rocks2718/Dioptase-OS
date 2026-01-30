@@ -5,22 +5,42 @@ Operating system for the [Dioptase system](https://github.com/b-Rocks2718/Diopta
 ## Makefile usage
 
 The Makefile in `Dioptase-OS/` builds a test program from a root C file and
-links it with kernel sources to produce a kernel-mode hex image in `build/`.
+links it with kernel sources to produce kernel-mode bin/hex outputs in `build/`.
 
 ### Requirements
 
-These tools are expected to be built already:
+These tools are expected to be built already (default `VERSION=release`):
 
-- `../Dioptase-Languages/Dioptase-C-Compiler/build/debug/bcc`
-- `../Dioptase-Assembler/build/debug/basm`
-- `../Dioptase-Emulators/Dioptase-Emulator-Full/target/debug/Dioptase-Emulator-Full`
+- `../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc`
+- `../Dioptase-Assembler/build/$(VERSION)/basm`
+- `../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Dioptase-Emulator-Full`
 
 ### Targets
 
-- `make <test>.hex` compiles `Dioptase-OS/<test>.c`, compiles all `kernel/*.c`,
-  assembles them along with any `kernel/*.s`, and writes `build/<test>.hex`.
-- `make <test>` does the same build and then runs the full emulator on the hex.
-- `make clean` removes `build/*.hex` and temporary assembly outputs.
+- `make bios.hex` builds the BIOS image at `build/bios.hex`.
+- `make bios.labels` writes label lines (`#...`) from `build/bios.hex` to
+  `build/bios.labels`.
+- `make <test>.bin` compiles `Dioptase-OS/<test>.c`, compiles all `kernel/*.c`,
+  assembles them along with any `kernel/*.s`, and writes `build/<test>.bin`.
+- `make <test>.hex` writes the kernel hex image to `build/<test>.hex`.
+- `make <test>.labels` writes label lines (`#...`) from `build/<test>.hex` to
+  `build/<test>.labels`.
+- `make <test>` builds `build/bios.hex` + `build/<test>.bin` and runs the full emulator.
+- `make <test>.test` runs the emulator `TEST_RUNS` times, writes `<test>.raw`,
+  filters lines starting with `***` into `<test>.out`, compares to `<test>.ok`,
+  and prints `successes/runs`. A run fails on timeout, non-zero exit, or if
+  `<test>.raw` contains `Warning` or `Spurious` or `PANIC`.
+- `make <test>.fail` is the same as `.test` but stops on the first failure.
+- `make clean` removes build outputs and temporary assembly outputs.
+
+### Configuration
+
+- `VERSION` (default `release`) selects the toolchain and emulator build.
+- `NUM_CORES` controls how many emulator cores to run.
+- `TEST_RUNS` controls the number of test iterations.
+- `SCHEDULER` controls the emulators scheduling for multicore runs. Options are `free`, `random`, and `rr` (round robin)
+- `TIMEOUT_SECONDS` controls the per-run timeout for `.test`/`.fail`.
+- `EMU_FLAGS` can include `--trace-ints` if you want information printed about each interrupt, `--vga` if you want to emulate the VGA monitor
 
 ### Notes
 
@@ -28,6 +48,3 @@ These tools are expected to be built already:
 - Kernel C assembly outputs live under `build/kernel/` to keep them separate
   from the root test's assembly file.
 - The makefile also compiles the BIOS. The emulator is run with the BIOS in ram and the kernel on the sd card, the bios loads the kernel and then jumps to it
-
-### Third-Party Code
-- [heap_allocator](https://github.com/CCareaga/heap_allocator/blob/master/commented_heap.c) by CCareaga (MIT)

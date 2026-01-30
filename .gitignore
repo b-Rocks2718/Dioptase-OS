@@ -2,3 +2,7 @@ build/*
 a.s
 *.hex
 *.bin
+*.out
+*.raw
+*.all.s
+*.labels

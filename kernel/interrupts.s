@@ -20,6 +20,12 @@ clear_isr:
   mov isr, r0
   ret
 
+  .global set_isp
+set_isp:
+  # r1 has new isp
+  mov isp, r1
+  ret
+
   .global register_handler
 register_handler:
   # func ptr in r1
