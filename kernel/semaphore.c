@@ -35,10 +35,11 @@ void sem_down(struct Semaphore* sem){
     spin_lock_release(&sem->lock);
     return;
   }
-
-  spin_lock_release(&sem->lock);
   
+  spin_lock_release(&sem->lock);
+
   int was = disable_interrupts();
+
   struct TCB* current_tcb = get_current_tcb();
   
   int* args[2] = { (int*)sem, (int*)current_tcb };

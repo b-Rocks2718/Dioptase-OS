@@ -24,13 +24,12 @@
 #include "interrupts.h"
 
 struct SpinQueue ready_queue;
+struct SpinQueue reaper_queue;
 
 int n_active = 0;
 bool bootstrapping = true;
 
-void threads_init(void){
-  spin_queue_init(&ready_queue);
-}
+struct TCB idle_tcbs[MAX_CORES];
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -39,8 +38,31 @@ static void free_fun(struct Fun* fun) {
   free(fun);
 }
 
-static struct TCB* make_tcb(void){
-  struct TCB* tcb = malloc(sizeof(struct TCB));
+static void free_tcb(struct TCB* tcb) {
+  assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
+  assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
+  free(tcb->stack);
+  free_fun(tcb->thread_fun);
+  free(tcb);
+
+  __atomic_fetch_add(&n_active, -1);
+}
+
+static void reaper(void){
+  while (true){
+    struct TCB* tcb = spin_queue_remove_all(&reaper_queue);
+    while (tcb != NULL){
+      struct TCB* prev = tcb;
+      tcb = tcb->next;
+      free_tcb(prev);
+    }
+    yield();
+  }
+  panic("reaper thread tried to exit\n");
+}
+
+static struct TCB* make_tcb(bool leak_mem){
+  struct TCB* tcb = leak_mem ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
 
   tcb->flags = 0;
 
@@ -83,15 +105,36 @@ static struct TCB* make_tcb(void){
   return tcb;
 }
 
-static void free_tcb(void* tcb_ptr) {
-  struct TCB* tcb = (struct TCB*)tcb_ptr;
-  assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
-  assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
-  free(tcb->stack);
-  free_fun(tcb->thread_fun);
-  free(tcb);
+// same as thread(), but doesn't modify bootstrapping or n_active
+// used to make stuff like reaper threads that won't count as active threads
+// and leave the system in the bootstrapping phase
+// leaks mem because it assumes these threads run forever
+static void setup_thread(struct Fun* thread_fun){
+  struct TCB* tcb = make_tcb(true);
 
-  __atomic_fetch_add(&n_active, -1);
+  unsigned* the_stack = leak(TCB_STACK_SIZE);
+  assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
+  assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
+  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->thread_fun = thread_fun;
+  tcb->stack = the_stack;
+  tcb->psr = 1; // kernel mode
+
+  tcb->sp = (unsigned)(&the_stack[1023]);
+  tcb->bp = (unsigned)(&the_stack[1023]);
+  
+  spin_queue_add(&ready_queue, tcb);
+}
+
+void threads_init(void){
+  spin_queue_init(&ready_queue);
+  spin_queue_init(&reaper_queue);
+
+  struct Fun* reaper_fun = leak(sizeof (struct Fun));
+  reaper_fun->func = (void (*)(void *))reaper;
+  reaper_fun->arg = NULL;
+
+  setup_thread(reaper_fun);
 }
 
 // Purpose: switch away from the current thread and run a completion callback.
@@ -118,7 +161,9 @@ void thread_entry(void) {
     (*thread_fun->func)(thread_fun->arg);
   }
 
-  // Thread cleanup happens after we switch to another context in stop().
+  // Thread cleanup:
+  // stop() places thread in reaper queue
+  // reaper thread eventually frees thread
 
   stop();
 }
@@ -167,7 +212,7 @@ void event_loop(void) {
 }
 
 void thread(struct Fun* thread_fun){
-  struct TCB* tcb = make_tcb();
+  struct TCB* tcb = make_tcb(false);
   __atomic_fetch_add(&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
 
@@ -186,7 +231,11 @@ void thread(struct Fun* thread_fun){
 }
 
 void bootstrap(void){
-  struct TCB* tcb = leak(sizeof(struct TCB));
+  // interrupts should be disabled when calling this function
+  // but we'll be safe
+  int was = disable_interrupts();
+  int me = get_core_id();
+  struct TCB* tcb = &idle_tcbs[me];
 
   tcb->flags = 0;
 
@@ -230,10 +279,8 @@ void bootstrap(void){
   tcb->psr = 1;
   tcb->imr = 0;
 
-  tcb->stack = (unsigned*)(0x10000 - (get_core_id() * 0x4000));
+  tcb->stack = (unsigned*)(0x10000 - (me * 0x4000));
 
-  // interrupts should be disabled when calling this function
-  int was = disable_interrupts();
   struct PerCore* core = get_per_core();
   assert((was & 0x80000000) == 0, "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
@@ -257,6 +304,11 @@ void yield(void){
   block(was, add_tcb, (void*)tcb);
 }
 
+
+void reap_tcb(void* tcb){
+  spin_queue_add(&reaper_queue, (struct TCB*)tcb);
+}
+
 // Purpose: terminate the current thread and free its resources.
 // Inputs: none.
 // Preconditions: kernel mode; current thread owns its stack and Fun resources.
@@ -276,7 +328,7 @@ void stop(void) {
   } else {
     // free current thread resources and block forever
     assert(n_active > 0, "no active threads to stop.\n");
-    block(was, free_tcb, (struct TCB*)current);
+    block(was, reap_tcb, (struct TCB*)current);
   }
 
   panic("unreachable code reached in stop().\n");

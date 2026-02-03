@@ -8,6 +8,7 @@
 #include "threads.h"
 #include "debug.h"
 #include "per_core.h"
+#include "sd_driver.h"
 
 unsigned HEAP_START = 0x200000;
 unsigned HEAP_SIZE = 0x600000;
@@ -45,6 +46,9 @@ void kernel_entry(void){
 
     say("| Initializing threads...\n", NULL);
     threads_init();
+
+    say("| Initializing sd driver...\n", NULL);
+    sd_init();
 
     // create barrier for all cores to sync on
     start_barrier = num_cores;

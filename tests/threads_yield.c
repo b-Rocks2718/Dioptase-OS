@@ -77,6 +77,8 @@ void kernel_main(void) {
 
   spawn_threads();
 
+  say("***all threads spawned\n", NULL);
+
   while (__atomic_load_n((int*)&finished) != NUM_THREADS) {
     yield();
   }

@@ -28,6 +28,21 @@ void spin_lock_get(struct SpinLock* lock){
   }
 }
 
+// will disable interrupt before attempting to get the lock
+// if it succeeds, interrupts are disabled
+bool spin_lock_try_get(struct SpinLock* lock){
+
+  int was = disable_interrupts();
+  if (!__atomic_exchange_n(&lock->the_lock, 1)){
+    // value was 0, now we have the lock
+    __atomic_store_n(&lock->interrupt_state, was);
+    return true;
+  }
+  restore_interrupts(was);
+
+  return false;
+}
+
 // restores interrupt state
 void spin_lock_release(struct SpinLock* lock){
   int was = __atomic_load_n(&lock->interrupt_state);

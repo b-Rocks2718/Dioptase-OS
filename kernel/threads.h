@@ -15,6 +15,7 @@
 #define THREADS_H
 
 #include "TCB.h"
+#include "queue.h"
 
 extern struct SpinQueue ready_queue;
 

@@ -1,3 +1,4 @@
 ***threads yield test start
+***all threads spawned
 ***threads yield ok threads=32 rounds=200 total=6400
 ***threads yield test complete

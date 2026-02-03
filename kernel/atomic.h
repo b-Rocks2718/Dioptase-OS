@@ -14,6 +14,8 @@ void spin_lock_init(struct SpinLock* lock);
 // when it returns, interrupts are disabled
 void spin_lock_get(struct SpinLock* lock);
 
+bool spin_lock_try_get(struct SpinLock* lock);
+
 // restores interrupt state
 void spin_lock_release(struct SpinLock* lock);
 

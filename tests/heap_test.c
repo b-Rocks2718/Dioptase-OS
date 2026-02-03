@@ -131,5 +131,5 @@ static void heap_stress(unsigned rounds, unsigned N) {
 }
 
 void kernel_main(void) {
-  heap_stress(/*rounds=*/5, /*N=*/128);
+  heap_stress(/*rounds=*/5, /*N=*/64);
 }

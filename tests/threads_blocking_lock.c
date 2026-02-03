@@ -80,8 +80,6 @@ void kernel_main(void) {
     panic("blocking lock test: counter mismatch\n");
   }
 
-  blocking_lock_destroy(&lock);
-
   say("***blocking lock ok\n", NULL);
   say("***blocking lock test complete\n", NULL);
 }

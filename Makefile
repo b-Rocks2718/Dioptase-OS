@@ -60,13 +60,20 @@ LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
 
 # Treat config.s as phony so NUM_CORES changes always rebuild kernel images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
-  $(TEST_NAMES) clean kernel/config.s kernel/mbr.s
+  $(TEST_NAMES) test-all clean kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
 
 # Default target prints usage to avoid surprising emulator runs.
 all:
 	@echo "Specify a target like: make bios.hex, make <test>.bin, or make <test>"
+
+# Run every test once via the .test rule.
+test-all:
+	@for test in $(TEST_NAMES); do \
+	  echo "==> $$test"; \
+	  $(MAKE) $$test.test TEST_RUNS=1; \
+	done
 
 # Build alias so `make bios.hex` produces build/bios.hex.
 bios.hex: $(BIOS_HEX)

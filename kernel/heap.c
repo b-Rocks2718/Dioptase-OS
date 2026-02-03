@@ -17,6 +17,7 @@
 #include "machine.h"
 #include "constants.h"
 #include "debug.h"
+#include "blocking_lock.h"
 
 #define HEAP_WORD_BYTES 4u
 #define HEAP_DEBUG 1
@@ -33,7 +34,7 @@ static unsigned *array;
 static unsigned len;
 static bool safe = false;
 static unsigned avail = 0; // index 0 will not be available by design
-static struct SpinLock theLock = { 0 };
+static struct BlockingLock theLock;
 
 static void makeTaken(unsigned i, unsigned entries);
 static void makeAvail(unsigned i, unsigned entries);
@@ -222,14 +223,14 @@ static void makeTaken(unsigned i, unsigned entry_count) {
 }
 
 void check_leaks() {
-  spin_lock_get(&theLock);
+  blocking_lock_get(&theLock);
   int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
   if (n_free + n_leak != n_malloc) {
     say("| Heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
   } else {
     say("| No heap leaks detected: (n_free:%d+n_leak:%d) == n_malloc:%d\n", args);
   }
-  spin_lock_release(&theLock);
+  blocking_lock_release(&theLock);
 }
 
 void heap_init(void* base, unsigned bytes) {
@@ -237,6 +238,8 @@ void heap_init(void* base, unsigned bytes) {
     int args[2] = {(int)base, bytes};
     say("| Heap init (start=0x%X, size=0x%X)\n", args); 
   }
+
+  blocking_lock_init(&theLock);
 
   unsigned alignedBase = ((unsigned)base + 4 + 3) / 4 * 4 - 4;
   assert((alignedBase % 4) == 0, "heap base not aligned to 4 bytes after alignment\n");
@@ -287,7 +290,7 @@ void *malloc(unsigned bytes) {
     entries++;
   }
 
-  spin_lock_get(&theLock);
+  blocking_lock_get(&theLock);
 
   void *res = 0;
 
@@ -333,7 +336,7 @@ void *malloc(unsigned bytes) {
     n_malloc += 1;
   }
 
-  spin_lock_release(&theLock);
+  blocking_lock_release(&theLock);
 
   return res;
 }
@@ -349,7 +352,7 @@ void free(void *p) {
   if (p == (void *)array)
     return;
 
-  spin_lock_get(&theLock);
+  blocking_lock_get(&theLock);
 
 #ifdef HEAP_DEBUG
   heap_validate_state();
@@ -398,5 +401,5 @@ void free(void *p) {
 
   makeAvail(idx, sz);
 
-  spin_lock_release(&theLock);
+  blocking_lock_release(&theLock);
 }
