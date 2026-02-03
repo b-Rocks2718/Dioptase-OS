@@ -3,6 +3,10 @@
 
 #include "constants.h"
 
+// Be super careful using these!!!
+// Weird behavior will happen if preemption occurs
+// during a call to these functions
+
 struct TCB;
 
 struct PerCore {

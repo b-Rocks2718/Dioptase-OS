@@ -1,0 +1,3 @@
+***threads race stress test start
+***threads race stress ok threads=32 rounds=100 total=3200
+***threads race stress test complete

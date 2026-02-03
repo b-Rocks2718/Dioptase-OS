@@ -16,7 +16,7 @@
 
 #include "TCB.h"
 
-void block(void (*func)(void *), void *arg);
+void block(unsigned was, void (*func)(void *), void *arg);
 
 void thread_entry(void);
 

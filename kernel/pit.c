@@ -60,7 +60,8 @@ struct TCB* pit_handler(unsigned* save_area){
   tcb->int_ra = save_area[23];
 
   if (tcb != per_core->idle_thread) {
-    block(add_tcb, tcb);
+    unsigned was = disable_interrupts();
+    block(was, add_tcb, tcb);
   }
 
   imr = get_imr();

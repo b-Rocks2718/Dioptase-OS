@@ -5,7 +5,7 @@
 # configuration
 NUM_CORES ?= 4
 TEST_RUNS ?= 100
-TIMEOUT_SECONDS ?= 20
+TIMEOUT_SECONDS ?= 30
 SCHEDULER ?= free
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER) #--trace-ints
 

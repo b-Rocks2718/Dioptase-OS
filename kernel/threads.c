@@ -88,8 +88,14 @@ static void free_tcb(void* tcb_ptr) {
   __atomic_fetch_add(&n_active, -1);
 }
 
-void block(void (*func)(void *), void *arg) {
-  unsigned was = disable_interrupts();
+// Purpose: switch away from the current thread and run a completion callback.
+// Inputs: was is the interrupt mask to restore when this thread is resumed;
+// func/arg execute on the next context after the switch.
+// Preconditions: interrupts are disabled; current thread is core->current_thread.
+// Postconditions: current thread state saved; next context runs func(arg).
+// Invariants: core->current_thread refers to the running thread on entry.
+// CPU state assumptions: kernel mode; local interrupts disabled.
+void block(unsigned was, void (*func)(void *), void *arg) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
   struct TCB* idle = core->idle_thread;
@@ -98,7 +104,9 @@ void block(void (*func)(void *), void *arg) {
 }
 
 void thread_entry(void) {
+  int was = disable_interrupts();
   struct TCB* current_tcb = get_current_tcb();
+  restore_interrupts(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
   if (thread_fun != NULL) {
     (*thread_fun->func)(thread_fun->arg);
@@ -230,24 +238,38 @@ void add_tcb(void* tcb){
   spin_queue_add(&ready_queue, (struct TCB*)tcb);
 }
 
+// Purpose: voluntarily yield the CPU and re-queue the current thread.
+// Inputs: none.
+// Preconditions: kernel mode; caller is a runnable (non-idle) thread.
+// Postconditions: current thread added to ready queue; another context runs.
+// Invariants: ready queue remains well-formed under its spinlock.
+// CPU state assumptions: kernel mode; local interrupts disabled during switch.
 void yield(void){
+  unsigned was = disable_interrupts();
   struct TCB* tcb = get_current_tcb();
-  block(add_tcb, (void*)tcb);
+  block(was, add_tcb, (void*)tcb);
 }
 
+// Purpose: terminate the current thread and free its resources.
+// Inputs: none.
+// Preconditions: kernel mode; current thread owns its stack and Fun resources.
+// Postconditions: non-idle thread resources freed and thread never resumes.
+// Invariants: idle thread remains pinned to its core and is never freed.
+// CPU state assumptions: kernel mode; local interrupts disabled during switch.
 void stop(void) {
   unsigned was = disable_interrupts();
   struct PerCore* core = get_per_core();
-  bool is_idle = (core->current_thread == core->idle_thread);
-  restore_interrupts(was);
+  struct TCB* current = core->current_thread;
+  bool is_idle = (current == core->idle_thread);
 
   if (is_idle) {
+    restore_interrupts(was);
     // idle thread should not be stopped
     event_loop();
   } else {
     // free current thread resources and block forever
     assert(n_active > 0, "no active threads to stop.\n");
-    block(free_tcb, (struct TCB*)core->current_thread);
+    block(was, free_tcb, (struct TCB*)current);
   }
 
   panic("unreachable code reached in stop().\n");
