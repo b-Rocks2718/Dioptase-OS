@@ -16,6 +16,10 @@
 
 #include "TCB.h"
 
+extern struct SpinQueue ready_queue;
+
+void threads_init(void);
+
 void block(unsigned was, void (*func)(void *), void *arg);
 
 void thread_entry(void);
@@ -31,5 +35,9 @@ void add_tcb(void* tcb);
 void yield(void);
 
 void stop(void);
+
+bool disable_preemption(void);
+
+void enable_preemption(bool was);
 
 #endif // THREADS_H

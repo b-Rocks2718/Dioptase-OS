@@ -17,12 +17,12 @@
 // - "heap pattern mismatch" => memory corruption or stale pointers.
 // - "count mismatch" => lost updates or missed rounds.
 
-#include "kernel/threads.h"
-#include "kernel/heap.h"
-#include "kernel/print.h"
-#include "kernel/debug.h"
-#include "kernel/machine.h"
-#include "kernel/constants.h"
+#include "../kernel/threads.h"
+#include "../kernel/heap.h"
+#include "../kernel/print.h"
+#include "../kernel/debug.h"
+#include "../kernel/machine.h"
+#include "../kernel/constants.h"
 
 #define NUM_THREADS 32
 #define ROUNDS 100

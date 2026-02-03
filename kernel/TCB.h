@@ -50,6 +50,8 @@ struct TCB {
   unsigned *stack;
   struct Fun *thread_fun;
 
+  bool can_preempt;
+
   struct TCB* next;
 };
 

@@ -4,7 +4,7 @@ Operating system for the [Dioptase system](https://github.com/b-Rocks2718/Diopta
 
 ## Makefile usage
 
-The Makefile in `Dioptase-OS/` builds a test program from a root C file and
+The Makefile in `Dioptase-OS/` builds a test program from a C file under `tests/`
 links it with kernel sources to produce kernel-mode bin/hex outputs in `build/`.
 
 ### Requirements
@@ -20,16 +20,16 @@ These tools are expected to be built already (default `VERSION=release`):
 - `make bios.hex` builds the BIOS image at `build/bios.hex`.
 - `make bios.labels` writes label lines (`#...`) from `build/bios.hex` to
   `build/bios.labels`.
-- `make <test>.bin` compiles `Dioptase-OS/<test>.c`, compiles all `kernel/*.c`,
+- `make <test>.bin` compiles `Dioptase-OS/tests/<test>.c`, compiles all `kernel/*.c`,
   assembles them along with any `kernel/*.s`, and writes `build/<test>.bin`.
 - `make <test>.hex` writes the kernel hex image to `build/<test>.hex`.
 - `make <test>.labels` writes label lines (`#...`) from `build/<test>.hex` to
   `build/<test>.labels`.
 - `make <test>` builds `build/bios.hex` + `build/<test>.bin` and runs the full emulator.
-- `make <test>.test` runs the emulator `TEST_RUNS` times, writes `<test>.raw`,
-  filters lines starting with `***` into `<test>.out`, compares to `<test>.ok`,
+- `make <test>.test` runs the emulator `TEST_RUNS` times, writes `tests/<test>.raw`,
+  filters lines starting with `***` into `tests/<test>.out`, compares to `tests/<test>.ok`,
   and prints `successes/runs`. A run fails on timeout, non-zero exit, or if
-  `<test>.raw` contains `Warning` or `Spurious` or `PANIC`.
+  `tests/<test>.raw` contains `Warning` or `Spurious` or `PANIC`.
 - `make <test>.fail` is the same as `.test` but stops on the first failure.
 - `make clean` removes build outputs and temporary assembly outputs.
 

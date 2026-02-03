@@ -1,11 +1,11 @@
 // Preemption stress test: threads must advance in turn without explicit yields.
 
-#include "kernel/threads.h"
-#include "kernel/heap.h"
-#include "kernel/print.h"
-#include "kernel/debug.h"
-#include "kernel/machine.h"
-#include "kernel/constants.h"
+#include "../kernel/threads.h"
+#include "../kernel/heap.h"
+#include "../kernel/print.h"
+#include "../kernel/debug.h"
+#include "../kernel/machine.h"
+#include "../kernel/constants.h"
 
 #define NUM_THREADS 16
 #define PREEMPT_ROUNDS 10

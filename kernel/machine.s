@@ -137,8 +137,8 @@ shutdown:
   mode halt
   ret
 
-  .global sleep
-sleep:
+  .global mode_sleep
+mode_sleep:
   mode sleep
   ret
 

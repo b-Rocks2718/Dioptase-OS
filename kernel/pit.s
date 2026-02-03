@@ -50,7 +50,6 @@ pit_handler_:
 
   call pit_handler
 
-  # r1 contains TCB* so we can restore everything
   pop  ra
   pop  bp
 

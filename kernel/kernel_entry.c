@@ -43,6 +43,9 @@ void kernel_entry(void){
     say("| Initializing PIT...\n", NULL);
     pit_init(1000); // trigger interrupts at 1000Hz
 
+    say("| Initializing threads...\n", NULL);
+    threads_init();
+
     // create barrier for all cores to sync on
     start_barrier = num_cores;
 
@@ -56,15 +59,10 @@ void kernel_entry(void){
   say("| Core %d initializing interrupts...\n", &me);
   interrupts_init();
 
-  say("| Core %d enabling interrupts...\n", &me);
-
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();
 
-  int tcb = (int)get_current_tcb();
-  int args[2] = {me, tcb};
-  say("| Core %d idle thread TCB at 0x%X\n", args);
-
+  say("| Core %d enabling interrupts...\n", &me);
   restore_interrupts(0x80000001); // only PIT interrupt enabled for now
 
   // wait for all cores to be awake and set up

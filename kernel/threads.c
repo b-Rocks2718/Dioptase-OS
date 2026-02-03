@@ -23,10 +23,14 @@
 #include "pit.h"
 #include "interrupts.h"
 
-struct SpinQueue ready_queue = {NULL, NULL, {0 }, 0};
+struct SpinQueue ready_queue;
 
 int n_active = 0;
 bool bootstrapping = true;
+
+void threads_init(void){
+  spin_queue_init(&ready_queue);
+}
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -71,6 +75,8 @@ static struct TCB* make_tcb(void){
 
   // interrupts enabled, timer interrupt enabled
   tcb->imr = 0x80000001;
+
+  tcb->can_preempt = true;
 
   tcb->next = NULL;
 
@@ -214,6 +220,7 @@ void bootstrap(void){
   tcb->r28 = 0;
   
   tcb->next = NULL;
+  tcb->can_preempt = false;
 
   // these values should never be used
   tcb->thread_fun = NULL;
@@ -273,4 +280,20 @@ void stop(void) {
   }
 
   panic("unreachable code reached in stop().\n");
+}
+
+bool disable_preemption(void){
+  int was = disable_interrupts();
+  struct TCB* tcb = get_current_tcb();
+  bool prev = tcb->can_preempt;
+  tcb->can_preempt = false;
+  restore_interrupts(was);
+  return prev;
+}
+
+void enable_preemption(bool was){
+  int intrs = disable_interrupts();
+  struct TCB* tcb = get_current_tcb();
+  tcb->can_preempt = was;
+  restore_interrupts(intrs);
 }

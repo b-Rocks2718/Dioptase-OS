@@ -1,7 +1,7 @@
-#include "kernel/heap.h"
-#include "kernel/print.h"
-#include "kernel/debug.h"
-#include "kernel/constants.h"
+#include "../kernel/heap.h"
+#include "../kernel/print.h"
+#include "../kernel/debug.h"
+#include "../kernel/constants.h"
 
 // Simple xorshift RNG (deterministic)
 static unsigned rng_state = 0xC0FFEE01u;

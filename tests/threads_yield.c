@@ -1,12 +1,12 @@
 // Thread yield stress test.
 // Purpose: ensure threads can yield to each other and all complete their work.
 
-#include "kernel/threads.h"
-#include "kernel/heap.h"
-#include "kernel/print.h"
-#include "kernel/debug.h"
-#include "kernel/machine.h"
-#include "kernel/constants.h"
+#include "../kernel/threads.h"
+#include "../kernel/heap.h"
+#include "../kernel/print.h"
+#include "../kernel/debug.h"
+#include "../kernel/machine.h"
+#include "../kernel/constants.h"
 
 #define NUM_THREADS 32
 #define YIELD_ROUNDS 200

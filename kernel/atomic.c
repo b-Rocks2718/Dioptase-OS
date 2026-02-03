@@ -6,6 +6,11 @@
 #include "debug.h"
 #include "interrupts.h"
 
+void spin_lock_init(struct SpinLock* lock){
+  lock->the_lock = 0;
+  lock->interrupt_state = 0;
+}
+
 // will disable interrupt on each attempt at getting the lock
 // when it returns, interrupts are disabled
 void spin_lock_get(struct SpinLock* lock){

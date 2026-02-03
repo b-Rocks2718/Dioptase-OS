@@ -50,9 +50,9 @@ RODATA_LOAD_ADDR := 0xA0000
 BSS_LOAD_ADDR := 0xB0000
 KERNEL_START_OFFSET := $(shell expr $(KERNEL_START_BLOCK) \* $(KERNEL_BLOCK_SIZE))
 
-# Test sources are any C files in the Dioptase-OS root.
-TEST_C_SRCS := $(wildcard *.c)
-TEST_NAMES := $(basename $(TEST_C_SRCS))
+# Test sources live under tests/.
+TEST_C_SRCS := $(wildcard tests/*.c)
+TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
 BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
@@ -98,9 +98,9 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	success=0; \
 	i=1; \
 	while [ $$i -le $$runs ]; do \
-	  raw="$*.raw"; \
-	  out="$*.out"; \
-	  ok="$*.ok"; \
+	  raw="tests/$*.raw"; \
+	  out="tests/$*.out"; \
+	  ok="tests/$*.ok"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin" $(EMU_FLAGS) > "$$raw" || status=$$?; \
@@ -127,9 +127,9 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	success=0; \
 	i=1; \
 	while [ $$i -le $$runs ]; do \
-	  raw="$*.raw"; \
-	  out="$*.out"; \
-	  ok="$*.ok"; \
+	  raw="tests/$*.raw"; \
+	  out="tests/$*.out"; \
+	  ok="tests/$*.ok"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin" $(EMU_FLAGS) > "$$raw" || status=$$?; \
@@ -232,7 +232,7 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	exit $$status
 
 # Compile the root test C file to assembly.
-$(BUILD_DIR)/%.s: %.c $(BCC) | $(BUILD_DIR)
+$(BUILD_DIR)/%.s: tests/%.c $(BCC) | $(BUILD_DIR)
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.

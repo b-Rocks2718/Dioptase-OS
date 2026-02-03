@@ -5,7 +5,7 @@
 
 extern void shutdown(void);
 
-extern void sleep(void);
+extern void mode_sleep(void);
 
 void pause(void);
 
