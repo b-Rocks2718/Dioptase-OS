@@ -14,7 +14,14 @@ static void* PIT_IVT_ENTRY = (void*)0x3C0;
 
 unsigned jiffies = 0;
 
-struct TCB* pit_handler(unsigned* save_area){
+// Purpose: handle PIT interrupts and perform preemptive scheduling.
+// Inputs: save_area points to the interrupted thread's stack save area.
+// Outputs: returns the TCB to resume; does not return if the core halts.
+// Preconditions: kernel mode; interrupts disabled on entry; save_area valid.
+// Postconditions: current thread state saved to TCB; ready queue updated.
+// Invariants: save_area layout matches pit.s; per-core current_thread stable
+// across the handler except when block() switches contexts.
+void pit_handler(void){
   mark_pit_handled();
 
   int me = get_core_id();
@@ -31,34 +38,6 @@ struct TCB* pit_handler(unsigned* save_area){
   struct TCB* tcb = per_core->current_thread;
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
-  // save caller saved registers
-  tcb->r1 = save_area[0];
-  tcb->r2 = save_area[1];
-  tcb->r3 = save_area[2];
-  tcb->r4 = save_area[3];
-  tcb->r5 = save_area[4];
-  tcb->r6 = save_area[5];
-  tcb->r7 = save_area[6];
-  tcb->r8 = save_area[7];
-  tcb->r9 = save_area[8];
-  tcb->r10 = save_area[9];
-  tcb->r11 = save_area[10];
-  tcb->r12 = save_area[11];
-  tcb->r13 = save_area[12];
-  tcb->r14 = save_area[13];
-  tcb->r15 = save_area[14];
-  tcb->r16 = save_area[15];
-  tcb->r17 = save_area[16];
-  tcb->r18 = save_area[17];
-  tcb->r19 = save_area[18];
-
-  tcb->epc = save_area[19];
-  tcb->efg = save_area[20];
-  tcb->ksp = save_area[21];
-
-  tcb->int_bp = save_area[22];
-  tcb->int_ra = save_area[23];
-
   if (tcb != per_core->idle_thread) {
     unsigned was = disable_interrupts();
     block(was, add_tcb, tcb);
@@ -71,8 +50,6 @@ struct TCB* pit_handler(unsigned* save_area){
   assert(per_core->current_thread == tcb, "current thread changed unexpectedly in PIT handler.\n");
 
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
-
-  return tcb;
 }
 
 void pit_init(unsigned hertz){

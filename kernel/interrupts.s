@@ -21,12 +21,6 @@ clear_isr:
   mov isr, r0
   ret
 
-  .global set_isa
-set_isa:
-  # r1 has new isa
-  mov isa, r1
-  ret
-
   .global register_handler
 register_handler:
   # func ptr in r1

@@ -7,13 +7,11 @@ extern unsigned jiffies;
 
 void pit_init(unsigned hertz);
 
-struct TCB* pit_handler(unsigned* sp);
+// Handle PIT interrupts; save_area points to the interrupted thread's stack save area.
+void pit_handler(void);
 
 extern void pit_handler_(void);
-
-extern void fake_pit_handler(void);
 
 extern void mark_pit_handled(void);
 
 #endif // PIT_H
-

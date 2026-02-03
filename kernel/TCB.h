@@ -47,13 +47,6 @@ struct TCB {
   unsigned psr;      // offset 128
   unsigned imr;      // offset 132
 
-  unsigned epc;      // offset 136
-  unsigned efg;      // offset 140
-  unsigned ksp;      // offset 144
-
-  unsigned int_bp;  // offset 148
-  unsigned int_ra;  // offset 152
-
   unsigned *stack;
   struct Fun *thread_fun;
 

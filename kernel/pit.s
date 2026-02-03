@@ -1,5 +1,6 @@
   .align 4
   .text
+
   .global mark_pit_handled
 mark_pit_handled:
   mov r1, isr
@@ -11,171 +12,71 @@ mark_pit_handled:
   .global pit_handler_
 pit_handler_:
   # Purpose: ISR wrapper for PIT that preserves interrupted CPU state.
-  # Preconditions: IMR top bit already cleared by HW
-  # so nested interrupts are disabled on entry; stack pointer (r31/ksp) valid.
+  # Preconditions: IMR top bit already cleared by HW so nested interrupts are
+  # disabled on entry; stack pointer (r31/ksp) is 4-byte aligned per ABI.
   # Postconditions: ISR status bit cleared by callee; IMR top bit re-enabled by rfi.
+  # Invariants: save area stays on the interrupted thread's stack until it resumes.
 
-  # Save caller-saved registers
-  sisa  r1, [0]
-  sisa  r2, [4]
-  sisa  r3, [8]
-  sisa  r4, [12]
-  sisa  r5, [16]
-  sisa  r6, [20]
-  sisa  r7, [24]
-  sisa  r8, [28]
-  sisa  r9, [32]
-  sisa  r10, [36]
-  sisa  r11, [40]
-  sisa  r12, [44]
-  sisa  r13, [48]
-  sisa  r14, [52]
-  sisa  r15, [56]
-  sisa  r16, [60]
-  sisa  r17, [64]
-  sisa  r18, [68]
-  sisa  r19, [72]
+  # Save caller-saved registers.
+  push  r1
+  push  r2
+  push  r3
+  push  r4
+  push  r5
+  push  r6
+  push  r7
+  push  r8
+  push  r9
+  push  r10
+  push  r11
+  push  r12
+  push  r13
+  push  r14
+  push  r15
+  push  r16
+  push  r17
+  push  r18
+  push  r19
 
+  # Save epc/efg using r1 as scratch (r1 already saved).
   mov  r1, epc
-  sisa  r1, [76] # save return address
-
+  push r1
   mov  r1, efg
-  sisa  r1, [80] # save flags
+  push r1
 
-  mov  r1, ksp # save kernel stack pointer
-  sisa  r1, [84]
+  # Save bp and ra.
+  push bp
+  push ra
 
-  # save bp and ra
-  sisa  bp,  [88]
-  sisa  ra,  [92]
-
-  mov  r1, isa # pass save area to pit_handler
-
-  # align stack to 4 bytes
-  movi r2, 0xFFFFFFFC
-  and  sp, r2, sp
-
-  call pit_handler # returns TCB* in r1
+  call pit_handler
 
   # r1 contains TCB* so we can restore everything
-  lwa  r2, [r1, 136] # restore return address
-  mov  epc, r2
+  pop  ra
+  pop  bp
 
-  lwa  r2, [r1, 140] # restore flags
-  mov  efg, r2
+  pop  r1
+  mov  efg, r1
+  pop  r1
+  mov  epc, r1
 
-  # restore kernel stack pointer
-  lwa  r2, [r1, 144]
-  mov  ksp, r2
-
-  lwa  r2, [r1, 4]
-  lwa  r3, [r1, 8]
-  lwa  r4, [r1, 12]
-  lwa  r5, [r1, 16]
-  lwa  r6, [r1, 20]
-  lwa  r7, [r1, 24]
-  lwa  r8, [r1, 28]
-  lwa  r9, [r1, 32]
-  lwa  r10, [r1, 36]
-  lwa  r11, [r1, 40]
-  lwa  r12, [r1, 44]
-  lwa  r13, [r1, 48]
-  lwa  r14, [r1, 52]
-  lwa  r15, [r1, 56]
-  lwa  r16, [r1, 60]
-  lwa  r17, [r1, 64]
-  lwa  r18, [r1, 68]
-  lwa  r19, [r1, 72]
-
-  # restore bp and ra
-  lwa  bp,  [r1, 148]
-  lwa  ra,  [r1, 152]
-
-  lwa  r1, [r1, 0] # last so we don't clobber r1 early
+  pop  r19
+  pop  r18
+  pop  r17
+  pop  r16
+  pop  r15
+  pop  r14
+  pop  r13
+  pop  r12
+  pop  r11
+  pop  r10
+  pop  r9
+  pop  r8
+  pop  r7
+  pop  r6
+  pop  r5
+  pop  r4
+  pop  r3
+  pop  r2
+  pop  r1
 
   rfi
-
-
-.global fake_pit_handler
-fake_pit_handler:
-  # fake pit handler used for testing
-
-  # Save caller-saved registers
-  sisa  r1, [0]
-  sisa  r2, [4]
-  sisa  r3, [8]
-  sisa  r4, [12]
-  sisa  r5, [16]
-  sisa  r6, [20]
-  sisa  r7, [24]
-  sisa  r8, [28]
-  sisa  r9, [32]
-  sisa  r10, [36]
-  sisa  r11, [40]
-  sisa  r12, [44]
-  sisa  r13, [48]
-  sisa  r14, [52]
-  sisa  r15, [56]
-  sisa  r16, [60]
-  sisa  r17, [64]
-  sisa  r18, [68]
-  sisa  r19, [72]
-
-  mov  r1, epc
-  sisa  r1, [76] # save return address
-
-  mov  r1, efg
-  sisa  r1, [80] # save flags
-
-  mov  r1, ksp # save kernel stack pointer
-  sisa  r1, [84]
-
-  # save bp and ra
-  sisa  bp,  [88]
-  sisa  ra,  [92]
-
-  mov  r1, isa # pass save area to pit_handler
-
-  # align stack to 4 bytes
-  movi r2, 0xFFFFFFFC
-  and  sp, r2, sp
-
-  call pit_handler # returns TCB* in r1
-
-  # r1 contains TCB* so we can restore everything
-  lwa  r2, [r1, 136] # restore return address
-  mov  epc, r2
-
-  lwa  r2, [r1, 140] # restore flags
-  mov  efg, r2
-
-  # restore kernel stack pointer
-  lwa  r2, [r1, 144]
-  mov  ksp, r2
-
-  lwa  r2, [r1, 4]
-  lwa  r3, [r1, 8]
-  lwa  r4, [r1, 12]
-  lwa  r5, [r1, 16]
-  lwa  r6, [r1, 20]
-  lwa  r7, [r1, 24]
-  lwa  r8, [r1, 28]
-  lwa  r9, [r1, 32]
-  lwa  r10, [r1, 36]
-  lwa  r11, [r1, 40]
-  lwa  r12, [r1, 44]
-  lwa  r13, [r1, 48]
-  lwa  r14, [r1, 52]
-  lwa  r15, [r1, 56]
-  lwa  r16, [r1, 60]
-  lwa  r17, [r1, 64]
-  lwa  r18, [r1, 68]
-  lwa  r19, [r1, 72]
-
-  # restore bp and ra
-  lwa  bp,  [r1, 148]
-  lwa  ra,  [r1, 152]
-
-  lwa  r1, [r1, 0] # last so we don't clobber r1 early
-
-  ret
