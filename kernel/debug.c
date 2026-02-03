@@ -5,9 +5,14 @@
 
 void panic(char* msg) {
   // print panic message
-  puts("| KERNEL PANIC: ");
+  spin_lock_get(&print_lock);
+  puts("| KERNEL PANIC (Core ");
+  unsigned core_id = get_core_id();
+  print_unsigned(core_id);
+  puts("): ");
   puts(msg);
   puts("| System halted.\n");
+  spin_lock_release(&print_lock);
 
   // halt the system
   while (true) {

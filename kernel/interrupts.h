@@ -6,7 +6,7 @@
 // returns current isr value
 extern unsigned clear_isr(void);
 
-extern void set_isp(unsigned isp);
+extern void set_isa(unsigned isa);
 
 // restores imr to prev, returns value that was in imr
 extern unsigned restore_interrupts(unsigned prev);

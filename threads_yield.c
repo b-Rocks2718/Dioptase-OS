@@ -41,12 +41,12 @@ static void thread_worker(void* arg) {
 static void spawn_threads(void) {
   for (int i = 0; i < NUM_THREADS; i++) {
     struct ThreadArg* arg = malloc(sizeof(struct ThreadArg));
-    assert(arg != NULL, "Error: ThreadArg allocation failed.\n");
+    assert(arg != NULL, "ThreadArg allocation failed.\n");
     arg->id = i;
     arg->rounds = YIELD_ROUNDS;
 
     struct Fun* fun = malloc(sizeof(struct Fun));
-    assert(fun != NULL, "Error: Fun allocation failed.\n");
+    assert(fun != NULL, "Fun allocation failed.\n");
     fun->func = thread_worker;
     fun->arg = arg;
 

@@ -11,6 +11,8 @@ struct TCB* pit_handler(unsigned* sp);
 
 extern void pit_handler_(void);
 
+extern void fake_pit_handler(void);
+
 extern void mark_pit_handled(void);
 
 #endif // PIT_H

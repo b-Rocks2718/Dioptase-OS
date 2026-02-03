@@ -52,6 +52,9 @@ ipi_handler_:
   # Clear pending IPI so we don't immediately re-enter.
   mov isr, r0
 
+  # disable interrupts
+  mov imr, r0
+
   # Ensure we return to kernel mode after rfi.
   # Interrupt entry incremented PSR to 1 for secondary cores, so set it to 2
   # so rfi leaves PSR=1 and kmode=true.

@@ -135,14 +135,17 @@ wakeup_core_error:
   .global shutdown
 shutdown:
   mode halt
+  ret
 
   .global sleep
 sleep:
   mode sleep
   ret
 
-  .global context_switch # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread)
+  .global context_switch # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was)
 context_switch:
+  mov  imr, r0 # temporarily disable interrupts
+
   # save current state
   swa  r20, [r1, 76]
   swa  r21, [r1, 80]
@@ -166,16 +169,8 @@ context_switch:
   mov  r9, psr
   swa  r9,  [r1, 128]
 
-  mov  r9, imr
+  mov  r9, r6 # was
   swa  r9,  [r1, 132]
-
-  mov  r9, cr13
-  swa  r9,  [r1, 136]
-
-  mov  imr, r0 # temporarily disable interrupts
-
-  lwa  r9,  [r2, 136]
-  mov  cr13, r9
 
   lwa  r9, [r2, 128]
   mov  psr, r9

@@ -18,12 +18,12 @@ Kernel rodata (64KB)
 ### 0xB0000 - 0xE0000
 Kernel bss (192KB)
 
-### 0xE0000 - 0xF0000
-Interrupt Stacks (16KB each)   
-- Core 3: 0xE0000 - 0xE4000   
-- Core 2: 0xE4000 - 0xE8000   
-- Core 1: 0xE8000 - 0xEC000   
-- Core 0: 0xEC000 - 0xF0000  
+### 0xE0000 - 0xE1000
+Interrupt Save Areas (1KB each)   
+- Core 3: 0xE0000 - 0xE0400   
+- Core 2: 0xE0400 - 0xE0800   
+- Core 1: 0xE0800 - 0xE0C00   
+- Core 0: 0xE0C00 - 0xE1000  
 
 ### 0xF0000 - 0x100000
 Kernel Stacks (16KB each)   

@@ -21,10 +21,10 @@ clear_isr:
   mov isr, r0
   ret
 
-  .global set_isp
-set_isp:
-  # r1 has new isp
-  mov isp, r1
+  .global set_isa
+set_isa:
+  # r1 has new isa
+  mov isa, r1
   ret
 
   .global register_handler

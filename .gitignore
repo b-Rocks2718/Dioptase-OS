@@ -6,3 +6,4 @@ a.s
 *.raw
 *.all.s
 *.labels
+*.debug

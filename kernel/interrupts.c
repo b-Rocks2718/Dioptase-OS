@@ -4,8 +4,8 @@
 
 void interrupts_init(void){
   unsigned me = get_core_id();
-  // set isp to top of core's interrupt stack area
-  set_isp(0xF0000 - (me * 0x4000)); 
+  // set isa to core's interrupt save area
+  set_isa(0xE0C00 - (me * 0x400)); 
 }
 
 void spurious_interrupt_handler(void){

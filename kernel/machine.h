@@ -64,13 +64,6 @@ extern void __atomic_store_n(int* ptr, int val);
 
 struct TCB;
 
-extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread);
-
-// Restore a fully-saved thread context from an interrupt handler.
-// Purpose: resume the selected thread via rfi without re-saving the current state.
-// Inputs: next thread TCB pointer (state already saved by PIT).
-// Outputs: does not return; transfers control to the thread.
-// Preconditions: executing in interrupt context with interrupts masked.
-extern void context_switch_from_isr(struct TCB* next);
+extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was);
 
 #endif // MACHINE_H

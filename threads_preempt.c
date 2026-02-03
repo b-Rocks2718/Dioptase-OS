@@ -7,8 +7,8 @@
 #include "kernel/machine.h"
 #include "kernel/constants.h"
 
-#define NUM_THREADS 8
-#define PREEMPT_ROUNDS 50
+#define NUM_THREADS 16
+#define PREEMPT_ROUNDS 10
 
 struct ThreadArg {
   int id;
@@ -24,6 +24,7 @@ static int total_steps = 0;
 static void wait_for_turn(int id) {
   while (__atomic_load_n(&turn) != id) {
     // Busy-wait until preemption runs the thread that owns the turn.
+    pause();
   }
 }
 
@@ -33,6 +34,7 @@ static void thread_worker(void* arg) {
 
   while (__atomic_load_n(&started) != NUM_THREADS) {
     // Wait for all threads to be ready (no yields).
+    pause();
   }
 
   for (int i = 0; i < a->rounds; i++) {
@@ -48,12 +50,12 @@ static void thread_worker(void* arg) {
 static void spawn_threads(void) {
   for (int i = 0; i < NUM_THREADS; i++) {
     struct ThreadArg* arg = malloc(sizeof(struct ThreadArg));
-    assert(arg != NULL, "Error: ThreadArg allocation failed.\n");
+    assert(arg != NULL, "ThreadArg allocation failed.\n");
     arg->id = i;
     arg->rounds = PREEMPT_ROUNDS;
 
     struct Fun* fun = malloc(sizeof(struct Fun));
-    assert(fun != NULL, "Error: Fun allocation failed.\n");
+    assert(fun != NULL, "Fun allocation failed.\n");
     fun->func = thread_worker;
     fun->arg = arg;
 
@@ -87,6 +89,7 @@ void kernel_main(void) {
 
   while (__atomic_load_n(&finished) != NUM_THREADS) {
     // Wait for all threads to complete (no yields).
+    pause();
   }
 
   verify_results();

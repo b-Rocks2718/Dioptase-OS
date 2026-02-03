@@ -3,6 +3,8 @@
 #include "kernel/heap.h"
 #include "kernel/constants.h"
 #include "kernel/atomic.h"
+#include "kernel/threads.h"
+#include "kernel/pit.h"
 
 #define NULL 0
 

@@ -69,8 +69,6 @@ static struct TCB* make_tcb(void){
   tcb->r27 = 0;
   tcb->r28 = 0;
 
-  tcb->cr13 = 0;
-
   // interrupts enabled, timer interrupt enabled
   tcb->imr = 0x80000001;
 
@@ -81,8 +79,8 @@ static struct TCB* make_tcb(void){
 
 static void free_tcb(void* tcb_ptr) {
   struct TCB* tcb = (struct TCB*)tcb_ptr;
-  assert(tcb != NULL, "Error: trying to free resources of a NULL TCB.\n");
-  assert(tcb->stack != NULL, "Error: TCB stack is already NULL.\n");
+  assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
+  assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
   free(tcb->stack);
   free_fun(tcb->thread_fun);
   free(tcb);
@@ -90,15 +88,13 @@ static void free_tcb(void* tcb_ptr) {
   __atomic_fetch_add(&n_active, -1);
 }
 
-void block(bool must, void (*func)(void *), void *arg) {
+void block(void (*func)(void *), void *arg) {
   unsigned was = disable_interrupts();
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
   struct TCB* idle = core->idle_thread;
-  core->current_thread = idle; // prevents preemption
-  restore_interrupts(was);
 
-  context_switch(me, idle, func, arg, &core->current_thread);
+  context_switch(me, idle, func, arg, &core->current_thread, was);
 }
 
 void thread_entry(void) {
@@ -120,19 +116,24 @@ void event_loop(void) {
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
     // if we actually are an idle thread, preemption is disabled
     // and we don't actually need to disable interrupts here
+    
+    struct TCB* next = spin_queue_remove(&ready_queue);
+
     int was = disable_interrupts();
     struct PerCore* core = get_per_core();
-    assert(core->current_thread == core->idle_thread,
-      "Error: only the idle thread can enter the event loop.\n");
-    restore_interrupts(was);
+    assert(core != NULL, "per-core data is NULL.\n");
+    if (core->current_thread != core->idle_thread) {
+      int args[2] = {get_core_id(), (int)core->current_thread};
+      say("core %d current thread: 0x%X\n", args);
+      panic("only idle thread can enter event loop.\n");
+    }
 
-    struct TCB* next = spin_queue_remove(&ready_queue);
     struct TCB* me = core->current_thread;
+
     if (next != NULL) {
-      // We are about to run `next`; update per-core state before the switch so
-      // thread_entry/stop see the correct current_thread.
-      context_switch(me, next, nothing, NULL, &core->current_thread);
+      context_switch(me, next, nothing, NULL, &core->current_thread, was);
     } else {
+      restore_interrupts(was);
       pause();
     }
   }
@@ -147,9 +148,7 @@ void event_loop(void) {
 
     while (true) shutdown();
   } else {
-    while (true) {
-      pause();
-    }
+    while (true) pause();
   }
 }
 
@@ -215,14 +214,13 @@ void bootstrap(void){
   tcb->ret_addr = 0;
   tcb->psr = 1;
   tcb->imr = 0;
-  tcb->cr13 = 0;
 
   tcb->stack = (unsigned*)(0x10000 - (get_core_id() * 0x4000));
 
   // interrupts should be disabled when calling this function
   int was = disable_interrupts();
   struct PerCore* core = get_per_core();
-  assert((was & 0x80000000) == 0, "Error: interrupts should be disabled when bootstrapping thread context.\n");
+  assert((was & 0x80000000) == 0, "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
   core->idle_thread = tcb;
   restore_interrupts(was);
@@ -234,7 +232,7 @@ void add_tcb(void* tcb){
 
 void yield(void){
   struct TCB* tcb = get_current_tcb();
-  block(false, add_tcb, (void*)tcb);
+  block(add_tcb, (void*)tcb);
 }
 
 void stop(void) {
@@ -242,14 +240,15 @@ void stop(void) {
   struct PerCore* core = get_per_core();
   bool is_idle = (core->current_thread == core->idle_thread);
   restore_interrupts(was);
+
   if (is_idle) {
     // idle thread should not be stopped
     event_loop();
   } else {
     // free current thread resources and block forever
-    assert(n_active > 0, "Error: no active threads to stop.\n");
-    block(true, free_tcb, (void*)get_current_tcb());
+    assert(n_active > 0, "no active threads to stop.\n");
+    block(free_tcb, (struct TCB*)core->current_thread);
   }
 
-  panic("Error: unreachable code reached in stop().\n");
+  panic("unreachable code reached in stop().\n");
 }
