@@ -5,12 +5,15 @@
 
 struct BlockingLock {
   struct Semaphore semaphore;
+  bool preempt;
 };
 
 void blocking_lock_init(struct BlockingLock* lock);
 
+// Note: acquiring a blocking lock disables preemption
 void blocking_lock_get(struct BlockingLock* lock);
 
+// restores preemption state
 void blocking_lock_release(struct BlockingLock* lock);
 
 #endif // BLOCKING_LOCK_H
