@@ -4,6 +4,8 @@
 #include "threads.h"
 #include "interrupts.h"
 
+// port of Gheith kernel
+
 void sem_init(struct Semaphore* sem, int initial_count){
   spin_lock_init(&sem->lock);
   sem->count = initial_count;
@@ -58,4 +60,26 @@ void sem_up(struct Semaphore* sem){
   if (wakeup != NULL){
     spin_queue_add(&ready_queue, wakeup);
   }
+}
+
+void sem_destroy(struct Semaphore* sem) {
+  spin_lock_acquire(&sem->lock);
+
+  struct TCB* dead = queue_remove_all(&sem->wait_queue);
+
+  spin_lock_release(&sem->lock);
+
+  while (dead != NULL) {
+    struct TCB* next = dead->next;
+    // Detach from the semaphore wait-list before enqueueing on reaper_queue.
+    // reaper_queue insertion expects a single node and will relink next itself.
+    dead->next = NULL;
+    spin_queue_add(&reaper_queue, dead);
+    dead = next;
+  }
+}
+
+void sem_free(struct Semaphore* sem) {
+  sem_destroy(sem);
+  free(sem);
 }

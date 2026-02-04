@@ -20,3 +20,13 @@ void blocking_lock_release(struct BlockingLock* lock){
   sem_up(&lock->semaphore);
   enable_preemption(lock->preempt);
 }
+
+void blocking_lock_destroy(struct BlockingLock* lock){
+  assert(lock != NULL, "blocking lock destroy: lock is NULL.\n");
+  sem_destroy(&lock->semaphore);
+}
+
+void blocking_lock_free(struct BlockingLock* lock){
+  blocking_lock_destroy(lock);
+  free(lock);
+}

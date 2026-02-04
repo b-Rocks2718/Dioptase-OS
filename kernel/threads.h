@@ -18,6 +18,7 @@
 #include "queue.h"
 
 extern struct SpinQueue ready_queue;
+extern struct SpinQueue reaper_queue;
 
 void threads_init(void);
 

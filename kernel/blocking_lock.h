@@ -16,4 +16,8 @@ void blocking_lock_get(struct BlockingLock* lock);
 // restores preemption state
 void blocking_lock_release(struct BlockingLock* lock);
 
+void blocking_lock_destroy(struct BlockingLock* lock);
+
+void blocking_lock_free(struct BlockingLock* lock);
+
 #endif // BLOCKING_LOCK_H

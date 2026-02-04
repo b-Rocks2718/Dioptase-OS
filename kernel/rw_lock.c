@@ -3,6 +3,7 @@
 #include "interrupts.h"
 #include "per_core.h"
 #include "debug.h"
+#include "heap.h"
 
 // Reader-writer lock implementation (write-preferring).
 // Waiting readers and writers are queued; writers are granted priority when present.
@@ -135,4 +136,35 @@ void rw_lock_release_write(struct RwLock* rwlock){
       readers = next;
     }
   }
+}
+
+void rw_lock_destroy(struct RwLock* rwlock) {
+  spin_lock_acquire(&rwlock->lock);
+
+  // Reap all waiting readers
+  struct TCB* readers = queue_remove_all(&rwlock->waiting_readers);
+
+  // Reap all waiting writers
+  struct TCB* writers = queue_remove_all(&rwlock->waiting_writers);
+  
+  spin_lock_release(&rwlock->lock);
+
+  while (readers != NULL) {
+    struct TCB* next = readers->next;
+    readers->next = NULL;
+    spin_queue_add(&reaper_queue, readers);
+    readers = next;
+  }
+
+  while (writers != NULL) {
+    struct TCB* next = writers->next;
+    writers->next = NULL;
+    spin_queue_add(&reaper_queue, writers);
+    writers = next;
+  }
+}
+
+void rw_lock_free(struct RwLock* rwlock){
+  rw_lock_destroy(rwlock);
+  free(rwlock);
 }

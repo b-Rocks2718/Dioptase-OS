@@ -50,4 +50,8 @@ void cond_var_signal(struct CondVar* cv);
 // Postconditions: all current waiters become runnable.
 void cond_var_broadcast(struct CondVar* cv);
 
+void cond_var_destroy(struct CondVar* cv);
+
+void cond_var_free(struct CondVar* cv);
+
 #endif // COND_VAR_H

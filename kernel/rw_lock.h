@@ -11,6 +11,7 @@
 // - readers > 0 implies writer_active == false.
 // - writer_active == true implies readers == 0 and either a writer holds
 //   the lock or has been granted it and is about to run.
+// On destruction, all waiting threads are reaped
 struct RwLock {
   struct SpinLock lock;
   struct Queue waiting_readers;
@@ -28,5 +29,9 @@ void rw_lock_release_read(struct RwLock* rwlock);
 void rw_lock_acquire_write(struct RwLock* rwlock);
 
 void rw_lock_release_write(struct RwLock* rwlock);
+
+void rw_lock_destroy(struct RwLock* rwlock);
+
+void rw_lock_free(struct RwLock* rwlock);
 
 #endif // RW_LOCK_H

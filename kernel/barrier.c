@@ -2,7 +2,9 @@
 #include "semaphore.h"
 #include "machine.h"
 #include "debug.h"
+#include "heap.h"
 
+// port of Gheith kernel
 
 void barrier_init(struct Barrier* barrier, unsigned count) {
   assert(barrier != NULL, "barrier init: barrier is NULL.\n");
@@ -20,4 +22,14 @@ void barrier_sync(struct Barrier* barrier) {
     sem_down(&barrier->sem);
     sem_up(&barrier->sem);
   }
+}
+
+void barrier_destroy(struct Barrier* barrier) {
+  assert(barrier != NULL, "barrier destroy: barrier is NULL.\n");
+  sem_destroy(&barrier->sem);
+}
+
+void barrier_free(struct Barrier* barrier) {
+  barrier_destroy(barrier);
+  free(barrier);
 }

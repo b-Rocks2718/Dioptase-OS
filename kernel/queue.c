@@ -4,6 +4,7 @@
 #include "machine.h"
 #include "constants.h"
 #include "pit.h"
+#include "debug.h"
 
 void spin_queue_init(struct SpinQueue* queue){
   queue->head = NULL;
@@ -13,7 +14,12 @@ void spin_queue_init(struct SpinQueue* queue){
 }
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
+  assert(data != NULL, "spin_queue_add: data is NULL.\n");
   spin_lock_acquire(&queue->spinlock);
+
+  // Queue insertion always consumes a single detached node.
+  // Force next=NULL to avoid linking stale list tails into this queue.
+  data->next = NULL;
 
   if (queue->head == NULL){
     queue->head = data;

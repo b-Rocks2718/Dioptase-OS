@@ -1,4 +1,5 @@
 #include "cond_var.h"
+#include "heap.h"
 
 // Condition variable implementation with semaphore-backed wakeups.
 // The caller-provided external BlockingLock protects the predicate state.
@@ -62,4 +63,13 @@ void cond_var_broadcast(struct CondVar* cv){
   for (unsigned i = 0; i < n; i++) {
     sem_up(&cv->semaphore);
   }
+}
+
+void cond_var_destroy(struct CondVar* cv){
+  sem_destroy(&cv->semaphore);
+}
+
+void cond_var_free(struct CondVar* cv){
+  cond_var_destroy(cv);
+  free(cv);
 }
