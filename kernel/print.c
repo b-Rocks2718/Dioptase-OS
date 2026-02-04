@@ -15,7 +15,7 @@ unsigned puts(char* str){
 }
 
 unsigned say(char* fmt, int* arr){
-  spin_lock_get(&print_lock);
+  spin_lock_acquire(&print_lock);
   unsigned count = printf(fmt, arr);
   spin_lock_release(&print_lock);
   return count;

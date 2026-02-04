@@ -23,7 +23,7 @@ static int tickets = 0;
 static int in_critical = 0;
 
 static unsigned cond_var_waiter_count(void) {
-  spin_lock_get(&cv.lock);
+  spin_lock_acquire(&cv.lock);
   unsigned n = cv.waiters;
   spin_lock_release(&cv.lock);
   return n;

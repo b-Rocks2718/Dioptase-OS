@@ -20,7 +20,7 @@ static void rw_add_reader(void* arg){
   struct RwLock* rwlock = (struct RwLock*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     rwlock->readers++;
@@ -33,7 +33,7 @@ static void rw_add_reader(void* arg){
 }
 
 void rw_lock_acquire_read(struct RwLock* rwlock){
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     // No active writer and no waiting writers, can acquire read lock
@@ -53,7 +53,7 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
 }
 
 void rw_lock_release_read(struct RwLock* rwlock){
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   assert(rwlock->readers > 0, "rw_lock_release_read: no active readers\n");
 
@@ -75,7 +75,7 @@ static void rw_add_writer(void* arg){
   struct RwLock* rwlock = (struct RwLock*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->readers == 0){
     rwlock->writer_active = true;
@@ -88,7 +88,7 @@ static void rw_add_writer(void* arg){
 }
 
 void rw_lock_acquire_write(struct RwLock* rwlock){
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->readers == 0){
     // No active writer and no active readers, can acquire write lock
@@ -108,7 +108,7 @@ void rw_lock_acquire_write(struct RwLock* rwlock){
 }
 
 void rw_lock_release_write(struct RwLock* rwlock){
-  spin_lock_get(&rwlock->lock);
+  spin_lock_acquire(&rwlock->lock);
 
   assert(rwlock->writer_active, "rw_lock_release_write: no active writer\n");
 

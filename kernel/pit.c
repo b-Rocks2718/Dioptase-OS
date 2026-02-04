@@ -12,7 +12,7 @@ static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
 static unsigned CLOCK_FREQ = 100000000; // 100MHz clock
 static void* PIT_IVT_ENTRY = (void*)0x3C0;
 
-unsigned jiffies = 0;
+unsigned current_jiffies = 0;
 
 // Purpose: handle PIT interrupts and perform preemptive scheduling.
 // Inputs: save_area points to the interrupted thread's stack save area.
@@ -30,7 +30,7 @@ void pit_handler(void){
   assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   if (me == 0){
-    jiffies++;
+    current_jiffies++;
   }
 
   struct PerCore* per_core = get_per_core();

@@ -35,6 +35,9 @@ void add_tcb(void* tcb);
 
 void yield(void);
 
+// Sleep the current thread for at least jiffies timer ticks.
+void sleep(unsigned jiffies);
+
 void stop(void);
 
 bool disable_preemption(void);

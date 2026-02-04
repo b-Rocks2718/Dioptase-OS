@@ -5,7 +5,7 @@
 
 void panic(char* msg) {
   // print panic message
-  spin_lock_get(&print_lock);
+  spin_lock_acquire(&print_lock);
   puts("| KERNEL PANIC (Core ");
   unsigned core_id = get_core_id();
   print_unsigned(core_id);

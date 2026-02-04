@@ -26,6 +26,8 @@
 struct SpinQueue ready_queue;
 struct SpinQueue reaper_queue;
 
+struct SleepQueue sleep_queue;
+
 int n_active = 0;
 bool bootstrapping = true;
 
@@ -129,6 +131,7 @@ static void setup_thread(struct Fun* thread_fun){
 void threads_init(void){
   spin_queue_init(&ready_queue);
   spin_queue_init(&reaper_queue);
+  sleep_queue_init(&sleep_queue);
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
@@ -173,11 +176,19 @@ static void nothing(void* unused) {}
 void event_loop(void) {
   /* only the idle thread can enter this function */
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
-    // if we actually are an idle thread, preemption is disabled
-    // and we don't actually need to disable interrupts here
     
+    // check sleep queue
+    struct TCB* wakeup = sleep_queue_remove(&sleep_queue);
+    while (wakeup != NULL) {
+      spin_queue_add(&ready_queue, wakeup);
+      wakeup = sleep_queue_remove(&sleep_queue);
+    }
+
     struct TCB* next = spin_queue_remove(&ready_queue);
 
+    // if we actually are an idle thread, preemption is disabled
+    // and we don't actually need to disable interrupts here
+    // this is just for debugging
     int was = disable_interrupts();
     struct PerCore* core = get_per_core();
     assert(core != NULL, "per-core data is NULL.\n");
@@ -197,7 +208,7 @@ void event_loop(void) {
     }
   }
   if (get_core_id() == 0) {
-    say("| finished in %d jiffies\n", (int*)&jiffies);
+    say("| finished in %d jiffies\n", (int*)&current_jiffies);
 
     say("| checking leaks\n", NULL);
     
@@ -292,12 +303,7 @@ void add_tcb(void* tcb){
   spin_queue_add(&ready_queue, (struct TCB*)tcb);
 }
 
-// Purpose: voluntarily yield the CPU and re-queue the current thread.
-// Inputs: none.
-// Preconditions: kernel mode; caller is a runnable (non-idle) thread.
-// Postconditions: current thread added to ready queue; another context runs.
-// Invariants: ready queue remains well-formed under its spinlock.
-// CPU state assumptions: kernel mode; local interrupts disabled during switch.
+// voluntarily yield the CPU and re-queue the current thread.
 void yield(void){
   unsigned was = disable_interrupts();
   struct TCB* tcb = get_current_tcb();
@@ -309,12 +315,7 @@ void reap_tcb(void* tcb){
   spin_queue_add(&reaper_queue, (struct TCB*)tcb);
 }
 
-// Purpose: terminate the current thread and free its resources.
-// Inputs: none.
-// Preconditions: kernel mode; current thread owns its stack and Fun resources.
-// Postconditions: non-idle thread resources freed and thread never resumes.
-// Invariants: idle thread remains pinned to its core and is never freed.
-// CPU state assumptions: kernel mode; local interrupts disabled during switch.
+// terminate the current thread and free its resources.
 void stop(void) {
   unsigned was = disable_interrupts();
   struct PerCore* core = get_per_core();
@@ -332,6 +333,17 @@ void stop(void) {
   }
 
   panic("unreachable code reached in stop().\n");
+}
+
+// block the current thread until a target jiffy count is reached.
+void sleep(unsigned jiffies){
+  unsigned was = disable_interrupts();
+  struct TCB* tcb = get_current_tcb();
+  struct PerCore* core = get_per_core();
+  assert(tcb != core->idle_thread, "sleep: idle thread cannot sleep.\n");
+  tcb->wakeup_jiffies = current_jiffies + jiffies;
+  int args[2] = {(int)&sleep_queue, (int)tcb};
+  block(was, sleep_queue_add, (void*)args);
 }
 
 bool disable_preemption(void){

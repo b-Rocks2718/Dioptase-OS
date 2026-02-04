@@ -15,7 +15,7 @@ static void sem_add(void* arg){
   struct Semaphore* sem = (struct Semaphore*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_get(&sem->lock);
+  spin_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
     sem->count--;
@@ -28,7 +28,7 @@ static void sem_add(void* arg){
 }
 
 void sem_down(struct Semaphore* sem){
-  spin_lock_get(&sem->lock);
+  spin_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
     sem->count--;
@@ -47,7 +47,7 @@ void sem_down(struct Semaphore* sem){
 }
 
 void sem_up(struct Semaphore* sem){
-  spin_lock_get(&sem->lock);
+  spin_lock_acquire(&sem->lock);
 
   struct TCB* wakeup = queue_remove(&sem->wait_queue);
   if (wakeup == NULL){

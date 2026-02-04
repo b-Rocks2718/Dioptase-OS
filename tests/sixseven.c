@@ -34,7 +34,7 @@ void int_list_append(struct IntList** head, struct IntList** tail, struct IntLis
 }
 
 void print_int_list(struct IntList* seq){
-  spin_lock_get(&print_lock);
+  spin_lock_acquire(&print_lock);
   puts("***");
   while (seq) {
     struct IntList* next = seq->next;

@@ -12,7 +12,7 @@ void spin_lock_init(struct SpinLock* lock);
 
 // will disable interrupt on each attempt at getting the lock
 // when it returns, interrupts are disabled
-void spin_lock_get(struct SpinLock* lock);
+void spin_lock_acquire(struct SpinLock* lock);
 
 bool spin_lock_try_get(struct SpinLock* lock);
 

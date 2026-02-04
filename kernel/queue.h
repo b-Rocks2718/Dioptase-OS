@@ -17,6 +17,12 @@ struct Queue {
   int size;
 };
 
+struct SleepQueue {
+  struct TCB* head;
+  struct SpinLock spinlock;
+  int size;
+};
+
 void spin_queue_init(struct SpinQueue* queue);
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data);
@@ -41,5 +47,14 @@ struct TCB* queue_remove_all(struct Queue* queue);
 unsigned queue_size(struct Queue* queue);
 
 struct TCB* queue_peek(struct Queue* queue);
+
+
+void sleep_queue_init(struct SleepQueue* queue);
+
+void sleep_queue_add(void* args);
+
+struct TCB* sleep_queue_remove(struct SleepQueue* queue);
+
+unsigned sleep_queue_size(struct SleepQueue* queue);
 
 #endif // QUEUE_H

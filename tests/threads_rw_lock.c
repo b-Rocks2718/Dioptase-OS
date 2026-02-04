@@ -41,7 +41,7 @@ static int late_seq[NUM_LATE_READERS];
 // Postconditions: active_readers updated; max_readers reflects peak.
 // CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
 static void update_reader_stats(int delta) {
-  spin_lock_get(&stats_lock);
+  spin_lock_acquire(&stats_lock);
   active_readers += delta;
   if (active_readers > max_readers) {
     max_readers = active_readers;
@@ -56,7 +56,7 @@ static void update_reader_stats(int delta) {
 // Postconditions: none.
 // CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
 static int get_active_readers(void) {
-  spin_lock_get(&stats_lock);
+  spin_lock_acquire(&stats_lock);
   int count = active_readers;
   spin_lock_release(&stats_lock);
   return count;
@@ -171,7 +171,7 @@ void kernel_main(void) {
 
   // Wait for the writer to enqueue before starting late readers.
   while (true) {
-    spin_lock_get(&rwlock.lock);
+    spin_lock_acquire(&rwlock.lock);
     int waiting = rwlock.waiting_writers.size;
     spin_lock_release(&rwlock.lock);
     if (waiting > 0) {

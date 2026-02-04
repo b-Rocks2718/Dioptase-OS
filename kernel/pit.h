@@ -3,7 +3,7 @@
 
 #include "TCB.h"
 
-extern unsigned jiffies;
+extern unsigned current_jiffies;
 
 void pit_init(unsigned hertz);
 

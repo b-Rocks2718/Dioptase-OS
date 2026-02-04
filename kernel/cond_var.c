@@ -19,7 +19,7 @@ void cond_var_init(struct CondVar* cv){
 //   while (!predicate) cond_var_wait(cv, lock);
 void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   // increment waiters count
-  spin_lock_get(&cv->lock);
+  spin_lock_acquire(&cv->lock);
   cv->waiters += 1;
   spin_lock_release(&cv->lock);
 
@@ -39,7 +39,7 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
 // Preconditions: caller holds the external predicate lock associated with cv.
 // Postconditions: at most one waiter is released.
 void cond_var_signal(struct CondVar* cv){
-  spin_lock_get(&cv->lock);
+  spin_lock_acquire(&cv->lock);
   if (cv->waiters > 0) {
     cv->waiters -= 1;
     // signal one waiting thread
@@ -53,7 +53,7 @@ void cond_var_signal(struct CondVar* cv){
 // Preconditions: caller holds the external predicate lock associated with cv.
 // Postconditions: all waiters present at function entry are released.
 void cond_var_broadcast(struct CondVar* cv){
-  spin_lock_get(&cv->lock);
+  spin_lock_acquire(&cv->lock);
   unsigned n = cv->waiters;
   cv->waiters = 0;
   spin_lock_release(&cv->lock);

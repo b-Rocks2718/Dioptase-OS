@@ -3,6 +3,7 @@
 #include "atomic.h"
 #include "machine.h"
 #include "constants.h"
+#include "pit.h"
 
 void spin_queue_init(struct SpinQueue* queue){
   queue->head = NULL;
@@ -12,7 +13,7 @@ void spin_queue_init(struct SpinQueue* queue){
 }
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
-  spin_lock_get(&queue->spinlock);
+  spin_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
     queue->head = data;
@@ -28,7 +29,7 @@ void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
 }
 
 struct TCB* spin_queue_remove(struct SpinQueue* queue){
-  spin_lock_get(&queue->spinlock);
+  spin_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
     spin_lock_release(&queue->spinlock);
@@ -51,7 +52,7 @@ struct TCB* spin_queue_remove(struct SpinQueue* queue){
 }
 
 struct TCB* spin_queue_remove_all(struct SpinQueue* queue){
-  spin_lock_get(&queue->spinlock);
+  spin_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
   queue->head = NULL;
@@ -68,7 +69,7 @@ unsigned spin_queue_size(struct SpinQueue* queue){
 }
 
 struct TCB* spin_queue_peek(struct SpinQueue* queue){
-  spin_lock_get(&queue->spinlock);
+  spin_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
 
@@ -129,4 +130,81 @@ unsigned queue_size(struct Queue* queue){
 
 struct TCB* queue_peek(struct Queue* queue){
   return queue->head;
+}
+
+
+void sleep_queue_init(struct SleepQueue* queue){
+  queue->head = NULL;
+  spin_lock_init(&queue->spinlock);
+  queue->size = 0;
+}
+
+// Adds a TCB to the sleep queue.
+// sort by wakeup_jiffies
+void sleep_queue_add(void* args){
+  int* args_array = (int*)args;
+  struct SleepQueue* queue = (struct SleepQueue*)args_array[0];
+  struct TCB* data = (struct TCB*)args_array[1];
+
+  spin_lock_acquire(&queue->spinlock);
+
+  if (queue->head == NULL){
+    // empty queue
+    queue->head = data;
+  } else {
+    // non-empty queue
+    struct TCB* current = queue->head;
+    struct TCB* previous = NULL;
+
+    while (current != NULL && current->wakeup_jiffies <= data->wakeup_jiffies) {
+      previous = current;
+      current = current->next;
+    }
+
+    if (previous == NULL) {
+      // insert at head
+      data->next = queue->head;
+      queue->head = data;
+    } else {
+      // insert in middle or end
+      previous->next = data;
+      data->next = current;
+    }
+  }
+
+  __atomic_fetch_add(&queue->size, 1);
+
+  spin_lock_release(&queue->spinlock);
+}
+
+// return first TCB if its wakeup_jiffies <= current jiffies
+// else return NULL
+struct TCB* sleep_queue_remove(struct SleepQueue* queue){
+  spin_lock_acquire(&queue->spinlock);
+
+  if (queue->head == NULL){
+    spin_lock_release(&queue->spinlock);
+    return NULL;
+  }
+
+  struct TCB* node = queue->head;
+  if (node->wakeup_jiffies <= current_jiffies) {
+    // remove from sleep queue
+    queue->head = node->next;
+    node->next = NULL;
+
+    __atomic_fetch_add(&queue->size, -1);
+
+    spin_lock_release(&queue->spinlock);
+
+    return node;
+  } else {
+    // not ready to wake up
+    spin_lock_release(&queue->spinlock);
+    return NULL;
+  }
+}
+
+unsigned sleep_queue_size(struct SleepQueue* queue){
+  return __atomic_load_n(&queue->size);
 }
