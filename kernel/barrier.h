@@ -3,7 +3,7 @@
 
 #include "semaphore.h"
 
-// port of Gheith kernel
+// port of Gheith kernel implementation
 
 // Note: destroyed barrier reaps all waiting threads.
 struct Barrier {

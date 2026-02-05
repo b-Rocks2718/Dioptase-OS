@@ -4,7 +4,7 @@
 #include "threads.h"
 #include "interrupts.h"
 
-// port of Gheith kernel
+// port of Gheith kernel implementation
 
 void sem_init(struct Semaphore* sem, int initial_count){
   spin_lock_init(&sem->lock);

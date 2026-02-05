@@ -4,7 +4,7 @@
 #include "debug.h"
 #include "heap.h"
 
-// port of Gheith kernel
+// port of Gheith kernel implementation
 
 void barrier_init(struct Barrier* barrier, unsigned count) {
   assert(barrier != NULL, "barrier init: barrier is NULL.\n");

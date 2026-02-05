@@ -1,7 +1,7 @@
 #ifndef SEMAPHORE_H
 #define SEMAPHORE_H
 
-// port of Gheith kernel
+// port of Gheith kernel implementation
 
 #include "atomic.h"
 #include "queue.h"

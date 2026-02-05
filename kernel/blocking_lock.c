@@ -4,6 +4,8 @@
 #include "debug.h"
 #include "threads.h"
 
+// port of Gheith kernel implementation
+
 void blocking_lock_init(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock init: lock is NULL.\n");
   sem_init(&lock->semaphore, 1);

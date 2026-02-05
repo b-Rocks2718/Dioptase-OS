@@ -3,6 +3,8 @@
 
 #include "semaphore.h"
 
+// port of Gheith kernel implementation
+
 struct BlockingLock {
   struct Semaphore semaphore;
   bool preempt;
