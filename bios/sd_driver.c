@@ -1,9 +1,9 @@
 
-int* DMA_MEM_REG =  (int*)0x7FE58F0;
-int* DMA_BLOCK_REG = (int*)0x7FE58F4;
-int* DMA_LEN_REG =   (int*)0x7FE58F8;
-int* DMA_CTRL_REG =  (int*)0x7FE58FC;
-int* DMA_STATUS_REG = (int*)0x7FE5900;
+int* DMA_MEM_REG =  (int*)0x7FE5810;
+int* DMA_BLOCK_REG = (int*)0x7FE5814;
+int* DMA_LEN_REG =   (int*)0x7FE5818;
+int* DMA_CTRL_REG =  (int*)0x7FE581C;
+int* DMA_STATUS_REG = (int*)0x7FE5820;
 
 int sd_read_block(int block_num, void* dest){
   // Set up DMA to read from SD card to memory
