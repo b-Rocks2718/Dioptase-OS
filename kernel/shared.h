@@ -38,6 +38,8 @@ void strongptr_init(struct StrongPtr* sptr, void* ptr, void (*destructor)(void*)
 
 struct StrongPtr strongptr_clone(struct StrongPtr* sptr);
 
+void strongptr_assign(struct StrongPtr* dest, struct StrongPtr* src);
+
 bool strongptr_not_null(struct StrongPtr* sptr);
 
 bool strongptr_compare(struct StrongPtr* sptr1, struct StrongPtr* sptr2);

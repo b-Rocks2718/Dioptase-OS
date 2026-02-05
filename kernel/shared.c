@@ -8,6 +8,9 @@
 // port of Gheith kernel implementation
 
 void refcount_init(struct RefCount* refcount, void* ptr, void (*destructor)(void*)){
+  assert(refcount != NULL, "refcount_init: refcount is NULL");
+  assert(ptr != NULL, "refcount_init: ptr is NULL");
+  assert(destructor != NULL, "refcount_init: destructor is NULL");
   refcount->ptr = ptr;
   refcount->strong_count = 1;
   refcount->weak_count = 0;
@@ -112,42 +115,66 @@ struct RefCount* refcount_promote_strong(struct RefCount* refcount){
 
 
 void strongptr_init(struct StrongPtr* sptr, void* ptr, void (*destructor)(void*)){
+  if (ptr == NULL) {
+    sptr->refcount = NULL;
+    return;
+  }
 
+  struct RefCount* refcount = (struct RefCount*)malloc(sizeof(struct RefCount));
+  refcount_init(refcount, ptr, destructor);
+  sptr->refcount = refcount;
 }
 
 struct StrongPtr strongptr_clone(struct StrongPtr* sptr){
+  struct StrongPtr new_sptr;
+  new_sptr.refcount = refcount_add_strong(sptr->refcount);
+  return new_sptr;
+}
 
+void strongptr_assign(struct StrongPtr* dest, struct StrongPtr* src){
+  if (dest->refcount != src->refcount){
+    struct RefCount* new_refcount = refcount_add_strong(src->refcount);
+    refcount_drop_strong(dest->refcount);
+    dest->refcount = new_refcount;
+  }
 }
 
 bool strongptr_not_null(struct StrongPtr* sptr){
-
+  return sptr->refcount != NULL && sptr->refcount->ptr != NULL;
 }
 
 bool strongptr_compare(struct StrongPtr* sptr1, struct StrongPtr* sptr2){
-
+  return sptr1->refcount == sptr2->refcount;
 }
 
 void* strongptr_deref(struct StrongPtr* sptr){
-
+  assert(strongptr_not_null(sptr), "Dereferencing null StrongPtr");
+  return sptr->refcount->ptr;
 }
 
 void strongptr_drop(struct StrongPtr* sptr){
-
+  refcount_drop_strong(sptr->refcount);
+  sptr->refcount = NULL;
 }
 
 
 void weakptr_init(struct WeakPtr* wptr, struct StrongPtr* sptr){
-
+  wptr->refcount = refcount_add_weak(sptr->refcount);
 }
 
 struct WeakPtr weakptr_clone(struct WeakPtr* wptr){
-
+  struct WeakPtr new_wptr;
+  new_wptr.refcount = refcount_add_weak(wptr->refcount);
+  return new_wptr;
 }
 
 struct StrongPtr weakptr_promote(struct WeakPtr* wptr){
-
+  struct StrongPtr new_sptr;
+  new_sptr.refcount = refcount_promote_strong(wptr->refcount);
+  return new_sptr;
 }
 
 void weakptr_drop(struct WeakPtr* wptr){
-
+  refcount_drop_weak(wptr->refcount);
+  wptr->refcount = NULL;
 }

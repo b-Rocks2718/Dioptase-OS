@@ -122,8 +122,8 @@ static void setup_thread(struct Fun* thread_fun){
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->sp = (unsigned)(&the_stack[1023]);
-  tcb->bp = (unsigned)(&the_stack[1023]);
+  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
   spin_queue_add(&ready_queue, tcb);
 }
@@ -235,8 +235,8 @@ void thread(struct Fun* thread_fun){
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->sp = (unsigned)(&the_stack[1023]);
-  tcb->bp = (unsigned)(&the_stack[1023]);
+  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
   spin_queue_add(&ready_queue, tcb);
 }

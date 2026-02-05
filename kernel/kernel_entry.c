@@ -42,7 +42,8 @@ void kernel_entry(void){
     register_spurious_handlers();
 
     say("| Initializing PIT...\n", NULL);
-    pit_init(1000); // trigger interrupts at 1000Hz
+    pit_init(10000); // trigger interrupts at 10000Hz 
+    // when running on emulator, this will actually be a much lower frequency
 
     say("| Initializing threads...\n", NULL);
     threads_init();

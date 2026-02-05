@@ -13,6 +13,6 @@
 #define UINT_MAX 0xFFFFFFFF
 
 // in bytes
-#define TCB_STACK_SIZE 4096
+#define TCB_STACK_SIZE 16384 // 16KiB
 
 #endif // CONSTANTS_H
