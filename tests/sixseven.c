@@ -36,6 +36,8 @@ void int_list_append(struct IntList** head, struct IntList** tail, struct IntLis
 
 void print_int_list(struct IntList* seq){
   spin_lock_acquire(&print_lock);
+  int old_color = text_color;
+  text_color = 0x1F;
   puts("***");
   while (seq) {
     struct IntList* next = seq->next;
@@ -44,6 +46,7 @@ void print_int_list(struct IntList* seq){
     seq = next;
   }
   putchar('\n');
+  text_color = old_color;
   spin_lock_release(&print_lock);
 }
 
@@ -80,9 +83,7 @@ struct IntList* collatz_seq(unsigned x){
 
 int kernel_main(void) {
   if (CONFIG.use_vga){
-    int old_color = __atomic_exchange_n(&text_color, 0x1C);
-    say("***Enter a number: ", NULL);
-    __atomic_store_n(&text_color, 0x1F);
+    say_color("***Enter a number: ", NULL, 0x1C);
 
     int key = 0;
     int num = 0;
@@ -93,7 +94,7 @@ int kernel_main(void) {
       if (key != 0 && ((key & 0xFF00) == 0)) {
         if (!isnum(key)) panic("key was not a number\n");
         num = num * 10 + (key - '0');
-        putchar(key);
+        putchar_color(key, 0x1F);
       }
     }
 
@@ -102,19 +103,14 @@ int kernel_main(void) {
 
     putchar('\n');
 
-    __atomic_store_n(&text_color, 0x1C);
-    say("***Collatz sequence:\n", NULL);
-    __atomic_store_n(&text_color, 0xFF);
-
-    struct IntList* seq = collatz_seq(num);
+    say_color("***Collatz sequence:\n", NULL, 0x1C);
     
-    __atomic_store_n(&text_color, 0x1F);
+    struct IntList* seq = collatz_seq(num);
+   
     print_int_list(seq);
-    __atomic_store_n(&text_color, 0x1C);
 
-    say("***Collatz sequence done\n", NULL);
-    __atomic_store_n(&text_color, old_color);
-  
+    say_color("***Collatz sequence done\n", NULL, 0x1C);
+   
     free_int_list(seq);
   } else {
     // just use 67

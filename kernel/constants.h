@@ -20,4 +20,6 @@
 
 #define TILE_ROW_WIDTH 80
 
+#define FB_NUM_TILES 4800
+
 #endif // CONSTANTS_H

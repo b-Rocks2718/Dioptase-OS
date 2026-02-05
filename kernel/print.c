@@ -2,6 +2,7 @@
 #include "machine.h"
 #include "atomic.h"
 #include "config.h"
+#include "debug.h"
 
 struct SpinLock print_lock = { 0 };
 
@@ -9,19 +10,43 @@ char* UART_PADDR = (char*)0x7FE5802;
 
 short* TILEMAP = (short*)0x7FE8000;
 short* TILE_FB = (short*)0x7FBD000;
+short* TILE_VSCROLL = (short*)0x7FE5B42;
 char* TILE_SCALE = (char*)0x7FE5B44;
 
-int text_color = 0xFF; // Note: use __atomic_exchange_n to avoid races
+int text_color = 0xFF; // Note: access only when holding print_lock
+
+static int vga_index = 0;
+bool scrolling = false;
+static bool was_newline = false;
 
 void putchar(char c){
-  static int vga_index = 0;
+  putchar_color(c, text_color);
+}
+
+void putchar_color(char c, int color){
   if (CONFIG.use_vga){
+
+    if (was_newline && scrolling){
+      for (int i = 0; i < TILE_ROW_WIDTH; ++i){
+        TILE_FB[vga_index + i] = 0;
+      }
+      *TILE_VSCROLL = *TILE_VSCROLL - 8;
+      was_newline = false;
+    }
+
     if (c == '\n'){
       vga_index++;
       // round up to next row
       vga_index = ((vga_index + TILE_ROW_WIDTH - 1) / TILE_ROW_WIDTH) * TILE_ROW_WIDTH;
+
+      was_newline = true;
     } else {
-      TILE_FB[vga_index++] = (short)((text_color << 8) | c);
+      TILE_FB[vga_index++] = (short)((color << 8) | c);
+    }
+
+    if (vga_index >= FB_NUM_TILES) {
+      vga_index -= FB_NUM_TILES;
+      scrolling = true;
     }
   } else {
     *UART_PADDR = c;
@@ -45,6 +70,16 @@ unsigned puts(char* str){
 unsigned say(char* fmt, int* arr){
   spin_lock_acquire(&print_lock);
   unsigned count = printf(fmt, arr);
+  spin_lock_release(&print_lock);
+  return count;
+}
+
+unsigned say_color(char* fmt, int* arr, int color){
+  spin_lock_acquire(&print_lock);
+  int old_color = text_color;
+  text_color = color;
+  unsigned count = printf(fmt, arr);
+  text_color = old_color;
   spin_lock_release(&print_lock);
   return count;
 }
@@ -155,7 +190,22 @@ void vga_text_init(void){
     load_text_tiles();
 
     *TILE_SCALE = 0;
+    *TILE_VSCROLL = 0;
   }
+}
+
+void clear_screen(void){
+  spin_lock_acquire(&print_lock);
+
+  vga_index = 0;
+  scrolling = false;
+  was_newline = false;
+
+  for (int i = 0; i < FB_NUM_TILES; ++i){
+    TILE_FB[i] = 0;
+  }
+
+  spin_lock_release(&print_lock);
 }
 
 // text_tiles is a list of addresses that we need to store 0xC000 at
@@ -163,6 +213,8 @@ void load_text_tiles(void){
   for (int i = 0; i < TILEMAP_PIXELS; ++i){
     TILEMAP[i] = 0;
   }
+
+  clear_screen();
 
   int i = 0;
   int offset = text_tiles[i];
