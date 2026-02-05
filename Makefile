@@ -8,6 +8,14 @@ TEST_RUNS ?= 100
 TIMEOUT_SECONDS ?= 300
 SCHEDULER ?= free
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER) #--trace-ints
+EMU_VGA := yes
+
+ifdef EMU_VGA
+EMU_FLAGS += --vga
+USE_VGA_DEFINE := 1
+else
+USE_VGA_DEFINE := 0
+endif
 
 # version can be set to "debug" or "release"
 VERSION ?= release
@@ -184,6 +192,7 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	  -DDATA_START_BLOCK=0 -DDATA_NUM_BLOCKS=0 -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=0 -DRODATA_NUM_BLOCKS=0 -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=0 -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	set -- $$(grep '^@' "$$tmp_hex" | head -n 6 | sed 's/^@//'); \
@@ -222,6 +231,7 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	"$(BASM)" -kernel -g -o "$(BUILD_DIR)/$*.hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
@@ -230,6 +240,7 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	grep '^#' "$(BUILD_DIR)/$*.hex" > "$(BUILD_DIR)/$*.labels" || true; \

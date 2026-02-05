@@ -9,8 +9,6 @@ extern void mode_sleep(void);
 
 void pause(void);
 
-extern void putchar(char c);
-
 extern unsigned get_core_id(void);
 
 extern unsigned get_cr0(void);

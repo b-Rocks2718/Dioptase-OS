@@ -22,6 +22,8 @@
 #include "debug.h"
 #include "pit.h"
 #include "interrupts.h"
+#include "config.h"
+#include "ps2.h"
 
 struct SpinQueue ready_queue;
 struct SpinQueue reaper_queue;
@@ -213,8 +215,15 @@ void event_loop(void) {
     say("| checking leaks\n", NULL);
     
     check_leaks();
+
+    if (CONFIG.use_vga){
+      say("| Press Q to exit...\n", NULL);
     
-    say("| Halting...\n", NULL);
+      // wait on user
+      while ((getkey() & 0xFF) != 'q');
+    } else {
+      say("| Halting...\n", NULL);
+    }
 
     while (true) shutdown();
   } else {

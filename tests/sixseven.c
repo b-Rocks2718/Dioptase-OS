@@ -5,8 +5,9 @@
 #include "../kernel/atomic.h"
 #include "../kernel/threads.h"
 #include "../kernel/pit.h"
-
-#define NULL 0
+#include "../kernel/config.h"
+#include "../kernel/ps2.h"
+#include "../kernel/debug.h"
 
 struct IntList {
   struct IntList* next;
@@ -78,12 +79,53 @@ struct IntList* collatz_seq(unsigned x){
 }
 
 int kernel_main(void) {
-  struct IntList* seq = collatz_seq(67);
+  if (CONFIG.use_vga){
+    int old_color = __atomic_exchange_n(&text_color, 0x1C);
+    say("***Enter a number: ", NULL);
+    __atomic_store_n(&text_color, 0x1F);
 
-  say("***Collatz sequence:\n", NULL);
-  print_int_list(seq);
+    int key = 0;
+    int num = 0;
+    while (true){
+      key = getkey();
+      if ((key & 0xFF) == '\r') break;
 
-  free_int_list(seq);
+      if (key != 0 && ((key & 0xFF00) == 0)) {
+        if (!isnum(key)) panic("key was not a number\n");
+        num = num * 10 + (key - '0');
+        putchar(key);
+      }
+    }
+
+    // empty buffer
+    while (getkey() != 0);
+
+    putchar('\n');
+
+    __atomic_store_n(&text_color, 0x1C);
+    say("***Collatz sequence:\n", NULL);
+    __atomic_store_n(&text_color, 0xFF);
+
+    struct IntList* seq = collatz_seq(num);
+    
+    __atomic_store_n(&text_color, 0x1F);
+    print_int_list(seq);
+    __atomic_store_n(&text_color, 0x1C);
+
+    say("***Collatz sequence done\n", NULL);
+    __atomic_store_n(&text_color, old_color);
+  
+    free_int_list(seq);
+  } else {
+    // just use 67
+    struct IntList* seq = collatz_seq(67);
+
+    say("***Collatz sequence:\n", NULL);
+    print_int_list(seq);
+    say("***Collatz sequence done\n", NULL);
+
+    free_int_list(seq);
+  }
 
   return 67;
 }

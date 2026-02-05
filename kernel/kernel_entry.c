@@ -29,6 +29,8 @@ void kernel_entry(void){
   __atomic_fetch_add(&awake_cores, 1);
 
   if (me == 0){
+    vga_text_init();
+
     say("| Hello from Dioptase Kernel!\n", NULL);
 
     say("| Num cores: %d\n", &num_cores);
@@ -76,14 +78,11 @@ void kernel_entry(void){
 
   // have the final core run kernel_main
   if (me == num_cores - 1) {
-    say("| Core %d starting kernel main thread...\n", &me);
     struct Fun* kernel_main_fun = malloc(sizeof (struct Fun));
     kernel_main_fun->arg = NULL;
     kernel_main_fun->func = (void (*)(void*))kernel_main;
     thread(kernel_main_fun);
   }
-
-  say("| Core %d entering event loop...\n", &me);
 
   event_loop();
 

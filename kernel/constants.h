@@ -15,4 +15,9 @@
 // in bytes
 #define TCB_STACK_SIZE 16384 // 16KiB
 
+// 256 * 64
+#define TILEMAP_PIXELS 16384
+
+#define TILE_ROW_WIDTH 80
+
 #endif // CONSTANTS_H

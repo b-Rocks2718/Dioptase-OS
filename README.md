@@ -40,7 +40,8 @@ These tools are expected to be built already (default `VERSION=release`):
 - `TEST_RUNS` controls the number of test iterations.
 - `SCHEDULER` controls the emulators scheduling for multicore runs. Options are `free`, `random`, and `rr` (round robin)
 - `TIMEOUT_SECONDS` controls the per-run timeout for `.test`/`.fail`.
-- `EMU_FLAGS` can include `--trace-ints` if you want information printed about each interrupt, `--vga` if you want to emulate the VGA monitor
+- `EMU_FLAGS` can include `--trace-ints` if you want information printed about each interrupt.
+- `EMU_VGA` (when defined) appends `--vga` to the emulator flags and assembles `kernel/config.s` with `-DUSE_VGA=1`. When not defined, `kernel/config.s` is assembled with `-DUSE_VGA=0`.
 
 ### Notes
 

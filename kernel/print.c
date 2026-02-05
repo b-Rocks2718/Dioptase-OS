@@ -1,8 +1,36 @@
 #include "print.h"
 #include "machine.h"
 #include "atomic.h"
+#include "config.h"
 
 struct SpinLock print_lock = { 0 };
+
+char* UART_PADDR = (char*)0x7FE5802;
+
+short* TILEMAP = (short*)0x7FE8000;
+short* TILE_FB = (short*)0x7FBD000;
+char* TILE_SCALE = (char*)0x7FE5B44;
+
+int text_color = 0xFF; // Note: use __atomic_exchange_n to avoid races
+
+void putchar(char c){
+  static int vga_index = 0;
+  if (CONFIG.use_vga){
+    if (c == '\n'){
+      vga_index++;
+      // round up to next row
+      vga_index = ((vga_index + TILE_ROW_WIDTH - 1) / TILE_ROW_WIDTH) * TILE_ROW_WIDTH;
+    } else {
+      TILE_FB[vga_index++] = (short)((text_color << 8) | c);
+    }
+  } else {
+    *UART_PADDR = c;
+  }
+}
+
+bool isnum(char c){
+  return ('0' <= c && c <= '9');
+}
 
 unsigned puts(char* str){
   unsigned count = 0;
@@ -120,4 +148,26 @@ unsigned print_hex(unsigned n, bool uppercase){
   
   // return number of characters printed
   return count;
+}
+
+void vga_text_init(void){
+  if (CONFIG.use_vga){
+    load_text_tiles();
+
+    *TILE_SCALE = 0;
+  }
+}
+
+// text_tiles is a list of addresses that we need to store 0xC000 at
+void load_text_tiles(void){
+  for (int i = 0; i < TILEMAP_PIXELS; ++i){
+    TILEMAP[i] = 0;
+  }
+
+  int i = 0;
+  int offset = text_tiles[i];
+  while (offset != 0){
+    TILEMAP[offset] = 0xC000;
+    offset = text_tiles[i++];
+  }
 }
