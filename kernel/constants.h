@@ -21,5 +21,11 @@
 #define TILE_ROW_WIDTH 80
 
 #define FB_NUM_TILES 4800
+#define FB_NUM_PIXELS 76800
+
+#define FB_WIDTH 320
+#define FB_HEIGHT 240
+
+#define TRANSPARENT 255
 
 #endif // CONSTANTS_H

@@ -3,15 +3,11 @@
 #include "atomic.h"
 #include "config.h"
 #include "debug.h"
+#include "vga.h"
 
 struct SpinLock print_lock = { 0 };
 
 char* UART_PADDR = (char*)0x7FE5802;
-
-short* TILEMAP = (short*)0x7FE8000;
-short* TILE_FB = (short*)0x7FBD000;
-short* TILE_VSCROLL = (short*)0x7FE5B42;
-char* TILE_SCALE = (char*)0x7FE5B44;
 
 int text_color = 0xFF; // Note: access only when holding print_lock
 
@@ -119,12 +115,12 @@ unsigned printf(char* fmt, int* arr){
 
 unsigned print_signed(int n){
   if(n == 0){
-      putchar('0');
-      return 1;
+    putchar('0');
+    return 1;
   }
   if(n < 0){
-      putchar('-');
-      n = -n;
+    putchar('-');
+    n = -n;
   }
 
   unsigned d = n % 10;
@@ -143,8 +139,8 @@ unsigned print_signed(int n){
 
 unsigned print_unsigned(unsigned n){
   if(n == 0){
-      putchar('0');
-      return 1;
+    putchar('0');
+    return 1;
   }
 
   unsigned d = n % 10;
@@ -163,8 +159,8 @@ unsigned print_unsigned(unsigned n){
 
 unsigned print_hex(unsigned n, bool uppercase){
   if(n == 0){
-      putchar('0');
-      return 1;
+    putchar('0');
+    return 1;
   }
 
   unsigned d = n % 16;
@@ -221,5 +217,11 @@ void load_text_tiles(void){
   while (offset != 0){
     TILEMAP[offset] = 0xC000;
     offset = text_tiles[i++];
+  }
+
+  // transparent tile at index 255
+  for (int i = 0; i < 64; ++i){
+    // 16320 = 255 * 64
+    TILEMAP[16320 + i] = 0xF000;
   }
 }
