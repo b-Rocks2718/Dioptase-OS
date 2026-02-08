@@ -5,6 +5,8 @@
 unsigned char* MBR_LOAD_ADDRESS = (unsigned char*)0x800000;
 
 int bios_entry(void){
+  vga_text_init();
+
   puts("| Hello from Dioptase BIOS!\n");
 
   puts("| Looking for boot device...\n");

@@ -66,9 +66,9 @@ BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
 LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
 
-# Treat config.s as phony so NUM_CORES changes always rebuild kernel images.
+# Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
-  $(TEST_NAMES) test-all clean kernel/config.s kernel/mbr.s
+  $(TEST_NAMES) test-all clean bios/config.s kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
 
@@ -173,7 +173,7 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 $(BIOS_HEX): $(BIOS_C_ASMS) $(BIOS_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 	@status=0; \
 	"$(BASM)" -kernel -o "$@" $(BIOS_ASM_INIT) $(BIOS_C_ASMS) \
-	  $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) -DNUM_CORES=$(NUM_CORES) -g || status=$$?; \
+	  $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) -DNUM_CORES=$(NUM_CORES) -DUSE_VGA=$(USE_VGA_DEFINE) -g || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	grep '^#' "$@" > "$(BUILD_DIR)/bios.labels" || true; \
 	cat $(BIOS_ASM_INIT) $(BIOS_C_ASMS) $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) > "$(BUILD_DIR)/bios.all.s"; \
