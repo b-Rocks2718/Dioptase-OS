@@ -285,4 +285,4 @@ $(EMULATOR):
 # Cleanup for build artifacts; does not delete source files.
 clean:
 	rm -f "$(BUILD_DIR)"/*.hex "$(BUILD_DIR)"/*.bin "$(BUILD_DIR)"/*.s "$(BUILD_DIR)"/*.labels \
-	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS)
+	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
