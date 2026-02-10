@@ -20,7 +20,6 @@ int start_barrier = 0;
 void kernel_entry(void){
 
   int me = get_core_id();
-  say("| Core %d starting up...\n", &me);
 
   // get number of cores from config
   int num_cores = CONFIG.num_cores;
@@ -30,6 +29,8 @@ void kernel_entry(void){
 
   if (me == 0){
     vga_text_init();
+
+    say("| Core %d starting up...\n", &me);
 
     say("| Hello from Dioptase Kernel!\n", NULL);
 
@@ -61,6 +62,8 @@ void kernel_entry(void){
     for (int i = 1; i < num_cores; ++i) {
       wakeup_core(i);
     }
+  } else {
+    say("| Core %d starting up...\n", &me);
   }
 
   say("| Core %d initializing interrupts...\n", &me);

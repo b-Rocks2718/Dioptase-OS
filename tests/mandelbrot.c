@@ -14,6 +14,8 @@
 
 #define FIXED_ONE 0x00010000
 
+#define RESOLUTION 3
+
 struct Complex {
   fix32 x;
   fix32 y;
@@ -61,7 +63,7 @@ int mandelbrot_count(struct Complex* c){
     mul_complex(&z, &z, &temp);
     add_complex(c, &temp, &z);
     fix32 d = norm(&z);
-    if (d > 10 * FIXED_ONE) break;
+    if (d > 4 * FIXED_ONE) break;
   }
   if (i == COLOR_COUNT) i = -1;
   return i;
@@ -77,8 +79,8 @@ unsigned colors[COLOR_COUNT] =
    0xF44, 0xF45, 0xF46, 0xF47, 0xF48, 0xF49, 0xF4A, 0xF4B};
 
 void display_mandelbrot(fix32 start_x, fix32 start_y, fix32 diff){
-  for (int i = 0; i < FB_HEIGHT; ++i){
-    for (int j = 0; j < FB_WIDTH; ++j){
+  for (int i = 0; i < FB_HEIGHT >> RESOLUTION; ++i){
+    for (int j = 0; j < FB_WIDTH >> RESOLUTION; ++j){
       struct Complex c = {start_x + diff * j, start_y - diff * i};
       int count = mandelbrot_count(&c);
       if (count >= 0){
@@ -93,10 +95,12 @@ void display_mandelbrot(fix32 start_x, fix32 start_y, fix32 diff){
 int kernel_main(void){
   make_tiles_transparent();
 
+  *PIXEL_SCALE = RESOLUTION;
+
   fix32 start_x = -0x00028000;
   fix32 start_y = 0x00012000;
 
-  fix32 diff = 0x00000266;
+  fix32 diff = 0x00000266 << RESOLUTION;
 
   display_mandelbrot(start_x, start_y, diff);
 

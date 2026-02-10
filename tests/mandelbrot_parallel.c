@@ -14,6 +14,8 @@
 
 #define FIXED_ONE 0x00010000
 
+#define RESOLUTION 3
+
 struct Complex {
   fix32 x;
   fix32 y;
@@ -84,8 +86,8 @@ void display_mandelbrot(void* arg){
   fix32 start_y = arg_arr[3];
   fix32 diff = arg_arr[4];
 
-  for (int i = start_i; i < start_i + FB_HEIGHT/2; ++i){
-    for (int j = start_j; j < start_j + FB_WIDTH/2; ++j){
+  for (int i = start_i; i < start_i + ((FB_HEIGHT/2) >> RESOLUTION); ++i){
+    for (int j = start_j; j < start_j + ((FB_WIDTH/2) >> RESOLUTION); ++j){
       struct Complex c = {start_x + diff * j, start_y - diff * i};
       int count = mandelbrot_count(&c);
       if (count >= 0){
@@ -103,7 +105,9 @@ int kernel_main(void){
   fix32 start_x = -0x00028000;
   fix32 start_y = 0x00012000;
 
-  fix32 diff = 0x00000266;
+  *PIXEL_SCALE = RESOLUTION;
+
+  fix32 diff = 0x00000266 << RESOLUTION;
 
   struct Fun* fun1 = (struct Fun*)malloc(sizeof(struct Fun));
   fun1->func = (void*)display_mandelbrot;
@@ -117,7 +121,7 @@ int kernel_main(void){
   struct Fun* fun2 = (struct Fun*)malloc(sizeof(struct Fun));
   fun2->func = (void*)display_mandelbrot;
   fun2->arg = (void*)malloc(5 * sizeof(int));
-  ((int*)fun2->arg)[0] = FB_WIDTH/2;
+  ((int*)fun2->arg)[0] = (FB_WIDTH/2) >> RESOLUTION;
   ((int*)fun2->arg)[1] = 0;
   ((int*)fun2->arg)[2] = start_x;
   ((int*)fun2->arg)[3] = start_y;
@@ -127,7 +131,7 @@ int kernel_main(void){
   fun3->func = (void*)display_mandelbrot;
   fun3->arg = (void*)malloc(5 * sizeof(int));
   ((int*)fun3->arg)[0] = 0;
-  ((int*)fun3->arg)[1] = FB_HEIGHT/2;
+  ((int*)fun3->arg)[1] = (FB_HEIGHT/2) >> RESOLUTION;
   ((int*)fun3->arg)[2] = start_x;
   ((int*)fun3->arg)[3] = start_y;
   ((int*)fun3->arg)[4] = diff;
@@ -136,7 +140,7 @@ int kernel_main(void){
   thread(fun2);
   thread(fun3);
 
-  int args[5] = {FB_WIDTH/2, FB_HEIGHT/2, start_x, start_y, diff};
+  int args[5] = {(FB_WIDTH/2) >> RESOLUTION, (FB_HEIGHT/2) >> RESOLUTION, start_x, start_y, diff};
   display_mandelbrot(args);
 
   while (getkey() != 'q');
