@@ -10,7 +10,14 @@ int bios_entry(void){
   puts("| Hello from Dioptase BIOS!\n");
 
   puts("| Looking for boot device...\n");
-  sd_read_block(0, MBR_LOAD_ADDRESS);
+  if (sd_init() != 0){
+    puts("| SD initialization failed. Halting.\n");
+    return 1;
+  }
+  if (sd_read_block(0, MBR_LOAD_ADDRESS) != 0){
+    puts("| Failed to read MBR from SD card. Halting.\n");
+    return 1;
+  }
 
   if (MBR_LOAD_ADDRESS[510] != 0x55 || MBR_LOAD_ADDRESS[511] != 0xAA){
     puts("| No valid MBR found on boot device. Halting.\n");
@@ -33,9 +40,18 @@ int bios_entry(void){
   unsigned bss_num_blocks = ((unsigned*)MBR_LOAD_ADDRESS)[9];
   unsigned bss_load_address = ((unsigned*)MBR_LOAD_ADDRESS)[10];
 
-  sd_read_blocks(text_start_block, text_num_blocks, (unsigned char*)text_load_address);
-  sd_read_blocks(data_start_block, data_num_blocks, (unsigned char*)data_load_address);
-  sd_read_blocks(rodata_start_block, rodata_num_blocks, (unsigned char*)rodata_load_address);
+  if (sd_read_blocks(text_start_block, text_num_blocks, (unsigned char*)text_load_address) != 0){
+    puts("| Failed to read kernel text from SD card. Halting.\n");
+    return 1;
+  }
+  if (sd_read_blocks(data_start_block, data_num_blocks, (unsigned char*)data_load_address) != 0){
+    puts("| Failed to read kernel data from SD card. Halting.\n");
+    return 1;
+  }
+  if (sd_read_blocks(rodata_start_block, rodata_num_blocks, (unsigned char*)rodata_load_address) != 0){
+    puts("| Failed to read kernel rodata from SD card. Halting.\n");
+    return 1;
+  }
 
   // zero out bss
   unsigned bss_size = bss_num_blocks * 512;

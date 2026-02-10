@@ -8,9 +8,9 @@ TEST_RUNS ?= 100
 TIMEOUT_SECONDS ?= 300
 SCHEDULER ?= free
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER) #--trace-ints
-EMU_VGA := yes
+EMU_VGA ?= no
 
-ifdef EMU_VGA
+ifeq ($(EMU_VGA),yes)
 EMU_FLAGS += --vga
 USE_VGA_DEFINE := 1
 else
