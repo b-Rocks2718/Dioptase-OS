@@ -19,6 +19,12 @@ int* DMA_ERR_REG = (int*)0x7FE5824;
 #define SD_DMA_STATUS_DONE 0x2
 #define SD_DMA_STATUS_ERR 0x4
 
+// Purpose: program one SD DMA argument register.
+// Hardware contract: one 32-bit store must fully program the target register.
+static void sd_write_arg_reg(int* reg, int value){
+  *reg = value;
+}
+
 // Purpose: clear sticky DONE/ERR state before issuing a new SD command.
 // Preconditions: SD MMIO is mapped and writable.
 // Postconditions: DONE/ERR and DMA_ERR are cleared; BUSY is unaffected.
@@ -54,9 +60,9 @@ int sd_init(void){
 
 int sd_read_block(int block_num, void* dest){
   sd_clear_status();
-  *DMA_MEM_REG = (int)dest;
-  *DMA_BLOCK_REG = block_num;
-  *DMA_LEN_REG = SD_DMA_BLOCKS_PER_TRANSFER;
+  sd_write_arg_reg(DMA_MEM_REG, (int)dest);
+  sd_write_arg_reg(DMA_BLOCK_REG, block_num);
+  sd_write_arg_reg(DMA_LEN_REG, SD_DMA_BLOCKS_PER_TRANSFER);
   *DMA_CTRL_REG = SD_DMA_CTRL_START;
   return sd_wait_done();
 }
@@ -73,9 +79,9 @@ int sd_read_blocks(int start_block, int num_blocks, void* dest){
 
 int sd_write_block(int block_num, void* src){
   sd_clear_status();
-  *DMA_MEM_REG = (int)src;
-  *DMA_BLOCK_REG = block_num;
-  *DMA_LEN_REG = SD_DMA_BLOCKS_PER_TRANSFER;
+  sd_write_arg_reg(DMA_MEM_REG, (int)src);
+  sd_write_arg_reg(DMA_BLOCK_REG, block_num);
+  sd_write_arg_reg(DMA_LEN_REG, SD_DMA_BLOCKS_PER_TRANSFER);
   *DMA_CTRL_REG = SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD;
   return sd_wait_done();
 }

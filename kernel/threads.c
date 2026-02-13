@@ -218,9 +218,28 @@ void event_loop(void) {
 
     if (CONFIG.use_vga){
       say("| Press Q to exit...\n", NULL);
-    
-      // wait on user
-      while ((getkey() & 0xFF) != 'q');
+
+      // Discard any stale keyboard events so only a fresh user keypress exits.
+      while (getkey() != 0);
+
+      // Wait for a full 'q' key cycle (make then break).
+      // This avoids accidental exit from a stray/glitched make event.
+      int saw_q_make = 0;
+      while (true) {
+        int key = getkey();
+        if (key == 0) continue;
+
+        int is_release = ((key & 0xFF00) != 0);
+        key &= 0xFF;
+
+        if (!is_release) {
+          saw_q_make = (key == 'q' || key == 'Q');
+          continue;
+        }
+
+        if (saw_q_make && (key == 'q' || key == 'Q')) break;
+        saw_q_make = 0;
+      }
     } else {
       say("| Halting...\n", NULL);
     }

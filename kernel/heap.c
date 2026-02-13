@@ -149,6 +149,8 @@ unsigned sanity(unsigned i) {
     if (i == 0)
       return 0;
     if (i >= len) {
+      int args[4] = {(int)i, (int)len, (int)array, (int)get_caller_return_address()};
+      say("| HEAP sanity: i=%d len=%d base=0x%X caller=0x%X\n", args);
       panic("bad header index\n");
     }
     unsigned footer = footerFromHeader(i);

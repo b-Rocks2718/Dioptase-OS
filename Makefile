@@ -3,7 +3,7 @@
 # from a root test C file plus kernel sources, and optionally run the emulator.
 
 # configuration
-NUM_CORES ?= 4
+NUM_CORES ?= 1
 TEST_RUNS ?= 100
 TIMEOUT_SECONDS ?= 300
 SCHEDULER ?= free
