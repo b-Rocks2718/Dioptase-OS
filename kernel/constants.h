@@ -13,7 +13,7 @@
 #define UINT_MAX 0xFFFFFFFF
 
 // in bytes
-#define TCB_STACK_SIZE 16384 // 16KiB
+#define TCB_STACK_SIZE 2048 // 2KiB
 
 // 256 * 64
 #define TILEMAP_PIXELS 16384

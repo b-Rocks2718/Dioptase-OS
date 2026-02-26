@@ -336,6 +336,9 @@ void *malloc(unsigned bytes) {
 
   if (res != NULL) {
     n_malloc += 1;
+  } else {
+    int args[1] = {bytes};
+    panic("malloc failed\n");
   }
 
   blocking_lock_release(&theLock);

@@ -1,8 +1,8 @@
 
 # Physmem address range: 0x0000000 - 0x7FFFFFF
 
-.define KERNEL_STACK_TOP, 0x100000
-.define KERNEL_STACK_SIZE, 0x4000
+.define KERNEL_STACK_TOP, 0x1D000
+.define KERNEL_STACK_SIZE, 0x2000
 .define IPI_IVT_OFFSET, 0x3D4
 
 # Section load addresses must match the kernel memory map so pc-relative

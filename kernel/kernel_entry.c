@@ -10,8 +10,8 @@
 #include "per_core.h"
 #include "sd_driver.h"
 
-unsigned HEAP_START = 0x200000;
-unsigned HEAP_SIZE = 0x600000;
+unsigned HEAP_START = 0x1D000;
+unsigned HEAP_SIZE = 0x02000;
 
 extern void kernel_main(void);
 
@@ -36,7 +36,7 @@ void kernel_entry(void){
 
     say("| Num cores: %d\n", &num_cores);
 
-    say("| Mem size: 128MiB\n", NULL);
+    say("| Mem size: 256KiB\n", NULL);
 
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
@@ -72,8 +72,8 @@ void kernel_entry(void){
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();
 
-  say("| Core %d enabling interrupts...\n", &me);
-  restore_interrupts(0x80000001); // only PIT interrupt enabled for now
+  //say("| Core %d enabling interrupts...\n", &me);
+  //restore_interrupts(0x80000001); // only PIT interrupt enabled for now
 
   // wait for all cores to be awake and set up
   say("| Core %d waiting at start barrier...\n", &me);

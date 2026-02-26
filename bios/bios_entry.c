@@ -1,8 +1,9 @@
 #include "print.h"
 #include "machine.h"
 #include "sd_driver.h"
+#include "config.h"
 
-unsigned char* MBR_LOAD_ADDRESS = (unsigned char*)0x800000;
+unsigned char* MBR_LOAD_ADDRESS = (unsigned char*)0x5000;
 
 int bios_entry(void){
   vga_text_init();
@@ -10,17 +11,28 @@ int bios_entry(void){
   puts("| Hello from Dioptase BIOS!\n");
 
   puts("| Looking for boot device...\n");
-  if (sd_init() != 0){
-    puts("| SD initialization failed. Halting.\n");
+
+  int sd_rc = sd_init();
+  if (sd_rc != 0){
+    puts("| SD initialization failed (rc=");
+    print_num(sd_rc);
+    puts("). Halting.\n");
+    if (CONFIG.use_vga) while (1);
     return 1;
   }
-  if (sd_read_block(0, MBR_LOAD_ADDRESS) != 0){
-    puts("| Failed to read MBR from SD card. Halting.\n");
+  
+  sd_rc = sd_read_block(0, MBR_LOAD_ADDRESS);
+  if (sd_rc != 0){
+    puts("| Failed to read MBR from SD card (rc=");
+    print_num(sd_rc);
+    puts("). Halting.\n");
+    if (CONFIG.use_vga) while (1);
     return 1;
   }
 
   if (MBR_LOAD_ADDRESS[510] != 0x55 || MBR_LOAD_ADDRESS[511] != 0xAA){
     puts("| No valid MBR found on boot device. Halting.\n");
+    if (CONFIG.use_vga) while (1);
     return 1;
   }
 

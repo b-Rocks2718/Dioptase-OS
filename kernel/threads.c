@@ -100,7 +100,7 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->r28 = 0;
 
   // interrupts enabled, timer interrupt enabled
-  tcb->imr = 0x80000001;
+  tcb->imr = 0;//0x80000001;
 
   tcb->can_preempt = true;
 
@@ -163,6 +163,17 @@ void thread_entry(void) {
   restore_interrupts(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
   if (thread_fun != NULL) {
+    // Catch corrupted thread trampoline state before an indirect branch can jump to 0x0.
+    if (thread_fun->func == NULL) {
+      int args[4] = {
+        get_core_id(),
+        (int)current_tcb,
+        (int)thread_fun,
+        (int)thread_fun->arg
+      };
+      say("| thread_entry null func core=%d tcb=0x%X fun=0x%X arg=0x%X\n", args);
+      panic("thread_entry: thread_fun->func is NULL.\n");
+    }
     (*thread_fun->func)(thread_fun->arg);
   }
 

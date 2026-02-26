@@ -1,7 +1,7 @@
 
-# Physmem address range: 0x0000000 - 0x7FFFFFF
+# Physmem address range: 0x00000 - 0x3FFFF
 
-.define BIOS_STACK_TOP, 0x400000
+.define BIOS_STACK_TOP, 0x5000
 
 # bios entry point
   .origin 0x400

@@ -1,3 +1,5 @@
+#include "print.h"
+
 int* DMA_MEM_REG = (int*)0x7FE5810;
 int* DMA_BLOCK_REG = (int*)0x7FE5814;
 int* DMA_LEN_REG = (int*)0x7FE5818;
@@ -19,6 +21,13 @@ int* DMA_ERR_REG = (int*)0x7FE5824;
 #define SD_DMA_STATUS_DONE 0x2
 #define SD_DMA_STATUS_ERR 0x4
 
+// BIOS-side polling timeout for SD DMA completion.
+// This is intentionally large because FPGA hardware SD init can take many
+// command retries and the CPU may be slowed by clock division in some builds.
+#define SD_DMA_WAIT_TIMEOUT_POLLS 50000000U
+// Local software-only error code returned when the DMA never reports DONE.
+#define SD_DMA_ERR_POLL_TIMEOUT 1000
+
 // Purpose: program one SD DMA argument register.
 // Hardware contract: one 32-bit store must fully program the target register.
 static void sd_write_arg_reg(int* reg, int value){
@@ -32,15 +41,37 @@ static void sd_clear_status(void){
   *DMA_STATUS_REG = 0;
 }
 
+// Purpose: emit a minimal SD DMA diagnostic when BIOS polling times out.
+// This avoids a silent hang on VGA/UART when the FPGA SD path deadlocks.
+static void sd_print_wait_timeout_diag(int status, int err){
+  puts("| SD DMA wait timeout. status=");
+  print_num(status);
+  puts(" err=");
+  print_num(err);
+  puts("\n");
+}
+
 // Purpose: wait for shared SD status to report completion and surface failures.
 // Returns: 0 on success, negative DMA error code on failure.
-// Behavior: status is cleared before returning so callers can issue the next command.
+// Behavior:
+// - status is cleared before returning on normal completion/error.
+// - on timeout, status is left intact so diagnostics remain visible in MMIO.
 static int sd_wait_done(void){
   int status;
   int err;
+  unsigned polls = 0;
 
   do {
     status = *DMA_STATUS_REG;
+    polls++;
+    if (polls >= SD_DMA_WAIT_TIMEOUT_POLLS){
+      err = *DMA_ERR_REG;
+      sd_print_wait_timeout_diag(status, err);
+      if (err != 0){
+        return -err;
+      }
+      return -SD_DMA_ERR_POLL_TIMEOUT;
+    }
   } while ((status & SD_DMA_STATUS_DONE) == 0);
 
   err = *DMA_ERR_REG;
