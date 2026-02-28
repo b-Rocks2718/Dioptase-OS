@@ -100,7 +100,7 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->r28 = 0;
 
   // interrupts enabled, timer interrupt enabled
-  tcb->imr = 0;//0x80000001;
+  tcb->imr = 0x80000001;
 
   tcb->can_preempt = true;
 

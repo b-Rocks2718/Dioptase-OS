@@ -10,8 +10,8 @@
 #include "per_core.h"
 #include "sd_driver.h"
 
-unsigned HEAP_START = 0x34000;
-unsigned HEAP_SIZE = 0x04000;
+unsigned HEAP_START = 0x100000;
+unsigned HEAP_SIZE =  0x700000;
 
 extern void kernel_main(void);
 
@@ -45,7 +45,7 @@ void kernel_entry(void){
     register_spurious_handlers();
 
     say("| Initializing PIT...\n", NULL);
-    pit_init(100); // trigger interrupts at 100Hz 
+    pit_init(1000); // trigger interrupts at 1000Hz 
     // when running on emulator, this will actually be a much lower frequency
 
     say("| Initializing threads...\n", NULL);
@@ -72,8 +72,8 @@ void kernel_entry(void){
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();
 
-  //say("| Core %d enabling interrupts...\n", &me);
-  //restore_interrupts(0x80000001); // only PIT interrupt enabled for now
+  say("| Core %d enabling interrupts...\n", &me);
+  restore_interrupts(0x80000001); // only PIT interrupt enabled for now
 
   // wait for all cores to be awake and set up
   say("| Core %d waiting at start barrier...\n", &me);

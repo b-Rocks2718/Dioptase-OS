@@ -163,10 +163,10 @@ context_switch:
   swa  r9,  [r1, 128]
 
   # TCB offset 132 stores per-thread IMR state (see kernel thread-state ABI).
-  # Save the architectural IMR so restoring this thread preserves its
-  # interrupt enable mask across context switches.
-  mov  r9, imr
-  swa  r9,  [r1, 132]
+  # The caller passes the outgoing thread's pre-switch IMR in r6 ("was").
+  # We must save that value, not the live IMR register, because IMR was
+  # already cleared above to keep the switch atomic.
+  swa  r6,  [r1, 132]
 
   lwa  r9, [r2, 128]
   mov  psr, r9
