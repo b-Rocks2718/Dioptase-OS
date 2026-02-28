@@ -10,8 +10,8 @@
 #include "per_core.h"
 #include "sd_driver.h"
 
-unsigned HEAP_START = 0x1D000;
-unsigned HEAP_SIZE = 0x02000;
+unsigned HEAP_START = 0x34000;
+unsigned HEAP_SIZE = 0x04000;
 
 extern void kernel_main(void);
 

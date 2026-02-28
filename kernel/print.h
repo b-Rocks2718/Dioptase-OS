@@ -41,4 +41,6 @@ void vga_text_init(void);
 
 void load_text_tiles(void);
 
+void load_text_tiles_colored(short text_color, short bg_color);
+
 #endif // PRINT_H

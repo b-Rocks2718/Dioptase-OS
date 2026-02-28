@@ -225,3 +225,25 @@ void load_text_tiles(void){
     TILEMAP[16320 + i] = 0xF000;
   }
 }
+
+// text_tiles is a list of addresses that we need to store 0xC000 at
+void load_text_tiles_colored(short text_color, short bg_color){
+  for (int i = 0; i < TILEMAP_PIXELS; ++i){
+    TILEMAP[i] = bg_color;
+  }
+
+  clear_screen();
+
+  int i = 0;
+  int offset = text_tiles[i];
+  while (offset != 0){
+    TILEMAP[offset] = text_color;
+    offset = text_tiles[i++];
+  }
+
+  // transparent tile at index 255
+  for (int i = 0; i < 64; ++i){
+    // 16320 = 255 * 64
+    TILEMAP[16320 + i] = 0xF000;
+  }
+}
