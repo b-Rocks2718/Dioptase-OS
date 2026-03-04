@@ -28,12 +28,12 @@ unsigned puts(char* str);
 
 // simple printf implementation supporting %d, %u, %x, %X
 // accepts an array instead of variadic arguments
-unsigned printf(char* fmt, int* arr);
+unsigned printf(char* fmt, void* arr);
 
 // printf with locking
-unsigned say(char* fmt, int* arr);
+unsigned say(char* fmt, void* arr);
 
-unsigned say_color(char* fmt, int* arr, int color);
+unsigned say_color(char* fmt, void* arr, int color);
 
 void clear_screen(void);
 

@@ -63,14 +63,14 @@ unsigned puts(char* str){
   return count;
 }
 
-unsigned say(char* fmt, int* arr){
+unsigned say(char* fmt, void* arr){
   spin_lock_acquire(&print_lock);
   unsigned count = printf(fmt, arr);
   spin_lock_release(&print_lock);
   return count;
 }
 
-unsigned say_color(char* fmt, int* arr, int color){
+unsigned say_color(char* fmt, void* arr, int color){
   spin_lock_acquire(&print_lock);
   int old_color = text_color;
   text_color = color;
@@ -82,23 +82,30 @@ unsigned say_color(char* fmt, int* arr, int color){
 
 // simple printf implementation supporting %d, %u, %x, %X
 // accepts an array instead of variadic arguments
-unsigned printf(char* fmt, int* arr){
+unsigned printf(char* fmt, void* arr){
   unsigned count = 0;
   unsigned i = 0;
   while (*fmt != '\0'){
     if (*fmt == '%') {
       if (*(fmt + 1) == 'd') {
         ++fmt;
-        count += print_signed(arr[i++]);
+        count += print_signed(((int*)arr)[i++]);
       } else if (*(fmt + 1) == 'u') {
         ++fmt;
-        count += print_unsigned((unsigned)arr[i++]);
+        count += print_unsigned(((unsigned*)arr)[i++]);
       } else if (*(fmt + 1) == 'x') {
         ++fmt;
-        count += print_hex((unsigned)arr[i++], false);
+        count += print_hex(((unsigned*)arr)[i++], false);
       } else if (*(fmt + 1) == 'X') {
         ++fmt;
-        count += print_hex((unsigned)arr[i++], true);
+        count += print_hex(((unsigned*)arr)[i++], true);
+      } else if (*(fmt + 1) == 's') {
+        ++fmt;
+        count += puts((char*)((void**)arr)[i++]);
+      } else if (*(fmt + 1) == '%') {
+        ++fmt;
+        putchar('%');
+        ++count;
       } else {
         // unsupported format specifier, print as is
         putchar(*fmt);

@@ -44,6 +44,14 @@ struct GenericSpinQueue {
   int size;
 };
 
+struct RingBuf {
+  void** buf;
+  unsigned capacity;
+  unsigned head;
+  unsigned tail;
+};
+
+
 void spin_queue_init(struct SpinQueue* queue);
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data);
@@ -99,5 +107,18 @@ struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* q
 struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueue* queue);
 
 unsigned generic_spin_queue_size(struct GenericSpinQueue* queue);
+
+
+void ringbuf_init(struct RingBuf* rb, unsigned capacity);
+
+bool ringbuf_add(struct RingBuf* rb, void* c);
+
+void* ringbuf_remove(struct RingBuf* rb);
+
+unsigned ringbuf_size(struct RingBuf* rb);
+
+void ringbuf_destroy(struct RingBuf* rb);
+
+void ringbuf_free(struct RingBuf* rb);
 
 #endif // QUEUE_H

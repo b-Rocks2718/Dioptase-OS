@@ -339,3 +339,55 @@ struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueu
 unsigned generic_spin_queue_size(struct GenericSpinQueue* queue){
   return __atomic_load_n(&queue->size);
 }
+
+
+void ringbuf_init(struct RingBuf* rb, unsigned capacity){
+  rb->buf = malloc(capacity * sizeof(void*));
+  rb->capacity = capacity;
+  rb->head = 0;
+  rb->tail = 0;
+}
+
+bool ringbuf_add(struct RingBuf* rb, void* c){
+  if ((rb->head + 1) % rb->capacity == rb->tail){
+    // full
+    return false;
+  }
+
+  rb->buf[rb->head] = c;
+  rb->head = (rb->head + 1) % rb->capacity;
+  return true;
+}
+
+void* ringbuf_remove(struct RingBuf* rb){
+  if (rb->head == rb->tail){
+    // empty
+    return NULL;
+  }
+
+  void* c = rb->buf[rb->tail];
+  rb->tail = (rb->tail + 1) % rb->capacity;
+  return c;
+}
+
+unsigned ringbuf_size(struct RingBuf* rb){
+  if (rb->head >= rb->tail){
+    return rb->head - rb->tail;
+  } else {
+    return rb->capacity - (rb->tail - rb->head);
+  }
+}
+
+void ringbuf_destroy(struct RingBuf* rb){
+  // free dynamically allocated buffer
+  free(rb->buf);
+  rb->buf = NULL;
+  rb->capacity = 0;
+  rb->head = 0;
+  rb->tail = 0;
+}
+
+void ringbuf_free(struct RingBuf* rb){
+  ringbuf_destroy(rb);
+  free(rb);
+}

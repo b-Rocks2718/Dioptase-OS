@@ -1,0 +1,9 @@
+***Hello from ext2 test!
+***Block size: 1024
+***Inode size: 128
+***Hello content: Hello!
+***Nested metadata: ok
+***Nested content: ok
+***Symlink target: nested
+***Block1 marker offset: 211
+***Missing path: ok

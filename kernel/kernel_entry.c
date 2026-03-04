@@ -36,7 +36,7 @@ void kernel_entry(void){
 
     say("| Num cores: %d\n", &num_cores);
 
-    say("| Mem size: 256KiB\n", NULL);
+    say("| Mem size: 128MiB\n", NULL);
 
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);

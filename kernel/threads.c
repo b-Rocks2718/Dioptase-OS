@@ -221,9 +221,9 @@ void event_loop(void) {
     }
   }
   if (get_core_id() == 0) {
-    say("| finished in %d jiffies\n", (int*)&current_jiffies);
+    say("| Finished in %d jiffies\n", (int*)&current_jiffies);
 
-    say("| checking leaks\n", NULL);
+    say("| Checking leaks\n", NULL);
     
     check_leaks();
 
