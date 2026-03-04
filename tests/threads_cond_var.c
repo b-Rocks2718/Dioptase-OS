@@ -33,7 +33,7 @@ static void waiter_thread(void* arg) {
   int id = *(int*)arg;
   (void)id;
 
-  blocking_lock_get(&lock);
+  blocking_lock_acquire(&lock);
   __atomic_fetch_add(&ready, 1);
 
   while (tickets == 0) {
@@ -83,7 +83,7 @@ void kernel_main(void) {
     yield();
   }
 
-  blocking_lock_get(&lock);
+  blocking_lock_acquire(&lock);
   tickets = 1;
   cond_var_signal(&cv);
   blocking_lock_release(&lock);
@@ -101,7 +101,7 @@ void kernel_main(void) {
     panic("cond_var test: signal woke incorrect number of waiters\n");
   }
 
-  blocking_lock_get(&lock);
+  blocking_lock_acquire(&lock);
   tickets = NUM_WAITERS - 1;
   cond_var_broadcast(&cv);
   blocking_lock_release(&lock);

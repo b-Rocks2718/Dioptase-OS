@@ -92,6 +92,10 @@ void queue_init(struct Queue* queue){
 }
 
 void queue_add(struct Queue* queue, struct TCB* data){
+  // Queue insertion always consumes a single detached node. Semaphore waiters
+  // may have stale linkage from an earlier queue, so clear it before linking.
+  data->next = NULL;
+
   if (queue->head == NULL){
     queue->head = data;
     queue->tail = data;
@@ -153,6 +157,10 @@ void sleep_queue_add(void* args){
   struct TCB* data = (struct TCB*)args_array[1];
 
   spin_lock_acquire(&queue->spinlock);
+
+  // Sleep queue insertion also consumes a detached node. Clear any stale
+  // linkage before we splice the thread into the ordered wakeup list.
+  data->next = NULL;
 
   if (queue->head == NULL){
     // empty queue
@@ -348,18 +356,39 @@ void ringbuf_init(struct RingBuf* rb, unsigned capacity){
   rb->tail = 0;
 }
 
-bool ringbuf_add(struct RingBuf* rb, void* c){
+bool ringbuf_add_front(struct RingBuf* rb, void* p){
   if ((rb->head + 1) % rb->capacity == rb->tail){
     // full
     return false;
   }
 
-  rb->buf[rb->head] = c;
+  rb->buf[rb->head] = p;
   rb->head = (rb->head + 1) % rb->capacity;
   return true;
 }
 
-void* ringbuf_remove(struct RingBuf* rb){
+bool ringbuf_add_back(struct RingBuf* rb, void* p){
+  if ((rb->head + 1) % rb->capacity == rb->tail){
+    // full
+    return false;
+  }
+
+  rb->tail = (rb->tail - 1 + rb->capacity) % rb->capacity;
+  rb->buf[rb->tail] = p;
+  return true;
+}
+
+void* ringbuf_remove_front(struct RingBuf* rb){
+  if (rb->head == rb->tail){
+    // empty
+    return NULL;
+  }
+
+  rb->head = (rb->head - 1 + rb->capacity) % rb->capacity;
+  return rb->buf[rb->head];
+}
+
+void* ringbuf_remove_back(struct RingBuf* rb){
   if (rb->head == rb->tail){
     // empty
     return NULL;

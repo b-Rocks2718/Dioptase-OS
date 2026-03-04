@@ -12,7 +12,8 @@
 
 void ext2_init(struct Ext2* fs){
   // start by reading superblock
-  sd_read_blocks(SD_DRIVE_1, 2, 2, &fs->superblock);
+  int rc = sd_read_blocks(SD_DRIVE_1, 2, 2, &fs->superblock);
+  assert(rc == 0, "ext2_init: failed to read ext2 superblock.\n");
 
   // check this is an ext2 file system
   assert(fs->superblock.magic == 0xEF53, "Not an ext2 file system\n");
@@ -37,8 +38,9 @@ void ext2_init(struct Ext2* fs){
   // The SD layer reads complete sectors, so the backing buffer must be rounded
   // up even if the descriptor table itself is smaller.
   fs->bgd_table = malloc(bgd_table_sectors * SD_SECTOR_SIZE_BYTES);
-  sd_read_blocks(SD_DRIVE_1, bgd_offset / SD_SECTOR_SIZE_BYTES,
+  rc = sd_read_blocks(SD_DRIVE_1, bgd_offset / SD_SECTOR_SIZE_BYTES,
     bgd_table_sectors, (char*)fs->bgd_table);
+  assert(rc == 0, "ext2_init: failed to read block group descriptor table.\n");
 
   fs->icache.fs = fs;
   icache_init(&fs->icache);
@@ -75,39 +77,78 @@ unsigned ext2_get_inode_size(struct Ext2* fs){
 }
 
 void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
-  // split string on first '/' character
-  int i = strlen(name) - 1;
-  while (i >= 0){
-    unsigned size = 1;
-          
-    // find separator
-    while (name[i] != '/' && i > 0) {
-      size++;
-      i--;
+  unsigned name_len = strlen(name);
+  unsigned start = 0;
+
+  // Queue path components in left-to-right order so `ringbuf_remove()` returns
+  // them in traversal order.
+  while (start < name_len) {
+    while (start < name_len && name[start] == '/') {
+      start++;
     }
 
-    if (i == 0 && name[0] != '/'){
-      size++;
-      i--;
+    if (start >= name_len) {
+      break;
     }
 
-    if (size == 1) {
-      i--;
-      continue;
+    unsigned end = start;
+    while (end < name_len && name[end] != '/') {
+      end++;
     }
 
+    unsigned size = (end - start) + 1;
     char* component = malloc(size);
-    memcpy(component, name + i + 1, size - 1);
+    memcpy(component, name + start, size - 1);
     component[size - 1] = 0;
 
-    i--;
-
-    ringbuf_add(path, component);
+    assert(ringbuf_add_front(path, component), "ext2_expand_path: path buffer overflow.\n");
+    start = end;
   }
 }
 
+// Releases any path components still owned by the traversal queue, then frees
+// the queue object itself. `ext2_find` uses this on both success and failure so
+// aborted lookups do not leak the remaining path strings.
+static void ext2_free_pending_path(struct RingBuf* path){
+  if (path == NULL) return;
+
+  while (ringbuf_size(path) > 0) {
+    free(ringbuf_remove_back(path));
+  }
+
+  ringbuf_free(path);
+}
+
+// Reconstruct the directory that contains `node`. This is needed when a caller
+// starts a relative lookup from a symlink node, because the traversal must
+// resolve that symlink relative to its containing directory rather than the
+// symlink inode itself.
+static struct Node* ext2_open_parent_dir(struct Node* node){
+  struct Ext2* fs = node->filesystem;
+  struct Inode* inode = icache_get(&fs->icache, node->parent_inumber);
+  struct Node* parent = malloc(sizeof(struct Node));
+
+  node_init(parent, node->parent_inumber, inode, fs);
+  assert(node_is_dir(parent),
+    "ext2_open_parent_dir: symlink parent inode is not a directory.\n");
+
+  return parent;
+}
+
+// Create a standalone wrapper for the ext2 root inode. This keeps ext2_find's
+// return contract uniform: every successful lookup returns a heap-owned node.
+static struct Node* ext2_open_root_dir(struct Ext2* fs){
+  struct Inode* inode = icache_get(&fs->icache, fs->root.inumber);
+  struct Node* root = malloc(sizeof(struct Node));
+
+  node_init(root, fs->root.inumber, inode, fs);
+  assert(node_is_dir(root), "ext2_open_root_dir: root inode is not a directory.\n");
+
+  return root;
+}
+
 struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* path){
-  char* name = ringbuf_remove(path);
+  char* name = ringbuf_remove_back(path);
   assert(name != NULL, "ext2_enter_dir: path is empty.\n");
 
   // get first directory entry
@@ -118,9 +159,9 @@ struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* p
   while (index < node_size_in_bytes(dir)) {
     int cnt = node_read_all(dir, index, sizeof(struct DirEntry), (char*)&entry);
     assert(cnt >= 4, "ext2_enter_dir: failed to read directory entry.\n");
+    assert(entry.rec_len >= 8, "ext2_enter_dir: invalid directory record length.\n");
 
     index += entry.rec_len;
-    //uint32_t inodes_per_block = get_block_size() / sizeof(Inode);
     if (strneq((char*)entry.name, name, entry.name_len) && entry.name_len == strlen(name) && entry.inode != 0) {
 
       assert(entry.inode != 0, "ext2_enter_dir: inode is 0.\n");
@@ -131,6 +172,7 @@ struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* p
       free(name);
       struct Node* node = malloc(sizeof(struct Node));
       node_init(node, entry.inode, inode, fs);
+      node->parent_inumber = dir->inumber;
       
       return node;
     }
@@ -145,25 +187,47 @@ struct Node* ext2_expand_symlink(struct Ext2* fs, struct Node* parent, struct No
   char* buf = malloc(target_size + 1);
   node_get_symlink_target(dir, buf);
 
-  ext2_expand_path(fs, buf, path);
+  // Push the symlink target ahead of the remaining unresolved path so traversal
+  // consumes the target before the old suffix.
+  assert(ringbuf_add_back(path, buf), "ext2_expand_symlink: path buffer overflow.\n");
 
   if (buf[0] == '/') {
-    free(buf);
-    return &fs->root;
+    return ext2_open_root_dir(fs);
   } else {
-    free(buf);
+    // When the traversal starts from a symlink node, `parent == dir` and the
+    // containing directory is not otherwise available. Reconstruct it so the
+    // relative target uses the same base directory a normal path walk would use.
+    if (parent == dir) {
+      return ext2_open_parent_dir(dir);
+    }
+
     return parent;
+  }
+}
+
+// Releases heap-owned traversal wrappers while leaving borrowed nodes untouched.
+static void ext2_release_owned_node(struct Node* node, bool owned){
+  if (owned && node != NULL) {
+    node_free(node);
   }
 }
 
 struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
   if (dir == NULL || name == NULL) return NULL;
   assert(node_is_dir(dir) || node_is_symlink(dir), "ext2_find: not a directory or symlink.\n");
-    
-  // path is absolute
-  if (name[0] == '/') dir = &fs->root;
+
+  bool dir_owned = false;
+
+  // Absolute paths and root-relative paths start from a fresh heap-owned root
+  // wrapper so all successful lookups have the same ownership contract.
+  if (name[0] == '/' || dir == &fs->root) {
+    dir = ext2_open_root_dir(fs);
+    dir_owned = true;
+  }
+
 
   struct Node* parent = dir;
+  bool parent_owned = dir_owned;
 
   // surely path won't contain more than 1024 directories/simlinks to traverse
   struct RingBuf* path = malloc(sizeof(struct RingBuf));
@@ -174,29 +238,76 @@ struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
   unsigned follows = 0;
 
   while (ringbuf_size(path) > 0) {
-    if (dir == NULL) return NULL;
-    if (follows > 100) return NULL;
+    if (dir == NULL) {
+      ext2_free_pending_path(path);
+      ext2_release_owned_node(parent, parent_owned);
+      return NULL;
+    }
+    if (follows > 100) {
+      ext2_free_pending_path(path);
+      if (parent != dir) {
+        ext2_release_owned_node(parent, parent_owned);
+      }
+      ext2_release_owned_node(dir, dir_owned);
+      return NULL;
+    }
 
     if (node_is_dir(dir)) {
+      struct Node* old_parent = parent;
+      bool old_parent_owned = parent_owned;
       struct Node* next = ext2_enter_dir(fs, dir, path);
+
       parent = dir;
+      parent_owned = dir_owned;
       dir = next;
+      dir_owned = next != NULL;
+
+      if (old_parent != parent) {
+        ext2_release_owned_node(old_parent, old_parent_owned);
+      }
     } else {
-      struct Node* tmp = ext2_expand_symlink(fs, parent, dir, path);
+      struct Node* old_parent = parent;
+      bool old_parent_owned = parent_owned;
+      struct Node* old_dir = dir;
+      bool old_dir_owned = dir_owned;
+      struct Node* tmp = ext2_expand_symlink(fs, old_parent, old_dir, path);
+
       follows += 1;
+
+      if (tmp == old_parent) {
+        dir = tmp;
+        dir_owned = old_parent_owned;
+      } else {
+        dir = tmp;
+        dir_owned = true;
+      }
+
+      // After expanding a symlink we restart traversal from `dir`, which is the
+      // containing directory for relative targets or root for absolute targets.
       parent = dir;
-      dir = tmp;
+      parent_owned = dir_owned;
+
+      if (old_dir != dir) {
+        ext2_release_owned_node(old_dir, old_dir_owned);
+      }
+      if (old_parent != old_dir && old_parent != dir) {
+        ext2_release_owned_node(old_parent, old_parent_owned);
+      }
     }
   }
 
-  ringbuf_free(path);
+  ext2_free_pending_path(path);
+
+  if (parent != dir) {
+    ext2_release_owned_node(parent, parent_owned);
+  }
 
   return dir;
 }
 
 
 void icache_init(struct InodeCache* cache){
-  spin_lock_init(&cache->lock);
+  blocking_lock_init(&cache->lock);
   for (unsigned i = 0; i < ICACHE_SIZE; ++i){
     // Clear tags so a freshly initialized cache cannot report a stale hit.
     cache->tags[i] = 0;
@@ -210,9 +321,8 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
   unsigned block_size = ext2_get_block_size(cache->fs);
   unsigned inode_size = ext2_get_inode_size(cache->fs);
   unsigned inodes_per_block = block_size / inode_size;
-  char* inode_table_buf = malloc(block_size);
 
-  spin_lock_acquire(&cache->lock);
+  blocking_lock_acquire(&cache->lock);
   bool found = false;
   unsigned result = 0;
   for (unsigned i = 0; i < ICACHE_SIZE; ++i){
@@ -233,9 +343,7 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
     // copy from buffer into inode
     memcpy(inode, cache->inode_cache + result, sizeof(struct Inode));
 
-    spin_lock_release(&cache->lock);
-
-    free(inode_table_buf);
+    blocking_lock_release(&cache->lock);
 
     return inode;
   } 
@@ -243,15 +351,20 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
   
   // have to read in inode, so temporarily release lock while doing IO
 
-  spin_lock_release(&cache->lock);
+  blocking_lock_release(&cache->lock);
 
-  sd_read_blocks(SD_DRIVE_1,
+  // Allocate the temporary inode-table buffer only on a cache miss so hot-path
+  // inode hits do not contend on the heap for an unused scratch block.
+  char* inode_table_buf = malloc(block_size);
+
+  int rc = sd_read_blocks(SD_DRIVE_1,
     (cache->fs->bgd_table[(inumber - 1) / cache->fs->superblock.inodes_per_group].inode_table + 
       (inumber - 1) / inodes_per_block) * block_size / SD_SECTOR_SIZE_BYTES,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf
   );
+  assert(rc == 0, "icache_get: failed to read inode table block.\n");
 
-  spin_lock_acquire(&cache->lock);
+  blocking_lock_acquire(&cache->lock);
 
   for (unsigned i = 0; i < ICACHE_SIZE; ++i){
     cache->ages[i]++;
@@ -268,7 +381,7 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
   // copy from cache into inode
   memcpy(inode, cache->inode_cache + result, sizeof(struct Inode));
 
-  spin_lock_release(&cache->lock);
+  blocking_lock_release(&cache->lock);
 
   free(inode_table_buf);
 
@@ -277,7 +390,7 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
 
 
 void bcache_init(struct BlockCache* cache, unsigned block_size){
-  spin_lock_init(&cache->lock);
+  blocking_lock_init(&cache->lock);
   cache->block_size = block_size;
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
     // Clear tags so a freshly initialized cache cannot report a stale hit.
@@ -287,7 +400,7 @@ void bcache_init(struct BlockCache* cache, unsigned block_size){
 }
 
 void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
-  spin_lock_acquire(&cache->lock);
+  blocking_lock_acquire(&cache->lock);
   bool found = false;
   unsigned result = 0;
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
@@ -308,7 +421,7 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
     // copy from buffer into inode
     memcpy(dest, cache->block_cache + result * cache->block_size, cache->block_size);
 
-    spin_lock_release(&cache->lock);
+    blocking_lock_release(&cache->lock);
 
     return;
   } 
@@ -316,13 +429,14 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
   // was not in cache, need to read in block
 
   // can't read from sd while holding the lock since it's a blocking call
-  spin_lock_release(&cache->lock);
+  blocking_lock_release(&cache->lock);
 
-  sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
+  int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, dest);
+  assert(rc == 0, "bcache_get: failed to read filesystem block.\n");
 
   // now update cache with new block
-  spin_lock_acquire(&cache->lock);
+  blocking_lock_acquire(&cache->lock);
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
     cache->ages[i]++;
     if (cache->ages[i] == BCACHE_SIZE) result = i;
@@ -332,12 +446,15 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
 
   memcpy(cache->block_cache + result * cache->block_size, dest, cache->block_size);
       
-  spin_lock_release(&cache->lock);
+  blocking_lock_release(&cache->lock);
 } 
 
 
 void node_init(struct Node* node, unsigned inumber, struct Inode* inode, struct Ext2* fs){
   node->inumber = inumber;
+  // Default to "self" so root nodes and reconstructed directory nodes remain
+  // valid even when the caller has no better parent information available.
+  node->parent_inumber = inumber;
   node->inode = inode;
   node->filesystem = fs;
 }
@@ -499,6 +616,7 @@ unsigned node_entry_count(struct Node* node){
   // traverse the linked list
   while (index < node_size_in_bytes(node)){
     node_read_all(node, index, sizeof(struct DirEntry), (char*)&entry);
+    assert(entry.rec_len >= 8, "node_entry_count: invalid directory record length.\n");
     index += entry.rec_len;
     if (entry.inode != 0) count++;
   }

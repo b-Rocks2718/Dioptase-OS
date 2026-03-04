@@ -34,11 +34,11 @@ int* DMA_ERR_REG_1 = (int*)0x7FE583C;
 static struct BlockingLock sd_lock_0;
 static struct BlockingLock sd_lock_1;
 
-void sd_lock_get(enum SdDrive drive){
+void sd_lock_acquire(enum SdDrive drive){
   if (drive == SD_DRIVE_0) {
-    blocking_lock_get(&sd_lock_0);
+    blocking_lock_acquire(&sd_lock_0);
   } else {
-    blocking_lock_get(&sd_lock_1);
+    blocking_lock_acquire(&sd_lock_1);
   }
 }
 
@@ -127,7 +127,7 @@ int sd_read_block(enum SdDrive drive, int block_num, void* dest){
 }
 
 int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* dest){
-  sd_lock_get(drive);
+  sd_lock_acquire(drive);
   for(int i = 0; i < num_blocks; i++){
     int rc = sd_read_block(drive, start_block + i, (char*)dest + (i * SD_BLOCK_SIZE_BYTES));
     if (rc != 0){
@@ -157,7 +157,7 @@ int sd_write_block(enum SdDrive drive, int block_num, void* src){
 }
 
 int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* src){
-  sd_lock_get(drive);
+  sd_lock_acquire(drive);
   for(int i = 0; i < num_blocks; i++){
     int rc = sd_write_block(drive, start_block + i, (char*)src + (i * SD_BLOCK_SIZE_BYTES));
     if (rc != 0){

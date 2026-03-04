@@ -111,9 +111,13 @@ unsigned generic_spin_queue_size(struct GenericSpinQueue* queue);
 
 void ringbuf_init(struct RingBuf* rb, unsigned capacity);
 
-bool ringbuf_add(struct RingBuf* rb, void* c);
+bool ringbuf_add_front(struct RingBuf* rb, void* p);
 
-void* ringbuf_remove(struct RingBuf* rb);
+bool ringbuf_add_back(struct RingBuf* rb, void* p);
+
+void* ringbuf_remove_front(struct RingBuf* rb);
+
+void* ringbuf_remove_back(struct RingBuf* rb);
 
 unsigned ringbuf_size(struct RingBuf* rb);
 

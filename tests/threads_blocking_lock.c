@@ -35,7 +35,7 @@ static void worker_thread(void* arg) {
   }
 
   for (int i = 0; i < a->rounds; i++) {
-    blocking_lock_get(&lock);
+    blocking_lock_acquire(&lock);
     shared_counter += 1;
     blocking_lock_release(&lock);
     yield();

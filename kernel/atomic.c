@@ -30,7 +30,7 @@ void spin_lock_acquire(struct SpinLock* lock){
 
 // will disable interrupt before attempting to get the lock
 // if it succeeds, interrupts are disabled
-bool spin_lock_try_get(struct SpinLock* lock){
+bool spin_lock_try_acquire(struct SpinLock* lock){
 
   int was = disable_interrupts();
   if (!__atomic_exchange_n(&lock->the_lock, 1)){

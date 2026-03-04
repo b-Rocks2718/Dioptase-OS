@@ -6,6 +6,7 @@
 #include "machine.h"
 #include "shared.h"
 #include "queue.h"
+#include "blocking_lock.h"
 
 #define ICACHE_SIZE 16
 #define BCACHE_SIZE 12
@@ -20,7 +21,7 @@ struct InodeCache {
   unsigned tags[ICACHE_SIZE]; // tags = array of inode numbers
   unsigned char ages[ICACHE_SIZE];
   struct Inode inode_cache[ICACHE_SIZE];
-  struct SpinLock lock;
+  struct BlockingLock lock;
 };
 
 struct BlockCache {
@@ -28,13 +29,17 @@ struct BlockCache {
   unsigned tags[BCACHE_SIZE];
   unsigned char ages[BCACHE_SIZE];
   char block_cache[BCACHE_SIZE_BYTES];
-  struct SpinLock lock;
+  struct BlockingLock lock;
   unsigned block_size;
 };
 
 struct Node {
   struct Inode* inode;
   unsigned inumber;
+  // Parent directory inode number. For the root node, this is the root inode
+  // itself. Symlink traversal uses this to resolve relative targets when a
+  // caller starts a lookup from a symlink node.
+  unsigned parent_inumber;
   struct Ext2* filesystem;
 };
 
@@ -63,7 +68,16 @@ unsigned ext2_get_block_size(struct Ext2* fs);
 
 unsigned ext2_get_inode_size(struct Ext2* fs);
 
+// Resolves `name` starting from `dir` and returns a heap-allocated node wrapper
+// on success (including when the result is the root inode). Callers must release
+// any non-NULL result with `node_free(...)`.
 struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name);
+
+struct Node* ext2_make_file(struct Ext2* fs, struct Node* dir, char* name);
+
+struct Node* ext2_make_dir(struct Ext2* fs, struct Node* dir, char* name);
+
+struct Node* ext2_make_symlink(struct Ext2* fs, struct Node* dir, char* name, char* target);
 
 void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path);
 
@@ -105,7 +119,9 @@ bool node_is_file(struct Node* node);
 
 bool node_is_symlink(struct Node* node);
 
-void node_get_symlink_target(struct Node* node, char* dest); // for symlink nodes only
+// For symlink nodes only. `dest` must have space for the raw target plus one
+// trailing NUL byte because this helper always NUL-terminates the result.
+void node_get_symlink_target(struct Node* node, char* dest);
 
 unsigned node_get_num_links(struct Node* node); // num hard links
 

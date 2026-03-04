@@ -155,13 +155,17 @@ unsigned sanity(unsigned i) {
     }
     unsigned footer = footerFromHeader(i);
     if (footer >= len) {
+      int args[4] = {(int)i, (int)footer, (int)len, (int)get_caller_return_address()};
+      say("| HEAP bad footer: header=%d footer=%d len=%d caller=0x%X\n", args);
       panic("bad footer index\n");
     }
     unsigned hv = array[i];
     unsigned fv = array[footer];
 
     if (hv != fv) {
-      panic("bad block\n"); // at i, hv, fv
+      int args[4] = {(int)i, (int)hv, (int)fv, (int)get_caller_return_address()};
+      say("| HEAP bad block: header=%d hv=0x%X fv=0x%X caller=0x%X\n", args);
+      panic("bad block\n");
     }
   }
 
@@ -225,7 +229,7 @@ static void makeTaken(unsigned i, unsigned entry_count) {
 }
 
 void check_leaks() {
-  blocking_lock_get(&theLock);
+  blocking_lock_acquire(&theLock);
   int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
   if (n_free + n_leak != n_malloc) {
     say("| Heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
@@ -292,7 +296,7 @@ void *malloc(unsigned bytes) {
     entries++;
   }
 
-  blocking_lock_get(&theLock);
+  blocking_lock_acquire(&theLock);
 
   void *res = 0;
 
@@ -357,7 +361,7 @@ void free(void *p) {
   if (p == (void *)array)
     return;
 
-  blocking_lock_get(&theLock);
+  blocking_lock_acquire(&theLock);
 
 #ifdef HEAP_DEBUG
   heap_validate_state();

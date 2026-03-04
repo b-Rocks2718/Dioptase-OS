@@ -32,7 +32,7 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   sem_down(&cv->semaphore);
 
   // re-acquire the external lock after being signaled
-  blocking_lock_get(external_lock);
+  blocking_lock_acquire(external_lock);
 }
 
 // Purpose: wake one waiter if any are currently blocked.
