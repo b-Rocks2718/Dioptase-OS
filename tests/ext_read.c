@@ -8,8 +8,15 @@
 
 struct Ext2 fs;
 
+#define EXT2_BLOCK_SIZE_1K 1024
+#define EXT2_BLOCK_SIZE_2K 2048
+#define EXT2_BLOCK_SIZE_4K 4096
 #define CONCURRENT_READERS 4
 #define CONCURRENT_ROUNDS 1
+#define MARKER_WINDOW_LEAD_BYTES 32
+#define MARKER_WINDOW_MAX_BYTES 320
+#define BLOCKS_MARKER "BLOCK1-MARKER\n"
+#define FILE_END_MARKER "FILE-END\n"
 
 struct ConcurrentReadArgs {
   unsigned block_size;
@@ -22,6 +29,29 @@ static int concurrent_block_reads = 0;
 static int concurrent_directory_checks = 0;
 static int concurrent_symlink_checks = 0;
 static int concurrent_missing_checks = 0;
+
+// Chooses a small read window that always covers BLOCK1-MARKER. When the
+// marker lives in a later logical block, the window starts just before that
+// block boundary so the read crosses the same boundary the full test cares
+// about. When the file fits in one block, the window falls back to a local
+// marker-centered slice.
+static void choose_marker_window(unsigned marker_offset, unsigned file_size,
+  unsigned block_size, unsigned* window_offset, unsigned* window_size) {
+  unsigned marker_block = marker_offset / block_size;
+
+  if (marker_block > 0) {
+    *window_offset = marker_block * block_size - MARKER_WINDOW_LEAD_BYTES;
+  } else if (marker_offset > MARKER_WINDOW_LEAD_BYTES) {
+    *window_offset = marker_offset - MARKER_WINDOW_LEAD_BYTES;
+  } else {
+    *window_offset = 0;
+  }
+
+  *window_size = MARKER_WINDOW_MAX_BYTES;
+  if (*window_offset + *window_size > file_size) {
+    *window_size = file_size - *window_offset;
+  }
+}
 
 // Verifies the ownership contract for root lookups: ext2_find("/") should
 // return a heap-owned wrapper that callers can release with node_free().
@@ -196,50 +226,60 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   node_free(nested);
 }
 
-// blocks.txt is deliberately larger than one 1KiB ext2 block in the default
-// test image. Reading the whole file and then reading block 1 directly checks
-// both the sequential read path and direct block addressing.
-static void check_multi_block_file(struct Node* root, unsigned block_size) {
+// blocks.txt keeps a fixed byte layout, so the historical BLOCK1-MARKER name
+// only lines up with logical block 1 when the ext2 block size is 1024 bytes.
+// The test therefore finds the marker first, then re-reads whichever logical
+// block currently contains it and a small window around that same offset.
+static void check_blocks_fixture(struct Node* root, unsigned block_size) {
   struct Node* blocks = ext2_find(&fs, root, "blocks.txt");
   assert(blocks != NULL, "ext_read: blocks.txt not found in root directory.\n");
   assert(node_is_file(blocks), "ext_read: blocks.txt should decode as a regular file.\n");
-  assert(node_size_in_bytes(blocks) > block_size,
-    "ext_read: blocks.txt should span multiple ext2 blocks.\n");
 
   unsigned blocks_size = node_size_in_bytes(blocks);
   char* blocks_text = read_node_text(blocks);
-  int marker_offset = find_marker(blocks_text, blocks_size, "BLOCK1-MARKER\n");
-  assert(marker_offset >= (int)block_size,
-    "ext_read: BLOCK1-MARKER should appear after the first ext2 block.\n");
+  int marker_offset = find_marker(blocks_text, blocks_size, BLOCKS_MARKER);
+  assert(marker_offset >= 0,
+    "ext_read: blocks.txt should contain BLOCK1-MARKER.\n");
 
-  char* block_one = malloc(block_size);
-  node_read_block(blocks, 1, block_one);
-  int block_one_offset = find_marker(block_one, block_size, "BLOCK1-MARKER\n");
-  assert(block_one_offset >= 0,
-    "ext_read: node_read_block(blocks.txt, 1) did not include BLOCK1-MARKER.\n");
+  unsigned marker_offset_u = marker_offset;
+  unsigned marker_block = marker_offset_u / block_size;
+  unsigned marker_block_offset = marker_offset_u % block_size;
 
-  int block_one_args[1] = { block_one_offset };
-  say("***Block1 marker offset: %d\n", block_one_args);
+  if (blocks_size > block_size) {
+    assert(marker_block > 0,
+      "ext_read: blocks.txt should place BLOCK1-MARKER in a later block when the file spans multiple ext2 blocks.\n");
+  } else {
+    assert(marker_block == 0,
+      "ext_read: blocks.txt should keep BLOCK1-MARKER in block 0 when the file fits in one ext2 block.\n");
+  }
 
-  // This unaligned read starts near the end of block 0 and extends into block
-  // 1. It catches bugs where `node_read_all` copies the second chunk to the
-  // wrong destination offset when the first chunk is only a partial block.
-  unsigned window_offset = block_size - 32;
-  unsigned window_size = 320;
+  char* marker_block_data = malloc(block_size);
+  node_read_block(blocks, marker_block, marker_block_data);
+  int direct_marker_offset = find_marker(marker_block_data, block_size, BLOCKS_MARKER);
+  assert(direct_marker_offset == (int)marker_block_offset,
+    "ext_read: node_read_block returned the wrong logical block for BLOCK1-MARKER.\n");
+
+  // This window is cross-block for the 1024-byte image and marker-centered for
+  // larger block sizes where the whole fixture fits inside block 0.
+  unsigned window_offset = 0;
+  unsigned window_size = 0;
+  choose_marker_window(marker_offset_u, blocks_size, block_size, &window_offset,
+    &window_size);
   char* marker_window = malloc(window_size);
   node_read_all(blocks, window_offset, window_size, marker_window);
-  int window_marker = find_marker(marker_window, window_size, "BLOCK1-MARKER\n");
-  assert(window_marker == marker_offset - (int)window_offset,
-    "ext_read: unaligned node_read_all lost the expected marker position.\n");
+  int window_marker = find_marker(marker_window, window_size, BLOCKS_MARKER);
+  assert(window_marker == (int)(marker_offset_u - window_offset),
+    "ext_read: node_read_all marker window lost the expected marker position.\n");
 
-  int file_end_offset = find_marker(blocks_text, blocks_size, "FILE-END\n");
-  assert(file_end_offset == (int)(blocks_size - strlen("FILE-END\n")),
+  int file_end_offset = find_marker(blocks_text, blocks_size, FILE_END_MARKER);
+  assert(file_end_offset == (int)(blocks_size - strlen(FILE_END_MARKER)),
     "ext_read: node_read_all did not preserve the expected file tail.\n");
 
   free(marker_window);
-  free(block_one);
+  free(marker_block_data);
   free(blocks_text);
   node_free(blocks);
+  say("***blocks.txt reads: ok\n", NULL);
 }
 
 // A missing single-component path should still fail cleanly.
@@ -269,22 +309,33 @@ static void check_concurrent_hello_once(unsigned block_size) {
   node_free(hello);
 }
 
-// Reads across the block boundary in blocks.txt. Running this in many threads at
-// once stresses the shared block cache while also proving each worker receives
-// an intact cross-block slice instead of mixed data from another read.
+// Reads a small marker window from blocks.txt. For the 1024-byte image this
+// crosses the block boundary before BLOCK1-MARKER; for larger block sizes it
+// stays inside block 0. Running this in many threads at once still stresses the
+// shared block cache while proving each worker receives an intact marker slice.
 static void check_concurrent_blocks_once(unsigned block_size) {
   struct Node* blocks = ext2_find(&fs, &fs.root, "blocks.txt");
   assert(blocks != NULL, "ext_read: concurrent blocks.txt lookup failed.\n");
   assert(node_is_file(blocks),
     "ext_read: concurrent blocks.txt lookup did not return a regular file.\n");
 
-  unsigned window_offset = block_size - 32;
-  unsigned window_size = 320;
+  unsigned blocks_size = node_size_in_bytes(blocks);
+  char* blocks_text = read_node_text(blocks);
+  int marker_offset = find_marker(blocks_text, blocks_size, BLOCKS_MARKER);
+  assert(marker_offset >= 0,
+    "ext_read: concurrent blocks.txt read should contain BLOCK1-MARKER.\n");
+  unsigned marker_offset_u = marker_offset;
+
+  unsigned window_offset = 0;
+  unsigned window_size = 0;
+  choose_marker_window(marker_offset_u, blocks_size, block_size, &window_offset,
+    &window_size);
   char* marker_window = malloc(window_size);
   node_read_all(blocks, window_offset, window_size, marker_window);
-  assert(find_marker(marker_window, window_size, "BLOCK1-MARKER\n") >= 0,
-    "ext_read: concurrent cross-block read lost BLOCK1-MARKER.\n");
+  assert(find_marker(marker_window, window_size, BLOCKS_MARKER) >= 0,
+    "ext_read: concurrent marker window read lost BLOCK1-MARKER.\n");
 
+  free(blocks_text);
   free(marker_window);
   node_free(blocks);
 }
@@ -431,8 +482,12 @@ int kernel_main(void) {
 
   int block_size = ext2_get_block_size(&fs);
   int inode_size = ext2_get_inode_size(&fs);
-  say("***Block size: %d\n", &block_size);
-  say("***Inode size: %d\n", &inode_size);
+  assert(block_size == EXT2_BLOCK_SIZE_1K || block_size == EXT2_BLOCK_SIZE_2K ||
+    block_size == EXT2_BLOCK_SIZE_4K,
+    "ext_read: ext2 block size should match the supported mkfs.ext2 test sizes.\n");
+  assert(inode_size >= sizeof(struct Inode),
+    "ext_read: superblock inode size is smaller than the in-memory inode decoder.\n");
+  say("***Filesystem geometry: ok\n", NULL);
 
   struct Node* root = &fs.root;
   assert(node_is_dir(root), "ext_read: root inode should be a directory.\n");
@@ -444,7 +499,7 @@ int kernel_main(void) {
   check_root_lookup_contract(root);
   unsigned hello_inumber = check_hello_file(root, block_size);
   check_nested_entries(root, hello_inumber);
-  check_multi_block_file(root, block_size);
+  check_blocks_fixture(root, block_size);
   check_missing_path(root);
   check_concurrent_reads(block_size);
 

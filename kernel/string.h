@@ -9,4 +9,6 @@ bool streq(char* str1, char* str2);
 
 bool strneq(char* str1, char* str2, unsigned n);
 
+char* strncpy(char* dest, char* src, unsigned n);
+
 #endif // STRING_H

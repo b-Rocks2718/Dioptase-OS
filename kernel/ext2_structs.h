@@ -125,13 +125,13 @@ struct Inode {
   unsigned short links_count;
   unsigned blocks;
   unsigned flags;
-  unsigned osdl;
+  unsigned osd1;
   unsigned block[15];
   unsigned generation;
   unsigned file_acl;
   unsigned dir_acl;
   unsigned faddr;
-  unsigned char  osd2[12];
+  unsigned char osd2[12];
 };
 
 // inode constants:

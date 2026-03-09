@@ -5,7 +5,7 @@
 # ----------------------------------- configuration ---------------------------------------- #
 
 # emulator config
-NUM_CORES ?= 1
+NUM_CORES ?= 4
 SCHEDULER ?= free # free, rr, or random
 EMU_VGA ?= no
 TRACE_INTS ?= no
@@ -17,12 +17,13 @@ RODATA_LOAD_ADDR := 0xA0000
 BSS_LOAD_ADDR := 0xF0000
 
 # ext2 filesystem config
-BLOCK_SIZE := 1024 # 1024, 2048, or 4096
+BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
-TEST_RUNS ?= 1
-TIMEOUT_SECONDS ?= 3
+TEST_RUNS ?= 100
+TIMEOUT_SECONDS ?= 300
 VERSION ?= release
+PYTHON3 ?= python3
 
 # ------------------------------------------------------------------------------------------ #
 
@@ -47,6 +48,7 @@ BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM := ../Dioptase-Assembler/build/$(VERSION)/basm
 EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Dioptase-Emulator-Full
 EMULATOR_DIR := ../Dioptase-Emulators/Dioptase-Emulator-Full
+EXT2_DIR_EXTRACTOR := ./scripts/extract_ext2_dir.py
 
 # Build output locations.
 BUILD_DIR := build
@@ -89,23 +91,38 @@ HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
 LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
 
 # Build the emulator argv in shell positional parameters. When tests/<name>.dir
-# exists, package it as an ext2 filesystem image and attach it as SD1.
+# exists, package it as an ext2 filesystem image, attach it as SD1, and request
+# the final SD1 image be written back for later extraction to tests/<name>.out.dir.
 define prepare_emulator_cmd
 sd1_dir="tests/$*.dir"; \
+sd1_output_image=""; \
+sd1_output_dir=""; \
 set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin"; \
 if [ -d "$$sd1_dir" ]; then \
   sd1_image="$(BUILD_DIR)/$*.sd1.ext2"; \
+  sd1_output_image="$(BUILD_DIR)/$*.sd1.out.ext2"; \
+  sd1_output_dir="tests/$*.out.dir"; \
   dir_kib=$$(du -sk "$$sd1_dir" | cut -f1); \
   dir_blocks=$$(((dir_kib * 1024 + $(BLOCK_SIZE) - 1) / $(BLOCK_SIZE))); \
   fs_blocks=$$((dir_blocks + $(SD_IMAGE_EXTRA_BLOCKS))); \
   if [ $$fs_blocks -lt $(SD_IMAGE_MIN_BLOCKS) ]; then \
     fs_blocks=$(SD_IMAGE_MIN_BLOCKS); \
   fi; \
-  rm -f "$$sd1_image"; \
+  rm -f "$$sd1_image" "$$sd1_output_image"; \
   mkfs.ext2 -q -d "$$sd1_dir" -b $(BLOCK_SIZE) -m 0 -r 0 -O none "$$sd1_image" "$$fs_blocks" > /dev/null || exit $$?; \
-  set -- "$$@" --sd1 "$$sd1_image"; \
+  set -- "$$@" --sd1 "$$sd1_image" --sd1-out "$$sd1_output_image"; \
 fi; \
 set -- "$$@" $(EMU_FLAGS);
+endef
+
+# Extract an SD1 ext2 output image back into a host directory when the test used
+# tests/<name>.dir. Extraction warnings are non-fatal so guest filesystem bugs do
+# not hide the program's own exit status.
+define extract_sd1_output_dir
+if [ -n "$$sd1_output_image" ] && [ -f "$$sd1_output_image" ]; then \
+  "$(PYTHON3)" "$(EXT2_DIR_EXTRACTOR)" "$$sd1_output_image" "$$sd1_output_dir" || \
+    echo "Warning: failed to extract $$sd1_output_image into $$sd1_output_dir"; \
+fi;
 endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
@@ -147,7 +164,10 @@ $(LABEL_TARGETS): %.labels: $(BUILD_DIR)/%.labels
 # Run alias so `make test` builds BIOS + kernel and runs the emulator.
 $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
-	"$$@"
+	status=0; \
+	"$$@" || status=$$?; \
+	$(extract_sd1_output_dir) \
+	exit $$status
 
 # Test alias so `make testname.test` runs the emulator multiple times and compares output.
 # Keep per-run logging here for interactive debugging of a single test.
@@ -179,6 +199,7 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	  fi; \
 	  i=$$((i + 1)); \
 	done; \
+	$(extract_sd1_output_dir) \
 	echo "[$$test_name] summary: $$success/$$runs"
 
 # Quiet aggregate target used by `make test`; prints once after all runs complete.
@@ -223,15 +244,14 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	  if [ $$mismatch_failures -gt 0 ]; then reason_summary="$$reason_summary $$mismatch_failures mismatch"; fi; \
 	  reason_summary=$${reason_summary# }; \
 	  echo "[$$test_name] fail: $$success/$$runs ($$reason_summary)"; \
-	fi
+	fi; \
+	$(extract_sd1_output_dir)
 
 # Test alias so `make testname.fail` stops on the first failure.
 %.fail: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
-	failure_reason=""; \
-	failure_run=0; \
 	test_name="$*"; \
 	i=1; \
 	while [ $$i -le $$runs ]; do \
@@ -243,31 +263,26 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
-	    failure_reason="timeout"; \
-	    failure_run=$$i; \
-	    break; \
-	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" ||  grep -q "PANIC" "$$raw"; then \
-	    failure_reason="warning"; \
-	    failure_run=$$i; \
-	    break; \
+	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
+			break; \
+	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
+	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
+			break; \
 	  elif [ $$status -ne 0 ]; then \
-	    failure_reason="exit $$status"; \
-	    failure_run=$$i; \
-	    break; \
+	    echo "[$$test_name] run $$i/$$runs: fail (exit $$status)"; \
+			break; \
 	  elif [ -f "$$ok" ] && cmp -s "$$out" "$$ok"; then \
 	    success=$$((success + 1)); \
+	    echo "[$$test_name] run $$i/$$runs: pass"; \
 	  else \
-	    failure_reason="mismatch"; \
-	    failure_run=$$i; \
-	    break; \
+	    echo "[$$test_name] run $$i/$$runs: fail"; \
+			break; \
 	  fi; \
 	  i=$$((i + 1)); \
 	done; \
-	if [ -z "$$failure_reason" ]; then \
-	  echo "[$$test_name] pass: $$success/$$runs"; \
-	else \
-	  echo "[$$test_name] fail: $$success/$$runs ($$failure_reason on run $$failure_run/$$runs)"; \
-	fi
+	$(extract_sd1_output_dir) \
+	echo "[$$test_name] summary: $$success/$$runs"
+
 # Assemble a BIOS image from BIOS C asm and BIOS asm.
 # init.s must be first so its .origin establishes the bios entry point.
 $(BIOS_HEX): $(BIOS_C_ASMS) $(BIOS_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
@@ -385,4 +400,6 @@ $(EMULATOR):
 # Cleanup for build artifacts; does not delete source files.
 clean:
 	rm -f "$(BUILD_DIR)"/*.hex "$(BUILD_DIR)"/*.bin "$(BUILD_DIR)"/*.s "$(BUILD_DIR)"/*.labels \
-	  "$(BUILD_DIR)"/*.sd1.ext2 $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
+	  "$(BUILD_DIR)"/*.sd1.ext2 "$(BUILD_DIR)"/*.sd1.out.ext2 \
+	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
+	rm -rf tests/*.out.dir

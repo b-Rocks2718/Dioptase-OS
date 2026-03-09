@@ -2,6 +2,7 @@
 #include "atomic.h"
 #include "blocking_lock.h"
 #include "debug.h"
+#include "print.h"
 
 int* DMA_MEM_REG_0 =  (int*)0x7FE5810;
 int* DMA_BLOCK_REG_0 = (int*)0x7FE5814;
@@ -127,6 +128,11 @@ int sd_read_block(enum SdDrive drive, int block_num, void* dest){
 }
 
 int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* dest){
+  if (drive == SD_DRIVE_1 && start_block == 0) {
+    // warn about access to block 0
+    say("| Warning: reading block 0 of drive 1\n", NULL);
+  }
+
   sd_lock_acquire(drive);
   for(int i = 0; i < num_blocks; i++){
     int rc = sd_read_block(drive, start_block + i, (char*)dest + (i * SD_BLOCK_SIZE_BYTES));
@@ -157,6 +163,11 @@ int sd_write_block(enum SdDrive drive, int block_num, void* src){
 }
 
 int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* src){
+  if (drive == SD_DRIVE_1 && start_block == 0) {
+    // warn about access to block 0
+    say("| Warning: writing block 0 of drive 1\n", NULL);
+  }
+
   sd_lock_acquire(drive);
   for(int i = 0; i < num_blocks; i++){
     int rc = sd_write_block(drive, start_block + i, (char*)src + (i * SD_BLOCK_SIZE_BYTES));

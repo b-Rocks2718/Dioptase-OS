@@ -29,3 +29,15 @@ bool strneq(char* str1, char* str2, unsigned n){
   }
   return i == n || (str1[i] == '\0' && str2[i] == '\0');
 }
+
+char* strncpy(char* dest, char* src, unsigned n){
+  unsigned i = 0;
+  while (i < n && src[i] != '\0'){
+    dest[i] = src[i];
+    i++;
+  }
+  if (i < n){
+    dest[i] = '\0';
+  }
+  return dest;
+}

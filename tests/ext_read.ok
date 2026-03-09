@@ -1,9 +1,12 @@
 ***Hello from ext2 test!
-***Block size: 1024
-***Inode size: 128
+***Filesystem geometry: ok
+***Root lookup ownership: ok
 ***Hello content: Hello!
 ***Nested metadata: ok
 ***Nested content: ok
+***Multi-part paths: ok
+***Symlink dir lookup: ok
 ***Symlink target: nested
-***Block1 marker offset: 211
+***blocks.txt reads: ok
 ***Missing path: ok
+***Concurrent reads: threads=4 rounds=1 ops=4

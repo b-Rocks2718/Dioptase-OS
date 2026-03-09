@@ -14,6 +14,8 @@
 // supported by the test harness. Smaller block sizes simply leave unused space.
 #define BCACHE_SIZE_BYTES 49152 // 12 cache lines * 4096 byte max ext2 block
 
+#define SD_SECTOR_SIZE_BYTES 512
+
 struct Ext2;
 
 struct InodeCache {
@@ -51,7 +53,11 @@ struct Ext2 {
   unsigned num_block_groups;
 
   // number of block groups is generally small
+  unsigned bgd_offset;
   struct BGD* bgd_table;
+
+  char** inode_bitmaps;
+  char** block_bitmaps;
 
   struct Node root;
 };
@@ -90,10 +96,14 @@ void icache_init(struct InodeCache* cache);
 
 struct Inode* icache_get(struct InodeCache* cache, unsigned inumber);
 
+void icache_set(struct InodeCache* cache, unsigned inumber, struct Inode* inode);
+
 
 void bcache_init(struct BlockCache* cache, unsigned block_size);
 
 void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest);
+
+void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigned offset, unsigned size);
 
 
 void node_init(struct Node* node, unsigned inumber, struct Inode* inode, struct Ext2* fs);
@@ -111,9 +121,13 @@ void node_read_block(struct Node* node, unsigned block_num, char* dest);
 
 unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* dest);
 
+unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src);
+
 unsigned short node_get_type(struct Node* node);
 
 bool node_is_dir(struct Node* node);
+
+void node_print_dir(struct Node* node);
 
 bool node_is_file(struct Node* node);
 

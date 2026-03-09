@@ -13,10 +13,11 @@ void blocking_lock_init(struct BlockingLock* lock){
 
 void blocking_lock_acquire(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock acquire: lock is NULL.\n");
+  bool was_preempt = disable_preemption();
   sem_down(&lock->semaphore);
   // Save the caller's preemption state only after this thread actually owns the
   // lock. Waiting threads must not overwrite the holder's saved state.
-  lock->preempt = disable_preemption();
+  lock->preempt = was_preempt;
 }
 
 void blocking_lock_release(struct BlockingLock* lock){
