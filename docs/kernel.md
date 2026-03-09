@@ -28,6 +28,15 @@ Supported Sync Primatives:
 ## File System
 ext2 rev 0
 
+Supported:
+- Read files, directories, and symlinks
+- create new files, directories, and symlinks
+
+TODO:
+- write to existing files
+- rename
+- delete 
+
 ## Virtual Memory
 tlb is software managed
 

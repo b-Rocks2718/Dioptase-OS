@@ -79,12 +79,6 @@ unsigned ext2_get_inode_size(struct Ext2* fs);
 // any non-NULL result with `node_free(...)`.
 struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name);
 
-struct Node* ext2_make_file(struct Ext2* fs, struct Node* dir, char* name);
-
-struct Node* ext2_make_dir(struct Ext2* fs, struct Node* dir, char* name);
-
-struct Node* ext2_make_symlink(struct Ext2* fs, struct Node* dir, char* name, char* target);
-
 void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path);
 
 struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* path);
@@ -134,6 +128,12 @@ void node_print_dir(struct Node* node);
 bool node_is_file(struct Node* node);
 
 bool node_is_symlink(struct Node* node);
+
+struct Node* node_make_file(struct Node* dir, char* name);
+
+struct Node* node_make_dir(struct Node* dir, char* name);
+
+struct Node* node_make_symlink(struct Node* dir, char* name, char* target);
 
 // For symlink nodes only. `dest` must have space for the raw target plus one
 // trailing NUL byte because this helper always NUL-terminates the result.

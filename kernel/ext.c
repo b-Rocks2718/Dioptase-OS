@@ -798,48 +798,6 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   return node;
 }
 
-struct Node* ext2_make_file(struct Ext2* fs, struct Node* dir, char* name){
-  // New regular files default to owner-writable, world-readable mode so the
-  // extracted host artifact is readable without an extra chmod step.
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_FILE_MODE);
-  if (node == NULL){
-    return NULL;
-  }
-
-  return node;
-}
-
-struct Node* ext2_make_dir(struct Ext2* fs, struct Node* dir, char* name){
-  // New directories default to executable/traversable permissions for all
-  // readers while remaining writable only by the owner.
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_DIR_MODE);
-
-  if (node == NULL){
-    return NULL;
-  }
-
-  // add . and .. entries to new directory
-  dir_add_entry(node, ".", node->inumber);
-  dir_add_entry(node, "..", dir->inumber);
-
-  return node;
-}
-
-struct Node* ext2_make_symlink(struct Ext2* fs, struct Node* dir, char* name, char* target){
-  // Symlinks traditionally carry 0777 permissions even though most hosts ignore
-  // them when dereferencing the link target.
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_SYMLINK_MODE);
-
-  if (node == NULL){
-    return NULL;
-  }
-
-  // write symlink target
-  node_write_all(node, 0, strlen(target), target);
-
-  return node;
-}
-
 void icache_init(struct InodeCache* cache){
   blocking_lock_init(&cache->lock);
   for (unsigned i = 0; i < ICACHE_SIZE; ++i){
@@ -1139,6 +1097,77 @@ void node_free(struct Node* node){
 
 unsigned node_size_in_bytes(struct Node* node){
   return node->inode->size;
+}
+
+struct Node* node_make_file(struct Node* dir, char* name){
+  // ensure dir is actually a dir
+  assert(node_is_dir(dir), "node_make_file: parent node is not a directory.\n");
+
+  // New regular files default to owner-writable, world-readable mode so the
+  // extracted host artifact is readable without an extra chmod step.
+  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_FILE_MODE);
+  if (node == NULL){
+    return NULL;
+  }
+
+  return node;
+}
+
+struct Node* node_make_dir(struct Node* dir, char* name){
+  // ensure dir is actually a dir
+  assert(node_is_dir(dir), "node_make_dir: parent node is not a directory.\n");
+
+  // New directories default to executable/traversable permissions for all
+  // readers while remaining writable only by the owner.
+  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_DIR_MODE);
+
+  if (node == NULL){
+    return NULL;
+  }
+
+  // add . and .. entries to new directory
+  dir_add_entry(node, ".", node->inumber);
+  dir_add_entry(node, "..", dir->inumber);
+
+  return node;
+}
+
+struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
+  // ensure dir is actually a dir
+  assert(node_is_dir(dir), "node_make_symlink: parent node is not a directory.\n");
+
+  // Symlinks traditionally carry 0777 permissions even though most hosts ignore
+  // them when dereferencing the link target.
+  unsigned target_size = strlen(target);
+  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_SYMLINK_MODE);
+
+  if (node == NULL){
+    return NULL;
+  }
+
+  // ext2 fast symlinks store short targets inline in i_block instead of
+  // allocating separate data blocks.
+  if (target_size < sizeof(node->inode->block)) {
+    memcpy((char*)node->inode->block, target, target_size);
+    node->inode->size = target_size;
+    node_sync_inode(node);
+    return node;
+  }
+
+  // node_write_all expects every logical block to already exist, so allocate
+  // the backing blocks for long symlink targets before copying the bytes.
+  unsigned block_size = ext2_get_block_size(node->filesystem);
+  unsigned block_count = (target_size + block_size - 1) / block_size;
+  for (unsigned i = 0; i < block_count; ++i){
+    bool added = node_add_block(node, alloc_block(node->filesystem));
+    assert(added, "node_make_symlink: failed to allocate a data block for the symlink target.\n");
+  }
+
+  node->inode->size = target_size;
+  node_write_all(node, 0, target_size, target);
+  node_sync_inode(node);
+
+  return node;
 }
 
 void read_sectors(struct Ext2* fs, unsigned index, char* buffer){

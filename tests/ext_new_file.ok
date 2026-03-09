@@ -1,0 +1,9 @@
+***Hello from ext2 new file test!
+***Original root directory:
+***New file creation: ok
+***New directory creation: ok
+***New file in new directory: ok
+***Inline symlink creation: ok
+***Block-backed symlink creation: ok
+***Root directory after create operations:
+***New directory after creating nested file:
