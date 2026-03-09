@@ -121,6 +121,8 @@ void node_read_block(struct Node* node, unsigned block_num, char* dest);
 
 unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* dest);
 
+void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned offset, unsigned size);
+
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src);
 
 unsigned short node_get_type(struct Node* node);

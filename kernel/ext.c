@@ -5,6 +5,93 @@
 #include "heap.h"
 #include "string.h"
 
+#define EXT2_SUPERBLOCK_SECTOR 2
+#define EXT2_SUPERBLOCK_SECTORS 2
+#define EXT2_DIR_ENTRY_HEADER_SIZE 8
+#define EXT2_DIR_ENTRY_ALIGN_SIZE 4
+
+// EXT2_S_IFREG | EXT2_S_IRUSR | EXT2_S_IWUSR | EXT2_S_IRGRP | EXT2_S_IROTH
+#define EXT2_DEFAULT_FILE_MODE 0x81A4
+
+// EXT2_S_IFDIR | EXT2_S_IRUSR | EXT2_S_IWUSR | EXT2_S_IXUSR | 
+// EXT2_S_IRGRP | EXT2_S_IXGRP | EXT2_S_IROTH | EXT2_S_IXOTH
+#define EXT2_DEFAULT_DIR_MODE 0x41ED
+
+// EXT2_S_IFLNK | EXT2_S_IRUSR | EXT2_S_IWUSR | EXT2_S_IXUSR | 
+// EXT2_S_IRGRP | EXT2_S_IWGRP | EXT2_S_IXGRP | EXT2_S_IROTH | 
+// EXT2_S_IWOTH | EXT2_S_IXOTH
+#define EXT2_DEFAULT_SYMLINK_MODE 0xA1FF
+
+// ext2 stores directory records on 4-byte boundaries so readers can walk a
+// block by following rec_len until the block boundary.
+static unsigned ext2_dir_entry_min_size(unsigned name_len){
+  unsigned size = EXT2_DIR_ENTRY_HEADER_SIZE + name_len;
+  unsigned remainder = size % EXT2_DIR_ENTRY_ALIGN_SIZE;
+  if (remainder != 0){
+    size += EXT2_DIR_ENTRY_ALIGN_SIZE - remainder;
+  }
+  return size;
+}
+
+// The ext2 directory writer emits rev-0 entries: inode, rec_len, name_len, and
+// the raw name bytes. Callers choose rec_len so the enclosing block remains a
+// valid record chain all the way to its end.
+static void ext2_write_dir_entry(char* dest, unsigned rec_len, char* name, unsigned inumber){
+  unsigned name_len = strlen(name);
+
+  assert(name_len <= sizeof(((struct DirEntry*)0)->name),
+    "ext2_write_dir_entry: name is too long for ext2.\n");
+  assert(rec_len >= ext2_dir_entry_min_size(name_len),
+    "ext2_write_dir_entry: rec_len is too small for the directory entry.\n");
+
+  struct DirEntry* entry = (struct DirEntry*)dest;
+  entry->inode = inumber;
+  entry->rec_len = rec_len;
+  entry->name_len = name_len;
+  strncpy((char*)entry->name, name, name_len);
+}
+
+// ext2 reserves 512-byte sectors in i_blocks, not filesystem blocks.
+static unsigned ext2_sectors_per_block(struct Ext2* fs){
+  return ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES;
+}
+
+// The allocator mutates free counts in the primary superblock, so callers must
+// flush it after every successful block or inode allocation.
+static void ext2_write_superblock(struct Ext2* fs){
+  int rc = sd_write_blocks(SD_DRIVE_1, EXT2_SUPERBLOCK_SECTOR,
+    EXT2_SUPERBLOCK_SECTORS, (char*)&fs->superblock);
+  assert(rc == 0, "ext2_write_superblock: failed to write ext2 superblock.\n");
+}
+
+// The block-group descriptor table can span a partial sector. The SD layer only
+// writes whole sectors, so round the table size up before writing it back.
+static void ext2_write_bgd_table(struct Ext2* fs){
+  unsigned bgd_table_bytes = fs->num_block_groups * sizeof(struct BGD);
+  unsigned bgd_table_sectors = (bgd_table_bytes + SD_SECTOR_SIZE_BYTES - 1) / SD_SECTOR_SIZE_BYTES;
+  int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_offset / SD_SECTOR_SIZE_BYTES,
+    bgd_table_sectors, (char*)fs->bgd_table);
+  assert(rc == 0, "ext2_write_bgd_table: failed to write block group descriptor table.\n");
+}
+
+// Inode writeback is explicit in this filesystem implementation. Any helper
+// that mutates on-disk inode fields must call this after the final state is set.
+static void node_sync_inode(struct Node* node){
+  icache_set(&node->filesystem->icache, node->inumber, node->inode);
+}
+
+// Directory sizes are tracked in bytes, while node_add_block needs the count of
+// logical data blocks already present. ext2 i_blocks cannot be used for that
+// because it is measured in 512-byte sectors and also includes indirect blocks.
+static unsigned node_data_block_count(struct Node* node){
+  unsigned block_size = ext2_get_block_size(node->filesystem);
+  if (node->inode->size == 0){
+    return 0;
+  }
+
+  return (node->inode->size - 1) / block_size + 1;
+}
+
 void ext2_init(struct Ext2* fs){
   // start by reading superblock
   int rc = sd_read_blocks(SD_DRIVE_1, 2, 2, &fs->superblock);
@@ -332,6 +419,7 @@ unsigned alloc_inumber(struct Ext2* fs){
     if (fs->bgd_table[i].free_inodes_count > 0){
       // found block group
       fs->bgd_table[i].free_inodes_count -= 1;
+      fs->superblock.free_inodes_count -= 1;
       
       // find free inode in bitmap
       for (int j = 0; j < fs->superblock.inodes_per_group / 8; ++j){
@@ -352,10 +440,9 @@ unsigned alloc_inumber(struct Ext2* fs){
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[i]);
       assert(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
-      
-      rc = sd_write_blocks(SD_DRIVE_1, (fs->bgd_offset + sizeof(struct BGD) * i) / SD_SECTOR_SIZE_BYTES,
-        fs->num_block_groups * sizeof(struct BGD) / SD_SECTOR_SIZE_BYTES, fs->bgd_table);
-      assert(rc == 0, "alloc_inumber: failed to write back block group descriptor.\n");
+
+      ext2_write_bgd_table(fs);
+      ext2_write_superblock(fs);
       
       break;
     }
@@ -372,6 +459,7 @@ unsigned alloc_block(struct Ext2* fs){
     if (fs->bgd_table[i].free_blocks_count > 0){
       // found block group
       fs->bgd_table[i].free_blocks_count -= 1;
+      fs->superblock.free_blocks_count -= 1;
       
       // find free block in bitmap
       for (int j = 0; j < fs->superblock.blocks_per_group / 8; ++j){
@@ -393,10 +481,9 @@ unsigned alloc_block(struct Ext2* fs){
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
       assert(rc == 0, "alloc_block: failed to write back block bitmap.\n");
-      
-      rc = sd_write_blocks(SD_DRIVE_1, (fs->bgd_offset + sizeof(struct BGD) * i) / SD_SECTOR_SIZE_BYTES,
-        fs->num_block_groups * sizeof(struct BGD) / SD_SECTOR_SIZE_BYTES, fs->bgd_table);
-      assert(rc == 0, "alloc_block: failed to write back block group descriptor.\n");
+
+      ext2_write_bgd_table(fs);
+      ext2_write_superblock(fs);
 
       break;
     }
@@ -438,17 +525,19 @@ struct Inode* make_inode(short mode){
 
 bool node_add_block(struct Node* node, unsigned block_num){
   unsigned block_size = ext2_get_block_size(node->filesystem);
+  unsigned sectors_per_block = ext2_sectors_per_block(node->filesystem);
   unsigned entries_per_block = block_size / 4;
   unsigned single_limit = 12 + entries_per_block;
   unsigned double_span = entries_per_block * entries_per_block;
   unsigned double_limit = single_limit + double_span;
   unsigned triple_span = double_span * entries_per_block;
   unsigned triple_limit = double_limit + triple_span;
-  unsigned logical_block = node->inode->blocks * 512 / block_size;
+  unsigned logical_block = node_data_block_count(node);
+  unsigned reserved_blocks = 1;
 
   if (logical_block < 12){
     node->inode->block[logical_block] = block_num;
-    node->inode->blocks = logical_block + block_size / 512;
+    node->inode->blocks += reserved_blocks * sectors_per_block;
     return true;
   } else if (logical_block < single_limit){
     unsigned* single_indirect = malloc(block_size);
@@ -459,13 +548,14 @@ bool node_add_block(struct Node* node, unsigned block_num){
         return false;
       }
       node->inode->block[12] = new_block;
+      reserved_blocks += 1;
     } else {
       bcache_get(&node->filesystem->bcache, node->inode->block[12], (char*)single_indirect);
     }
 
     single_indirect[logical_block - 12] = block_num;
     bcache_set(&node->filesystem->bcache, node->inode->block[12], (char*)single_indirect, 0, block_size);
-    node->inode->blocks = logical_block + block_size / 512;
+    node->inode->blocks += reserved_blocks * sectors_per_block;
     free(single_indirect);
     return true;
   } else if (logical_block < double_limit){
@@ -483,6 +573,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
         return false;
       }
       node->inode->block[13] = new_double_block;
+      reserved_blocks += 1;
     } else {
       bcache_get(&node->filesystem->bcache, node->inode->block[13], (char*)double_indirect);
     }
@@ -496,6 +587,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
       }
 
       double_indirect[indirect_index] = new_block;
+      reserved_blocks += 1;
       bcache_set(&node->filesystem->bcache, node->inode->block[13], (char*)double_indirect, 0, block_size);
     } else {
       bcache_get(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect);
@@ -503,7 +595,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect, 0, block_size);
-    node->inode->blocks = logical_block + block_size / 512;
+    node->inode->blocks += reserved_blocks * sectors_per_block;
     free(double_indirect);
     free(single_indirect);
     return true;
@@ -525,6 +617,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
         return false;
       }
       node->inode->block[14] = new_triple_block;
+      reserved_blocks += 1;
     } else {
       bcache_get(&node->filesystem->bcache, node->inode->block[14], (char*)triple_indirect);
     }
@@ -539,6 +632,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
       }
 
       triple_indirect[outer_index] = new_block;
+      reserved_blocks += 1;
       bcache_set(&node->filesystem->bcache, node->inode->block[14], (char*)triple_indirect, 0, block_size);
     } else {
       bcache_get(&node->filesystem->bcache, triple_indirect[outer_index], (char*)double_indirect);
@@ -554,6 +648,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
       }
 
       double_indirect[middle_index] = new_block;
+      reserved_blocks += 1;
       bcache_set(&node->filesystem->bcache, triple_indirect[outer_index], (char*)double_indirect, 0, block_size);
     } else {
       bcache_get(&node->filesystem->bcache, double_indirect[middle_index], (char*)single_indirect);
@@ -561,7 +656,7 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[middle_index], (char*)single_indirect, 0, block_size);
-    node->inode->blocks = logical_block + block_size / 512;
+    node->inode->blocks += reserved_blocks * sectors_per_block;
     free(triple_indirect);
     free(double_indirect);
     free(single_indirect);
@@ -571,33 +666,120 @@ bool node_add_block(struct Node* node, unsigned block_num){
   }
 }
 
-void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
-  // add directory entry for new inode
-  struct DirEntry entry;
-  entry.inode = inumber;
+// Search one directory data block for slack in an existing record. ext2 grows a
+// directory by splitting the last record that has spare rec_len bytes; only a
+// completely full directory needs a new data block.
+static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_index, char* name, unsigned inumber){
+  unsigned block_size = ext2_get_block_size(dir->filesystem);
+  unsigned new_entry_size = ext2_dir_entry_min_size(strlen(name));
+  char* block_buf = malloc(block_size);
 
-  entry.name_len = strlen(name);
-  entry.rec_len = 8 + entry.name_len;
-  strncpy((char*)entry.name, name, sizeof(entry.name));
-  
-  // update parent directory block count
-  if (dir->inode->size >= 512 * dir->inode->blocks){
-    // allocate new block for directory if needed
-    unsigned new_block = alloc_block(dir->filesystem);
-    node_add_block(dir, new_block); 
+  node_read_block(dir, block_index, block_buf);
+
+  unsigned offset = 0;
+  while (offset < block_size){
+    struct DirEntry* existing = (struct DirEntry*)(block_buf + offset);
+    unsigned record_length = existing->rec_len;
+
+    assert(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
+      "dir_insert_entry_in_existing_block: invalid directory record length.\n");
+    assert(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+      "dir_insert_entry_in_existing_block: directory record is not 4-byte aligned.\n");
+    assert(offset + record_length <= block_size,
+      "dir_insert_entry_in_existing_block: directory record crosses the block boundary.\n");
+
+    if (existing->inode == 0){
+      if (record_length >= new_entry_size){
+        ext2_write_dir_entry(block_buf + offset, record_length, name, inumber);
+        node_write_block(dir, block_index, block_buf, 0, block_size);
+        free(block_buf);
+        return true;
+      }
+    } else {
+      unsigned ideal_length = ext2_dir_entry_min_size(existing->name_len);
+      if (record_length >= ideal_length + new_entry_size){
+        existing->rec_len = ideal_length;
+        ext2_write_dir_entry(block_buf + offset + ideal_length,
+          record_length - ideal_length, name, inumber);
+        node_write_block(dir, block_index, block_buf, 0, block_size);
+        free(block_buf);
+        return true;
+      }
+    }
+
+    offset += record_length;
   }
 
-  // write back updated parent directory
-  node_write_all(dir, node_size_in_bytes(dir), entry.rec_len, (char*)&entry);
+  assert(offset == block_size,
+    "dir_insert_entry_in_existing_block: directory block did not terminate at the block boundary.\n");
 
-  // update parent directory size
-  dir->inode->size += entry.rec_len;
+  free(block_buf);
+  return false;
+}
 
-  // write back updated parent directory inode
-  icache_set(&dir->filesystem->icache, dir->inumber, dir->inode);
+void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
+  unsigned block_size = ext2_get_block_size(dir->filesystem);
+  unsigned logical_block_count = node_data_block_count(dir);
+
+  assert(node_is_dir(dir), "dir_add_entry: target node is not a directory.\n");
+  assert(strlen(name) > 0, "dir_add_entry: directory entries must have a non-empty name.\n");
+
+  for (unsigned i = 0; i < logical_block_count; ++i){
+    if (dir_insert_entry_in_existing_block(dir, i, name, inumber)){
+      return;
+    }
+  }
+
+  // No existing record had enough slack, so the directory must grow by one full
+  // data block. The new block starts with one record that owns the entire block.
+  unsigned new_block = alloc_block(dir->filesystem);
+  assert(new_block != (unsigned)-1, "dir_add_entry: failed to allocate a new directory block.\n");
+
+  bool added = node_add_block(dir, new_block);
+  assert(added, "dir_add_entry: failed to attach the new directory block to the inode.\n");
+
+  char* block_buf = malloc(block_size);
+  ext2_write_dir_entry(block_buf, block_size, name, inumber);
+  node_write_block(dir, logical_block_count, block_buf, 0, block_size);
+  free(block_buf);
+
+  dir->inode->size += block_size;
+  node_sync_inode(dir);
+}
+
+// Duplicate names are rejected before allocation so failed creates do not
+// consume inode numbers or mutate the parent directory on disk.
+static bool dir_has_entry_name(struct Node* dir, char* name){
+  unsigned index = 0;
+  unsigned name_len = strlen(name);
+  struct DirEntry entry;
+
+  assert(node_is_dir(dir), "dir_has_entry_name: target node is not a directory.\n");
+  assert(name != NULL, "dir_has_entry_name: name is NULL.\n");
+
+  while (index < node_size_in_bytes(dir)){
+    int cnt = node_read_all(dir, index, sizeof(struct DirEntry), (char*)&entry);
+    assert(cnt >= 4, "dir_has_entry_name: failed to read directory entry.\n");
+    assert(entry.rec_len >= 8, "dir_has_entry_name: invalid directory record length.\n");
+
+    index += entry.rec_len;
+    if (entry.inode != 0 && entry.name_len == name_len &&
+        strneq((char*)entry.name, name, name_len)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mode){
+  assert(dir != NULL, "alloc_inode: parent directory is NULL.\n");
+  assert(name != NULL, "alloc_inode: name is NULL.\n");
+
+  if (dir_has_entry_name(dir, name)){
+    return NULL;
+  }
+
   unsigned inumber = alloc_inumber(fs);
   if (inumber == 0){
     return NULL;
@@ -611,13 +793,15 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   dir_add_entry(dir, name, inumber);
 
   // write new inode to disk
-  icache_set(&fs->icache, node->inumber, inode);
+  node_sync_inode(node);
 
   return node;
 }
 
 struct Node* ext2_make_file(struct Ext2* fs, struct Node* dir, char* name){
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_S_IFREG);
+  // New regular files default to owner-writable, world-readable mode so the
+  // extracted host artifact is readable without an extra chmod step.
+  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_FILE_MODE);
   if (node == NULL){
     return NULL;
   }
@@ -626,7 +810,9 @@ struct Node* ext2_make_file(struct Ext2* fs, struct Node* dir, char* name){
 }
 
 struct Node* ext2_make_dir(struct Ext2* fs, struct Node* dir, char* name){
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_S_IFDIR);
+  // New directories default to executable/traversable permissions for all
+  // readers while remaining writable only by the owner.
+  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_DIR_MODE);
 
   if (node == NULL){
     return NULL;
@@ -640,7 +826,9 @@ struct Node* ext2_make_dir(struct Ext2* fs, struct Node* dir, char* name){
 }
 
 struct Node* ext2_make_symlink(struct Ext2* fs, struct Node* dir, char* name, char* target){
-  struct Node* node = alloc_inode(fs, dir, name, EXT2_S_IFLNK);
+  // Symlinks traditionally carry 0777 permissions even though most hosts ignore
+  // them when dereferencing the link target.
+  struct Node* node = alloc_inode(fs, dir, name, EXT2_DEFAULT_SYMLINK_MODE);
 
   if (node == NULL){
     return NULL;
@@ -865,17 +1053,28 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   }
 
   if (found || (size >= cache->block_size && offset == 0)){
-    // if overwriting an entire block, no need to read block first
-    for (unsigned i = 0; i < BCACHE_SIZE; ++i){
-      cache->ages[i]++;
-      if (cache->ages[i] == BCACHE_SIZE) result = i;
+    // Cache hits already have a complete block image in memory. Full-block
+    // overwrites also do not need a read-before-write path because every byte
+    // in the block will be replaced by src.
+    if (found){
+      for (unsigned i = 0; i < BCACHE_SIZE; ++i){
+        if (cache->ages[i] < cache->ages[result]){
+          cache->ages[i]++;
+        }
+      }
+    } else {
+      for (unsigned i = 0; i < BCACHE_SIZE; ++i){
+        cache->ages[i]++;
+        if (cache->ages[i] == BCACHE_SIZE) result = i;
+      }
     }
+
     cache->ages[result] = 0;
     cache->tags[result] = block_num;
 
     unsigned write_size = size >= (cache->block_size - offset) ? (cache->block_size - offset) : size;
     memcpy(cache->block_cache + result * cache->block_size + offset, src, write_size);
-    memcpy(block_buf, cache->block_cache, cache->block_size);
+    memcpy(block_buf, cache->block_cache + result * cache->block_size, cache->block_size);
 
     blocking_lock_release(&cache->lock);
 
@@ -892,8 +1091,9 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   blocking_lock_release(&cache->lock);
 
   // need to read block first so we can do a partial write without overwriting the rest of the block
-  sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
+  int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
+  assert(rc == 0, "bcache_set: failed to read filesystem block before a partial write.\n");
 
   blocking_lock_acquire(&cache->lock);
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
@@ -912,7 +1112,7 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
 
   // write to disk after releasing lock since it's a blocking call and we don't want to hold
   // the lock during it
-  int rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
+  rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
   assert(rc == 0, "bcache_set: failed to write filesystem block.\n");
 
