@@ -1,0 +1,215 @@
+/*
+ * Covers every helper in kernel/string.c.
+ * The test checks string equality and prefix semantics, documents the current
+ * kernel-specific strncpy behavior, and verifies memcpy/memset on raw bytes.
+ */
+#include "../kernel/string.h"
+#include "../kernel/print.h"
+#include "../kernel/debug.h"
+
+static void assert_byte_region(unsigned char* actual, unsigned char* expected,
+  unsigned size, char* failure_message) {
+  int mismatch = 0;
+
+  for (unsigned i = 0; i < size; ++i){
+    if (actual[i] != expected[i]){
+      mismatch = 1;
+    }
+  }
+
+  assert(mismatch == 0, failure_message);
+}
+
+static void check_strlen(void) {
+  char embedded_nul[5];
+
+  embedded_nul[0] = 'd';
+  embedded_nul[1] = 'i';
+  embedded_nul[2] = '\0';
+  embedded_nul[3] = 'x';
+  embedded_nul[4] = '\0';
+
+  assert(strlen("") == 0,
+    "string: strlen should report zero for the empty string.\n");
+  assert(strlen("dioptase") == 8,
+    "string: strlen should count every character before the trailing NUL.\n");
+  assert(strlen(embedded_nul) == 2,
+    "string: strlen should stop at the first embedded NUL byte.\n");
+
+  say("***strlen: ok\n", NULL);
+}
+
+static void check_streq(void) {
+  assert(streq("kernel", "kernel"),
+    "string: streq should return true for identical strings.\n");
+  assert(!streq("kernel", "kern"),
+    "string: streq should reject strings with different lengths.\n");
+  assert(!streq("kernel", "kernal"),
+    "string: streq should reject strings with different bytes.\n");
+
+  say("***streq: ok\n", NULL);
+}
+
+static void check_strneq(void) {
+  assert(strneq("kernel", "kernal", 4),
+    "string: strneq should accept equal prefixes shorter than the mismatch.\n");
+  assert(!strneq("kernel", "kernal", 6),
+    "string: strneq should reject mismatches inside the compared prefix.\n");
+  assert(strneq("short", "longer", 0),
+    "string: strneq should treat a zero-length comparison as equal.\n");
+  assert(!strneq("abc", "ab", 3),
+    "string: strneq should reject when one string ends before n and the other does not.\n");
+  assert(strneq("abc", "abc", 5),
+    "string: strneq should accept identical strings even when n exceeds their length.\n");
+
+  say("***strneq: ok\n", NULL);
+}
+
+static void check_strncpy(void) {
+  char short_dest[5];
+  char short_expected[5];
+  char long_dest[4];
+  char long_expected[4];
+
+  short_dest[0] = 'x';
+  short_dest[1] = 'x';
+  short_dest[2] = 'x';
+  short_dest[3] = 'x';
+  short_dest[4] = 'x';
+
+  short_expected[0] = 'h';
+  short_expected[1] = 'i';
+  short_expected[2] = '\0';
+  short_expected[3] = 'x';
+  short_expected[4] = 'x';
+
+  long_dest[0] = 'x';
+  long_dest[1] = 'x';
+  long_dest[2] = 'x';
+  long_dest[3] = 'x';
+
+  long_expected[0] = 'a';
+  long_expected[1] = 'b';
+  long_expected[2] = 'c';
+  long_expected[3] = 'x';
+
+  assert(strncpy(short_dest, "hi", 5) == short_dest,
+    "string: strncpy should return the original destination pointer.\n");
+  assert_byte_region((unsigned char*)short_dest, (unsigned char*)short_expected, 5,
+    "string: strncpy should copy the source and write one trailing NUL when the source is shorter than n.\n");
+
+  assert(strncpy(long_dest, "abcdef", 3) == long_dest,
+    "string: strncpy should still return the destination pointer for truncated copies.\n");
+  assert_byte_region((unsigned char*)long_dest, (unsigned char*)long_expected, 4,
+    "string: strncpy should copy exactly n bytes and leave later bytes untouched when truncating.\n");
+
+  say("***strncpy: ok\n", NULL);
+}
+
+static void check_memcpy(void) {
+  unsigned char source[6];
+  unsigned char dest[8];
+  unsigned char expected[8];
+  unsigned char untouched[4];
+  unsigned char untouched_expected[4];
+
+  source[0] = 'A';
+  source[1] = 0;
+  source[2] = 'B';
+  source[3] = 0x7F;
+  source[4] = 0xFF;
+  source[5] = 'Z';
+
+  dest[0] = 0x11;
+  dest[1] = 0x11;
+  dest[2] = 0x11;
+  dest[3] = 0x11;
+  dest[4] = 0x11;
+  dest[5] = 0x11;
+  dest[6] = 0x11;
+  dest[7] = 0x11;
+
+  expected[0] = 0x11;
+  expected[1] = 'A';
+  expected[2] = 0;
+  expected[3] = 'B';
+  expected[4] = 0x7F;
+  expected[5] = 0xFF;
+  expected[6] = 'Z';
+  expected[7] = 0x11;
+
+  untouched[0] = 1;
+  untouched[1] = 2;
+  untouched[2] = 3;
+  untouched[3] = 4;
+
+  untouched_expected[0] = 1;
+  untouched_expected[1] = 2;
+  untouched_expected[2] = 3;
+  untouched_expected[3] = 4;
+
+  assert((unsigned char*)memcpy(dest + 1, source, 6) == dest + 1,
+    "string: memcpy should return the destination pointer.\n");
+  assert_byte_region(dest, expected, 8,
+    "string: memcpy should copy raw bytes exactly and leave surrounding bytes untouched.\n");
+
+  assert((unsigned char*)memcpy(untouched, source, 0) == untouched,
+    "string: memcpy should return the destination pointer for zero-length copies.\n");
+  assert_byte_region(untouched, untouched_expected, 4,
+    "string: memcpy should leave the destination unchanged when n is zero.\n");
+
+  say("***memcpy: ok\n", NULL);
+}
+
+static void check_memset(void) {
+  unsigned char buf[6];
+  unsigned char expected[6];
+  unsigned char untouched[3];
+  unsigned char untouched_expected[3];
+
+  buf[0] = 0xAA;
+  buf[1] = 0xAA;
+  buf[2] = 0xAA;
+  buf[3] = 0xAA;
+  buf[4] = 0xAA;
+  buf[5] = 0xAA;
+
+  expected[0] = 0xAA;
+  expected[1] = 0x34;
+  expected[2] = 0x34;
+  expected[3] = 0x34;
+  expected[4] = 0x34;
+  expected[5] = 0xAA;
+
+  untouched[0] = 9;
+  untouched[1] = 8;
+  untouched[2] = 7;
+
+  untouched_expected[0] = 9;
+  untouched_expected[1] = 8;
+  untouched_expected[2] = 7;
+
+  assert((unsigned char*)memset(buf + 1, 0x1234, 4) == buf + 1,
+    "string: memset should return the destination pointer.\n");
+  assert_byte_region(buf, expected, 6,
+    "string: memset should write the low byte of c across the requested range only.\n");
+
+  assert((unsigned char*)memset(untouched, 0x56, 0) == untouched,
+    "string: memset should return the destination pointer for zero-length fills.\n");
+  assert_byte_region(untouched, untouched_expected, 3,
+    "string: memset should leave the destination unchanged when n is zero.\n");
+
+  say("***memset: ok\n", NULL);
+}
+
+int kernel_main(void) {
+  check_strlen();
+  check_streq();
+  check_strneq();
+  check_strncpy();
+  check_memcpy();
+  check_memset();
+
+  say("***string helpers: ok\n", NULL);
+  return 0;
+}

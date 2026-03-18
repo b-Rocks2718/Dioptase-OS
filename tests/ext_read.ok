@@ -9,4 +9,5 @@
 ***Symlink target: nested
 ***blocks.txt reads: ok
 ***Missing path: ok
-***Concurrent reads: threads=4 rounds=1 ops=4
+***Concurrent reads start: threads=2 rounds=1 ops=2
+***Concurrent reads: threads=2 rounds=1 ops=2

@@ -4,6 +4,7 @@
 void event_init(struct Event* event){
   blocking_lock_init(&event->lock);
   cond_var_init(&event->cv);
+  event->generation = 0;
 }
 
 // wait until event is signaled, then return
@@ -35,4 +36,3 @@ void event_free(struct Event* event){
   event_destroy(event);
   free(event);
 }
-

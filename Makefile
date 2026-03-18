@@ -27,6 +27,7 @@ VERSION ?= release
 # ------------------------------------------------------------------------------------------ #
 
 PYTHON3 ?= python3
+DEPGEN ?= gcc
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER)
 
@@ -82,6 +83,7 @@ SD_IMAGE_EXTRA_BLOCKS := 256
 # Test sources live under tests/.
 TEST_C_SRCS := $(wildcard tests/*.c)
 TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
+TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
 # Only tests with checked-in .ok baselines are valid for aggregate output checks.
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(basename $(notdir $(TEST_OK_FILES)))
@@ -90,6 +92,9 @@ BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
 LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
+BIOS_C_DEPS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s.d,$(BIOS_C_SRCS))
+KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
+DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
 # Build the emulator argv in shell positional parameters. When tests/<name>.dir
 # exists, package it as an ext2 filesystem image, attach it as SD1, and request
@@ -131,6 +136,9 @@ endef
   $(TEST_NAMES) test test-no-ok clean bios/config.s kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
+
+# Header dependency tracking for the generated C->assembly outputs.
+-include $(DEPFILES)
 
 # Default target prints usage to avoid surprising emulator runs.
 all:
@@ -367,14 +375,17 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 
 # Compile the root test C file to assembly.
 $(BUILD_DIR)/%.s: tests/%.c $(BCC) | $(BUILD_DIR)
+	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.
 $(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) | $(BIOS_ASM_DIR)
+	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
 $(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) | $(KERNEL_ASM_DIR)
+	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
@@ -401,6 +412,7 @@ $(EMULATOR):
 # Cleanup for build artifacts; does not delete source files.
 clean:
 	rm -f "$(BUILD_DIR)"/*.hex "$(BUILD_DIR)"/*.bin "$(BUILD_DIR)"/*.s "$(BUILD_DIR)"/*.labels \
+	  "$(BUILD_DIR)"/*.d "$(BIOS_ASM_DIR)"/*.d "$(KERNEL_ASM_DIR)"/*.d \
 	  "$(BUILD_DIR)"/*.sd1.ext2 "$(BUILD_DIR)"/*.sd1.out.ext2 \
 	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
 	rm -rf tests/*.out.dir

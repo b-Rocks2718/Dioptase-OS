@@ -30,6 +30,9 @@ bool strneq(char* str1, char* str2, unsigned n){
   return i == n || (str1[i] == '\0' && str2[i] == '\0');
 }
 
+// Copies at most `n` bytes and only writes a single trailing NUL when the
+// source string ends early. This is the behavior current kernel callers rely
+// on, even though it is weaker than ISO C `strncpy` zero-padding semantics.
 char* strncpy(char* dest, char* src, unsigned n){
   unsigned i = 0;
   while (i < n && src[i] != '\0'){

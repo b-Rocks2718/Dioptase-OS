@@ -1,0 +1,7 @@
+***strlen: ok
+***streq: ok
+***strneq: ok
+***strncpy: ok
+***memcpy: ok
+***memset: ok
+***string helpers: ok

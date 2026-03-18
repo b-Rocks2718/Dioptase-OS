@@ -206,38 +206,3 @@ context_switch:
   pop  ra
 
 	ret
-
-  .global memcpy
-memcpy:
-  # copy n (r3) bytes from src (r2) to dest (r1)
-  # returns dest in r1
-  mov  r4, r3 # n
-  mov  r5, r1 # dest
-  mov  r6, r2 # src
-memcpy_loop:
-  cmp  r4, 0
-  bz   memcpy_done
-  lba  r7, [r6]
-  sba  r7, [r5]
-  add  r5, r5, 1
-  add  r6, r6, 1
-  add  r4, r4, -1
-  jmp  memcpy_loop
-memcpy_done:
-  ret
-
-  .global memset
-memset:
-  # fill n (r3) bytes at dest (r1) with byte value in r2
-  # returns dest in r1
-  mov  r4, r3 # n
-  mov  r5, r1 # dest
-memset_loop:
-  cmp  r4, 0
-  bz   memset_done
-  sba  r2, [r5]
-  add  r5, r5, 1
-  add  r4, r4, -1
-  jmp  memset_loop
-memset_done:
-  ret

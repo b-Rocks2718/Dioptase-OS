@@ -1,0 +1,5 @@
+***atomic test start
+***atomic lock state ok
+***atomic contention ok
+***atomic barrier ok
+***atomic test complete
