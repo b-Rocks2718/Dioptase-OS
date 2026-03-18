@@ -86,7 +86,7 @@ int kernel_main(void) {
     "node_make_symlink: inline symlink target was not stored inline in the inode.\n");
   node_free(inline_link);
 
-  struct Node* reopened_inline_link = ext2_find(&fs, root, "inline-link");
+  struct Node* reopened_inline_link = node_find(root, "inline-link");
   assert(reopened_inline_link != NULL,
     "node_make_symlink: inline symlink could not be reopened from the directory.\n");
   assert(node_is_symlink(reopened_inline_link),
@@ -108,7 +108,7 @@ int kernel_main(void) {
     "node_make_symlink: block-backed symlink target was not written through the inode data blocks.\n");
   node_free(block_link);
 
-  struct Node* reopened_block_link = ext2_find(&fs, root, "block-link");
+  struct Node* reopened_block_link = node_find(root, "block-link");
   assert(reopened_block_link != NULL,
     "node_make_symlink: block-backed symlink could not be reopened from the directory.\n");
   assert(node_is_symlink(reopened_block_link),

@@ -40,7 +40,7 @@ void sem_down(struct Semaphore* sem){
   
   spin_lock_release(&sem->lock);
 
-  int was = disable_interrupts();
+  int was = interrupts_disable();
 
   struct TCB* current_tcb = get_current_tcb();
   

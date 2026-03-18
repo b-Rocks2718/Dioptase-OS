@@ -4,29 +4,60 @@
 #include "debug.h"
 #include "heap.h"
 
-// port of Gheith kernel implementation
+// ChatGPT helped me learn how to implement a reusable barrier using two semaphores and a blocking lock
 
 void barrier_init(struct Barrier* barrier, unsigned count) {
   assert(barrier != NULL, "barrier init: barrier is NULL.\n");
   assert(count > 0, "barrier init: count must be > 0.\n");
-  barrier->count = count;
-  sem_init(&barrier->sem, 0);
+  barrier->initial_count = count;
+  barrier->current_count = count;
+
+  blocking_lock_init(&barrier->lock);
+  sem_init(&barrier->sem_1, 0); // closed
+  sem_init(&barrier->sem_2, 1); // open
 }
 
-
+// last call to sync() allows all threads to continue, and then resets the barrier
 void barrier_sync(struct Barrier* barrier) {
   assert(barrier != NULL, "barrier sync: barrier is NULL.\n");
-  if (__atomic_fetch_add((int*)&barrier->count, -1) == 1) {
-    sem_up(&barrier->sem);
-  } else {
-    sem_down(&barrier->sem);
-    sem_up(&barrier->sem);
+
+  // Phase 1: arrival
+  blocking_lock_acquire(&barrier->lock);
+  barrier->current_count--;
+  if (barrier->current_count == 0) {
+    // last thread has arrived, so we can open the barrier for all threads to depart
+    // because last thread has arrived, we know all threads have left the previous generation
+    // therefore we can close the second gate
+    sem_down(&barrier->sem_2);   // close second gate for this generation
+    sem_up(&barrier->sem_1);     // open first gate
   }
+  blocking_lock_release(&barrier->lock);
+
+  sem_down(&barrier->sem_1);
+  sem_up(&barrier->sem_1);
+
+  // Phase 2: departure
+  blocking_lock_acquire(&barrier->lock);
+  barrier->current_count++;
+  if (barrier->current_count == barrier->initial_count) {
+    // last thread has departed, so we can close the barrier for all threads to arrive for the next generation
+    // because last thread has departed, we know all threads have arrived for this generation
+    // therefore we can open the second gate for the next generation
+    sem_down(&barrier->sem_1);   // close first gate for next generation
+    sem_up(&barrier->sem_2);     // open second gate
+
+    // the barrier is now reset for the next generation
+  }
+  blocking_lock_release(&barrier->lock);
+
+  sem_down(&barrier->sem_2);
+  sem_up(&barrier->sem_2);
 }
 
 void barrier_destroy(struct Barrier* barrier) {
   assert(barrier != NULL, "barrier destroy: barrier is NULL.\n");
-  sem_destroy(&barrier->sem);
+  sem_destroy(&barrier->sem_1);
+  sem_destroy(&barrier->sem_2);
 }
 
 void barrier_free(struct Barrier* barrier) {

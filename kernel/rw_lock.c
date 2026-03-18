@@ -45,7 +45,7 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
 
   spin_lock_release(&rwlock->lock);
 
-  int was = disable_interrupts();
+  int was = interrupts_disable();
 
   struct TCB* current_tcb = get_current_tcb();
 
@@ -100,7 +100,7 @@ void rw_lock_acquire_write(struct RwLock* rwlock){
 
   spin_lock_release(&rwlock->lock);
 
-  int was = disable_interrupts();
+  int was = interrupts_disable();
 
   struct TCB* current_tcb = get_current_tcb();
 

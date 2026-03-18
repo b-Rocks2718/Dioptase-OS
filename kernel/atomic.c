@@ -17,13 +17,13 @@ void spin_lock_acquire(struct SpinLock* lock){
 
   // wait until the value stored in the lock is 0
   while (true){
-    int was = disable_interrupts();
+    int was = interrupts_disable();
     if (!__atomic_exchange_n(&lock->the_lock, 1)){
       // value was 0, now we have the lock
       __atomic_store_n(&lock->interrupt_state, was);
       return;
     }
-    restore_interrupts(was);
+    interrupts_restore(was);
     pause();
   }
 }
@@ -32,13 +32,13 @@ void spin_lock_acquire(struct SpinLock* lock){
 // if it succeeds, interrupts are disabled
 bool spin_lock_try_acquire(struct SpinLock* lock){
 
-  int was = disable_interrupts();
+  int was = interrupts_disable();
   if (!__atomic_exchange_n(&lock->the_lock, 1)){
     // value was 0, now we have the lock
     __atomic_store_n(&lock->interrupt_state, was);
     return true;
   }
-  restore_interrupts(was);
+  interrupts_restore(was);
 
   return false;
 }
@@ -47,7 +47,7 @@ bool spin_lock_try_acquire(struct SpinLock* lock){
 void spin_lock_release(struct SpinLock* lock){
   int was = __atomic_load_n(&lock->interrupt_state);
   __atomic_exchange_n(&lock->the_lock, 0);
-  restore_interrupts(was);
+  interrupts_restore(was);
 }
 
 void spin_barrier_sync(int* barrier){

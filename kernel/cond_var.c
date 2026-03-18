@@ -1,8 +1,8 @@
 #include "cond_var.h"
 #include "heap.h"
+#include "debug.h"
 
 // Condition variable implementation with semaphore-backed wakeups.
-// The caller-provided external BlockingLock protects the predicate state.
 
 void cond_var_init(struct CondVar* cv){
   sem_init(&cv->semaphore, 0);
@@ -10,15 +10,14 @@ void cond_var_init(struct CondVar* cv){
   cv->waiters = 0;
 }
 
-// Purpose: wait on a condition while releasing/reacquiring the predicate lock.
-// Inputs: cv is the condition variable; external_lock protects the predicate.
-// Preconditions: caller holds external_lock; cv is initialized; kernel mode.
-// Postconditions: caller holds external_lock again when function returns.
-//
 // Contract note:
 // The caller must wrap this call in a predicate loop:
 //   while (!predicate) cond_var_wait(cv, lock);
 void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
+  assert(cv != NULL, "cond_var wait: cv is NULL.\n");
+  assert(external_lock != NULL, "cond_var wait: external lock is NULL.\n");
+  assert(external_lock->is_held, "cond_var wait: external lock must be held by caller.\n");
+
   // increment waiters count
   spin_lock_acquire(&cv->lock);
   cv->waiters += 1;
@@ -35,25 +34,30 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   blocking_lock_acquire(external_lock);
 }
 
-// Purpose: wake one waiter if any are currently blocked.
-// Inputs: cv is the condition variable.
-// Preconditions: caller holds the external predicate lock associated with cv.
-// Postconditions: at most one waiter is released.
-void cond_var_signal(struct CondVar* cv){
+void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
+  assert(cv != NULL, "cond_var signal: cv is NULL.\n");
+  assert(external_lock != NULL, "cond_var signal: external lock is NULL.\n");
+  assert(external_lock->is_held, "cond_var signal: external lock must be held by caller.\n");
+
+  bool should_wake = false;
+
   spin_lock_acquire(&cv->lock);
   if (cv->waiters > 0) {
     cv->waiters -= 1;
-    // signal one waiting thread
-    sem_up(&cv->semaphore);
+    should_wake = true;
   }
   spin_lock_release(&cv->lock);
+
+  if (should_wake) {
+    sem_up(&cv->semaphore);
+  }
 }
 
-// Purpose: wake all current waiters.
-// Inputs: cv is the condition variable.
-// Preconditions: caller holds the external predicate lock associated with cv.
-// Postconditions: all waiters present at function entry are released.
-void cond_var_broadcast(struct CondVar* cv){
+void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
+  assert(cv != NULL, "cond_var broadcast: cv is NULL.\n");
+  assert(external_lock != NULL, "cond_var broadcast: external lock is NULL.\n");
+  assert(external_lock->is_held, "cond_var broadcast: external lock must be held by caller.\n");
+
   spin_lock_acquire(&cv->lock);
   unsigned n = cv->waiters;
   cv->waiters = 0;
@@ -66,10 +70,12 @@ void cond_var_broadcast(struct CondVar* cv){
 }
 
 void cond_var_destroy(struct CondVar* cv){
+  assert(cv != NULL, "cond_var destroy: cv is NULL.\n");
   sem_destroy(&cv->semaphore);
 }
 
 void cond_var_free(struct CondVar* cv){
+  assert(cv != NULL, "cond_var free: cv is NULL.\n");
   cond_var_destroy(cv);
   free(cv);
 }

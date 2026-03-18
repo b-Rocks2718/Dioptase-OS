@@ -6,12 +6,11 @@
 // returns current isr value
 extern unsigned clear_isr(void);
 
-
 // restores imr to prev, returns value that was in imr
-extern unsigned restore_interrupts(unsigned prev);
+extern unsigned interrupts_restore(unsigned prev);
 
 // returns current imr value
-extern unsigned disable_interrupts(void);
+extern unsigned interrupts_disable(void);
 
 extern void register_spurious_handlers(void);
 

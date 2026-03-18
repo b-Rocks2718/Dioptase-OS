@@ -8,6 +8,7 @@
 struct BlockingLock {
   struct Semaphore semaphore;
   bool preempt;
+  bool is_held; // for debugging
 };
 
 void blocking_lock_init(struct BlockingLock* lock);

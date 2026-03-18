@@ -22,6 +22,8 @@
 // EXT2_S_IWOTH | EXT2_S_IXOTH
 #define EXT2_DEFAULT_SYMLINK_MODE 0xA1FF
 
+static void cached_inode_init(struct CachedInode* cached, unsigned inumber);
+
 // ext2 stores directory records on 4-byte boundaries so readers can walk a
 // block by following rec_len until the block boundary.
 static unsigned ext2_dir_entry_min_size(unsigned name_len){
@@ -77,19 +79,119 @@ static void ext2_write_bgd_table(struct Ext2* fs){
 // Inode writeback is explicit in this filesystem implementation. Any helper
 // that mutates on-disk inode fields must call this after the final state is set.
 static void node_sync_inode(struct Node* node){
-  icache_set(&node->filesystem->icache, node->inumber, node->inode);
+  icache_set(&node->filesystem->icache, node->cached);
+}
+
+// Count contiguous non-zero block pointers in one indirect block. Ext2 files in
+// this implementation only grow by appending blocks, so the first zero entry
+// terminates the logical data-block span.
+static unsigned ext2_count_indirect_entries(unsigned* block, unsigned entries_per_block){
+  unsigned count = 0;
+
+  while (count < entries_per_block && block[count] != 0){
+    count += 1;
+  }
+
+  return count;
+}
+
+// Clear a newly allocated pointer block before publishing it. That guarantees
+// later scans stop at the first unused entry instead of reading heap garbage as
+// block numbers.
+static void ext2_zero_pointer_block(unsigned* block, unsigned entries_per_block){
+  memset(block, 0, entries_per_block * sizeof(unsigned));
 }
 
 // Directory sizes are tracked in bytes, while node_add_block needs the count of
-// logical data blocks already present. ext2 i_blocks cannot be used for that
-// because it is measured in 512-byte sectors and also includes indirect blocks.
-static unsigned node_data_block_count(struct Node* node){
+// logical data blocks already attached to the inode. ext2 i_blocks cannot be
+// used for that because it counts 512-byte sectors for both file data and
+// metadata blocks such as indirect pointer blocks.
+static unsigned node_scan_data_block_count(struct Node* node){
   unsigned block_size = ext2_get_block_size(node->filesystem);
-  if (node->inode->size == 0){
-    return 0;
+  unsigned entries_per_block = block_size / 4;
+  unsigned count = 0;
+  unsigned single_count = 0;
+  unsigned* single_indirect = NULL;
+  unsigned* double_indirect = NULL;
+  unsigned* triple_indirect = NULL;
+
+  while (count < 12 && node->cached->inode.block[count] != 0){
+    count += 1;
   }
 
-  return (node->inode->size - 1) / block_size + 1;
+  if (count < 12 || node->cached->inode.block[12] == 0){
+    return count;
+  }
+
+  single_indirect = malloc(block_size);
+  bcache_get(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect);
+  single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
+  count += single_count;
+  if (single_count < entries_per_block || node->cached->inode.block[13] == 0){
+    free(single_indirect);
+    return count;
+  }
+
+  double_indirect = malloc(block_size);
+  bcache_get(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect);
+  for (unsigned outer = 0; outer < entries_per_block; ++outer){
+    if (double_indirect[outer] == 0){
+      free(double_indirect);
+      free(single_indirect);
+      return count;
+    }
+
+    bcache_get(&node->filesystem->bcache, double_indirect[outer], (char*)single_indirect);
+    single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
+    count += single_count;
+    if (single_count < entries_per_block){
+      free(double_indirect);
+      free(single_indirect);
+      return count;
+    }
+  }
+
+  if (node->cached->inode.block[14] == 0){
+    free(double_indirect);
+    free(single_indirect);
+    return count;
+  }
+
+  triple_indirect = malloc(block_size);
+  bcache_get(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect);
+  for (unsigned outer = 0; outer < entries_per_block; ++outer){
+    if (triple_indirect[outer] == 0){
+      free(triple_indirect);
+      free(double_indirect);
+      free(single_indirect);
+      return count;
+    }
+
+    bcache_get(&node->filesystem->bcache, triple_indirect[outer], (char*)double_indirect);
+    for (unsigned middle = 0; middle < entries_per_block; ++middle){
+      if (double_indirect[middle] == 0){
+        free(triple_indirect);
+        free(double_indirect);
+        free(single_indirect);
+        return count;
+      }
+
+      bcache_get(&node->filesystem->bcache, double_indirect[middle], (char*)single_indirect);
+      single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
+      count += single_count;
+      if (single_count < entries_per_block){
+        free(triple_indirect);
+        free(double_indirect);
+        free(single_indirect);
+        return count;
+      }
+    }
+  }
+
+  free(triple_indirect);
+  free(double_indirect);
+  free(single_indirect);
+  return count;
 }
 
 void ext2_init(struct Ext2* fs){
@@ -146,20 +248,23 @@ void ext2_init(struct Ext2* fs){
   fs->bcache.fs = fs;
   bcache_init(&fs->bcache, block_size);
 
+  blocking_lock_init(&fs->inode_alloc_lock);
+  blocking_lock_init(&fs->block_alloc_lock);
+
   // Read the root inode through the inode cache so bootstrap uses the same
   // inode size and block-size rules as every other inode lookup.
-  struct Inode* root_inode = icache_get(&fs->icache, EXT2_ROOT_INO);
+  struct CachedInode* root_inode = icache_get(&fs->icache, EXT2_ROOT_INO);
 
   // The ext2 root inode must always be a directory.
-  assert((root_inode->mode & 0xF000) == EXT2_S_IFDIR,
+  assert((root_inode->inode.mode & 0xF000) == EXT2_S_IFDIR,
     "ext2_init: root inode is not a directory.\n");
 
-  node_init(&fs->root, EXT2_ROOT_INO, root_inode, fs);
+  node_init(&fs->root, root_inode, EXT2_BAD_INO, fs);
 }
 
 void ext2_destroy(struct Ext2* fs){
   free(fs->bgd_table);
-  free(fs->root.inode);
+  node_destroy(&fs->root);
 
   for (unsigned i = 0; i < fs->num_block_groups; ++i){
     free(fs->inode_bitmaps[i]);
@@ -167,6 +272,10 @@ void ext2_destroy(struct Ext2* fs){
   }
   free(fs->inode_bitmaps);
   free(fs->block_bitmaps);
+
+  icache_destroy(&fs->icache);
+  blocking_lock_destroy(&fs->inode_alloc_lock);
+  blocking_lock_destroy(&fs->block_alloc_lock);
 }
 
 void ext2_free(struct Ext2* fs){
@@ -213,7 +322,7 @@ void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
 }
 
 // Releases any path components still owned by the traversal queue, then frees
-// the queue object itself. `ext2_find` uses this on both success and failure so
+// the queue object itself. `node_find` uses this on both success and failure so
 // aborted lookups do not leak the remaining path strings.
 static void ext2_free_pending_path(struct RingBuf* path){
   if (path == NULL) return;
@@ -231,23 +340,23 @@ static void ext2_free_pending_path(struct RingBuf* path){
 // symlink inode itself.
 static struct Node* ext2_open_parent_dir(struct Node* node){
   struct Ext2* fs = node->filesystem;
-  struct Inode* inode = icache_get(&fs->icache, node->parent_inumber);
+  struct CachedInode* cached = icache_get(&fs->icache, node->parent_inumber);
   struct Node* parent = malloc(sizeof(struct Node));
 
-  node_init(parent, node->parent_inumber, inode, fs);
+  node_init(parent, cached, node->parent_inumber, fs);
   assert(node_is_dir(parent),
     "ext2_open_parent_dir: symlink parent inode is not a directory.\n");
 
   return parent;
 }
 
-// Create a standalone wrapper for the ext2 root inode. This keeps ext2_find's
+// Create a standalone wrapper for the ext2 root inode. This keeps node_find's
 // return contract uniform: every successful lookup returns a heap-owned node.
 static struct Node* ext2_open_root_dir(struct Ext2* fs){
-  struct Inode* inode = icache_get(&fs->icache, fs->root.inumber);
+  struct CachedInode* cached = icache_get(&fs->icache, fs->root.cached->inumber);
   struct Node* root = malloc(sizeof(struct Node));
 
-  node_init(root, fs->root.inumber, inode, fs);
+  node_init(root, cached, EXT2_BAD_INO, fs);
   assert(node_is_dir(root), "ext2_open_root_dir: root inode is not a directory.\n");
 
   return root;
@@ -273,12 +382,11 @@ struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* p
       assert(entry.inode != 0, "ext2_enter_dir: inode is 0.\n");
 
       // read inode table
-      struct Inode* inode = icache_get(&fs->icache, entry.inode);
+      struct CachedInode* inode = icache_get(&fs->icache, entry.inode);
               
       free(name);
       struct Node* node = malloc(sizeof(struct Node));
-      node_init(node, entry.inode, inode, fs);
-      node->parent_inumber = dir->inumber;
+      node_init(node, inode, dir->cached->inumber, fs);
       
       return node;
     }
@@ -318,16 +426,16 @@ static void ext2_release_owned_node(struct Node* node, bool owned){
   }
 }
 
-struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
+struct Node* node_find(struct Node* dir, char* name){
   if (dir == NULL || name == NULL) return NULL;
-  assert(node_is_dir(dir) || node_is_symlink(dir), "ext2_find: not a directory or symlink.\n");
+  assert(node_is_dir(dir) || node_is_symlink(dir), "node_find: not a directory or symlink.\n");
 
   bool dir_owned = false;
 
   // Absolute paths and root-relative paths start from a fresh heap-owned root
   // wrapper so all successful lookups have the same ownership contract.
-  if (name[0] == '/' || dir == &fs->root) {
-    dir = ext2_open_root_dir(fs);
+  if (name[0] == '/' || dir == &dir->filesystem->root) {
+    dir = ext2_open_root_dir(dir->filesystem);
     dir_owned = true;
   }
 
@@ -339,7 +447,7 @@ struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
   struct RingBuf* path = malloc(sizeof(struct RingBuf));
   ringbuf_init(path, 1024);
 
-  ext2_expand_path(fs, name, path);
+  ext2_expand_path(dir->filesystem, name, path);
 
   unsigned follows = 0;
 
@@ -361,7 +469,7 @@ struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
     if (node_is_dir(dir)) {
       struct Node* old_parent = parent;
       bool old_parent_owned = parent_owned;
-      struct Node* next = ext2_enter_dir(fs, dir, path);
+      struct Node* next = ext2_enter_dir(dir->filesystem, dir, path);
 
       parent = dir;
       parent_owned = dir_owned;
@@ -376,7 +484,7 @@ struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
       bool old_parent_owned = parent_owned;
       struct Node* old_dir = dir;
       bool old_dir_owned = dir_owned;
-      struct Node* tmp = ext2_expand_symlink(fs, old_parent, old_dir, path);
+      struct Node* tmp = ext2_expand_symlink(dir->filesystem, old_parent, old_dir, path);
 
       follows += 1;
 
@@ -414,6 +522,8 @@ struct Node* ext2_find(struct Ext2* fs, struct Node* dir, char* name){
 unsigned alloc_inumber(struct Ext2* fs){
   unsigned inumber = 0;
 
+  blocking_lock_acquire(&fs->inode_alloc_lock);
+
   // find block group with free inodes
   for (unsigned i = 0; i < fs->num_block_groups; ++i){
     if (fs->bgd_table[i].free_inodes_count > 0){
@@ -436,6 +546,8 @@ unsigned alloc_inumber(struct Ext2* fs){
         if (inumber != 0) break;
       }
 
+      blocking_lock_release(&fs->inode_alloc_lock);
+
       // write back updated bitmap and bgd
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[i]);
@@ -448,11 +560,21 @@ unsigned alloc_inumber(struct Ext2* fs){
     }
   }
 
+  if (inumber == 0){
+    panic("alloc_inumber: no free inodes available.\n");
+  }
+
   return inumber;
+}
+
+void dealloc_inumber(struct Ext2* fs, unsigned inumber) {
+  // TODO
 }
 
 unsigned alloc_block(struct Ext2* fs){
   unsigned block_num = -1;
+
+  blocking_lock_acquire(&fs->block_alloc_lock);
 
   // find block group with free inodes
   for (unsigned i = 0; i < fs->num_block_groups; ++i){
@@ -477,6 +599,8 @@ unsigned alloc_block(struct Ext2* fs){
         if (block_num != -1) break;
       }
 
+      blocking_lock_release(&fs->block_alloc_lock);
+
       // write back updated bitmap and bgd
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
@@ -489,38 +613,41 @@ unsigned alloc_block(struct Ext2* fs){
     }
   }
 
+  if (block_num == -1){
+    panic("alloc_block: no free blocks available.\n");
+  }
+
   return block_num;
 }
 
-struct Inode* make_inode(short mode){
-  struct Inode* inode = malloc(sizeof(struct Inode));
+void dealloc_block(struct Ext2* fs, unsigned block_num) {
+  // TODO
+}
 
-  inode->mode = mode;
-  inode->uid = 0; // TODO: support non-root users
-  inode->size = 0; // new file has no data blocks
-  inode->atime = 0; // not supported
-  inode->ctime = 0; // not supported
-  inode->mtime = 0; // not supported
-  inode->dtime = 0; // not supported
-  inode->gid = 0; // TODO: support non-root groups
-  inode->links_count = 1; // new file has one link from its parent directory
-  inode->blocks = 0; // no data blocks yet
-  inode->flags = 0; // not supported
-  inode->osd1 = 0; // not used
-  
-  for (int i = 0; i < 15; ++i){
-    inode->block[i] = 0; // no data blocks yet
-  }
+struct CachedInode* make_inode(short mode, unsigned inumber){
+  struct CachedInode* cached = malloc(sizeof(struct CachedInode));
+  cached_inode_init(cached, inumber);
 
-  inode->generation = 0; // not supported
-  inode->dir_acl = 0; // rev 0 requires this to be 0
-  inode->faddr = 0; // not supported
+  cached->inode.mode = mode;
+  cached->inode.uid = 0; // TODO: support non-root users
+  cached->inode.size = 0; // new file has no data blocks
+  cached->inode.atime = 0; // not supported
+  cached->inode.ctime = 0; // not supported
+  cached->inode.mtime = 0; // not supported
+  cached->inode.dtime = 0; // not supported
+  cached->inode.gid = 0; // TODO: support non-root groups
+  cached->inode.links_count = 1; // new file has one link from its parent directory
+  cached->inode.blocks = 0; // no data blocks yet
+  cached->inode.flags = 0; // not supported
+  cached->inode.osd1 = 0; // not used
+  memset(cached->inode.block, 0, sizeof(cached->inode.block));
 
-  for (int i = 0; i < 12; ++i){
-    inode->osd2[i] = 0; // not used
-  }
+  cached->inode.generation = 0; // not supported
+  cached->inode.dir_acl = 0; // rev 0 requires this to be 0
+  cached->inode.faddr = 0; // not supported
+  memset(cached->inode.osd2, 0, sizeof(cached->inode.osd2));
 
-  return inode;
+  return cached;
 }
 
 bool node_add_block(struct Node* node, unsigned block_num){
@@ -532,12 +659,13 @@ bool node_add_block(struct Node* node, unsigned block_num){
   unsigned double_limit = single_limit + double_span;
   unsigned triple_span = double_span * entries_per_block;
   unsigned triple_limit = double_limit + triple_span;
-  unsigned logical_block = node_data_block_count(node);
+  unsigned logical_block = node->cached->data_block_count;
   unsigned reserved_blocks = 1;
 
   if (logical_block < 12){
-    node->inode->block[logical_block] = block_num;
-    node->inode->blocks += reserved_blocks * sectors_per_block;
+    node->cached->inode.block[logical_block] = block_num;
+    node->cached->inode.blocks += reserved_blocks * sectors_per_block;
+    node->cached->data_block_count += 1;
     return true;
   } else if (logical_block < single_limit){
     unsigned* single_indirect = malloc(block_size);
@@ -547,15 +675,17 @@ bool node_add_block(struct Node* node, unsigned block_num){
         free(single_indirect);
         return false;
       }
-      node->inode->block[12] = new_block;
+      node->cached->inode.block[12] = new_block;
+      ext2_zero_pointer_block(single_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->inode->block[12], (char*)single_indirect);
+      bcache_get(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect);
     }
 
     single_indirect[logical_block - 12] = block_num;
-    bcache_set(&node->filesystem->bcache, node->inode->block[12], (char*)single_indirect, 0, block_size);
-    node->inode->blocks += reserved_blocks * sectors_per_block;
+    bcache_set(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect, 0, block_size);
+    node->cached->inode.blocks += reserved_blocks * sectors_per_block;
+    node->cached->data_block_count += 1;
     free(single_indirect);
     return true;
   } else if (logical_block < double_limit){
@@ -572,10 +702,11 @@ bool node_add_block(struct Node* node, unsigned block_num){
         free(single_indirect);
         return false;
       }
-      node->inode->block[13] = new_double_block;
+      node->cached->inode.block[13] = new_double_block;
+      ext2_zero_pointer_block(double_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->inode->block[13], (char*)double_indirect);
+      bcache_get(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect);
     }
 
     if (direct_index == 0){
@@ -588,14 +719,16 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
       double_indirect[indirect_index] = new_block;
       reserved_blocks += 1;
-      bcache_set(&node->filesystem->bcache, node->inode->block[13], (char*)double_indirect, 0, block_size);
+      bcache_set(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect, 0, block_size);
+      ext2_zero_pointer_block(single_indirect, entries_per_block);
     } else {
       bcache_get(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect);
     }
 
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect, 0, block_size);
-    node->inode->blocks += reserved_blocks * sectors_per_block;
+    node->cached->inode.blocks += reserved_blocks * sectors_per_block;
+    node->cached->data_block_count += 1;
     free(double_indirect);
     free(single_indirect);
     return true;
@@ -616,10 +749,11 @@ bool node_add_block(struct Node* node, unsigned block_num){
         free(single_indirect);
         return false;
       }
-      node->inode->block[14] = new_triple_block;
+      node->cached->inode.block[14] = new_triple_block;
+      ext2_zero_pointer_block(triple_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->inode->block[14], (char*)triple_indirect);
+      bcache_get(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect);
     }
 
     if (triple_index % double_span == 0){
@@ -633,7 +767,8 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
       triple_indirect[outer_index] = new_block;
       reserved_blocks += 1;
-      bcache_set(&node->filesystem->bcache, node->inode->block[14], (char*)triple_indirect, 0, block_size);
+      bcache_set(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect, 0, block_size);
+      ext2_zero_pointer_block(double_indirect, entries_per_block);
     } else {
       bcache_get(&node->filesystem->bcache, triple_indirect[outer_index], (char*)double_indirect);
     }
@@ -650,13 +785,15 @@ bool node_add_block(struct Node* node, unsigned block_num){
       double_indirect[middle_index] = new_block;
       reserved_blocks += 1;
       bcache_set(&node->filesystem->bcache, triple_indirect[outer_index], (char*)double_indirect, 0, block_size);
+      ext2_zero_pointer_block(single_indirect, entries_per_block);
     } else {
       bcache_get(&node->filesystem->bcache, double_indirect[middle_index], (char*)single_indirect);
     }
 
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[middle_index], (char*)single_indirect, 0, block_size);
-    node->inode->blocks += reserved_blocks * sectors_per_block;
+    node->cached->inode.blocks += reserved_blocks * sectors_per_block;
+    node->cached->data_block_count += 1;
     free(triple_indirect);
     free(double_indirect);
     free(single_indirect);
@@ -719,7 +856,7 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
 
 void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
   unsigned block_size = ext2_get_block_size(dir->filesystem);
-  unsigned logical_block_count = node_data_block_count(dir);
+  unsigned logical_block_count = dir->cached->data_block_count;
 
   assert(node_is_dir(dir), "dir_add_entry: target node is not a directory.\n");
   assert(strlen(name) > 0, "dir_add_entry: directory entries must have a non-empty name.\n");
@@ -743,7 +880,7 @@ void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
   node_write_block(dir, logical_block_count, block_buf, 0, block_size);
   free(block_buf);
 
-  dir->inode->size += block_size;
+  dir->cached->inode.size += block_size;
   node_sync_inode(dir);
 }
 
@@ -785,9 +922,12 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
     return NULL;
   }
 
-  struct Inode* inode = make_inode(mode);
+  struct CachedInode* cached = make_inode(mode, inumber);
+  icache_insert(&fs->icache, cached);
+
   struct Node* node = malloc(sizeof(struct Node));
-  node_init(node, inumber, inode, fs);
+
+  node_init(node, cached, dir->cached->inumber, fs);
 
   // inode allocated successfully, now update parent directory
   dir_add_entry(dir, name, inumber);
@@ -798,18 +938,34 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   return node;
 }
 
-void icache_init(struct InodeCache* cache){
-  blocking_lock_init(&cache->lock);
-  for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-    // Clear tags so a freshly initialized cache cannot report a stale hit.
-    cache->tags[i] = -1;
-    cache->ages[i] = i;
-  }
+void dealloc_inode(struct Ext2* fs, unsigned inumber){
+  // TODO
 }
 
-struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
-  struct Inode* inode = malloc(sizeof(struct Inode));
+static void cached_inode_init(struct CachedInode* cached, unsigned inumber){
+  cached->inumber = inumber;
+  cached->refcount = 1;
+  cached->valid = false; // invalid until the inode data is read in from disk
+  blocking_lock_init(&cached->lock);
+  gate_init(&cached->valid_gate);
+}
 
+static void cached_inode_destroy(struct CachedInode* cached){
+  gate_destroy(&cached->valid_gate);
+  blocking_lock_destroy(&cached->lock);
+}
+
+static void cached_inode_free(struct CachedInode* cached){
+  cached_inode_destroy(cached);
+  free(cached);
+}
+
+void icache_init(struct InodeCache* cache){
+  blocking_lock_init(&cache->lock);
+  hash_map_init(&cache->cache, 1024);
+}
+
+struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber){
   unsigned block_size = ext2_get_block_size(cache->fs);
   unsigned inode_size = ext2_get_inode_size(cache->fs);
   unsigned inodes_per_block = block_size / inode_size;
@@ -823,33 +979,45 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
   blocking_lock_acquire(&cache->lock);
   bool found = false;
   unsigned result = 0;
-  for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-    if (inumber == cache->tags[i]){
-      found = true;
-      result = i;
-    }
-  }
-
-  if (found){
-    for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-      if (cache->ages[i] < cache->ages[result]){
-        cache->ages[i]++;
-      }
-    }
-    cache->ages[result] = 0;
-
-    // copy from buffer into inode
-    memcpy(inode, cache->inode_cache + result, sizeof(struct Inode));
-
+  
+  // check live cache
+  struct CachedInode* cached = hash_map_get(&cache->cache, inumber);
+  if (cached != NULL){
+    // cache hit in live cache, can return immediately
+    cached->refcount += 1;
     blocking_lock_release(&cache->lock);
 
-    return inode;
+    gate_wait(&cached->valid_gate);
+
+    return cached;
   } 
   
-  
   // have to read in inode, so temporarily release lock while doing IO
-
   blocking_lock_release(&cache->lock);
+
+  // insert entry into cache before reading, so we avoid reading twice
+  struct CachedInode* new_cache_entry = malloc(sizeof(struct CachedInode));
+  cached_inode_init(new_cache_entry, inumber);
+
+  blocking_lock_acquire(&cache->lock);
+  struct CachedInode* old = hash_map_try_insert(&cache->cache, inumber, new_cache_entry);
+  if (old != NULL){
+    old->refcount += 1;
+  }
+  blocking_lock_release(&cache->lock);
+
+  if (old != NULL){
+    // this inode is already being read by another thread,
+    // so we will wait for it to become valid and then return the same cache entry
+    cached_inode_free(new_cache_entry); // wasn't needed
+
+    gate_wait(&old->valid_gate);
+
+    assert(old->valid, 
+      "icache_get: gate was signaled but cache entry is not valid.\n");
+
+    return old;
+  }
 
   // Allocate the temporary inode-table buffer only on a cache miss so hot-path
   // inode hits do not contend on the heap for an unused scratch block.
@@ -861,80 +1029,82 @@ struct Inode* icache_get(struct InodeCache* cache, unsigned inumber){
 
   blocking_lock_acquire(&cache->lock);
 
-  for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-    cache->ages[i]++;
-    if (cache->ages[i] == ICACHE_SIZE) result = i;
-  }
-    
-  cache->ages[result] = 0;
-  cache->tags[result] = inumber;
-
   // copy from buffer into cache
-  memcpy(cache->inode_cache + result, (struct Inode*)(inode_table_buf + inode_offset), sizeof(struct Inode));
+  memcpy(&new_cache_entry->inode, (struct Inode*)(inode_table_buf + inode_offset), sizeof(struct Inode));
 
-  // copy from cache into inode
-  memcpy(inode, cache->inode_cache + result, sizeof(struct Inode));
-
+  new_cache_entry->valid = true;
   blocking_lock_release(&cache->lock);
+
+  gate_signal(&new_cache_entry->valid_gate);
 
   free(inode_table_buf);
 
-  return inode;
+  return new_cache_entry;
 }
 
-void icache_set(struct InodeCache* cache, unsigned inumber, struct Inode* inode){
+void icache_insert(struct InodeCache* cache, struct CachedInode* cached){
+  blocking_lock_acquire(&cache->lock);
+  struct CachedInode* old = hash_map_try_insert(&cache->cache, cached->inumber, cached);
+  assert(old == NULL, "icache_insert: attempted to insert duplicate cache entry.\n");
+  blocking_lock_release(&cache->lock);
+
+  gate_signal(&cached->valid_gate);
+}
+
+void icache_set(struct InodeCache* cache, struct CachedInode* cached){
   unsigned block_size = ext2_get_block_size(cache->fs);
   unsigned inode_size = ext2_get_inode_size(cache->fs);
   unsigned inodes_per_block = block_size / inode_size;
-  unsigned block_group = (inumber - 1) / cache->fs->superblock.inodes_per_group;
-  unsigned block_group_inode_index = (inumber - 1) % cache->fs->superblock.inodes_per_group;
+  unsigned block_group = (cached->inumber - 1) / cache->fs->superblock.inodes_per_group;
+  unsigned block_group_inode_index = (cached->inumber - 1) % cache->fs->superblock.inodes_per_group;
   unsigned inode_table_sector =
     (cache->fs->bgd_table[block_group].inode_table + block_group_inode_index / inodes_per_block) *
     block_size / SD_SECTOR_SIZE_BYTES;
   unsigned inode_offset = inode_size * (block_group_inode_index % inodes_per_block);
   char* inode_table_buf = malloc(block_size);
 
-  blocking_lock_acquire(&cache->lock);
-  bool found = false;
-  unsigned result = 0;
-  for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-    if (inumber == cache->tags[i]){
-      found = true;
-      result = i;
-    }
-  }
-
-  if (found){
-    for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-      if (cache->ages[i] < cache->ages[result]){
-        cache->ages[i]++;
-      }
-    }
-  } else {
-    for (unsigned i = 0; i < ICACHE_SIZE; ++i){
-      cache->ages[i]++;
-      if (cache->ages[i] == ICACHE_SIZE) result = i;
-    }
-    cache->tags[result] = inumber;
-  }
-
-  cache->ages[result] = 0;
-  memcpy(cache->inode_cache + result, inode, sizeof(struct Inode));
-  blocking_lock_release(&cache->lock);
-
   // Read-modify-write the containing inode-table block so neighboring inodes in
-  // the same block are preserved, then write it back after the cache update.
+  // the same block are preserved
   int rc = sd_read_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
   assert(rc == 0, "icache_set: failed to read inode table block.\n");
 
-  memcpy(inode_table_buf + inode_offset, inode, sizeof(struct Inode));
+  memcpy(inode_table_buf + inode_offset, &cached->inode, sizeof(struct Inode));
 
   rc = sd_write_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
   assert(rc == 0, "icache_set: failed to write inode table block.\n");
 
   free(inode_table_buf);
+}
+
+// decrement refcount, free if it hits 0
+// Note that the caller is responsible for writing back dirty cache entries before releasing them
+void icache_release(struct InodeCache* cache, struct CachedInode* cached){
+  blocking_lock_acquire(&cache->lock);
+
+  cached->refcount -= 1;
+  assert(cached->refcount >= 0, "icache_release: cache entry refcount went negative.\n");
+
+  if (cached->refcount == 0){
+    hash_map_remove(&cache->cache, cached->inumber);
+
+    blocking_lock_release(&cache->lock);
+
+    cached_inode_free(cached);
+  } else {
+    blocking_lock_release(&cache->lock);
+  }
+}
+
+void icache_destroy(struct InodeCache* cache){
+  hash_map_destroy(&cache->cache);
+  blocking_lock_destroy(&cache->lock);
+}
+
+void icache_free(struct InodeCache* cache){
+  icache_destroy(cache);
+  free(cache);
 }
 
 void bcache_init(struct BlockCache* cache, unsigned block_size){
@@ -1077,17 +1247,19 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   free(block_buf);
 }
 
-void node_init(struct Node* node, unsigned inumber, struct Inode* inode, struct Ext2* fs){
-  node->inumber = inumber;
+void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_inumber, struct Ext2* fs){
+  node->cached = cached;
   // Default to "self" so root nodes and reconstructed directory nodes remain
   // valid even when the caller has no better parent information available.
-  node->parent_inumber = inumber;
-  node->inode = inode;
+  node->parent_inumber = parent_inumber;
   node->filesystem = fs;
+  // Seed the cache once when the wrapper is created. Later block-growth paths
+  // update it incrementally so steady-state writes avoid pointer-tree scans.
+  node->cached->data_block_count = node_scan_data_block_count(node);
 }
 
 void node_destroy(struct Node* node){
-  free(node->inode);
+  icache_release(&node->filesystem->icache, node->cached);
 }
 
 void node_free(struct Node* node){
@@ -1096,7 +1268,7 @@ void node_free(struct Node* node){
 }
 
 unsigned node_size_in_bytes(struct Node* node){
-  return node->inode->size;
+  return node->cached->inode.size;
 }
 
 struct Node* node_make_file(struct Node* dir, char* name){
@@ -1126,8 +1298,8 @@ struct Node* node_make_dir(struct Node* dir, char* name){
   }
 
   // add . and .. entries to new directory
-  dir_add_entry(node, ".", node->inumber);
-  dir_add_entry(node, "..", dir->inumber);
+  dir_add_entry(node, ".", node->cached->inumber);
+  dir_add_entry(node, "..", dir->cached->inumber);
 
   return node;
 }
@@ -1147,9 +1319,9 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
 
   // ext2 fast symlinks store short targets inline in i_block instead of
   // allocating separate data blocks.
-  if (target_size < sizeof(node->inode->block)) {
-    memcpy((char*)node->inode->block, target, target_size);
-    node->inode->size = target_size;
+  if (target_size < sizeof(node->cached->inode.block)) {
+    memcpy((char*)node->cached->inode.block, target, target_size);
+    node->cached->inode.size = target_size;
     node_sync_inode(node);
     return node;
   }
@@ -1163,11 +1335,14 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
     assert(added, "node_make_symlink: failed to allocate a data block for the symlink target.\n");
   }
 
-  node->inode->size = target_size;
+  node->cached->inode.size = target_size;
   node_write_all(node, 0, target_size, target);
-  node_sync_inode(node);
 
   return node;
+}
+
+void node_delete(struct Node* node){
+  // TODO
 }
 
 void read_sectors(struct Ext2* fs, unsigned index, char* buffer){
@@ -1189,7 +1364,7 @@ void node_print_dir(struct Node* node){
       char* name_buf = malloc(entry.name_len + 1);
       strncpy(name_buf, (char*)entry.name, entry.name_len);
       name_buf[entry.name_len] = '\0';
-      printf("%s\n", &name_buf);
+      printf("***%s\n", &name_buf);
       free(name_buf);
     }
   }
@@ -1198,7 +1373,7 @@ void node_print_dir(struct Node* node){
 void read_direct_block(struct Node* node, unsigned index, char* buffer){
   assert(index < 12, "read_direct_block: index out of bounds for direct block.\n");
 
-  read_sectors(node->filesystem, node->inode->block[index], buffer);
+  read_sectors(node->filesystem, node->cached->inode.block[index], buffer);
 }
 
 void read_indirect_block(struct Node* node, unsigned index, char* buffer){
@@ -1210,7 +1385,7 @@ void read_indirect_block(struct Node* node, unsigned index, char* buffer){
   unsigned real_index = index - 12;
 
   unsigned* direct_pointers = malloc(block_size);
-  read_sectors(node->filesystem, node->inode->block[12], (char*)direct_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[12], (char*)direct_pointers);
   read_sectors(node->filesystem, direct_pointers[real_index], buffer);
   free(direct_pointers);
 }
@@ -1225,7 +1400,7 @@ void read_double_indirect_block(struct Node* node, unsigned index, char* buffer)
 
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
-  read_sectors(node->filesystem, node->inode->block[13], (char*)indirect_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[13], (char*)indirect_pointers);
   read_sectors(node->filesystem, indirect_pointers[real_index / entries_per_block], (char*)direct_pointers);
   read_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer);
   free(indirect_pointers);
@@ -1244,7 +1419,7 @@ void read_triple_indirect_block(struct Node* node, unsigned index, char* buffer)
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
     
-  read_sectors(node->filesystem, node->inode->block[14], (char*)double_indirect_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[14], (char*)double_indirect_pointers);
   read_sectors(node->filesystem, double_indirect_pointers[real_index / (entries_per_block * entries_per_block)], (char*)indirect_pointers);
   read_sectors(node->filesystem, indirect_pointers[(real_index / entries_per_block) % entries_per_block], (char*)direct_pointers);
   read_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer);
@@ -1273,7 +1448,7 @@ void write_sectors(struct Ext2* fs, unsigned index, char* buffer, unsigned offse
 void write_direct_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   assert(index < 12, "write_direct_block: index out of bounds for direct block.\n");
 
-  write_sectors(node->filesystem, node->inode->block[index], buffer, offset, size);
+  write_sectors(node->filesystem, node->cached->inode.block[index], buffer, offset, size);
 }
 
 void write_indirect_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
@@ -1285,7 +1460,7 @@ void write_indirect_block(struct Node* node, unsigned index, char* buffer, unsig
   unsigned real_index = index - 12;
 
   unsigned* direct_pointers = malloc(block_size);
-  read_sectors(node->filesystem, node->inode->block[12], (char*)direct_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[12], (char*)direct_pointers);
   write_sectors(node->filesystem, direct_pointers[real_index], buffer, offset, size);
   free(direct_pointers);
 }
@@ -1300,7 +1475,7 @@ void write_double_indirect_block(struct Node* node, unsigned index, char* buffer
 
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
-  read_sectors(node->filesystem, node->inode->block[13], (char*)indirect_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[13], (char*)indirect_pointers);
   read_sectors(node->filesystem, indirect_pointers[real_index / entries_per_block], (char*)direct_pointers);
   write_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer, offset, size);
   free(indirect_pointers);
@@ -1319,7 +1494,7 @@ void write_triple_indirect_block(struct Node* node, unsigned index, char* buffer
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
     
-  read_sectors(node->filesystem, node->inode->block[14], (char*)double_indirect_pointers);
+  read_sectors(node->filesystem, node->cached->inode.block[14], (char*)double_indirect_pointers);
   read_sectors(node->filesystem, double_indirect_pointers[real_index / (entries_per_block * entries_per_block)], (char*)indirect_pointers);
   read_sectors(node->filesystem, indirect_pointers[(real_index / entries_per_block) % entries_per_block], (char*)direct_pointers);
   write_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer, offset, size);
@@ -1372,6 +1547,17 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   unsigned end_block = (offset + size - 1) / block_size;
   unsigned bytes_copied = 0;
 
+  // Update the file size if we wrote past the previous end of the file
+  if (offset + size > node->cached->inode.size){
+    // allocate new block if necessary
+    while (end_block >= node->cached->data_block_count){
+      bool added = node_add_block(node, alloc_block(node->filesystem));
+      assert(added, "node_write_all: failed to allocate a new block for the file data.\n");
+    }
+
+    node->cached->inode.size = offset + size;
+  }
+
   for (unsigned i = start_block; i <= end_block; ++i){
     unsigned block_offset = (i == start_block) ? offset % block_size : 0;
     unsigned copy_size = (i == end_block) ? ((offset + size - 1) % block_size) - block_offset + 1 : block_size - block_offset;
@@ -1380,42 +1566,44 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
     bytes_copied += copy_size;
   }
 
+  node_sync_inode(node);
+
   return size;
 }
 
 unsigned short node_get_type(struct Node* node){
-  return node->inode->mode & 0xF000;
+  return node->cached->inode.mode & 0xF000;
 }
 
 bool node_is_dir(struct Node* node){
-  unsigned short type = node->inode->mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & 0xF000;
   return (type == EXT2_S_IFDIR);
 }
 
 bool node_is_file(struct Node* node){
-  unsigned short type = node->inode->mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & 0xF000;
   return (type == EXT2_S_IFREG);
 }
 
 bool node_is_symlink(struct Node* node){
-  unsigned short type = node->inode->mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & 0xF000;
   return (type == EXT2_S_IFLNK);
 }
 
 void node_get_symlink_target(struct Node* node, char* dest){
   assert(node_is_symlink(node), "node_get_symlink_target: node is not a symlink.\n");
 
-  if (node->inode->size < 60) {
-    memcpy(dest, &node->inode->block, node->inode->size);
-    *(dest + node->inode->size) = 0;
+  if (node->cached->inode.size < 60) {
+    memcpy(dest, &node->cached->inode.block, node->cached->inode.size);
+    *(dest + node->cached->inode.size) = 0;
   } else {
-    node_read_all(node, 0, node->inode->size, dest);
-    *(dest + node->inode->size) = 0;
+    node_read_all(node, 0, node->cached->inode.size, dest);
+    *(dest + node->cached->inode.size) = 0;
   }
 }
 
 unsigned node_get_num_links(struct Node* node){
-  return node->inode->links_count;
+  return node->cached->inode.links_count;
 }
 
 unsigned node_entry_count(struct Node* node){

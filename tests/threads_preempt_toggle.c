@@ -1,5 +1,5 @@
 // Preemption toggle test.
-// Purpose: verify disable_preemption blocks PIT-driven rescheduling on the
+// Purpose: verify preemption_disable blocks PIT-driven rescheduling on the
 // current core until re-enabled.
 
 // Note: this test assumes single core
@@ -19,12 +19,7 @@ static int target_core = -1;
 static int worker_ready = 0;
 static int worker_progress = 0;
 
-// Purpose: exercise preemption behavior by yielding on a designated core.
-// Inputs: arg unused.
-// Preconditions: kernel mode; thread created via thread().
-// Postconditions: increments worker_progress WORKER_ROUNDS times on target_core.
-// Invariants: worker_progress increments only when running on target_core.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// exercise preemption behavior by yielding on a designated core.
 static void worker_thread(void* arg) {
   (void)arg;
 
@@ -40,13 +35,7 @@ static void worker_thread(void* arg) {
   }
 }
 
-// Purpose: validate disable_preemption prevents PIT rescheduling on this core.
-// Inputs: none.
-// Outputs: prints pass/fail status; panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: worker progresses only after preemption is re-enabled.
-// Invariants: no yields occur while preemption is disabled in the critical window.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// validate preemption_disable prevents PIT rescheduling on this core.
 void kernel_main(void) {
   say("***preemption toggle test start\n", NULL);
 
@@ -63,7 +52,7 @@ void kernel_main(void) {
   }
 
   int before = __atomic_load_n(&worker_progress);
-  bool prev = disable_preemption();
+  bool prev = preemption_disable();
 
   for (int i = 0; i < SPIN_ITERS; i++) {
     pause();
@@ -76,7 +65,7 @@ void kernel_main(void) {
     panic("preempt toggle: worker ran while preemption disabled\n");
   }
 
-  enable_preemption(prev);
+  preemption_restore(prev);
 
   bool saw_progress = false;
   for (int i = 0; i < POST_ENABLE_SPINS; i++) {

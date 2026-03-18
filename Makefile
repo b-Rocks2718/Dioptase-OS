@@ -1,6 +1,6 @@
 # Build/test harness for Dioptase-OS test programs.
-# Purpose: build a standalone BIOS hex image, then build a kernel binary image
-# from a root test C file plus kernel sources, and optionally run the emulator.
+# builds a standalone BIOS hex image, then builds a kernel binary image
+# from a root test C file plus kernel sources, and optionally runs the emulator.
 
 # ----------------------------------- configuration ---------------------------------------- #
 
@@ -13,7 +13,7 @@ TRACE_INTS ?= no
 # memory map
 TEXT_LOAD_ADDR := 0x10000
 DATA_LOAD_ADDR := 0x90000
-RODATA_LOAD_ADDR := 0xA0000
+RODATA_LOAD_ADDR := 0xC0000
 BSS_LOAD_ADDR := 0xF0000
 
 # ext2 filesystem config
@@ -23,9 +23,10 @@ BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 TEST_RUNS ?= 100
 TIMEOUT_SECONDS ?= 300
 VERSION ?= release
-PYTHON3 ?= python3
 
 # ------------------------------------------------------------------------------------------ #
+
+PYTHON3 ?= python3
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER)
 

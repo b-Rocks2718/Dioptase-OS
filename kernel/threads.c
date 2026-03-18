@@ -158,9 +158,9 @@ void block(unsigned was, void (*func)(void *), void *arg) {
 }
 
 void thread_entry(void) {
-  int was = disable_interrupts();
+  int was = interrupts_disable();
   struct TCB* current_tcb = get_current_tcb();
-  restore_interrupts(was);
+  interrupts_restore(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
   if (thread_fun != NULL) {
     // Catch corrupted thread trampoline state before an indirect branch can jump to 0x0.
@@ -202,7 +202,7 @@ void event_loop(void) {
     // if we actually are an idle thread, preemption is disabled
     // and we don't actually need to disable interrupts here
     // this is just for debugging
-    int was = disable_interrupts();
+    int was = interrupts_disable();
     struct PerCore* core = get_per_core();
     assert(core != NULL, "per-core data is NULL.\n");
     if (core->current_thread != core->idle_thread) {
@@ -216,7 +216,7 @@ void event_loop(void) {
     if (next != NULL) {
       context_switch(me, next, nothing, NULL, &core->current_thread, was);
     } else {
-      restore_interrupts(was);
+      interrupts_restore(was);
       pause();
     }
   }
@@ -283,7 +283,7 @@ void thread(struct Fun* thread_fun){
 void bootstrap(void){
   // interrupts should be disabled when calling this function
   // but we'll be safe
-  int was = disable_interrupts();
+  int was = interrupts_disable();
   int me = get_core_id();
   struct TCB* tcb = &idle_tcbs[me];
 
@@ -335,7 +335,7 @@ void bootstrap(void){
   assert((was & 0x80000000) == 0, "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
   core->idle_thread = tcb;
-  restore_interrupts(was);
+  interrupts_restore(was);
 }
 
 void add_tcb(void* tcb){
@@ -344,7 +344,7 @@ void add_tcb(void* tcb){
 
 // voluntarily yield the CPU and re-queue the current thread.
 void yield(void){
-  unsigned was = disable_interrupts();
+  unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   block(was, add_tcb, (void*)tcb);
 }
@@ -356,13 +356,13 @@ void reap_tcb(void* tcb){
 
 // terminate the current thread and free its resources.
 void stop(void) {
-  unsigned was = disable_interrupts();
+  unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;
   bool is_idle = (current == core->idle_thread);
 
   if (is_idle) {
-    restore_interrupts(was);
+    interrupts_restore(was);
     // idle thread should not be stopped
     event_loop();
   } else {
@@ -376,7 +376,7 @@ void stop(void) {
 
 // block the current thread until a target jiffy count is reached.
 void sleep(unsigned jiffies){
-  unsigned was = disable_interrupts();
+  unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   struct PerCore* core = get_per_core();
   assert(tcb != core->idle_thread, "sleep: idle thread cannot sleep.\n");
@@ -385,18 +385,18 @@ void sleep(unsigned jiffies){
   block(was, sleep_queue_add, (void*)args);
 }
 
-bool disable_preemption(void){
-  int was = disable_interrupts();
+bool preemption_disable(void){
+  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   bool prev = tcb->can_preempt;
   tcb->can_preempt = false;
-  restore_interrupts(was);
+  interrupts_restore(was);
   return prev;
 }
 
-void enable_preemption(bool was){
-  int intrs = disable_interrupts();
+void preemption_restore(bool was){
+  int intrs = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   tcb->can_preempt = was;
-  restore_interrupts(intrs);
+  interrupts_restore(intrs);
 }

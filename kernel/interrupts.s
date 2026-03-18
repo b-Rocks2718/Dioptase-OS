@@ -1,15 +1,15 @@
   .align 4
   .text
-  .global restore_interrupts
-restore_interrupts:
+  .global interrupts_restore
+interrupts_restore:
   # r1 has mask to restore
   mov  r2, imr # save previous state
   mov  imr, r1
   mov  r1, r2 # return previous interrupt state
   ret
 
-  .global disable_interrupts
-disable_interrupts:
+  .global interrupts_disable
+interrupts_disable:
   # return previous state
   mov  r1, imr
   mov  imr, r0

@@ -41,8 +41,8 @@ void sleep(unsigned jiffies);
 
 void stop(void);
 
-bool disable_preemption(void);
+bool preemption_disable(void);
 
-void enable_preemption(bool was);
+void preemption_restore(bool was);
 
 #endif // THREADS_H

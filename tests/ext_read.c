@@ -53,20 +53,20 @@ static void choose_marker_window(unsigned marker_offset, unsigned file_size,
   }
 }
 
-// Verifies the ownership contract for root lookups: ext2_find("/") should
+// Verifies the ownership contract for root lookups: node_find("/") should
 // return a heap-owned wrapper that callers can release with node_free().
 static void check_root_lookup_contract(struct Node* root) {
-  struct Node* looked_up_root = ext2_find(&fs, root, "/");
+  struct Node* looked_up_root = node_find(root, "/");
   assert(looked_up_root != NULL,
     "ext_read: root lookup should return a valid node.\n");
   assert(node_is_dir(looked_up_root),
     "ext_read: root lookup should decode as a directory.\n");
-  assert(looked_up_root->inumber == root->inumber,
+  assert(looked_up_root->cached->inumber == root->cached->inumber,
     "ext_read: root lookup should resolve to the root inode number.\n");
   assert(looked_up_root != root,
-    "ext_read: ext2_find should return a heap wrapper for root lookups.\n");
-  assert(looked_up_root->inode != root->inode,
-    "ext_read: root lookup should return an owned inode copy.\n");
+    "ext_read: node_find should return a heap wrapper for root lookups.\n");
+  assert(looked_up_root->cached == root->cached,
+    "ext_read: should only be one copy in cache\n");
 
   node_free(looked_up_root);
   say("***Root lookup ownership: ok\n", NULL);
@@ -105,11 +105,14 @@ static int find_marker(char* data, unsigned data_size, char* marker) {
 // block read. The returned inode number is reused later to confirm that an
 // absolute path resets back to the filesystem root.
 static unsigned check_hello_file(struct Node* root, unsigned block_size) {
-  struct Node* hello = ext2_find(&fs, root, "hello.txt");
+  struct Node* hello = node_find(root, "hello.txt");
+  struct Node* hello_again = node_find(root, "hello.txt");
   assert(hello != NULL, "ext_read: hello.txt not found in root directory.\n");
   assert(node_is_file(hello), "ext_read: hello.txt should decode as a regular file.\n");
   assert(node_get_type(hello) == EXT2_S_IFREG,
     "ext_read: hello.txt inode type did not decode as a regular file.\n");
+  assert(hello->cached == hello_again->cached,
+    "ext_read: repeated lookups of the same file should return wrappers that share the same cache entry.\n");
 
   char* hello_block = malloc(block_size + 1);
   node_read_block(hello, 0, hello_block);
@@ -120,10 +123,11 @@ static unsigned check_hello_file(struct Node* root, unsigned block_size) {
   int hello_args[1] = { (int)hello_block };
   say("***Hello content: %s\n", hello_args);
 
-  unsigned hello_inumber = hello->inumber;
+  unsigned hello_inumber = hello->cached->inumber;
 
   free(hello_block);
   node_free(hello);
+  node_free(hello_again);
 
   return hello_inumber;
 }
@@ -132,7 +136,7 @@ static unsigned check_hello_file(struct Node* root, unsigned block_size) {
 // non-root directory, absolute-path reset back to the filesystem root, and
 // symlink target decoding.
 static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
-  struct Node* nested = ext2_find(&fs, root, "nested");
+  struct Node* nested = node_find(root, "nested");
   assert(nested != NULL, "ext_read: nested directory not found in root directory.\n");
   assert(node_is_dir(nested), "ext_read: nested should decode as a directory.\n");
 
@@ -143,7 +147,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
     "ext_read: nested should have exactly two directory links.\n");
   say("***Nested metadata: ok\n", NULL);
 
-  struct Node* nested_file = ext2_find(&fs, nested, "inner.txt");
+  struct Node* nested_file = node_find(nested, "inner.txt");
   assert(nested_file != NULL,
     "ext_read: nested directory lookup for inner.txt failed.\n");
   assert(node_is_file(nested_file),
@@ -157,7 +161,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   // Resolve the same file through two multi-component paths. This covers
   // slash-separated traversal and symlink expansion within the traversal loop.
   // It also ensures intermediate path nodes are released instead of leaking.
-  struct Node* nested_file_path = ext2_find(&fs, root, "nested/inner.txt");
+  struct Node* nested_file_path = node_find(root, "nested/inner.txt");
   assert(nested_file_path != NULL,
     "ext_read: nested/inner.txt multi-component lookup failed.\n");
   assert(node_is_file(nested_file_path),
@@ -167,7 +171,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   assert(streq(nested_path_text, "Nested hello\n"),
     "ext_read: multi-component nested/inner.txt returned the wrong contents.\n");
 
-  struct Node* nested_link_path = ext2_find(&fs, root, "nested.link/inner.txt");
+  struct Node* nested_link_path = node_find(root, "nested.link/inner.txt");
   assert(nested_link_path != NULL,
     "ext_read: nested.link/inner.txt symlink traversal lookup failed.\n");
   assert(node_is_file(nested_link_path),
@@ -178,13 +182,13 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
     "ext_read: symlink-expanded multi-component lookup returned the wrong contents.\n");
   say("***Multi-part paths: ok\n", NULL);
 
-  struct Node* absolute_hello = ext2_find(&fs, nested, "/hello.txt");
+  struct Node* absolute_hello = node_find(nested, "/hello.txt");
   assert(absolute_hello != NULL,
     "ext_read: absolute path lookup should restart from the ext2 root.\n");
-  assert(absolute_hello->inumber == hello_inumber,
+  assert(absolute_hello->cached->inumber == hello_inumber,
     "ext_read: /hello.txt should resolve to the same inode as hello.txt.\n");
 
-  struct Node* nested_link = ext2_find(&fs, root, "nested.link");
+  struct Node* nested_link = node_find(root, "nested.link");
   assert(nested_link != NULL, "ext_read: nested.link symlink not found.\n");
   assert(node_is_symlink(nested_link),
     "ext_read: nested.link should decode as a symbolic link.\n");
@@ -198,7 +202,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   // the symlink's containing directory metadata: the relative target must be
   // resolved from the directory that contains `nested.link`, not from the
   // symlink inode wrapper.
-  struct Node* from_symlink = ext2_find(&fs, nested_link, "inner.txt");
+  struct Node* from_symlink = node_find(nested_link, "inner.txt");
   assert(from_symlink != NULL,
     "ext_read: lookup starting from nested.link should resolve inner.txt.\n");
   assert(node_is_file(from_symlink),
@@ -231,7 +235,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
 // The test therefore finds the marker first, then re-reads whichever logical
 // block currently contains it and a small window around that same offset.
 static void check_blocks_fixture(struct Node* root, unsigned block_size) {
-  struct Node* blocks = ext2_find(&fs, root, "blocks.txt");
+  struct Node* blocks = node_find(root, "blocks.txt");
   assert(blocks != NULL, "ext_read: blocks.txt not found in root directory.\n");
   assert(node_is_file(blocks), "ext_read: blocks.txt should decode as a regular file.\n");
 
@@ -284,7 +288,7 @@ static void check_blocks_fixture(struct Node* root, unsigned block_size) {
 
 // A missing single-component path should still fail cleanly.
 static void check_missing_path(struct Node* root) {
-  struct Node* missing = ext2_find(&fs, root, "missing");
+  struct Node* missing = node_find(root, "missing");
   assert(missing == NULL,
     "ext_read: missing should return NULL for a missing root entry.\n");
   say("***Missing path: ok\n", NULL);
@@ -294,7 +298,7 @@ static void check_missing_path(struct Node* root) {
 // against the shared filesystem at the same time after the start barrier, so it
 // exercises concurrent cache hits on the same hot file path.
 static void check_concurrent_hello_once(unsigned block_size) {
-  struct Node* hello = ext2_find(&fs, &fs.root, "hello.txt");
+  struct Node* hello = node_find(&fs.root, "hello.txt");
   assert(hello != NULL, "ext_read: concurrent hello.txt lookup failed.\n");
   assert(node_is_file(hello),
     "ext_read: concurrent hello.txt lookup did not return a regular file.\n");
@@ -314,7 +318,7 @@ static void check_concurrent_hello_once(unsigned block_size) {
 // stays inside block 0. Running this in many threads at once still stresses the
 // shared block cache while proving each worker receives an intact marker slice.
 static void check_concurrent_blocks_once(unsigned block_size) {
-  struct Node* blocks = ext2_find(&fs, &fs.root, "blocks.txt");
+  struct Node* blocks = node_find(&fs.root, "blocks.txt");
   assert(blocks != NULL, "ext_read: concurrent blocks.txt lookup failed.\n");
   assert(node_is_file(blocks),
     "ext_read: concurrent blocks.txt lookup did not return a regular file.\n");
@@ -340,21 +344,21 @@ static void check_concurrent_blocks_once(unsigned block_size) {
   node_free(blocks);
 }
 
-// Uses only single-component ext2_find calls so every intermediate node can be
+// Uses only single-component node_find calls so every intermediate node can be
 // freed explicitly. This still exercises shared directory traversal by having
 // each thread scan the root and nested directories at the same time.
 static void check_concurrent_directory_once(void) {
   assert(node_entry_count(&fs.root) >= 5,
     "ext_read: concurrent root directory count regressed.\n");
 
-  struct Node* nested = ext2_find(&fs, &fs.root, "nested");
+  struct Node* nested = node_find(&fs.root, "nested");
   assert(nested != NULL, "ext_read: concurrent nested lookup failed.\n");
   assert(node_is_dir(nested),
     "ext_read: concurrent nested lookup did not return a directory.\n");
   assert(node_entry_count(nested) == 3,
     "ext_read: concurrent nested directory count regressed.\n");
 
-  struct Node* inner = ext2_find(&fs, nested, "inner.txt");
+  struct Node* inner = node_find(nested, "inner.txt");
   assert(inner != NULL, "ext_read: concurrent inner.txt lookup failed.\n");
   assert(node_is_file(inner),
     "ext_read: concurrent inner.txt lookup did not return a regular file.\n");
@@ -372,7 +376,7 @@ static void check_concurrent_directory_once(void) {
 // "control path" operations under contention: short symlink reads and clean
 // NULL returns when the requested entry does not exist.
 static void check_concurrent_symlink_and_missing_once(void) {
-  struct Node* nested_link = ext2_find(&fs, &fs.root, "nested.link");
+  struct Node* nested_link = node_find(&fs.root, "nested.link");
   assert(nested_link != NULL, "ext_read: concurrent nested.link lookup failed.\n");
   assert(node_is_symlink(nested_link),
     "ext_read: concurrent nested.link lookup did not return a symlink.\n");
@@ -382,7 +386,7 @@ static void check_concurrent_symlink_and_missing_once(void) {
   assert(streq(target, "nested"),
     "ext_read: concurrent nested.link read returned the wrong target.\n");
 
-  struct Node* missing = ext2_find(&fs, &fs.root, "missing");
+  struct Node* missing = node_find(&fs.root, "missing");
   assert(missing == NULL,
     "ext_read: concurrent missing lookup should still return NULL.\n");
 

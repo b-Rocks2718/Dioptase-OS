@@ -65,5 +65,6 @@ struct TCB;
 extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was);
 
 extern void* memcpy(void* dest, void* src, unsigned n);
+extern void* memset(void* dest, int c, unsigned n);
 
 #endif // MACHINE_H

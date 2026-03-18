@@ -10,7 +10,7 @@
 struct Semaphore {
   struct SpinLock lock;
   int count;
-  struct Queue wait_queue;  
+  struct Queue wait_queue;
 };
 
 void sem_init(struct Semaphore* sem, int initial_count);

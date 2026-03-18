@@ -1,0 +1,7 @@
+***Hello from ext2 write test!
+***Existing file writes: ok
+***New file write persistence: ok
+***Concurrent disjoint writes: ok
+***Gap zero fill: ok
+***Cross-block growth: ok
+***Single-indirect growth: ok

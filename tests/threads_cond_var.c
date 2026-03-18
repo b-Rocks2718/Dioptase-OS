@@ -59,9 +59,13 @@ void kernel_main(void) {
   cond_var_init(&cv);
   blocking_lock_init(&lock);
 
+  blocking_lock_acquire(&lock);
+
   // No-op wakeups when there are no waiters should not break future waits.
-  cond_var_signal(&cv);
-  cond_var_broadcast(&cv);
+  cond_var_signal(&cv, &lock);
+  cond_var_broadcast(&cv, &lock);
+
+  blocking_lock_release(&lock);
 
   for (int i = 0; i < NUM_WAITERS; i++) {
     int* id = malloc(sizeof(int));
@@ -85,7 +89,7 @@ void kernel_main(void) {
 
   blocking_lock_acquire(&lock);
   tickets = 1;
-  cond_var_signal(&cv);
+  cond_var_signal(&cv, &lock);
   blocking_lock_release(&lock);
 
   while (__atomic_load_n(&done) != 1) {
@@ -103,7 +107,7 @@ void kernel_main(void) {
 
   blocking_lock_acquire(&lock);
   tickets = NUM_WAITERS - 1;
-  cond_var_broadcast(&cv);
+  cond_var_broadcast(&cv, &lock);
   blocking_lock_release(&lock);
 
   while (__atomic_load_n(&done) != NUM_WAITERS) {

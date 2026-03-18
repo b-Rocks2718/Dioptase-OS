@@ -50,6 +50,8 @@ static void worker_thread(void* arg) {
 // Postconditions: phase1_total == phase2_total == NUM_THREADS.
 // CPU state assumptions: kernel mode; interrupts enabled except where noted.
 void kernel_main(void) {
+  puts("TODO: test reuse of the same barrier\n");
+
   say("***barrier test start\n", NULL);
 
   barrier_init(&barrier, NUM_THREADS);
