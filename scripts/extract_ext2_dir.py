@@ -35,6 +35,8 @@ from pathlib import Path
 DEBUGFS_BANNER_PREFIX = "debugfs "
 DEBUGFS_ERROR_PREFIXES = ("debugfs:", "ls:", "dump:", "stat:")
 FAST_LINK_RE = re.compile(r'^Fast link dest: "(.*)"$')
+BLOCKCOUNT_RE = re.compile(r"Blockcount:\s+(\d+)")
+INLINE_BLOCK_WORD_RE = re.compile(r"\([^)]*\):(\d+)")
 
 
 def run_debugfs(image: Path, command: str, cwd: Path | None = None) -> list[str]:
@@ -84,10 +86,33 @@ def parse_ls_entry(line: str) -> tuple[str, str, str]:
 def read_symlink_target(image: Path, guest_path: str) -> str:
     """Read a symlink target from the ext2 image."""
     stat_lines = run_debugfs(image, f"stat {guest_path}")
+    target_size: int | None = None
+    block_count: int | None = None
+    inline_words: list[int] = []
+
     for line in stat_lines:
         match = FAST_LINK_RE.match(line)
         if match:
             return match.group(1)
+
+        if "User:" in line and "Group:" in line and "Size:" in line:
+            target_size = int(line.rsplit("Size:", 1)[1].strip())
+
+        block_count_match = BLOCKCOUNT_RE.search(line)
+        if block_count_match:
+            block_count = int(block_count_match.group(1))
+
+        inline_words.extend(int(word) for word in INLINE_BLOCK_WORD_RE.findall(line))
+
+    # debugfs prints `Fast link dest:` for most inline symlinks, but for an
+    # exact 60-byte ext2 fast symlink it instead dumps the raw i_block words as
+    # decimal integers. Reconstruct those words directly so host extraction can
+    # still validate the kernel's fast-symlink boundary behavior.
+    if target_size is not None and block_count == 0 and target_size <= 60:
+        inline_bytes = bytearray()
+        for word in inline_words[:15]:
+            inline_bytes.extend(word.to_bytes(4, "little"))
+        return inline_bytes[:target_size].decode("utf-8", errors="surrogateescape")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)

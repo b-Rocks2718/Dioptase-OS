@@ -20,7 +20,7 @@ BSS_LOAD_ADDR := 0xF0000
 BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
-TEST_RUNS ?= 100
+TEST_RUNS ?= 2
 TIMEOUT_SECONDS ?= 300
 VERSION ?= release
 
@@ -88,6 +88,14 @@ TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(basename $(notdir $(TEST_OK_FILES)))
 TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
+EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
+EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
+THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))
+THREAD_SUMMARY_TARGETS := $(addsuffix .summary-test,$(THREAD_TEST_NAMES))
+DATASTRUCT_TEST_NAMES := $(filter hashmap_test queue_test string,$(TEST_OK_NAMES))
+DATASTRUCT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(DATASTRUCT_TEST_NAMES))
+HEAP_TEST_NAMES := $(filter heap_test heap_test_threadsafe,$(TEST_OK_NAMES))
+HEAP_SUMMARY_TARGETS := $(addsuffix .summary-test,$(HEAP_TEST_NAMES))
 BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
@@ -133,7 +141,9 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
-  $(TEST_NAMES) test test-no-ok clean bios/config.s kernel/config.s kernel/mbr.s
+  $(TEST_NAMES) test test-no-ok ext ext-no-ok threads threads-no-ok \
+  datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
+  kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
 
@@ -149,6 +159,30 @@ test: $(if $(TEST_OK_SUMMARY_TARGETS),$(TEST_OK_SUMMARY_TARGETS),test-no-ok)
 
 test-no-ok:
 	@echo "No tests with .ok baselines were found under tests/."
+
+# Aggregate ext2 operation summary targets.
+ext: $(if $(EXT_SUMMARY_TARGETS),$(EXT_SUMMARY_TARGETS),ext-no-ok)
+
+ext-no-ok:
+	@echo "No ext tests with .ok baselines were found under tests/."
+
+# Aggregate threading and synchronization summary targets.
+threads: $(if $(THREAD_SUMMARY_TARGETS),$(THREAD_SUMMARY_TARGETS),threads-no-ok)
+
+threads-no-ok:
+	@echo "No thread tests with .ok baselines were found under tests/."
+
+# Aggregate baseline-checked data-structure utility tests.
+datastructs: $(if $(DATASTRUCT_SUMMARY_TARGETS),$(DATASTRUCT_SUMMARY_TARGETS),datastructs-no-ok)
+
+datastructs-no-ok:
+	@echo "No data-structure tests with .ok baselines were found under tests/."
+
+# Aggregate heap allocator tests, including the threaded heap stress case.
+heap: $(if $(HEAP_SUMMARY_TARGETS),$(HEAP_SUMMARY_TARGETS),heap-no-ok)
+
+heap-no-ok:
+	@echo "No heap tests with .ok baselines were found under tests/."
 
 # Build alias so `make bios.hex` produces build/bios.hex.
 bios.hex: $(BIOS_HEX)

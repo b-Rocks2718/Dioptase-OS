@@ -37,13 +37,15 @@ Supported:
 - Read files, directories, and symlinks
 - create new files, directories, and symlinks
 - write to files
-- rename
+- rename files/directories/symlinks
+- delete files and symlinks, and delete empty directories
 
-TODO:
-- delete files
+Not yet supported:
+- rwx permissions
+- uid/gid
 
 ## Virtual Memory
-tlb is software managed
+TLB is software managed
 
 TODO: all of VM and page cache
 

@@ -24,6 +24,49 @@
 
 static void cached_inode_init(struct CachedInode* cached, unsigned inumber);
 
+// ext2 block and inode bitmaps can end mid-byte when the per-group count is not
+// divisible by 8, so scans must round up to cover the partial final byte.
+static unsigned ext2_bitmap_bytes(unsigned entries_per_group){
+  return (entries_per_group + 7) / 8;
+}
+
+// Absolute ext2 block numbers start at first_data_block for the filesystem.
+static unsigned ext2_block_group_start(struct Ext2* fs, unsigned group_index){
+  return fs->superblock.first_data_block + group_index * fs->superblock.blocks_per_group;
+}
+
+static unsigned ext2_block_group_index(struct Ext2* fs, unsigned block_num){
+  assert(block_num >= fs->superblock.first_data_block,
+    "ext2_block_group_index: block number is before first_data_block.\n");
+  return (block_num - fs->superblock.first_data_block) / fs->superblock.blocks_per_group;
+}
+
+static unsigned ext2_block_local_index(struct Ext2* fs, unsigned block_num){
+  assert(block_num >= fs->superblock.first_data_block,
+    "ext2_block_local_index: block number is before first_data_block.\n");
+  return (block_num - fs->superblock.first_data_block) % fs->superblock.blocks_per_group;
+}
+
+static bool ext2_name_is_dot(char* name){
+  return name[0] == '.' && name[1] == '\0';
+}
+
+static bool ext2_name_is_dot_dot(char* name){
+  return name[0] == '.' && name[1] == '.' && name[2] == '\0';
+}
+
+static bool ext2_name_has_separator(char* name){
+  unsigned name_len = strlen(name);
+
+  for (unsigned i = 0; i < name_len; ++i){
+    if (name[i] == '/') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ext2 stores directory records on 4-byte boundaries so readers can walk a
 // block by following rec_len until the block boundary.
 static unsigned ext2_dir_entry_min_size(unsigned name_len){
@@ -200,7 +243,8 @@ void ext2_init(struct Ext2* fs){
   assert(rc == 0, "ext2_init: failed to read ext2 superblock.\n");
 
   // check this is an ext2 file system
-  assert(fs->superblock.magic == 0xEF53, "Not an ext2 file system\n");
+  assert(fs->superblock.magic == 0xEF53,
+    "ext2_init: filesystem superblock magic does not identify an ext2 image.\n");
   
   // read in the block group descriptor table
   unsigned block_size = ext2_get_block_size(fs);
@@ -321,6 +365,27 @@ void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
   }
 }
 
+// Insert a slash-separated path string ahead of the remaining unresolved path
+// components in `path`. `path` already stores the caller's suffix in
+// ringbuf_remove_back order, so rebuild the queue as:
+//   target components, then the old suffix components.
+static void ext2_prepend_path(struct Ext2* fs, struct RingBuf* path, char* target){
+  unsigned suffix_size = ringbuf_size(path);
+  struct RingBuf rebuilt;
+
+  ringbuf_init(&rebuilt, path->capacity);
+  ext2_expand_path(fs, target, &rebuilt);
+
+  for (unsigned i = 0; i < suffix_size; ++i){
+    char* component = ringbuf_remove_back(path);
+    assert(component != NULL, "ext2_prepend_path: path queue unexpectedly underflowed.\n");
+    assert(ringbuf_add_front(&rebuilt, component), "ext2_prepend_path: path buffer overflow.\n");
+  }
+
+  ringbuf_destroy(path);
+  *path = rebuilt;
+}
+
 // Releases any path components still owned by the traversal queue, then frees
 // the queue object itself. `node_find` uses this on both success and failure so
 // aborted lookups do not leak the remaining path strings.
@@ -401,20 +466,24 @@ struct Node* ext2_expand_symlink(struct Ext2* fs, struct Node* parent, struct No
   char* buf = malloc(target_size + 1);
   node_get_symlink_target(dir, buf);
 
-  // Push the symlink target ahead of the remaining unresolved path so traversal
-  // consumes the target before the old suffix.
-  assert(ringbuf_add_back(path, buf), "ext2_expand_symlink: path buffer overflow.\n");
+  // The symlink target is itself a path string, not one literal directory name.
+  // Rebuild the traversal queue so slash-separated target components are
+  // prepended ahead of the still-unresolved suffix from the original lookup.
+  ext2_prepend_path(fs, path, buf);
 
   if (buf[0] == '/') {
+    free(buf);
     return ext2_open_root_dir(fs);
   } else {
     // When the traversal starts from a symlink node, `parent == dir` and the
     // containing directory is not otherwise available. Reconstruct it so the
     // relative target uses the same base directory a normal path walk would use.
     if (parent == dir) {
+      free(buf);
       return ext2_open_parent_dir(dir);
     }
 
+    free(buf);
     return parent;
   }
 }
@@ -448,6 +517,20 @@ struct Node* node_find(struct Node* dir, char* name){
   ringbuf_init(path, 1024);
 
   ext2_expand_path(dir->filesystem, name, path);
+
+  if (ringbuf_size(path) == 0){
+    struct Node* result = dir;
+
+    ext2_free_pending_path(path);
+
+    if (!dir_owned){
+      struct CachedInode* cached = icache_get(&dir->filesystem->icache, dir->cached->inumber);
+      result = malloc(sizeof(struct Node));
+      node_init(result, cached, dir->parent_inumber, dir->filesystem);
+    }
+
+    return result;
+  }
 
   unsigned follows = 0;
 
@@ -521,6 +604,7 @@ struct Node* node_find(struct Node* dir, char* name){
 
 unsigned alloc_inumber(struct Ext2* fs, short mode){
   unsigned inumber = 0;
+  unsigned bitmap_bytes = ext2_bitmap_bytes(fs->superblock.inodes_per_group);
 
   blocking_lock_acquire(&fs->metadata_lock);
 
@@ -532,13 +616,19 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
       fs->superblock.free_inodes_count -= 1;
       
       // find free inode in bitmap
-      for (int j = 0; j < fs->superblock.inodes_per_group / 8; ++j){
+      for (unsigned j = 0; j < bitmap_bytes; ++j){
         if (fs->inode_bitmaps[i][j] != 0xFF){
           // found free inode
-          for (int k = 0; k < 8; ++k){
+          for (unsigned k = 0; k < 8; ++k){
+            unsigned local_index = j * 8 + k;
+
+            if (local_index >= fs->superblock.inodes_per_group){
+              break;
+            }
+
             if ((fs->inode_bitmaps[i][j] & (1 << k)) == 0){
               fs->inode_bitmaps[i][j] |= (1 << k); // mark as used
-              inumber = i * fs->superblock.inodes_per_group + j * 8 + k + 1; // calculate inumber
+              inumber = i * fs->superblock.inodes_per_group + local_index + 1; // calculate inumber
               break;
             }
           }
@@ -574,12 +664,40 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
   return inumber;
 }
 
-void dealloc_inumber(struct Ext2* fs, unsigned inumber) {
-  // TODO
+void dealloc_inumber(struct Ext2* fs, unsigned inumber, short mode) {
+  blocking_lock_acquire(&fs->metadata_lock);
+
+  // find block group containing inumber
+  unsigned group_index = (inumber - 1) / fs->superblock.inodes_per_group;
+  unsigned local_index = (inumber - 1) % fs->superblock.inodes_per_group;
+  unsigned byte_index = local_index / 8;
+  unsigned bit_index = local_index % 8;
+
+  fs->inode_bitmaps[group_index][byte_index] &= ~(1 << bit_index); // mark as free
+  fs->bgd_table[group_index].free_inodes_count += 1;
+  fs->superblock.free_inodes_count += 1;
+
+  if ((mode & 0xF000) == EXT2_S_IFDIR){
+    fs->bgd_table[group_index].used_dirs_count -= 1;
+  }
+
+  // for now, double-locking seems necessary to avoid the case of
+  // an old superblock accidentally being written back after a newer one
+  // TODO: refactor to avoid this
+  ext2_write_bgd_table(fs);
+  ext2_write_superblock(fs);
+
+  // write back updated bitmap
+  int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[group_index].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
+    ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[group_index]);
+  assert(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
+
+  blocking_lock_release(&fs->metadata_lock);
 }
 
 unsigned alloc_block(struct Ext2* fs){
   unsigned block_num = -1;
+  unsigned bitmap_bytes = ext2_bitmap_bytes(fs->superblock.blocks_per_group);
 
   blocking_lock_acquire(&fs->metadata_lock);
 
@@ -591,13 +709,19 @@ unsigned alloc_block(struct Ext2* fs){
       fs->superblock.free_blocks_count -= 1;
       
       // find free block in bitmap
-      for (int j = 0; j < fs->superblock.blocks_per_group / 8; ++j){
+      for (unsigned j = 0; j < bitmap_bytes; ++j){
         if (fs->block_bitmaps[i][j] != 0xFF){
           // found free block
-          for (int k = 0; k < 8; ++k){
+          for (unsigned k = 0; k < 8; ++k){
+            unsigned local_index = j * 8 + k;
+
+            if (local_index >= fs->superblock.blocks_per_group){
+              break;
+            }
+
             if ((fs->block_bitmaps[i][j] & (1 << k)) == 0){
               fs->block_bitmaps[i][j] |= (1 << k); // mark as used
-              block_num = i * fs->superblock.blocks_per_group + j * 8 + k; // calculate block number
+              block_num = ext2_block_group_start(fs, i) + local_index;
               break;
             }
           }
@@ -614,6 +738,14 @@ unsigned alloc_block(struct Ext2* fs){
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
       assert(rc == 0, "alloc_block: failed to write back block bitmap.\n");
 
+      // A reused block may still contain bytes from the inode that previously
+      // owned it, both on disk and in the block cache. Zero it before returning
+      // so later partial writes and gap reads observe a clean block image.
+      char* zero_block = malloc(ext2_get_block_size(fs));
+      memset(zero_block, 0, ext2_get_block_size(fs));
+      bcache_set(&fs->bcache, block_num, zero_block, 0, ext2_get_block_size(fs));
+      free(zero_block);
+
       blocking_lock_release(&fs->metadata_lock);
 
       break;
@@ -628,7 +760,87 @@ unsigned alloc_block(struct Ext2* fs){
 }
 
 void dealloc_block(struct Ext2* fs, unsigned block_num) {
-  // TODO
+  blocking_lock_acquire(&fs->metadata_lock);
+
+  // find block group containing block_num
+  unsigned group_index = ext2_block_group_index(fs, block_num);
+  unsigned local_index = ext2_block_local_index(fs, block_num);
+  unsigned byte_index = local_index / 8;
+  unsigned bit_index = local_index % 8;
+
+  fs->block_bitmaps[group_index][byte_index] &= ~(1 << bit_index); // mark as free
+  fs->bgd_table[group_index].free_blocks_count += 1;
+  fs->superblock.free_blocks_count += 1;
+
+  ext2_write_bgd_table(fs);
+  ext2_write_superblock(fs);
+
+  // write back updated bitmap
+  int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[group_index].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
+    ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[group_index]);
+  assert(rc == 0, "dealloc_block: failed to write back block bitmap.\n");
+
+  blocking_lock_release(&fs->metadata_lock);
+}
+
+// Release one indirect pointer block and every block reachable from it. `levels`
+// is the number of pointer hops from this block to data blocks:
+// 1 = single indirect, 2 = double indirect, 3 = triple indirect.
+static void ext2_free_indirect_tree(struct Ext2* fs, unsigned pointer_block_num, unsigned levels){
+  unsigned block_size = ext2_get_block_size(fs);
+  unsigned entries_per_block = block_size / sizeof(unsigned);
+  unsigned* pointers = malloc(block_size);
+
+  assert(levels >= 1 && levels <= 3, "ext2_free_indirect_tree: invalid indirect level.\n");
+  assert(pointer_block_num != 0, "ext2_free_indirect_tree: pointer block number is zero.\n");
+
+  bcache_get(&fs->bcache, pointer_block_num, (char*)pointers);
+
+  for (unsigned i = 0; i < entries_per_block; ++i){
+    if (pointers[i] == 0) continue;
+
+    if (levels == 1){
+      dealloc_block(fs, pointers[i]);
+    } else {
+      ext2_free_indirect_tree(fs, pointers[i], levels - 1);
+    }
+  }
+
+  free(pointers);
+  dealloc_block(fs, pointer_block_num);
+}
+
+// Deleting the final name for an inode must reclaim every filesystem block that
+// belongs to that inode. Fast symlinks are excluded because short targets are
+// stored inline in inode.block[] instead of in allocatable filesystem blocks.
+static void node_dealloc_blocks(struct Node* node){
+  bool fast_symlink = (node->cached->inode.mode & 0xF000) == EXT2_S_IFLNK &&
+    node->cached->inode.size <= sizeof(node->cached->inode.block);
+
+  if (!fast_symlink){
+    for (unsigned i = 0; i < 12; ++i){
+      if (node->cached->inode.block[i] != 0){
+        dealloc_block(node->filesystem, node->cached->inode.block[i]);
+      }
+    }
+
+    if (node->cached->inode.block[12] != 0){
+      ext2_free_indirect_tree(node->filesystem, node->cached->inode.block[12], 1);
+    }
+
+    if (node->cached->inode.block[13] != 0){
+      ext2_free_indirect_tree(node->filesystem, node->cached->inode.block[13], 2);
+    }
+
+    if (node->cached->inode.block[14] != 0){
+      ext2_free_indirect_tree(node->filesystem, node->cached->inode.block[14], 3);
+    }
+  }
+
+  memset(node->cached->inode.block, 0, sizeof(node->cached->inode.block));
+  node->cached->inode.blocks = 0;
+  node->cached->inode.size = 0;
+  node->cached->data_block_count = 0;
 }
 
 struct CachedInode* make_inode(short mode, unsigned inumber){
@@ -989,16 +1201,65 @@ static bool dir_has_entry_name(struct Node* dir, char* name){
   return false;
 }
 
+// ext2 directories are empty when every live entry is either "." or "..".
+// Removed entries with inode == 0 are free space and do not make the directory
+// non-empty.
+static bool dir_is_empty(struct Node* dir){
+  unsigned index = 0;
+  struct DirEntry entry;
+
+  assert(node_is_dir(dir), "dir_is_empty: target node is not a directory.\n");
+
+  blocking_lock_acquire(&dir->cached->lock);
+
+  while (index < node_size_in_bytes(dir)){
+    int cnt = node_read_all(dir, index, sizeof(struct DirEntry), (char*)&entry);
+    assert(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
+    assert(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+      "dir_is_empty: invalid directory record length.\n");
+    assert(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+      "dir_is_empty: directory record is not 4-byte aligned.\n");
+
+    if (entry.inode != 0){
+      bool is_dot = entry.name_len == 1 && strneq((char*)entry.name, ".", 1);
+      bool is_dot_dot = entry.name_len == 2 && strneq((char*)entry.name, "..", 2);
+
+      if (!is_dot && !is_dot_dot){
+        blocking_lock_release(&dir->cached->lock);
+        return false;
+      }
+    }
+
+    index += entry.rec_len;
+  }
+
+  blocking_lock_release(&dir->cached->lock);
+  return true;
+}
+
 struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mode){
   assert(dir != NULL, "alloc_inode: parent directory is NULL.\n");
   assert(name != NULL, "alloc_inode: name is NULL.\n");
+  assert(strlen(name) > 0, "alloc_inode: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "alloc_inode: names must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "alloc_inode: '.' is reserved and cannot be created as a new directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "alloc_inode: '..' is reserved and cannot be created as a new directory entry.\n");
+
+  // Serialize duplicate-name detection and insertion so two concurrent creates
+  // of the same basename cannot both observe the name as free.
+  blocking_lock_acquire(&dir->cached->lock);
 
   if (dir_has_entry_name(dir, name)){
+    blocking_lock_release(&dir->cached->lock);
     return NULL;
   }
 
   unsigned inumber = alloc_inumber(fs, mode);
   if (inumber == 0){
+    blocking_lock_release(&dir->cached->lock);
     return NULL;
   }
 
@@ -1010,25 +1271,28 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   node_init(node, cached, dir->cached->inumber, fs);
 
   // inode allocated successfully, now update parent directory
-  dir_add_entry(dir, name, inumber, false);
+  bool added = dir_add_entry(dir, name, inumber, true);
+  assert(added, "alloc_inode: failed to add the new directory entry to the parent directory.\n");
 
   if ((mode & 0xF000) == EXT2_S_IFDIR){
     // parent dir gets new link from child's .. entry
     dir->cached->inode.links_count += 1;
     node_sync_inode(dir);
-
-    // update used_dirs_count in block group descriptor
-    unsigned group = (inumber - 1) / fs->superblock.inodes_per_group;
   }
 
   // write new inode to disk
   node_sync_inode(node);
 
+  blocking_lock_release(&dir->cached->lock);
+
   return node;
 }
 
-void dealloc_inode(struct Ext2* fs, struct CachedInode* cached){
-  // TODO
+static void dealloc_inode(struct Node* node){
+  assert(node->cached->inode.links_count == 1, "dealloc_inode: cannot delete a node with multiple links.\n");
+
+  node_dealloc_blocks(node);
+  dealloc_inumber(node->filesystem, node->cached->inumber, node->cached->inode.mode);
 }
 
 static void cached_inode_init(struct CachedInode* cached, unsigned inumber){
@@ -1178,8 +1442,8 @@ void icache_set(struct InodeCache* cache, struct CachedInode* cached){
 void icache_release(struct InodeCache* cache, struct CachedInode* cached){
   blocking_lock_acquire(&cache->lock);
 
+  assert(cached->refcount > 0, "icache_release: attempted to release an inode cache entry with refcount 0.\n");
   cached->refcount -= 1;
-  assert(cached->refcount >= 0, "icache_release: cache entry refcount went negative.\n");
 
   if (cached->refcount == 0){
     hash_map_remove(&cache->cache, cached->inumber);
@@ -1363,8 +1627,17 @@ unsigned node_size_in_bytes(struct Node* node){
 }
 
 struct Node* node_make_file(struct Node* dir, char* name){
+  assert(dir != NULL, "node_make_file: parent node is NULL.\n");
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_file: parent node is not a directory.\n");
+  assert(name != NULL, "node_make_file: name is NULL.\n");
+  assert(strlen(name) > 0, "node_make_file: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "node_make_file: names must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "node_make_file: '.' is reserved and cannot be created as a new directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "node_make_file: '..' is reserved and cannot be created as a new directory entry.\n");
 
   // New regular files default to owner-writable, world-readable mode so the
   // extracted host artifact is readable without an extra chmod step.
@@ -1377,8 +1650,17 @@ struct Node* node_make_file(struct Node* dir, char* name){
 }
 
 struct Node* node_make_dir(struct Node* dir, char* name){
+  assert(dir != NULL, "node_make_dir: parent node is NULL.\n");
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_dir: parent node is not a directory.\n");
+  assert(name != NULL, "node_make_dir: name is NULL.\n");
+  assert(strlen(name) > 0, "node_make_dir: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "node_make_dir: names must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "node_make_dir: '.' is reserved and cannot be created as a new directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "node_make_dir: '..' is reserved and cannot be created as a new directory entry.\n");
 
   // New directories default to executable/traversable permissions for all
   // readers while remaining writable only by the owner.
@@ -1396,8 +1678,18 @@ struct Node* node_make_dir(struct Node* dir, char* name){
 }
 
 struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
+  assert(dir != NULL, "node_make_symlink: parent node is NULL.\n");
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_symlink: parent node is not a directory.\n");
+  assert(name != NULL, "node_make_symlink: name is NULL.\n");
+  assert(strlen(name) > 0, "node_make_symlink: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "node_make_symlink: names must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "node_make_symlink: '.' is reserved and cannot be created as a new directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "node_make_symlink: '..' is reserved and cannot be created as a new directory entry.\n");
+  assert(target != NULL, "node_make_symlink: target is NULL.\n");
 
   // Symlinks traditionally carry 0777 permissions even though most hosts ignore
   // them when dereferencing the link target.
@@ -1410,7 +1702,7 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
 
   // ext2 fast symlinks store short targets inline in i_block instead of
   // allocating separate data blocks.
-  if (target_size < sizeof(node->cached->inode.block)) {
+  if (target_size <= sizeof(node->cached->inode.block)) {
     memcpy((char*)node->cached->inode.block, target, target_size);
     node->cached->inode.size = target_size;
     node_sync_inode(node);
@@ -1433,6 +1725,29 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
 }
 
 void node_rename(struct Node* dir, char* old_name, char* new_name){
+  assert(dir != NULL, "node_rename: parent node is NULL.\n");
+  assert(node_is_dir(dir), "node_rename: parent node is not a directory.\n");
+  assert(old_name != NULL, "node_rename: old name is NULL.\n");
+  assert(new_name != NULL, "node_rename: new name is NULL.\n");
+  assert(strlen(old_name) > 0, "node_rename: old name is empty.\n");
+  assert(strlen(new_name) > 0, "node_rename: new name is empty.\n");
+  assert(!ext2_name_has_separator(old_name),
+    "node_rename: old name must be one directory entry component without '/'.\n");
+  assert(!ext2_name_has_separator(new_name),
+    "node_rename: new name must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(old_name),
+    "node_rename: cannot rename the '.' directory entry.\n");
+  assert(!ext2_name_is_dot_dot(old_name),
+    "node_rename: cannot rename the '..' directory entry.\n");
+  assert(!ext2_name_is_dot(new_name),
+    "node_rename: cannot rename to the '.' directory entry.\n");
+  assert(!ext2_name_is_dot_dot(new_name),
+    "node_rename: cannot rename to the '..' directory entry.\n");
+
+  if (streq(old_name, new_name)){
+    return;
+  }
+
   blocking_lock_acquire(&dir->cached->lock);
   
   struct Node* node = node_find(dir, old_name);
@@ -1453,8 +1768,55 @@ void node_rename(struct Node* dir, char* old_name, char* new_name){
   node_free(node);
 }
 
-void node_delete(struct Node* node){
-  // TODO
+void node_delete(struct Node* dir, char* name){
+  assert(dir != NULL, "node_delete: parent node is NULL.\n");
+  assert(node_is_dir(dir), "node_delete: parent node is not a directory.\n");
+  assert(name != NULL, "node_delete: name is NULL.\n");
+  assert(strlen(name) > 0, "node_delete: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "node_delete: name must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "node_delete: cannot delete the '.' directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "node_delete: cannot delete the '..' directory entry.\n");
+
+  blocking_lock_acquire(&dir->cached->lock);
+  
+  struct Node* node = node_find(dir, name);
+  
+  assert(node != NULL, "node_delete: no directory entry with the given name exists in the parent directory.\n");
+
+  if (node_is_dir(node)){
+    assert(dir_is_empty(node), "node_delete: cannot delete a non-empty directory.\n");
+  }
+
+  bool rc = dir_remove_entry(dir, name, true);
+  assert(rc, "node_delete: failed to remove the directory entry.\n");
+
+  if (node_is_dir(node)){
+    // directories get an extra link from their "." entry
+    node->cached->inode.links_count -= 1;
+
+    // parent directory also has a link from the child's ".." entry, so decrement that too
+    dir->cached->inode.links_count -= 1;
+
+    node_sync_inode(dir);
+  }
+
+  if (node->cached->inode.links_count > 1){
+    // node has multiple links, just decrement the link count and sync the inode
+    node->cached->inode.links_count -= 1;
+    node_sync_inode(node);
+    blocking_lock_release(&dir->cached->lock);
+    node_free(node);
+    return;
+  }
+
+  dealloc_inode(node);
+
+  blocking_lock_release(&dir->cached->lock);
+
+  node_free(node);
 }
 
 void read_sectors(struct Ext2* fs, unsigned index, char* buffer){
@@ -1550,7 +1912,9 @@ void node_read_block(struct Node* node, unsigned block_num, char* dest){
   else if (block_num < 12 + entries_per_block * (1 + entries_per_block)) read_double_indirect_block(node, block_num, dest);
   else if (block_num < 12 + entries_per_block * (1 + entries_per_block * (1 + entries_per_block))){
     read_triple_indirect_block(node, block_num, dest);
-  } else panic("invalid index for inode");
+  } else {
+    panic("node_read_block: logical block index exceeds this inode addressing implementation.\n");
+  }
 }
   
 void write_sectors(struct Ext2* fs, unsigned index, char* buffer, unsigned offset, unsigned size){
@@ -1625,11 +1989,21 @@ void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned
   else if (block_num < 12 + entries_per_block * (1 + entries_per_block)) write_double_indirect_block(node, block_num, src, offset, size);
   else if (block_num < 12 + entries_per_block * (1 + entries_per_block * (1 + entries_per_block))){
     write_triple_indirect_block(node, block_num, src, offset, size);
-  } else panic("invalid index for inode");
+  } else {
+    panic("node_write_block: logical block index exceeds this inode addressing implementation.\n");
+  }
 }
 
 unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* dest){
+  unsigned available;
+
   if (size == 0) return 0;
+  if (offset >= node->cached->inode.size) return 0;
+
+  available = node->cached->inode.size - offset;
+  if (size > available){
+    size = available;
+  }
 
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned start_block = offset / block_size;
@@ -1648,7 +2022,7 @@ unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* 
     free(block_buf);
   }
 
-  return size;
+  return bytes_copied;
 }
 
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src){
@@ -1663,6 +2037,8 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   // and data writes observe one consistent per-file state without re-entering
   // inode_lock through icache_set().
   blocking_lock_acquire(&node->cached->lock);
+
+  assert(node_is_file(node) || node_is_symlink(node), "node_write_all: can only write to regular files or symlinks.\n");
 
   // Update the file size if we wrote past the previous end of the file
   if (offset + size > node->cached->inode.size){
@@ -1711,7 +2087,9 @@ bool node_is_symlink(struct Node* node){
 void node_get_symlink_target(struct Node* node, char* dest){
   assert(node_is_symlink(node), "node_get_symlink_target: node is not a symlink.\n");
 
-  if (node->cached->inode.size < 60) {
+  if (node->cached->inode.size <= sizeof(node->cached->inode.block)) {
+    assert(node->cached->inode.size <= sizeof(node->cached->inode.block),
+      "node_get_symlink_target: fast symlink size exceeds inline inode storage.\n");
     memcpy(dest, &node->cached->inode.block, node->cached->inode.size);
     *(dest + node->cached->inode.size) = 0;
   } else {

@@ -33,6 +33,16 @@ These tools are expected to be built already (default `VERSION=release`):
   and prints `successes/runs`. A run fails on timeout, non-zero exit, or if
   `tests/<test>.raw` contains `Warning` or `Spurious` or `PANIC`.
 - `make <test>.fail` is the same as `.test` but stops on the first failure.
+- `make test` runs every test that has a checked-in `tests/<test>.ok` baseline
+  through the quiet `.summary-test` path.
+- `make ext` runs the ext2-related baseline-checked subset:
+  `ext_read`, `ext_new_file`, `ext_write`, `ext_rename`,
+  `ext_rename_concurrent`, and `ext_delete`.
+- `make threads` runs every baseline-checked `threads_*` test.
+- `make datastructs` runs the baseline-checked utility tests:
+  `hashmap_test`, `queue_test`, and `string`.
+- `make heap` runs the baseline-checked heap allocator tests:
+  `heap_test` and `heap_test_threadsafe`.
 - `make clean` removes build outputs and temporary assembly outputs.
 
 ### Configuration
@@ -42,6 +52,10 @@ These tools are expected to be built already (default `VERSION=release`):
 - `TEST_RUNS` controls the number of test iterations.
 - `SCHEDULER` controls the emulators scheduling for multicore runs. Options are `free`, `random`, and `rr` (round robin)
 - `TIMEOUT_SECONDS` controls the per-run timeout for `.test`/`.fail`.
+- `BLOCK_SIZE` controls the ext2 block size used for tests with `tests/<test>.dir`.
+- The aggregate targets `make test`, `make ext`, `make threads`, `make datastructs`,
+  and `make heap` all honor `TEST_RUNS`, `TIMEOUT_SECONDS`, `BLOCK_SIZE`,
+  `NUM_CORES`, `SCHEDULER`, `EMU_VGA`, and `TRACE_INTS`.
 - `EMU_FLAGS` can include `--trace-ints` if you want information printed about each interrupt.
 - `EMU_VGA` (when defined) appends `--vga` to the emulator flags and assembles `kernel/config.s` and `bios/config.s` with `-DUSE_VGA=1`. When not defined, those files are assembled with `-DUSE_VGA=0`.
 
@@ -50,6 +64,10 @@ These tools are expected to be built already (default `VERSION=release`):
 - Generated assembly files are named `*.s` and kept after assembly.
 - Kernel C assembly outputs live under `build/kernel/` to keep them separate
   from the root test's assembly file.
+- The aggregate test targets only include tests with checked-in `.ok` baselines,
+  just like `make test`.
+- `superblock` is left as an explicit one-off target instead of part of `make ext`
+  because its checked-in baseline depends on the ext2 image geometry.
 - Tests with `tests/<test>.dir` use that directory to build an ext2 image for SD1;
   the harness tries to extract the final SD1 contents into `tests/<test>.out.dir`
   after emulator runs so filesystem side effects can be inspected on the host.

@@ -3,11 +3,13 @@
 ***Root lookup ownership: ok
 ***Hello content: Hello!
 ***Nested metadata: ok
+***Empty path lookup: ok
 ***Nested content: ok
 ***Multi-part paths: ok
 ***Symlink dir lookup: ok
 ***Symlink target: nested
 ***blocks.txt reads: ok
+***EOF short reads: ok
 ***Missing path: ok
 ***Concurrent reads start: threads=2 rounds=1 ops=2
 ***Concurrent reads: threads=2 rounds=1 ops=2

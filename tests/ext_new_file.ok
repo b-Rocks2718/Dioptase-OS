@@ -9,6 +9,7 @@
 ***New file in new directory: ok
 ***Inline symlink creation: ok
 ***Block-backed symlink creation: ok
+***Concurrent duplicate create: ok
 ***Root directory after create operations:
 ***.
 ***..
@@ -18,6 +19,7 @@
 ***new-dir
 ***inline-link
 ***block-link
+***concurrent-create.txt
 ***New directory after creating nested file:
 ***.
 ***..

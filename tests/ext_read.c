@@ -1,3 +1,8 @@
+/*
+ * Covers ext2 read-side behavior for files, directories, symlinks, and path
+ * traversal. The test includes both sequential contract checks and a short
+ * concurrent read phase to stress inode-cache and block-cache sharing.
+ */
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
 #include "../kernel/ext.h"
@@ -69,6 +74,26 @@ static void check_root_lookup_contract(struct Node* root) {
 
   node_free(looked_up_root);
   say("***Root lookup ownership: ok\n", NULL);
+}
+
+// Empty-path lookups should preserve the same ownership contract as other
+// successful lookups: callers receive a fresh heap wrapper that aliases the
+// same cached inode as the starting directory.
+static void check_empty_path_lookup_contract(struct Node* dir) {
+  struct Node* same_dir = node_find(dir, "");
+  assert(same_dir != NULL,
+    "ext_read: empty-path lookup should return the starting directory.\n");
+  assert(node_is_dir(same_dir),
+    "ext_read: empty-path lookup from a directory should still return a directory.\n");
+  assert(same_dir->cached->inumber == dir->cached->inumber,
+    "ext_read: empty-path lookup should preserve inode identity.\n");
+  assert(same_dir != dir,
+    "ext_read: empty-path lookup should return a heap-owned wrapper.\n");
+  assert(same_dir->cached == dir->cached,
+    "ext_read: empty-path lookup should reuse the cached inode entry.\n");
+
+  node_free(same_dir);
+  say("***Empty path lookup: ok\n", NULL);
 }
 
 // Reads the full logical file into a heap buffer and appends a trailing NUL so
@@ -145,6 +170,7 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   assert(node_get_num_links(nested) == 2,
     "ext_read: nested should have exactly two directory links.\n");
   say("***Nested metadata: ok\n", NULL);
+  check_empty_path_lookup_contract(nested);
 
   struct Node* nested_file = node_find(nested, "inner.txt");
   assert(nested_file != NULL,
@@ -179,6 +205,26 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   char* nested_link_text = read_node_text(nested_link_path);
   assert(streq(nested_link_text, "Nested hello\n"),
     "ext_read: symlink-expanded multi-component lookup returned the wrong contents.\n");
+
+  struct Node* dotted_nested_link_path = node_find(root, "dotted-nested.link/inner.txt");
+  assert(dotted_nested_link_path != NULL,
+    "ext_read: ./nested symlink traversal lookup failed.\n");
+  assert(node_is_file(dotted_nested_link_path),
+    "ext_read: dotted-nested.link/inner.txt should resolve to a regular file.\n");
+
+  char* dotted_nested_link_text = read_node_text(dotted_nested_link_path);
+  assert(streq(dotted_nested_link_text, "Nested hello\n"),
+    "ext_read: dotted relative symlink target expanded to the wrong contents.\n");
+
+  struct Node* absolute_nested_link_path = node_find(root, "abs-nested.link/inner.txt");
+  assert(absolute_nested_link_path != NULL,
+    "ext_read: /nested symlink traversal lookup failed.\n");
+  assert(node_is_file(absolute_nested_link_path),
+    "ext_read: abs-nested.link/inner.txt should resolve to a regular file.\n");
+
+  char* absolute_nested_link_text = read_node_text(absolute_nested_link_path);
+  assert(streq(absolute_nested_link_text, "Nested hello\n"),
+    "ext_read: absolute symlink target expanded to the wrong contents.\n");
   say("***Multi-part paths: ok\n", NULL);
 
   struct Node* absolute_hello = node_find(nested, "/hello.txt");
@@ -217,6 +263,10 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
 
   free(from_symlink_text);
   node_free(from_symlink);
+  free(absolute_nested_link_text);
+  node_free(absolute_nested_link_path);
+  free(dotted_nested_link_text);
+  node_free(dotted_nested_link_path);
   free(nested_target);
   node_free(nested_link);
   node_free(absolute_hello);
@@ -283,6 +333,38 @@ static void check_blocks_fixture(struct Node* root, unsigned block_size) {
   free(blocks_text);
   node_free(blocks);
   say("***blocks.txt reads: ok\n", NULL);
+}
+
+// Read helpers should stop at EOF instead of fabricating extra bytes from
+// unallocated blocks, and a zero-byte result should leave the destination
+// buffer untouched.
+static void check_eof_short_reads(struct Node* root) {
+  struct Node* hello = node_find(root, "hello.txt");
+  char buffer[8];
+  unsigned eof_offset;
+  unsigned cnt;
+
+  assert(hello != NULL, "ext_read: hello.txt should exist for EOF checks.\n");
+  eof_offset = node_size_in_bytes(hello);
+
+  memset(buffer, '?', sizeof(buffer));
+  cnt = node_read_all(hello, 3, sizeof(buffer), buffer);
+  assert(cnt == 3,
+    "ext_read: read across EOF should return only the bytes before EOF.\n");
+  assert(strneq(buffer, "lo!", 3),
+    "ext_read: EOF-clamped read returned the wrong file tail.\n");
+  assert(buffer[3] == '?',
+    "ext_read: EOF-clamped read should not overwrite bytes past the short result.\n");
+
+  memset(buffer, '?', sizeof(buffer));
+  cnt = node_read_all(hello, eof_offset, sizeof(buffer), buffer);
+  assert(cnt == 0,
+    "ext_read: a read that starts exactly at EOF should return zero bytes.\n");
+  assert(buffer[0] == '?',
+    "ext_read: a zero-byte EOF read should not modify the destination buffer.\n");
+
+  node_free(hello);
+  say("***EOF short reads: ok\n", NULL);
 }
 
 // A missing single-component path should still fail cleanly.
@@ -440,6 +522,7 @@ int kernel_main(void) {
   unsigned hello_inumber = check_hello_file(root, block_size);
   check_nested_entries(root, hello_inumber);
   check_blocks_fixture(root, block_size);
+  check_eof_short_reads(root);
   check_missing_path(root);
   check_concurrent_reads(block_size);
 

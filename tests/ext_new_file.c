@@ -1,9 +1,10 @@
 /*
  * Covers ext2 create operations for regular files, directories, and symlinks.
  * The test also checks link-count and used_dirs_count metadata so directory
- * creates do not accidentally perturb ext2 accounting for other inode types.
- * The symlink cases exercise both inline targets stored in i_block (< 60 bytes)
- * and longer targets stored in allocated data blocks.
+ * creates do not accidentally perturb ext2 accounting for other inode types,
+ * and it includes one concurrent duplicate-create race on the same basename.
+ * The symlink cases exercise both the exact fast-symlink inline boundary and
+ * longer targets stored in allocated data blocks.
  */
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -14,8 +15,16 @@
 #include "../kernel/barrier.h"
 
 struct Ext2 fs;
-#define INLINE_SYMLINK_TARGET_SIZE 60
-#define BLOCK_SYMLINK_TARGET_SIZE 65
+#define FAST_SYMLINK_TARGET_BYTES 60
+#define FAST_SYMLINK_TARGET_BUFFER_BYTES 61
+#define LONG_SYMLINK_TARGET_BYTES 64
+#define LONG_SYMLINK_TARGET_BUFFER_BYTES 65
+#define CONCURRENT_CREATE_WORKERS 2
+#define CONCURRENT_CREATE_NAME "concurrent-create.txt"
+
+static struct Barrier concurrent_create_start_barrier;
+static int concurrent_create_finished = 0;
+static int concurrent_create_successes = 0;
 
 static unsigned count_used_dirs(struct Ext2* fs) {
   unsigned count = 0;
@@ -27,6 +36,75 @@ static unsigned count_used_dirs(struct Ext2* fs) {
   return count;
 }
 
+static void fill_target_pattern(char* dest, unsigned size) {
+  char* alphabet = "0123456789abcdef";
+
+  for (unsigned i = 0; i < size; ++i){
+    dest[i] = alphabet[i % 16];
+  }
+
+  dest[size] = '\0';
+}
+
+static void concurrent_duplicate_create_thread(void* unused) {
+  struct Node* created;
+  (void)unused;
+
+  barrier_sync(&concurrent_create_start_barrier);
+
+  created = node_make_file(&fs.root, CONCURRENT_CREATE_NAME);
+  if (created != NULL) {
+    __atomic_fetch_add(&concurrent_create_successes, 1);
+    node_free(created);
+  }
+
+  __atomic_fetch_add(&concurrent_create_finished, 1);
+}
+
+// Two threads race to create the same basename in the same directory. Exactly
+// one create may succeed, and the parent directory may gain only one entry.
+static void check_concurrent_duplicate_create(struct Node* root, unsigned expected_entry_count) {
+  struct Node* existing = node_find(root, CONCURRENT_CREATE_NAME);
+  assert(existing == NULL,
+    "node_make_file: concurrent duplicate-create fixture should not exist before the race.\n");
+
+  concurrent_create_finished = 0;
+  concurrent_create_successes = 0;
+  barrier_init(&concurrent_create_start_barrier, CONCURRENT_CREATE_WORKERS + 1);
+
+  for (unsigned i = 0; i < CONCURRENT_CREATE_WORKERS; ++i){
+    struct Fun* fun = malloc(sizeof(struct Fun));
+    assert(fun != NULL, "node_make_file: concurrent duplicate-create Fun allocation failed.\n");
+    fun->func = concurrent_duplicate_create_thread;
+    fun->arg = NULL;
+    thread(fun);
+  }
+
+  barrier_sync(&concurrent_create_start_barrier);
+
+  while (__atomic_load_n(&concurrent_create_finished) != CONCURRENT_CREATE_WORKERS) {
+    yield();
+  }
+
+  barrier_destroy(&concurrent_create_start_barrier);
+
+  assert(__atomic_load_n(&concurrent_create_successes) == 1,
+    "node_make_file: concurrent duplicate create should allow exactly one winner.\n");
+  assert(node_entry_count(root) == expected_entry_count + 1,
+    "node_make_file: concurrent duplicate create should add exactly one directory entry.\n");
+
+  existing = node_find(root, CONCURRENT_CREATE_NAME);
+  assert(existing != NULL,
+    "node_make_file: concurrent duplicate create should leave one visible file.\n");
+  assert(node_is_file(existing),
+    "node_make_file: concurrent duplicate create should leave a regular file.\n");
+  assert(node_get_num_links(existing) == 1,
+    "node_make_file: concurrent duplicate create should leave one file with one link.\n");
+  node_free(existing);
+
+  say("***Concurrent duplicate create: ok\n", NULL);
+}
+
 int kernel_main(void) {
   say("***Hello from ext2 new file test!\n", NULL);
 
@@ -36,20 +114,11 @@ int kernel_main(void) {
   unsigned original_entry_count = node_entry_count(root);
   unsigned original_root_links = node_get_num_links(root);
   unsigned original_used_dirs = count_used_dirs(&fs);
-  char inline_symlink_target[INLINE_SYMLINK_TARGET_SIZE];
-  char block_symlink_target[BLOCK_SYMLINK_TARGET_SIZE];
+  char inline_symlink_target[FAST_SYMLINK_TARGET_BUFFER_BYTES];
+  char block_symlink_target[LONG_SYMLINK_TARGET_BUFFER_BYTES];
 
-  memcpy(inline_symlink_target + 0, "0123456789abcdef", 16);
-  memcpy(inline_symlink_target + 16, "0123456789abcdef", 16);
-  memcpy(inline_symlink_target + 32, "0123456789abcdef", 16);
-  memcpy(inline_symlink_target + 48, "0123456789a", 11);
-  inline_symlink_target[INLINE_SYMLINK_TARGET_SIZE - 1] = '\0';
-
-  memcpy(block_symlink_target + 0, "0123456789abcdef", 16);
-  memcpy(block_symlink_target + 16, "0123456789abcdef", 16);
-  memcpy(block_symlink_target + 32, "0123456789abcdef", 16);
-  memcpy(block_symlink_target + 48, "0123456789abcdef", 16);
-  block_symlink_target[BLOCK_SYMLINK_TARGET_SIZE - 1] = '\0';
+  fill_target_pattern(inline_symlink_target, FAST_SYMLINK_TARGET_BYTES);
+  fill_target_pattern(block_symlink_target, LONG_SYMLINK_TARGET_BYTES);
 
   say("***Original root directory:\n", NULL);
   node_print_dir(root);
@@ -114,7 +183,7 @@ int kernel_main(void) {
     "node_make_symlink: inline symlink create should add exactly one directory entry.\n");
   assert(count_used_dirs(&fs) == original_used_dirs + 1,
     "node_make_symlink: symlink create should not change ext2 used_dirs_count.\n");
-  char inline_target_buf[INLINE_SYMLINK_TARGET_SIZE];
+  char inline_target_buf[FAST_SYMLINK_TARGET_BUFFER_BYTES];
   node_get_symlink_target(inline_link, inline_target_buf);
   assert(streq(inline_target_buf, inline_symlink_target),
     "node_make_symlink: inline symlink target was not stored inline in the inode.\n");
@@ -140,7 +209,7 @@ int kernel_main(void) {
     "node_make_symlink: block-backed symlink create should add exactly one directory entry.\n");
   assert(count_used_dirs(&fs) == original_used_dirs + 1,
     "node_make_symlink: block-backed symlink create should not change ext2 used_dirs_count.\n");
-  char block_target_buf[BLOCK_SYMLINK_TARGET_SIZE];
+  char block_target_buf[LONG_SYMLINK_TARGET_BUFFER_BYTES];
   node_get_symlink_target(block_link, block_target_buf);
   assert(streq(block_target_buf, block_symlink_target),
     "node_make_symlink: block-backed symlink target was not written through the inode data blocks.\n");
@@ -156,6 +225,8 @@ int kernel_main(void) {
     "node_make_symlink: reopened block-backed symlink target did not match the stored bytes.\n");
   node_free(reopened_block_link);
   say("***Block-backed symlink creation: ok\n", NULL);
+
+  check_concurrent_duplicate_create(root, original_entry_count + 4);
 
   say("***Root directory after create operations:\n", NULL);
   node_print_dir(root);
