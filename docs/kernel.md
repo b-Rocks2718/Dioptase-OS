@@ -37,13 +37,10 @@ Supported:
 - Read files, directories, and symlinks
 - create new files, directories, and symlinks
 - write to files
+- rename
 
 TODO:
-- fix hard links
-- truncate/deallocate blocks
-- rename
-- delete 
-- readdir
+- delete files
 
 ## Virtual Memory
 tlb is software managed

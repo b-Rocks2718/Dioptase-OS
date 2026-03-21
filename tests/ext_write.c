@@ -1,7 +1,9 @@
 /*
  * Covers ext2 regular-file writes: in-place overwrites, persistence after
  * reopening, file growth across block boundaries, single-indirect growth, and
- * concurrent disjoint writes to the same file.
+ * concurrent writes to the same file. The concurrent cases cover both disjoint
+ * full-block writes and same-block partial writes so block-cache writeback does
+ * not lose older regions when multiple threads update one logical block.
  */
 #include "../kernel/ext.h"
 #include "../kernel/print.h"
@@ -14,6 +16,7 @@
 #define CONCURRENT_WRITERS 4
 #define CONCURRENT_ROUNDS 3
 #define CONCURRENT_FILE_NAME "shared-concurrent.bin"
+#define PARTIAL_CONCURRENT_FILE_NAME "shared-partial-concurrent.bin"
 
 struct Ext2 fs;
 
@@ -24,8 +27,11 @@ struct ConcurrentWriteArgs {
 
 static struct Barrier concurrent_start_barrier;
 static int concurrent_finished = 0;
+static struct Barrier partial_concurrent_start_barrier;
+static int partial_concurrent_finished = 0;
 
 static void concurrent_writer_thread(void* arg);
+static void partial_concurrent_writer_thread(void* arg);
 
 // Allocates a raw byte buffer and fills every byte with the same pattern.
 // The write tests use this for file bootstrap images and per-thread payloads so
@@ -209,6 +215,64 @@ static void check_concurrent_disjoint_writes(struct Node* root, unsigned block_s
   say("***Concurrent disjoint writes: ok\n", NULL);
 }
 
+// Covers concurrent writes into disjoint regions of one logical block. This is
+// the deterministic stale-write regression case for block-cache partial writes:
+// each thread owns a fixed byte range, so the final block contents should be a
+// stable union of every writer's payload regardless of interleaving.
+static void check_concurrent_same_block_partial_writes(struct Node* root, unsigned block_size) {
+  struct Node* shared = node_make_file(root, PARTIAL_CONCURRENT_FILE_NAME);
+  assert(shared != NULL, "ext_write: failed to create the partial concurrent write test file.\n");
+
+  char* zeroes = alloc_filled_bytes(block_size, 0,
+    "ext_write: failed to allocate the partial concurrent bootstrap buffer.\n");
+  unsigned cnt = node_write_all(shared, 0, block_size, zeroes);
+  assert(cnt == block_size,
+    "ext_write: failed to pre-size the partial concurrent write test file.\n");
+  free(zeroes);
+  node_free(shared);
+
+  partial_concurrent_finished = 0;
+  barrier_init(&partial_concurrent_start_barrier, CONCURRENT_WRITERS + 1);
+
+  for (unsigned i = 0; i < CONCURRENT_WRITERS; ++i){
+    struct ConcurrentWriteArgs* args = malloc(sizeof(struct ConcurrentWriteArgs));
+    assert(args != NULL, "ext_write: partial concurrent writer args allocation failed.\n");
+    args->block_size = block_size;
+    args->slot = i;
+
+    struct Fun* fun = malloc(sizeof(struct Fun));
+    assert(fun != NULL, "ext_write: partial concurrent writer Fun allocation failed.\n");
+    fun->func = partial_concurrent_writer_thread;
+    fun->arg = args;
+
+    thread(fun);
+  }
+
+  barrier_sync(&partial_concurrent_start_barrier);
+
+  while (__atomic_load_n(&partial_concurrent_finished) != CONCURRENT_WRITERS) {
+    yield();
+  }
+
+  barrier_destroy(&partial_concurrent_start_barrier);
+
+  shared = node_find(root, PARTIAL_CONCURRENT_FILE_NAME);
+  assert(shared != NULL, "ext_write: failed to reopen the partial concurrent write test file.\n");
+  assert(node_size_in_bytes(shared) == block_size,
+    "ext_write: concurrent same-block partial writes changed the file size unexpectedly.\n");
+
+  char* bytes = read_node_bytes(shared);
+  unsigned region_size = block_size / CONCURRENT_WRITERS;
+  for (unsigned i = 0; i < CONCURRENT_WRITERS; ++i){
+    assert_region_is_byte(bytes, i * region_size, region_size, 'a' + i,
+      "ext_write: concurrent same-block partial writes lost one writer's byte range.\n");
+  }
+  free(bytes);
+  node_free(shared);
+
+  say("***Concurrent same-block partial writes: ok\n", NULL);
+}
+
 // Covers file growth where the first write starts after offset 0. ext2 should
 // expose the unwritten prefix as zero bytes and persist the payload at the
 // requested later offset.
@@ -318,6 +382,30 @@ static void concurrent_writer_thread(void* arg) {
   __atomic_fetch_add(&concurrent_finished, 1);
 }
 
+static void partial_concurrent_writer_thread(void* arg) {
+  struct ConcurrentWriteArgs* write_args = (struct ConcurrentWriteArgs*)arg;
+  struct Node* file = node_find(&fs.root, PARTIAL_CONCURRENT_FILE_NAME);
+  assert(file != NULL,
+    "ext_write: partial concurrent writer failed to reopen the shared file.\n");
+
+  unsigned region_size = write_args->block_size / CONCURRENT_WRITERS;
+  char* region = alloc_filled_bytes(region_size, 'a' + write_args->slot,
+    "ext_write: failed to allocate a partial concurrent writer payload.\n");
+
+  barrier_sync(&partial_concurrent_start_barrier);
+
+  for (unsigned round = 0; round < CONCURRENT_ROUNDS; ++round) {
+    unsigned cnt = node_write_all(file, write_args->slot * region_size,
+      region_size, region);
+    assert(cnt == region_size,
+      "ext_write: partial concurrent writer returned the wrong byte count.\n");
+  }
+
+  free(region);
+  node_free(file);
+  __atomic_fetch_add(&partial_concurrent_finished, 1);
+}
+
 int kernel_main(void) {
   // The suite progresses from small sequential writes to larger growth cases,
   // then finishes with the first indirect-block case that previously triggered
@@ -332,6 +420,7 @@ int kernel_main(void) {
   check_existing_file_writes(root);
   check_new_file_growth(root);
   check_concurrent_disjoint_writes(root, block_size);
+  check_concurrent_same_block_partial_writes(root, block_size);
   check_gap_zero_fill(root);
   check_cross_block_growth(root, block_size);
   check_single_indirect_growth(root, block_size);

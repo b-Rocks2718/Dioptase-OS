@@ -26,7 +26,7 @@ struct CachedInode {
   unsigned data_block_count;
   unsigned refcount;
   bool valid;
-  struct BlockingLock lock;
+  struct BlockingLock lock; // protects writes to this node's blocks
   struct Gate valid_gate; // threads waiting for valid == true
 };
 
@@ -50,7 +50,13 @@ struct BlockCache {
 
 struct Node {
   struct CachedInode* cached;
+
+  // initialized to EXT2_BAD_INO,
+  // filled in when find() traverses directories
+  // INVARIANT: any Node* returned by `node_find` has a valid parent_inumber
+  // (except root, which keeps EXT2_BAD_INO)
   unsigned parent_inumber;
+
   struct Ext2* filesystem;
 };
 
@@ -70,8 +76,8 @@ struct Ext2 {
 
   struct Node root;
 
-  struct BlockingLock inode_alloc_lock; // protects inode allocation state
-  struct BlockingLock block_alloc_lock; // protects block allocation state
+  struct BlockingLock metadata_lock; // protects writes to BGD table, superblock, and bitmaps
+  struct BlockingLock inode_lock; // protects inode table
 };
 
 void ext2_init(struct Ext2* fs);
@@ -154,6 +160,8 @@ struct Node* node_make_file(struct Node* dir, char* name);
 struct Node* node_make_dir(struct Node* dir, char* name);
 
 struct Node* node_make_symlink(struct Node* dir, char* name, char* target);
+
+void node_rename(struct Node* node, char* old_name, char* new_name);
 
 void node_delete(struct Node* node);
 

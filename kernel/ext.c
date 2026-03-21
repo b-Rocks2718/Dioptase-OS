@@ -248,8 +248,8 @@ void ext2_init(struct Ext2* fs){
   fs->bcache.fs = fs;
   bcache_init(&fs->bcache, block_size);
 
-  blocking_lock_init(&fs->inode_alloc_lock);
-  blocking_lock_init(&fs->block_alloc_lock);
+  blocking_lock_init(&fs->metadata_lock);
+  blocking_lock_init(&fs->inode_lock);
 
   // Read the root inode through the inode cache so bootstrap uses the same
   // inode size and block-size rules as every other inode lookup.
@@ -274,8 +274,8 @@ void ext2_destroy(struct Ext2* fs){
   free(fs->block_bitmaps);
 
   icache_destroy(&fs->icache);
-  blocking_lock_destroy(&fs->inode_alloc_lock);
-  blocking_lock_destroy(&fs->block_alloc_lock);
+  blocking_lock_destroy(&fs->metadata_lock);
+  blocking_lock_destroy(&fs->inode_lock);
 }
 
 void ext2_free(struct Ext2* fs){
@@ -343,7 +343,7 @@ static struct Node* ext2_open_parent_dir(struct Node* node){
   struct CachedInode* cached = icache_get(&fs->icache, node->parent_inumber);
   struct Node* parent = malloc(sizeof(struct Node));
 
-  node_init(parent, cached, node->parent_inumber, fs);
+  node_init(parent, cached, EXT2_BAD_INO, fs);
   assert(node_is_dir(parent),
     "ext2_open_parent_dir: symlink parent inode is not a directory.\n");
 
@@ -519,10 +519,10 @@ struct Node* node_find(struct Node* dir, char* name){
   return dir;
 }
 
-unsigned alloc_inumber(struct Ext2* fs){
+unsigned alloc_inumber(struct Ext2* fs, short mode){
   unsigned inumber = 0;
 
-  blocking_lock_acquire(&fs->inode_alloc_lock);
+  blocking_lock_acquire(&fs->metadata_lock);
 
   // find block group with free inodes
   for (unsigned i = 0; i < fs->num_block_groups; ++i){
@@ -546,15 +546,22 @@ unsigned alloc_inumber(struct Ext2* fs){
         if (inumber != 0) break;
       }
 
-      blocking_lock_release(&fs->inode_alloc_lock);
+      if ((mode & 0xF000) == EXT2_S_IFDIR){
+        fs->bgd_table[i].used_dirs_count += 1;
+      }
 
-      // write back updated bitmap and bgd
+      // for now, double-locking seems necessary to avoid the case of
+      // an old superblock accidentally being written back after a newer one
+      // TODO: refactor to avoid this
+      ext2_write_bgd_table(fs);
+      ext2_write_superblock(fs);
+
+      // write back updated bitmap
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[i]);
       assert(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
 
-      ext2_write_bgd_table(fs);
-      ext2_write_superblock(fs);
+      blocking_lock_release(&fs->metadata_lock);
       
       break;
     }
@@ -574,7 +581,7 @@ void dealloc_inumber(struct Ext2* fs, unsigned inumber) {
 unsigned alloc_block(struct Ext2* fs){
   unsigned block_num = -1;
 
-  blocking_lock_acquire(&fs->block_alloc_lock);
+  blocking_lock_acquire(&fs->metadata_lock);
 
   // find block group with free inodes
   for (unsigned i = 0; i < fs->num_block_groups; ++i){
@@ -599,15 +606,15 @@ unsigned alloc_block(struct Ext2* fs){
         if (block_num != -1) break;
       }
 
-      blocking_lock_release(&fs->block_alloc_lock);
+      ext2_write_bgd_table(fs);
+      ext2_write_superblock(fs);
 
-      // write back updated bitmap and bgd
+      // write back updated bitmap
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
       assert(rc == 0, "alloc_block: failed to write back block bitmap.\n");
 
-      ext2_write_bgd_table(fs);
-      ext2_write_superblock(fs);
+      blocking_lock_release(&fs->metadata_lock);
 
       break;
     }
@@ -636,7 +643,7 @@ struct CachedInode* make_inode(short mode, unsigned inumber){
   cached->inode.mtime = 0; // not supported
   cached->inode.dtime = 0; // not supported
   cached->inode.gid = 0; // TODO: support non-root groups
-  cached->inode.links_count = 1; // new file has one link from its parent directory
+  cached->inode.links_count = (mode & 0xF000) == EXT2_S_IFDIR ? 2 : 1; // directory has extra link for ".", file has 1 link
   cached->inode.blocks = 0; // no data blocks yet
   cached->inode.flags = 0; // not supported
   cached->inode.osd1 = 0; // not used
@@ -806,11 +813,14 @@ bool node_add_block(struct Node* node, unsigned block_num){
 // Search one directory data block for slack in an existing record. ext2 grows a
 // directory by splitting the last record that has spare rec_len bytes; only a
 // completely full directory needs a new data block.
-static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_index, char* name, unsigned inumber){
+static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_index, char* name, unsigned inumber, bool has_lock){
   unsigned block_size = ext2_get_block_size(dir->filesystem);
   unsigned new_entry_size = ext2_dir_entry_min_size(strlen(name));
   char* block_buf = malloc(block_size);
 
+  if (!has_lock){
+    blocking_lock_acquire(&dir->cached->lock);
+  }
   node_read_block(dir, block_index, block_buf);
 
   unsigned offset = 0;
@@ -829,6 +839,9 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
       if (record_length >= new_entry_size){
         ext2_write_dir_entry(block_buf + offset, record_length, name, inumber);
         node_write_block(dir, block_index, block_buf, 0, block_size);
+        if (!has_lock){
+          blocking_lock_release(&dir->cached->lock);
+        }
         free(block_buf);
         return true;
       }
@@ -839,6 +852,9 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
         ext2_write_dir_entry(block_buf + offset + ideal_length,
           record_length - ideal_length, name, inumber);
         node_write_block(dir, block_index, block_buf, 0, block_size);
+        if (!has_lock){
+          blocking_lock_release(&dir->cached->lock);
+        }
         free(block_buf);
         return true;
       }
@@ -849,12 +865,14 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
 
   assert(offset == block_size,
     "dir_insert_entry_in_existing_block: directory block did not terminate at the block boundary.\n");
-
+  if (!has_lock){
+    blocking_lock_release(&dir->cached->lock);
+  }
   free(block_buf);
   return false;
 }
 
-void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
+bool dir_add_entry(struct Node* dir, char* name, unsigned inumber, bool has_lock){
   unsigned block_size = ext2_get_block_size(dir->filesystem);
   unsigned logical_block_count = dir->cached->data_block_count;
 
@@ -862,8 +880,8 @@ void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
   assert(strlen(name) > 0, "dir_add_entry: directory entries must have a non-empty name.\n");
 
   for (unsigned i = 0; i < logical_block_count; ++i){
-    if (dir_insert_entry_in_existing_block(dir, i, name, inumber)){
-      return;
+    if (dir_insert_entry_in_existing_block(dir, i, name, inumber, has_lock)){
+      return true;
     }
   }
 
@@ -882,6 +900,68 @@ void dir_add_entry(struct Node* dir, char* name, unsigned inumber){
 
   dir->cached->inode.size += block_size;
   node_sync_inode(dir);
+
+  return true;
+}
+
+bool dir_remove_entry(struct Node* dir, char* name, bool has_lock){
+  unsigned block_size = ext2_get_block_size(dir->filesystem);
+  unsigned logical_block_count = dir->cached->data_block_count;
+
+  assert(node_is_dir(dir), "dir_remove_entry: target node is not a directory.\n");
+  assert(name != NULL, "dir_remove_entry: name is NULL.\n");
+
+  for (unsigned i = 0; i < logical_block_count; ++i){
+    char* block_buf = malloc(block_size);
+
+    if (!has_lock){
+      blocking_lock_acquire(&dir->cached->lock);
+    }
+    node_read_block(dir, i, block_buf);
+
+    unsigned offset = 0;
+    struct DirEntry* prev = NULL;
+    while (offset < block_size){
+      struct DirEntry* existing = (struct DirEntry*)(block_buf + offset);
+      unsigned record_length = existing->rec_len;
+
+      assert(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
+        "dir_remove_entry: invalid directory record length.\n");
+      assert(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+        "dir_remove_entry: directory record is not 4-byte aligned.\n");
+      assert(offset + record_length <= block_size,
+        "dir_remove_entry: directory record crosses the block boundary.\n");
+
+      if (existing->inode != 0 && existing->name_len == strlen(name) &&
+          strneq((char*)existing->name, name, existing->name_len)) {
+        existing->inode = 0;
+        if (prev != NULL){
+          prev->rec_len += existing->rec_len;
+        }
+        node_write_block(dir, i, block_buf, 0, block_size);
+        if (!has_lock){
+          blocking_lock_release(&dir->cached->lock);
+        }
+        free(block_buf);
+
+        return true;
+      }
+      
+
+      offset += record_length;
+      prev = existing;
+    }
+
+    assert(offset == block_size,
+      "dir_remove_entry: directory block did not terminate at the block boundary.\n");
+
+    if (!has_lock){
+      blocking_lock_release(&dir->cached->lock);
+    }
+    free(block_buf);
+  }
+
+  return false;
 }
 
 // Duplicate names are rejected before allocation so failed creates do not
@@ -917,7 +997,7 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
     return NULL;
   }
 
-  unsigned inumber = alloc_inumber(fs);
+  unsigned inumber = alloc_inumber(fs, mode);
   if (inumber == 0){
     return NULL;
   }
@@ -930,7 +1010,16 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   node_init(node, cached, dir->cached->inumber, fs);
 
   // inode allocated successfully, now update parent directory
-  dir_add_entry(dir, name, inumber);
+  dir_add_entry(dir, name, inumber, false);
+
+  if ((mode & 0xF000) == EXT2_S_IFDIR){
+    // parent dir gets new link from child's .. entry
+    dir->cached->inode.links_count += 1;
+    node_sync_inode(dir);
+
+    // update used_dirs_count in block group descriptor
+    unsigned group = (inumber - 1) / fs->superblock.inodes_per_group;
+  }
 
   // write new inode to disk
   node_sync_inode(node);
@@ -938,7 +1027,7 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   return node;
 }
 
-void dealloc_inode(struct Ext2* fs, unsigned inumber){
+void dealloc_inode(struct Ext2* fs, struct CachedInode* cached){
   // TODO
 }
 
@@ -1064,7 +1153,11 @@ void icache_set(struct InodeCache* cache, struct CachedInode* cached){
   char* inode_table_buf = malloc(block_size);
 
   // Read-modify-write the containing inode-table block so neighboring inodes in
-  // the same block are preserved
+  // the same block are preserved. This needs to be atomic to avoid losing updated
+  // if two threads change different inodes in the same block
+
+  blocking_lock_acquire(&cache->fs->inode_lock);
+
   int rc = sd_read_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
   assert(rc == 0, "icache_set: failed to read inode table block.\n");
@@ -1074,6 +1167,8 @@ void icache_set(struct InodeCache* cache, struct CachedInode* cached){
   rc = sd_write_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
   assert(rc == 0, "icache_set: failed to write inode table block.\n");
+
+  blocking_lock_release(&cache->fs->inode_lock);
 
   free(inode_table_buf);
 }
@@ -1204,26 +1299,23 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
     memcpy(cache->block_cache + result * cache->block_size + offset, src, write_size);
     memcpy(block_buf, cache->block_cache + result * cache->block_size, cache->block_size);
 
-    blocking_lock_release(&cache->lock);
-
     // write back to sd
     int rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
       cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
     assert(rc == 0, "bcache_set: failed to write filesystem block.\n");
+
+    blocking_lock_release(&cache->lock);
 
     free(block_buf);
 
     return;
   }
 
-  blocking_lock_release(&cache->lock);
-
   // need to read block first so we can do a partial write without overwriting the rest of the block
   int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
   assert(rc == 0, "bcache_set: failed to read filesystem block before a partial write.\n");
 
-  blocking_lock_acquire(&cache->lock);
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
     cache->ages[i]++;
     if (cache->ages[i] == BCACHE_SIZE) result = i;
@@ -1236,13 +1328,12 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   memcpy(cache->block_cache + result * cache->block_size, block_buf, cache->block_size);  
   memcpy(cache->block_cache + result * cache->block_size + offset, src, write_size);
   memcpy(block_buf + offset, src, write_size);
-  blocking_lock_release(&cache->lock);
 
-  // write to disk after releasing lock since it's a blocking call and we don't want to hold
-  // the lock during it
   rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
   assert(rc == 0, "bcache_set: failed to write filesystem block.\n");
+
+  blocking_lock_release(&cache->lock);
 
   free(block_buf);
 }
@@ -1298,8 +1389,8 @@ struct Node* node_make_dir(struct Node* dir, char* name){
   }
 
   // add . and .. entries to new directory
-  dir_add_entry(node, ".", node->cached->inumber);
-  dir_add_entry(node, "..", dir->cached->inumber);
+  dir_add_entry(node, ".", node->cached->inumber, false);
+  dir_add_entry(node, "..", dir->cached->inumber, false);
 
   return node;
 }
@@ -1339,6 +1430,27 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
   node_write_all(node, 0, target_size, target);
 
   return node;
+}
+
+void node_rename(struct Node* dir, char* old_name, char* new_name){
+  blocking_lock_acquire(&dir->cached->lock);
+  
+  struct Node* node = node_find(dir, old_name);
+  
+  if (dir_has_entry_name(dir, new_name)){
+    panic("node_rename: a directory entry with the new name already exists in the parent directory.\n");
+  }
+
+  assert(node != NULL, 
+    "node_rename: no directory entry with the old name exists in the parent directory.\n");
+  
+  bool rc = dir_remove_entry(dir, old_name, true);
+  assert(rc, "node_rename: failed to remove the old directory entry.\n");
+  rc = dir_add_entry(dir, new_name, node->cached->inumber, true);
+  assert(rc, "node_rename: failed to add the new directory entry.\n");
+  blocking_lock_release(&dir->cached->lock);
+
+  node_free(node);
 }
 
 void node_delete(struct Node* node){
@@ -1547,6 +1659,11 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   unsigned end_block = (offset + size - 1) / block_size;
   unsigned bytes_copied = 0;
 
+  // Serialize the full write path for one inode so block growth, inode writeback,
+  // and data writes observe one consistent per-file state without re-entering
+  // inode_lock through icache_set().
+  blocking_lock_acquire(&node->cached->lock);
+
   // Update the file size if we wrote past the previous end of the file
   if (offset + size > node->cached->inode.size){
     // allocate new block if necessary
@@ -1558,6 +1675,8 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
     node->cached->inode.size = offset + size;
   }
 
+  node_sync_inode(node);
+
   for (unsigned i = start_block; i <= end_block; ++i){
     unsigned block_offset = (i == start_block) ? offset % block_size : 0;
     unsigned copy_size = (i == end_block) ? ((offset + size - 1) % block_size) - block_offset + 1 : block_size - block_offset;
@@ -1565,8 +1684,7 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 
     bytes_copied += copy_size;
   }
-
-  node_sync_inode(node);
+  blocking_lock_release(&node->cached->lock);
 
   return size;
 }
@@ -1609,6 +1727,8 @@ unsigned node_get_num_links(struct Node* node){
 unsigned node_entry_count(struct Node* node){
   assert(node_is_dir(node), "node_entry_count: node is not a directory.\n");
 
+  blocking_lock_acquire(&node->cached->lock);
+
   // get first directory entry
   unsigned index = 0;
   struct DirEntry entry;
@@ -1621,6 +1741,8 @@ unsigned node_entry_count(struct Node* node){
     index += entry.rec_len;
     if (entry.inode != 0) count++;
   }
+
+  blocking_lock_release(&node->cached->lock);
 
   return count;
 }

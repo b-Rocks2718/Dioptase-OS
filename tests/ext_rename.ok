@@ -1,0 +1,4 @@
+***ext_rename test start
+***Rename inode+content: ok
+***Rename removes old name: ok
+***ext_rename test complete
