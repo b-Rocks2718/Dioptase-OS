@@ -40,7 +40,7 @@ void pit_handler(void){
 
   if (tcb != &per_core->idle_thread && tcb->can_preempt){
     unsigned was = get_imr();
-    block(was, global_queue_add, tcb);
+    block(was, local_queue_add, tcb);
   }
 
   imr = get_imr();

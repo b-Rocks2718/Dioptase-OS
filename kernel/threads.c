@@ -124,7 +124,7 @@ static void setup_thread(struct Fun* thread_fun){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
-  spin_queue_add(&global_ready_queue, tcb);
+  global_queue_add(tcb);
 }
 
 void threads_init(void){
@@ -187,8 +187,11 @@ void thread_entry(void) {
 
 static void nothing(void* unused) {}
 
+#define GLOBAL_CHECK_INTERVAL 8
+
 void event_loop(void) {
   /* only the idle thread can enter this function */
+  unsigned global_check_counter = 0;
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
     struct PerCore* core = get_per_core();
     
@@ -199,12 +202,19 @@ void event_loop(void) {
       wakeup = sleep_queue_remove(&core->sleep_queue);
     }
 
-    // try to remove from local ready queue first
-    struct TCB* next = queue_remove(&core->ready_queue);
+    struct TCB* next = NULL;
+    if (global_check_counter < GLOBAL_CHECK_INTERVAL){
+      // usually check local queue first, 
+      // occasionally check global queue first to prevent starvation
+      next = queue_remove(&core->ready_queue);
+    } else {
+      global_check_counter = 0;
+    }
     // if local ready queue is empty, try global ready queue
     if (next == NULL) {
       next = spin_queue_remove(&global_ready_queue);
     }
+    global_check_counter++;
 
     assert(core != NULL, "per-core data is NULL.\n");
     if (core->current_thread != &core->idle_thread) {
@@ -284,7 +294,7 @@ void thread(struct Fun* thread_fun){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
-  spin_queue_add(&global_ready_queue, tcb);
+  global_queue_add(tcb);
 }
 
 void bootstrap(void){
