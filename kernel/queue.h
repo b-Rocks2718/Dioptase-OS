@@ -21,7 +21,6 @@ struct Queue {
 
 struct SleepQueue {
   struct TCB* head;
-  struct SpinLock spinlock;
   int size;
 };
 

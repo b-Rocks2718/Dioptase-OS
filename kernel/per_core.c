@@ -14,5 +14,14 @@ struct TCB* get_current_tcb() {
 }
 
 struct TCB* get_idle_tcb() {
-  return get_per_core()->idle_thread;
+  return &get_per_core()->idle_thread;
 }
+
+struct Queue* get_ready_queue() {
+  return &get_per_core()->ready_queue;
+}
+
+struct SleepQueue* get_sleep_queue() {
+  return &get_per_core()->sleep_queue;
+}
+

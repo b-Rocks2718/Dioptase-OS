@@ -51,6 +51,7 @@ struct TCB {
   struct Fun *thread_fun;
 
   bool can_preempt;
+  bool pinned;
   unsigned wakeup_jiffies;
 
   struct TCB* next;

@@ -17,7 +17,8 @@
 #include "TCB.h"
 #include "queue.h"
 
-extern struct SpinQueue ready_queue;
+extern struct SpinQueue global_ready_queue;
+extern struct Queue local_ready_queues[MAX_CORES];
 extern struct SpinQueue reaper_queue;
 
 void threads_init(void);
@@ -32,7 +33,9 @@ void thread(struct Fun* thread_fun);
 
 void bootstrap(void);
 
-void add_tcb(void* tcb);
+void global_queue_add(void* tcb);
+
+void local_queue_add(void* tcb);
 
 void yield(void);
 

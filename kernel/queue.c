@@ -145,7 +145,6 @@ struct TCB* queue_peek(struct Queue* queue){
 
 void sleep_queue_init(struct SleepQueue* queue){
   queue->head = NULL;
-  spin_lock_init(&queue->spinlock);
   queue->size = 0;
 }
 
@@ -155,8 +154,6 @@ void sleep_queue_add(void* args){
   int* args_array = (int*)args;
   struct SleepQueue* queue = (struct SleepQueue*)args_array[0];
   struct TCB* data = (struct TCB*)args_array[1];
-
-  spin_lock_acquire(&queue->spinlock);
 
   // Sleep queue insertion also consumes a detached node. Clear any stale
   // linkage before we splice the thread into the ordered wakeup list.
@@ -187,17 +184,13 @@ void sleep_queue_add(void* args){
   }
 
   __atomic_fetch_add(&queue->size, 1);
-
-  spin_lock_release(&queue->spinlock);
 }
 
 // return first TCB if its wakeup_jiffies <= current jiffies
 // else return NULL
 struct TCB* sleep_queue_remove(struct SleepQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
-    spin_lock_release(&queue->spinlock);
     return NULL;
   }
 
@@ -209,12 +202,9 @@ struct TCB* sleep_queue_remove(struct SleepQueue* queue){
 
     __atomic_fetch_add(&queue->size, -1);
 
-    spin_lock_release(&queue->spinlock);
-
     return node;
   } else {
     // not ready to wake up
-    spin_lock_release(&queue->spinlock);
     return NULL;
   }
 }

@@ -4,10 +4,9 @@
 
 Structure:
 - Allocates a fixed size stack per thread (TODO: use page allocator instead of heap, and use guard pages to detect overflow)
-- Global ready queue
+- Per-core and global ready queues
 - round-robin scheduling
 - Preemptive, timer isr context switches to idle threads, idle thread cannot be preempted and finds next ready thread to switch to
-- TODO: switch to per-core queues
 - TODO: better scheduling
 
 Supported Sync Primatives:

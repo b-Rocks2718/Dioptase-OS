@@ -22,7 +22,7 @@ static void sem_add(void* arg){
   if (sem->count > 0){
     sem->count--;
     spin_lock_release(&sem->lock);
-    spin_queue_add(&ready_queue, tcb);
+    local_queue_add(tcb);
   } else {
     queue_add(&sem->wait_queue, tcb);
     spin_lock_release(&sem->lock);
@@ -58,7 +58,7 @@ void sem_up(struct Semaphore* sem){
   spin_lock_release(&sem->lock);
 
   if (wakeup != NULL){
-    spin_queue_add(&ready_queue, wakeup);
+    local_queue_add(wakeup);
   }
 }
 

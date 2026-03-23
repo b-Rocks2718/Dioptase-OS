@@ -25,15 +25,11 @@
 #include "config.h"
 #include "ps2.h"
 
-struct SpinQueue ready_queue;
+struct SpinQueue global_ready_queue;
 struct SpinQueue reaper_queue;
-
-struct SleepQueue sleep_queue;
 
 int n_active = 0;
 bool bootstrapping = true;
-
-struct TCB idle_tcbs[MAX_CORES];
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -103,6 +99,7 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->imr = 0x80000001;
 
   tcb->can_preempt = true;
+  tcb->pinned = false;
 
   tcb->next = NULL;
 
@@ -127,13 +124,17 @@ static void setup_thread(struct Fun* thread_fun){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
-  spin_queue_add(&ready_queue, tcb);
+  spin_queue_add(&global_ready_queue, tcb);
 }
 
 void threads_init(void){
-  spin_queue_init(&ready_queue);
+  spin_queue_init(&global_ready_queue);
   spin_queue_init(&reaper_queue);
-  sleep_queue_init(&sleep_queue);
+
+  for (int i = 0; i < MAX_CORES; i++) {
+    queue_init(&per_core_data[i].ready_queue);
+    sleep_queue_init(&per_core_data[i].sleep_queue);
+  }
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
@@ -152,7 +153,7 @@ void threads_init(void){
 void block(unsigned was, void (*func)(void *), void *arg) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
-  struct TCB* idle = core->idle_thread;
+  struct TCB* idle = &core->idle_thread;
 
   context_switch(me, idle, func, arg, &core->current_thread, was);
 }
@@ -189,29 +190,35 @@ static void nothing(void* unused) {}
 void event_loop(void) {
   /* only the idle thread can enter this function */
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
+    struct PerCore* core = get_per_core();
     
     // check sleep queue
-    struct TCB* wakeup = sleep_queue_remove(&sleep_queue);
+    struct TCB* wakeup = sleep_queue_remove(&core->sleep_queue);
     while (wakeup != NULL) {
-      spin_queue_add(&ready_queue, wakeup);
-      wakeup = sleep_queue_remove(&sleep_queue);
+      queue_add(&core->ready_queue, wakeup);
+      wakeup = sleep_queue_remove(&core->sleep_queue);
     }
 
-    struct TCB* next = spin_queue_remove(&ready_queue);
+    // try to remove from local ready queue first
+    struct TCB* next = queue_remove(&core->ready_queue);
+    // if local ready queue is empty, try global ready queue
+    if (next == NULL) {
+      next = spin_queue_remove(&global_ready_queue);
+    }
 
-    // if we actually are an idle thread, preemption is disabled
-    // and we don't actually need to disable interrupts here
-    // this is just for debugging
-    int was = interrupts_disable();
-    struct PerCore* core = get_per_core();
     assert(core != NULL, "per-core data is NULL.\n");
-    if (core->current_thread != core->idle_thread) {
+    if (core->current_thread != &core->idle_thread) {
       int args[2] = {get_core_id(), (int)core->current_thread};
       say("core %d current thread: 0x%X\n", args);
       panic("only idle thread can enter event loop.\n");
     }
 
     struct TCB* me = core->current_thread;
+
+    // if we actually are an idle thread, preemption is disabled
+    // and we don't actually need to disable interrupts here
+    // this is just for debugging
+    int was = interrupts_disable();
 
     if (next != NULL) {
       context_switch(me, next, nothing, NULL, &core->current_thread, was);
@@ -277,7 +284,7 @@ void thread(struct Fun* thread_fun){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
-  spin_queue_add(&ready_queue, tcb);
+  spin_queue_add(&global_ready_queue, tcb);
 }
 
 void bootstrap(void){
@@ -285,7 +292,7 @@ void bootstrap(void){
   // but we'll be safe
   int was = interrupts_disable();
   int me = get_core_id();
-  struct TCB* tcb = &idle_tcbs[me];
+  struct TCB* tcb = &get_per_core()->idle_thread;
 
   tcb->flags = 0;
 
@@ -320,6 +327,7 @@ void bootstrap(void){
   
   tcb->next = NULL;
   tcb->can_preempt = false;
+  tcb->pinned = true;
 
   // these values should never be used
   tcb->thread_fun = NULL;
@@ -332,23 +340,28 @@ void bootstrap(void){
   tcb->stack = (unsigned*)(0x10000 - (me * 0x4000));
 
   struct PerCore* core = get_per_core();
-  assert((was & 0x80000000) == 0, "interrupts should be disabled when bootstrapping thread context.\n");
+  assert((was & 0x80000000) == 0, 
+    "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
-  core->idle_thread = tcb;
   interrupts_restore(was);
 }
 
-void add_tcb(void* tcb){
-  spin_queue_add(&ready_queue, (struct TCB*)tcb);
+void global_queue_add(void* tcb){
+  spin_queue_add(&global_ready_queue, (struct TCB*)tcb);
+}
+
+void local_queue_add(void* tcb){
+  int was = interrupts_disable();
+  queue_add(&get_per_core()->ready_queue, (struct TCB*)tcb);
+  interrupts_restore(was);
 }
 
 // voluntarily yield the CPU and re-queue the current thread.
 void yield(void){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  block(was, add_tcb, (void*)tcb);
+  block(was, local_queue_add, (void*)tcb);
 }
-
 
 void reap_tcb(void* tcb){
   spin_queue_add(&reaper_queue, (struct TCB*)tcb);
@@ -359,7 +372,7 @@ void stop(void) {
   unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;
-  bool is_idle = (current == core->idle_thread);
+  bool is_idle = (current == &core->idle_thread);
 
   if (is_idle) {
     interrupts_restore(was);
@@ -379,9 +392,9 @@ void sleep(unsigned jiffies){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   struct PerCore* core = get_per_core();
-  assert(tcb != core->idle_thread, "sleep: idle thread cannot sleep.\n");
+  assert(tcb != &core->idle_thread, "sleep: idle thread cannot sleep.\n");
   tcb->wakeup_jiffies = current_jiffies + jiffies;
-  int args[2] = {(int)&sleep_queue, (int)tcb};
+  int args[2] = {(int)&core->sleep_queue, (int)tcb};
   block(was, sleep_queue_add, (void*)args);
 }
 

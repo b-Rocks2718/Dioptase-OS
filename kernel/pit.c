@@ -38,9 +38,9 @@ void pit_handler(void){
   struct TCB* tcb = per_core->current_thread;
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
-  if (tcb != per_core->idle_thread && tcb->can_preempt){
+  if (tcb != &per_core->idle_thread && tcb->can_preempt){
     unsigned was = get_imr();
-    block(was, add_tcb, tcb);
+    block(was, global_queue_add, tcb);
   }
 
   imr = get_imr();

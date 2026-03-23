@@ -26,7 +26,7 @@ static void rw_add_reader(void* arg){
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     rwlock->readers++;
     spin_lock_release(&rwlock->lock);
-    spin_queue_add(&ready_queue, tcb);
+    local_queue_add(tcb);
   } else {
     queue_add(&rwlock->waiting_readers, tcb);
     spin_lock_release(&rwlock->lock);
@@ -65,7 +65,7 @@ void rw_lock_release_read(struct RwLock* rwlock){
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    spin_queue_add(&ready_queue, writer);
+    local_queue_add(writer);
   } else {
     spin_lock_release(&rwlock->lock);
   }
@@ -81,7 +81,7 @@ static void rw_add_writer(void* arg){
   if (!rwlock->writer_active && rwlock->readers == 0){
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    spin_queue_add(&ready_queue, tcb);
+    local_queue_add(tcb);
   } else {
     queue_add(&rwlock->waiting_writers, tcb);
     spin_lock_release(&rwlock->lock);
@@ -120,7 +120,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    spin_queue_add(&ready_queue, writer);
+    local_queue_add(writer);
   } else {
     // Wake up all waiting readers.
     // Count and claim reader slots while holding the lock so writers cannot slip in.
@@ -132,7 +132,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     while (readers != NULL){
       struct TCB* next = readers->next;
       readers->next = NULL;
-      spin_queue_add(&ready_queue, readers);
+      local_queue_add(readers);
       readers = next;
     }
   }
