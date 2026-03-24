@@ -12,7 +12,7 @@ Structure:
 Supported Sync Primatives:
 - enable/disable interrupts
 - enable/disable preemption
-- TODO: core pinning
+- core pinning
 - spinlock
 - blocking lock
 - semaphore

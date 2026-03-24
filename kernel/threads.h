@@ -18,9 +18,9 @@
 #include "queue.h"
 
 extern struct SpinQueue global_ready_queue;
-extern struct Queue local_ready_queues[MAX_CORES];
 extern struct SpinQueue reaper_queue;
 
+// should only be called once on one core
 void threads_init(void);
 
 void block(unsigned was, void (*func)(void *), void *arg);
@@ -47,5 +47,9 @@ void stop(void);
 bool preemption_disable(void);
 
 void preemption_restore(bool was);
+
+void core_pin(void);
+
+void core_unpin(void);
 
 #endif // THREADS_H

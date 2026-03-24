@@ -8,6 +8,22 @@ struct Fun {
   void *arg;
 };
 
+enum CoreAffinity {
+  CORE_0 = 0,
+  CORE_1 = 1,
+  CORE_2 = 2,
+  CORE_3 = 3,
+  ANY_CORE = 0xFFFFFFFF
+};
+
+#define PRIORITY_LEVELS 3
+
+enum ThreadPriority {
+  LOW_PRIORITY = 0,
+  NORMAL_PRIORITY = 1,
+  HIGH_PRIORITY = 2,
+};
+
 struct TCB {
 
   unsigned r1; // offset 0
@@ -47,11 +63,12 @@ struct TCB {
   unsigned psr;      // offset 128
   unsigned imr;      // offset 132
 
-  unsigned *stack;
-  struct Fun *thread_fun;
+  unsigned* stack;
+  struct Fun* thread_fun;
 
   bool can_preempt;
-  bool pinned;
+  enum CoreAffinity core_affinity;
+  enum ThreadPriority priority;
   unsigned wakeup_jiffies;
 
   struct TCB* next;

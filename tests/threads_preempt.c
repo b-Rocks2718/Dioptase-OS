@@ -1,4 +1,21 @@
-// Preemption stress test: threads must advance in turn without explicit yields.
+/*
+ * Preemption stress test.
+ *
+ * Validates:
+ * - runnable threads still make forward progress when neither the workers nor
+ *   kernel_main() call yield()
+ * - each thread gets exactly PREEMPT_ROUNDS turns, so timer-driven
+ *   rescheduling is enough to rotate execution through the full worker set
+ *
+ * How:
+ * - spawn NUM_THREADS workers
+ * - each worker waits until all threads have started, then busy-waits until a
+ *   shared turn variable matches its id
+ * - the active thread records one step for itself, bumps the global step
+ *   count, and hands turn to the next thread id
+ * - kernel_main() also busy-waits for completion, so the only way the system
+ *   can advance is through PIT-driven involuntary preemption
+ */
 
 #include "../kernel/threads.h"
 #include "../kernel/heap.h"

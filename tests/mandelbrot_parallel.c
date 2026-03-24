@@ -88,7 +88,8 @@ void display_mandelbrot(void* arg){
 
   for (int i = start_i; i < start_i + ((FB_HEIGHT/2) >> RESOLUTION); ++i){
     for (int j = start_j; j < start_j + ((FB_WIDTH/2) >> RESOLUTION); ++j){
-      struct Complex c = {start_x + diff * j, start_y - diff * i};
+      //struct Complex c = {start_x + diff * j, start_y - diff * i};
+      struct Complex c = {-0x00010000, 0x00010000};
       int count = mandelbrot_count(&c);
       if (count >= 0){
         PIXEL_FB[i * FB_WIDTH + j] = colors[count % COLOR_COUNT];

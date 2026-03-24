@@ -29,6 +29,7 @@ struct SpinQueue global_ready_queue;
 struct SpinQueue reaper_queue;
 
 int n_active = 0;
+int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
 
 static void free_fun(struct Fun* fun) {
@@ -99,11 +100,31 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->imr = 0x80000001;
 
   tcb->can_preempt = true;
-  tcb->pinned = false;
+  tcb->core_affinity = ANY_CORE;
+  tcb->priority = NORMAL_PRIORITY;
 
   tcb->next = NULL;
 
   return tcb;
+}
+
+void thread(struct Fun* thread_fun){
+  struct TCB* tcb = make_tcb(false);
+  __atomic_fetch_add(&n_active, 1);
+  __atomic_store_n(&bootstrapping, false);
+
+  unsigned* the_stack = malloc(TCB_STACK_SIZE);
+  assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
+  assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
+  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->thread_fun = thread_fun;
+  tcb->stack = the_stack;
+  tcb->psr = 1; // kernel mode
+
+  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  
+  global_queue_add(tcb);
 }
 
 // same as thread(), but doesn't modify bootstrapping or n_active
@@ -112,6 +133,8 @@ static struct TCB* make_tcb(bool leak_mem){
 // leaks mem because it assumes these threads run forever
 static void setup_thread(struct Fun* thread_fun){
   struct TCB* tcb = make_tcb(true);
+
+  __atomic_fetch_add(&n_active_others, 1);
 
   unsigned* the_stack = leak(TCB_STACK_SIZE);
   assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
@@ -127,6 +150,7 @@ static void setup_thread(struct Fun* thread_fun){
   global_queue_add(tcb);
 }
 
+// should only be called once on one core
 void threads_init(void){
   spin_queue_init(&global_ready_queue);
   spin_queue_init(&reaper_queue);
@@ -134,6 +158,7 @@ void threads_init(void){
   for (int i = 0; i < MAX_CORES; i++) {
     queue_init(&per_core_data[i].ready_queue);
     sleep_queue_init(&per_core_data[i].sleep_queue);
+    spin_queue_init(&per_core_data[i].pinned_queue);
   }
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
@@ -185,13 +210,18 @@ void thread_entry(void) {
   stop();
 }
 
+// empty function to pass into context_switch
+// when we don't need to run any callback
 static void nothing(void* unused) {}
 
-#define GLOBAL_CHECK_INTERVAL 8
+#define GLOBAL_CHECK_INTERVAL 8 // every 8 iterations of the event loop, check the global queue for new work
+#define REBALANCE_INTERVAL 32 // only check for rebalancing every 32 iterations to avoid excessive overhead
+#define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
+#define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
 
 void event_loop(void) {
   /* only the idle thread can enter this function */
-  unsigned global_check_counter = 0;
+  unsigned event_loop_iters = 0;
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
     struct PerCore* core = get_per_core();
     
@@ -202,19 +232,68 @@ void event_loop(void) {
       wakeup = sleep_queue_remove(&core->sleep_queue);
     }
 
-    struct TCB* next = NULL;
-    if (global_check_counter < GLOBAL_CHECK_INTERVAL){
-      // usually check local queue first, 
-      // occasionally check global queue first to prevent starvation
-      next = queue_remove(&core->ready_queue);
-    } else {
-      global_check_counter = 0;
+    // empty pinned queue into local ready queue
+    struct TCB* pinned = spin_queue_remove_all(&core->pinned_queue);
+    while (pinned != NULL) {
+      struct TCB* next = pinned->next;
+      pinned->next = NULL;
+      queue_add(&core->ready_queue, pinned);
+      pinned = next;
     }
-    // if local ready queue is empty, try global ready queue
+
+    if (event_loop_iters % REBALANCE_INTERVAL == 0) {
+      // work out if our local queue has too many or too few threads
+
+      // Use ceiling division so remainder runnable threads do not remain stuck
+      // on the global queue when the active count is not divisible by core count.
+      unsigned total_active = __atomic_load_n(&n_active) + __atomic_load_n(&n_active_others);
+      unsigned ideal = (total_active + CONFIG.num_cores - 1) / CONFIG.num_cores;
+      unsigned local_size = __atomic_load_n(&core->ready_queue.size);
+      unsigned global_size = __atomic_load_n(&global_ready_queue.size);
+
+      if (local_size * 100 > ideal * MAX_REBALANCE_PERCENT) {
+        // if we have > 130% of our ideal number of threads, move some to the global queue
+        int to_move = local_size - ideal;
+        unsigned scan_budget = local_size;
+        int moved = 0;
+        while (moved < to_move && scan_budget > 0) {
+          struct TCB* tcb = queue_remove(&core->ready_queue);
+          if (tcb == NULL) break;
+          if (tcb->core_affinity != ANY_CORE) {
+            // Keep pinned threads on their home core's local queue.
+            queue_add(&core->ready_queue, tcb);
+          } else {
+            global_queue_add(tcb);
+            moved++;
+          }
+          scan_budget--;
+        }
+      } else if (local_size * 100 < ideal * MIN_REBALANCE_PERCENT) {
+        // if we have < 70% of our ideal number of threads, try to take some from the global queue
+        int to_move = ideal - local_size;
+        for (int i = 0; i < to_move; i++) {
+          struct TCB* tcb = spin_queue_remove(&global_ready_queue);
+          if (tcb == NULL) break;
+          queue_add(&core->ready_queue, tcb);
+        }
+      }
+    }
+
+    struct TCB* next = NULL;
+
+    // Periodically check global work first so threads woken onto the global
+    // queue cannot starve behind a permanently "balanced" local queue set.
+    if ((event_loop_iters % GLOBAL_CHECK_INTERVAL) == 0) {
+      next = spin_queue_remove(&global_ready_queue);
+    }
+
+    if (next == NULL) {
+      next = queue_remove(&core->ready_queue);
+    }
+
     if (next == NULL) {
       next = spin_queue_remove(&global_ready_queue);
     }
-    global_check_counter++;
 
     assert(core != NULL, "per-core data is NULL.\n");
     if (core->current_thread != &core->idle_thread) {
@@ -236,6 +315,8 @@ void event_loop(void) {
       interrupts_restore(was);
       pause();
     }
+
+    event_loop_iters++;
   }
   if (get_core_id() == 0) {
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
@@ -278,25 +359,6 @@ void event_loop(void) {
   }
 }
 
-void thread(struct Fun* thread_fun){
-  struct TCB* tcb = make_tcb(false);
-  __atomic_fetch_add(&n_active, 1);
-  __atomic_store_n(&bootstrapping, false);
-
-  unsigned* the_stack = malloc(TCB_STACK_SIZE);
-  assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
-  assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ret_addr = (unsigned)thread_entry;
-  tcb->thread_fun = thread_fun;
-  tcb->stack = the_stack;
-  tcb->psr = 1; // kernel mode
-
-  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  
-  global_queue_add(tcb);
-}
-
 void bootstrap(void){
   // interrupts should be disabled when calling this function
   // but we'll be safe
@@ -337,8 +399,8 @@ void bootstrap(void){
   
   tcb->next = NULL;
   tcb->can_preempt = false;
-  tcb->pinned = true;
-
+  tcb->core_affinity = me;
+  tcb->priority = NORMAL_PRIORITY;
   // these values should never be used
   tcb->thread_fun = NULL;
   tcb->bp = 0;
@@ -357,7 +419,17 @@ void bootstrap(void){
 }
 
 void global_queue_add(void* tcb){
-  spin_queue_add(&global_ready_queue, (struct TCB*)tcb);
+  struct TCB* thread = (struct TCB*)tcb;
+
+  if (thread->core_affinity == ANY_CORE) {
+    spin_queue_add(&global_ready_queue, thread);
+    return;
+  }
+
+  // If the thread is pinned to a specific core, add it to that core's pinned queue
+  // The idle thread on that core will move it to the ready queue
+  struct PerCore* target_core = &per_core_data[thread->core_affinity];
+  spin_queue_add(&target_core->pinned_queue, thread);
 }
 
 void local_queue_add(void* tcb){
@@ -422,4 +494,20 @@ void preemption_restore(bool was){
   struct TCB* tcb = get_current_tcb();
   tcb->can_preempt = was;
   interrupts_restore(intrs);
+}
+
+void core_pin(void){
+  int was = interrupts_disable();
+  unsigned me = get_core_id();
+  struct TCB* tcb = get_current_tcb();
+  tcb->core_affinity = me;
+  interrupts_restore(was);
+}
+
+void core_unpin(void){
+  int was = interrupts_disable();
+  unsigned me = get_core_id();
+  struct TCB* tcb = get_current_tcb();
+  tcb->core_affinity = ANY_CORE;
+  interrupts_restore(was);
 }

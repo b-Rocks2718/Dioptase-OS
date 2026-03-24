@@ -232,7 +232,7 @@ void check_leaks() {
   blocking_lock_acquire(&theLock);
   int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
   if (n_free + n_leak != n_malloc) {
-    say("| Heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
+    say("| Warning: heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
   } else {
     say("| No heap leaks detected: (n_free:%d+n_leak:%d) == n_malloc:%d\n", args);
   }
