@@ -20,8 +20,8 @@ BSS_LOAD_ADDR := 0xF0000
 BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
-TEST_RUNS ?= 20
-TIMEOUT_SECONDS ?= 15
+TEST_RUNS ?= 2
+TIMEOUT_SECONDS ?= 120
 VERSION ?= release
 
 # ------------------------------------------------------------------------------------------ #

@@ -40,12 +40,7 @@ static int late_done = 0;
 static int reset_ready = 0;
 static int reset_done = 0;
 
-// Purpose: read the number of threads blocked in gate_wait().
-// Inputs: none.
-// Outputs: current waiter count.
-// Preconditions: gate initialized.
-// Postconditions: none.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Read the number of threads currently blocked in gate_wait().
 static unsigned gate_waiter_count(void) {
   spin_lock_acquire(&gate.cv.lock);
   unsigned waiters = gate.cv.waiters;
@@ -53,11 +48,7 @@ static unsigned gate_waiter_count(void) {
   return waiters;
 }
 
-// Purpose: block on the global gate and record phase progress.
-// Inputs: arg points to GateWaitArgs for this waiter.
-// Preconditions: gate initialized; arg, ready, and done are non-NULL.
-// Postconditions: increments *ready before waiting and *done after returning.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Wait on the shared gate once and record when this waiter starts and finishes.
 static void gate_waiter_thread(void* arg) {
   struct GateWaitArgs* args = (struct GateWaitArgs*)arg;
   __atomic_fetch_add(args->ready, 1);
@@ -65,11 +56,7 @@ static void gate_waiter_thread(void* arg) {
   __atomic_fetch_add(args->done, 1);
 }
 
-// Purpose: allocate and start one waiter thread for a specific test phase.
-// Inputs: ready and done counters for the phase.
-// Preconditions: gate initialized; ready and done are non-NULL.
-// Postconditions: one new waiter thread has been scheduled.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Allocate and start one waiter for the requested gate phase.
 static void spawn_waiter(int* ready, int* done) {
   struct GateWaitArgs* args = malloc(sizeof(struct GateWaitArgs));
   assert(args != NULL, "gate test: waiter arg allocation failed.\n");
@@ -88,6 +75,7 @@ void kernel_main(void) {
 
   gate_init(&gate);
 
+  // First prove the closed gate blocks every waiter until signal().
   for (int i = 0; i < INITIAL_WAITERS; i++) {
     spawn_waiter(&initial_ready, &initial_done);
   }
@@ -158,6 +146,7 @@ void kernel_main(void) {
     panic("gate test: wait after signal blocked even though the gate remained open\n");
   }
 
+  // Reset should close the gate again for the next batch of waiters.
   gate_reset(&gate);
 
   for (int i = 0; i < RESET_WAITERS; i++) {
@@ -195,6 +184,7 @@ void kernel_main(void) {
     panic("gate test: reset-phase waiters passed through before the second signal\n");
   }
 
+  // The second signal should release the reset-phase waiters as one group.
   gate_signal(&gate);
 
   for (int i = 0; i < DONE_WAIT_BUDGET &&

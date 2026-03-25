@@ -1,3 +1,18 @@
+/*
+ * Superblock dump test.
+ *
+ * Validates:
+ * - the SD driver can read the ext2 superblock blocks from drive 1
+ * - the in-memory Superblock layout matches the bytes stored on disk closely
+ *   enough to decode the core fields printed here
+ *
+ * How:
+ * - read the two blocks that contain the ext2 superblock into one Superblock
+ *   instance
+ * - print the key geometry and policy fields, then decode the enum-style fields
+ *   into readable names where possible
+ */
+
 #include "../kernel/debug.h"
 #include "../kernel/sd_driver.h"
 #include "../kernel/heap.h"
@@ -6,11 +21,14 @@
 
 struct Superblock superblock;
 
+// Read the ext2 superblock from drive 1 and print its decoded fields.
 int kernel_main(void){
-  sd_read_blocks(SD_DRIVE_1, 2, 2, &superblock);
+  int err = sd_read_blocks(SD_DRIVE_1, 2, 2, &superblock);
+  assert(err == 0, "superblock test: sd_read_blocks failed.\n");
 
   sizeof(struct Superblock);
 
+  // Print the raw count and geometry fields first.
   say("***Superblock contents:\n", NULL);
   say("***inodes_count: %d\n", (int*)&superblock.inodes_count);
   say("***blocks_count: %d\n", (int*)&superblock.blocks_count);
@@ -29,6 +47,8 @@ int kernel_main(void){
   int magic = superblock.magic;
   say("***magic: %X\n", &magic);
   int state = superblock.state;
+
+  // Decode the small enum-style fields into names to keep the output readable.
   say("***state: ", NULL);
   if (state == EXT2_VALID_FS) {
     say("valid\n", NULL);
@@ -73,4 +93,5 @@ int kernel_main(void){
 
   int inode_size = superblock.inode_size;
   say("***inode_size: %d\n", &inode_size);
+  return 0;
 }

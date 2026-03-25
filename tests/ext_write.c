@@ -1,9 +1,20 @@
 /*
- * Covers ext2 regular-file writes: in-place overwrites, persistence after
- * reopening, file growth across block boundaries, single-indirect growth, and
- * concurrent writes to the same file. The concurrent cases cover both disjoint
- * full-block writes and same-block partial writes so block-cache writeback does
- * not lose older regions when multiple threads update one logical block.
+ * ext2 write test.
+ *
+ * Validates:
+ * - in-place overwrites, reopen-after-write persistence, and offset writes all
+ *   preserve the expected file contents and inode size
+ * - file growth across block boundaries and into the single-indirect range
+ *   allocates blocks correctly and zero-fills unwritten gaps
+ * - concurrent writers updating the same inode do not lose disjoint full-block
+ *   or same-block partial writes
+ *
+ * How:
+ * - overwrite an existing file, reopen it, and then grow it past its old size
+ * - create fresh files for zero-gap, cross-block, and single-indirect growth
+ *   cases and verify the resulting bytes directly
+ * - start concurrent writer groups behind barriers so they rewrite distinct
+ *   regions of one shared file at the same time
  */
 #include "../kernel/ext.h"
 #include "../kernel/print.h"
@@ -406,6 +417,7 @@ static void partial_concurrent_writer_thread(void* arg) {
   __atomic_fetch_add(&partial_concurrent_finished, 1);
 }
 
+// Run the write suite from small sequential cases up through concurrent growth.
 int kernel_main(void) {
   // The suite progresses from small sequential writes to larger growth cases,
   // then finishes with the first indirect-block case that previously triggered
@@ -417,6 +429,7 @@ int kernel_main(void) {
   struct Node* root = &fs.root;
   unsigned block_size = ext2_get_block_size(&fs);
 
+  // Start with deterministic sequential writes before the concurrent cases.
   check_existing_file_writes(root);
   check_new_file_growth(root);
   check_concurrent_disjoint_writes(root, block_size);

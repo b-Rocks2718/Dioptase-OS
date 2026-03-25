@@ -6,15 +6,11 @@
  *   when later wakeups make it runnable again
  *
  * How:
- * - the worker records its startup core and immediately calls core_pin()
+ * - the worker calls core_pin() and records its startup core
  * - main wakes the worker repeatedly with a semaphore
  * - each wakeup path goes through sem_up() -> global_queue_add()
  * - the worker asserts that every resumed execution still happens on the
  *   original pinned core
- *
- * This test intentionally does not assert that core_unpin() causes immediate
- * migration. The current kernel documentation does not specify when an
- * unpinned thread must move to another core.
  */
 
 #include "../kernel/semaphore.h"
@@ -34,22 +30,21 @@ static int worker_ready = 0;
 static int worker_pinned_core = -1;
 static int worker_runs = 0;
 
-// Purpose: pin to the first core where the worker starts, then verify every
-// later wakeup resumes on that same core.
-// Inputs: arg is unused.
-// Preconditions: wake_sem and done_sem initialized.
-// Postconditions: worker_runs increments once per successful wakeup round.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Pin to the startup core and verify every later wakeup resumes there again.
 static void worker_thread(void* arg) {
   (void)arg;
 
-  __atomic_store_n(&worker_pinned_core, (int)get_core_id());
   core_pin();
+
+  // Record and pin the first core this worker runs on.
+  __atomic_store_n(&worker_pinned_core, (int)get_core_id());
+
   __atomic_store_n(&worker_ready, 1);
 
   for (int round = 0; round < WAKE_ROUNDS; round++) {
     sem_down(&wake_sem);
 
+    // Every resume after sem_down() should stay on the pinned core.
     int resume_core = (int)get_core_id();
     if (resume_core != __atomic_load_n(&worker_pinned_core)) {
       int args[3] = {
@@ -66,11 +61,7 @@ static void worker_thread(void* arg) {
   }
 }
 
-// Purpose: allocate and start the pinned worker thread.
-// Inputs: none.
-// Preconditions: heap and scheduler initialized.
-// Postconditions: one worker thread is queued to run.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Allocate and start the single pinned worker.
 static void spawn_worker(void) {
   struct Fun* fun = malloc(sizeof(struct Fun));
   assert(fun != NULL, "core pin test: Fun allocation failed.\n");
@@ -79,6 +70,7 @@ static void spawn_worker(void) {
   thread(fun);
 }
 
+// Wake the pinned worker repeatedly and verify it never migrates.
 void kernel_main(void) {
   say("***core pin test start\n", NULL);
 
@@ -87,6 +79,7 @@ void kernel_main(void) {
 
   spawn_worker();
 
+  // Wait until the worker has pinned itself and recorded its home core.
   bool ready = false;
   for (int i = 0; i < READY_WAIT_BUDGET; i++) {
     if (__atomic_load_n(&worker_ready) != 0) {
@@ -107,6 +100,7 @@ void kernel_main(void) {
     panic("core pin test: worker recorded an invalid pinned core\n");
   }
 
+  // Each wakeup should round-trip through semaphores on the same core.
   for (int i = 0; i < WAKE_ROUNDS; i++) {
     sem_up(&wake_sem);
     sem_down(&done_sem);

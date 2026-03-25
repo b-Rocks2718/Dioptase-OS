@@ -1,5 +1,19 @@
-// Thread-safe heap stress test.
-// Purpose: ensure heap malloc/free are safe under concurrent access.
+/*
+ * Thread-safe heap stress test.
+ *
+ * Validates:
+ * - concurrent malloc() and free() preserve payload bytes for every live block
+ * - one thread's heap churn does not corrupt another thread's live allocations
+ * - allocator reuse remains correct even while several workers fragment the heap
+ *
+ * How:
+ * - start NUM_THREADS workers together behind one go flag
+ * - each worker allocates a batch of random-sized blocks, fills them with a
+ *   per-thread deterministic pattern, and frees half in shuffled order
+ * - each worker then churns short-lived allocations to force reuse before
+ *   verifying and freeing the remaining original blocks
+ * - the test completes only after every worker finished all rounds
+ */
 
 #include "../kernel/heap.h"
 #include "../kernel/threads.h"
@@ -30,11 +44,7 @@ static struct BlockInfo blocks[NUM_THREADS][N_BLOCKS];
 static unsigned order[NUM_THREADS][N_BLOCKS];
 static unsigned rng_state[NUM_THREADS];
 
-// Purpose: per-thread deterministic RNG.
-// Inputs: tid identifies the thread-local state.
-// Outputs: pseudo-random u32.
-// Preconditions: tid in [0, NUM_THREADS).
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Generate deterministic pseudo-random values for one worker.
 static unsigned rnd_u32(int tid) {
   unsigned x = rng_state[tid];
   x ^= x << 13;
@@ -44,12 +54,14 @@ static unsigned rnd_u32(int tid) {
   return x;
 }
 
+// Fill one allocation with a deterministic byte pattern.
 static void mem_fill(unsigned char* p, unsigned n, unsigned seed) {
   for (unsigned i = 0; i < n; i++) {
     p[i] = (unsigned char)((seed + i * 131u) ^ (seed >> 8));
   }
 }
 
+// Verify that a worker's live allocation still holds its expected bytes.
 static void mem_check(unsigned char* p, unsigned n, unsigned seed) {
   for (unsigned i = 0; i < n; i++) {
     unsigned char expect = (unsigned char)((seed + i * 131u) ^ (seed >> 8));
@@ -61,6 +73,7 @@ static void mem_check(unsigned char* p, unsigned n, unsigned seed) {
   }
 }
 
+// Shuffle one worker's free order so concurrent rounds do not look uniform.
 static void shuffle(int tid) {
   for (unsigned i = N_BLOCKS; i > 1; i--) {
     unsigned j = rnd_u32(tid) % i;
@@ -70,21 +83,19 @@ static void shuffle(int tid) {
   }
 }
 
-// Purpose: perform per-thread heap stress cycles.
-// Inputs: arg points to ThreadArg.
-// Preconditions: heap initialized; arg non-NULL.
-// Postconditions: per-thread blocks allocated and freed without corruption.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Run the heap stress sequence for one worker thread.
 static void heap_worker(void* arg) {
   struct ThreadArg* a = (struct ThreadArg*)arg;
   int tid = a->id;
 
   __atomic_fetch_add(&started, 1);
   while (__atomic_load_n(&go) == 0) {
+    // Hold all workers until the main thread releases them together.
     yield();
   }
 
   for (unsigned r = 0; r < ROUNDS; r++) {
+    // Phase 1: allocate and fill a batch of live blocks.
     for (unsigned i = 0; i < N_BLOCKS; i++) {
       unsigned roll = rnd_u32(tid);
       unsigned sz;
@@ -112,6 +123,7 @@ static void heap_worker(void* arg) {
       order[tid][i] = i;
     }
 
+    // Phase 2: free half the blocks in shuffled order after checking them.
     shuffle(tid);
 
     unsigned halfway = N_BLOCKS / 2;
@@ -123,6 +135,7 @@ static void heap_worker(void* arg) {
       b->ptr = NULL;
     }
 
+    // Phase 3: churn short-lived allocations to force cross-thread reuse.
     for (unsigned i = 0; i < halfway; i++) {
       unsigned roll = rnd_u32(tid);
       unsigned sz = 16 + (roll % 128);
@@ -134,6 +147,7 @@ static void heap_worker(void* arg) {
       free(p);
     }
 
+    // Phase 4: verify and free the remaining original blocks.
     for (unsigned k = halfway; k < N_BLOCKS; k++) {
       unsigned idx = order[tid][k];
       struct BlockInfo* b = &blocks[tid][idx];
@@ -146,6 +160,7 @@ static void heap_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
+// Start all heap workers, then release them together for maximum overlap.
 void kernel_main(void) {
   say("***heap threadsafe test start\n", NULL);
 
@@ -170,6 +185,7 @@ void kernel_main(void) {
     yield();
   }
 
+  // Flip the shared start flag only after every worker is ready.
   __atomic_store_n(&go, 1);
 
   while (__atomic_load_n(&finished) != NUM_THREADS) {

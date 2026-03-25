@@ -1,6 +1,16 @@
-// Semaphore destroy/free test.
-// Purpose: verify that destroying a semaphore reaps blocked waiters and that
-// __attribute__((cleanup)) can safely trigger sem_free on scope exit.
+/*
+ * Semaphore destroy cleanup test.
+ *
+ * Validates:
+ * - destroying and freeing a semaphore reaps blocked waiters instead of waking
+ *   them back into execution
+ * - the cleanup attribute can safely trigger sem_free() at scope exit
+ *
+ * How:
+ * - create NUM_WAITERS threads that block on one semaphore
+ * - let a scoped cleanup hook call sem_free(), which triggers sem_destroy()
+ * - yield afterward and verify no waiter resumes from sem_down()
+ */
 
 #include "../kernel/semaphore.h"
 #include "../kernel/threads.h"
@@ -20,11 +30,7 @@ static int started = 0;
 static int awakened = 0;
 static int cleanup_called = 0;
 
-// Purpose: auto-cleanup hook for a local Semaphore* variable.
-// Inputs: sem_ptr points to a local pointer variable.
-// Preconditions: sem_ptr is non-NULL.
-// Postconditions: sem_free called once for non-NULL pointer.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Free the scoped semaphore when the cleanup attribute fires.
 static void sem_cleanup(struct Semaphore** sem_ptr) {
   if (sem_ptr != NULL && *sem_ptr != NULL) {
     sem_free(*sem_ptr);
@@ -33,12 +39,7 @@ static void sem_cleanup(struct Semaphore** sem_ptr) {
   }
 }
 
-// Purpose: read semaphore waiter count under semaphore lock.
-// Inputs: sem points to a semaphore.
-// Outputs: current waiter count.
-// Preconditions: sem is non-NULL.
-// Postconditions: none.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Read the current waiter count from the semaphore internals.
 static unsigned sem_waiter_count(struct Semaphore* sem) {
   spin_lock_acquire(&sem->lock);
   unsigned n = sem->wait_queue.size;
@@ -46,11 +47,7 @@ static unsigned sem_waiter_count(struct Semaphore* sem) {
   return n;
 }
 
-// Purpose: block on a semaphore that should later be destroyed.
-// Inputs: arg points to WaiterArg.
-// Preconditions: arg and arg->sem are non-NULL.
-// Postconditions: increments started before blocking.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Block on the semaphore that the cleanup path will later destroy.
 static void waiter_thread(void* arg) {
   struct WaiterArg* a = (struct WaiterArg*)arg;
   __atomic_fetch_add(&started, 1);
@@ -58,11 +55,7 @@ static void waiter_thread(void* arg) {
   __atomic_fetch_add(&awakened, 1);
 }
 
-// Purpose: build a waiter set and rely on cleanup attribute to free semaphore.
-// Inputs: none.
-// Preconditions: kernel mode.
-// Postconditions: all waiters are queued on the semaphore before return.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Build a blocked waiter set, then leave scope so cleanup frees the semaphore.
 static void run_cleanup_destroy_case(void) {
   struct Semaphore* sem __attribute__((cleanup(sem_cleanup))) =
       malloc(sizeof(struct Semaphore));
@@ -81,6 +74,7 @@ static void run_cleanup_destroy_case(void) {
     thread(fun);
   }
 
+  // Wait until every waiter is actually blocked before scope exit destroys it.
   while (__atomic_load_n(&started) != NUM_WAITERS) {
     yield();
   }
@@ -91,12 +85,7 @@ static void run_cleanup_destroy_case(void) {
   // Scope exit triggers sem_cleanup -> sem_free -> sem_destroy.
 }
 
-// Purpose: validate sem_destroy + sem_free behavior through cleanup attribute.
-// Inputs: none.
-// Outputs: prints pass/fail status; panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: blocked waiters are destroyed, not resumed.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Run the cleanup case and prove blocked waiters never resume.
 void kernel_main(void) {
   say("***semaphore destroy cleanup test start\n", NULL);
 
@@ -107,6 +96,7 @@ void kernel_main(void) {
     panic("semaphore destroy cleanup test: cleanup hook not invoked\n");
   }
 
+  // Give any wrongly resumed waiter a chance to run before checking.
   for (int i = 0; i < POST_DESTROY_YIELDS; i++) {
     yield();
   }

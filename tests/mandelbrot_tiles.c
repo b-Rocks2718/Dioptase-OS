@@ -1,3 +1,16 @@
+/*
+ * Tile framebuffer Mandelbrot test.
+ *
+ * Validates:
+ * - the fixed-point Mandelbrot helpers can drive the tile framebuffer path
+ * - the tile framebuffer receives a stable Mandelbrot view with per-tile colors
+ *
+ * How:
+ * - use the shared Q16.16 helpers for Mandelbrot iteration counts
+ * - map the result into tile framebuffer color indices instead of pixel colors
+ * - draw one full tile framebuffer view and wait for q
+ */
+
 #include "../kernel/machine.h"
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -21,6 +34,7 @@ struct Complex {
   fix32 y;
 };
 
+// Multiply two Q16.16 fixed-point values without requiring 64-bit arithmetic.
 fix32 mul_fixed(fix32 a, fix32 b){
   unsigned ua = (unsigned)a;
   unsigned ub = (unsigned)b;
@@ -37,24 +51,28 @@ fix32 mul_fixed(fix32 a, fix32 b){
   return (fix32)(hi + mid + lo);
 }
 
+// Add two complex values component-wise.
 void add_complex(struct Complex* a, struct Complex* b, 
                  struct Complex* out){
   out->x = a->x + b->x;
   out->y = a->y + b->y;
 }
 
+// Multiply two complex values in Q16.16 form.
 void mul_complex(struct Complex* a, struct Complex* b, 
                  struct Complex* out){
   out->x = mul_fixed(a->x, b->x) - mul_fixed(a->y, b->y);
   out->y = mul_fixed(a->x, b->y) + mul_fixed(a->y, b->x);
 }
 
+// Compute the squared magnitude of one complex value.
 fix32 norm(struct Complex* z){
   return mul_fixed(z->x, z->x) + mul_fixed(z->y, z->y);
 }
 
 #define COLOR_COUNT 56
 
+// Count Mandelbrot iterations for one complex coordinate.
 int mandelbrot_count(struct Complex* c){
   struct Complex z = {0, 0};
   int i;
@@ -69,6 +87,7 @@ int mandelbrot_count(struct Complex* c){
   return i;
 }
 
+// Render one Mandelbrot view into the tile framebuffer.
 void display_mandelbrot(fix32 start_x, fix32 start_y, fix32 diff){
   for (int i = 0; i < TILE_COL_HEIGHT >> RESOLUTION; ++i){
     for (int j = 0; j < TILE_ROW_WIDTH >> RESOLUTION; ++j){
@@ -83,6 +102,7 @@ void display_mandelbrot(fix32 start_x, fix32 start_y, fix32 diff){
   }
 }
 
+// Configure the tile framebuffer view, render it, and wait for q to exit.
 int kernel_main(void){
   *PIXEL_SCALE = RESOLUTION;
 
@@ -91,6 +111,7 @@ int kernel_main(void){
 
   fix32 diff = 0x00000266 << (RESOLUTION + 2);
 
+  // Draw one static Mandelbrot view for manual inspection.
   display_mandelbrot(start_x, start_y, diff);
 
   while (getkey() != 'q');

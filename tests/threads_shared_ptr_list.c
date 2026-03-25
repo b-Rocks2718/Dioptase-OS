@@ -1,5 +1,17 @@
-// Shared pointer list test.
-// Purpose: validate strong/weak list links and destructor order visibility.
+/*
+ * Shared pointer list test.
+ *
+ * Validates:
+ * - a list built from strong next links and weak prev links tears down cleanly
+ * - each node destructor can safely drop its outgoing references
+ * - every node destructor runs exactly once
+ *
+ * How:
+ * - build a NODE_COUNT-long list
+ * - keep only the head/tail strong references in local scope
+ * - let the scope end so the list tears down through chained destructors
+ * - verify the destructor count reaches NODE_COUNT
+ */
 
 #include "../kernel/shared.h"
 #include "../kernel/threads.h"
@@ -18,11 +30,7 @@ struct Node {
 
 static int destroyed = 0;
 
-// Purpose: destructor for Node that drops its links and logs.
-// Inputs: ptr points to a Node.
-// Preconditions: ptr is non-NULL.
-// Postconditions: next strong and prev weak references dropped; node freed.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Drop one node's links, log it, and count the destruction.
 static void node_destructor(void* ptr) {
   struct Node* node = (struct Node*)ptr;
 
@@ -40,17 +48,14 @@ static void node_destructor(void* ptr) {
   __atomic_fetch_add(&destroyed, 1);
 }
 
-// Purpose: initialize a Node with empty links.
-// Inputs: node points to storage; id is the node id.
-// Preconditions: node is non-NULL.
-// Postconditions: next/prev links are empty.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Initialize one node before it is linked into the list.
 static void node_init(struct Node* node, int id) {
   node->id = id;
   node->next.refcount = NULL;
   node->prev.refcount = NULL;
 }
 
+// Build the list, drop the roots, and verify every node gets destroyed.
 void kernel_main(void) {
   say("***shared_ptr_list test start\n", NULL);
 
@@ -63,6 +68,7 @@ void kernel_main(void) {
 
     __attribute__((cleanup(strongptr_drop))) struct StrongPtr tail = strongptr_clone(&head);
 
+    // Chain each new node onto the tail with strong-next / weak-prev links.
     for (int i = 1; i < NODE_COUNT; ++i) {
       struct Node* n = malloc(sizeof(struct Node));
       node_init(n, i);
@@ -77,7 +83,7 @@ void kernel_main(void) {
     }
 
     strongptr_drop(&tail);
-  } // head dropped automatically here
+  } // Head drops here and should tear down the whole list.
 
   assert(destroyed == NODE_COUNT, "Not all nodes were destroyed\n");
 

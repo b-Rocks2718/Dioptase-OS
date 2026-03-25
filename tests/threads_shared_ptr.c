@@ -1,5 +1,17 @@
-// Shared pointer test.
-// Purpose: validate strong/weak lifetime rules and destructor behavior.
+/*
+ * Shared pointer test.
+ *
+ * Validates:
+ * - strong references keep the payload alive until the last one drops
+ * - weak promotion fails after the payload has been destroyed
+ * - the payload destructor runs exactly once
+ *
+ * How:
+ * - create one strong root, clone it, and create one weak pointer
+ * - drop the strong references one at a time
+ * - check the destructor count before and after the final drop
+ * - verify weakptr_promote() returns NULL after destruction
+ */
 
 #include "../kernel/shared.h"
 #include "../kernel/threads.h"
@@ -14,39 +26,28 @@ struct Payload {
 
 static int destroyed = 0;
 
-// Purpose: cleanup hook to drop a StrongPtr at scope exit.
-// Inputs: sptr points to a local StrongPtr variable.
-// Preconditions: sptr is non-NULL.
-// Postconditions: strongptr_drop called for non-NULL refcount.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Drop a scoped StrongPtr automatically at scope exit.
 static void strongptr_cleanup(struct StrongPtr* sptr) {
   if (sptr != NULL && sptr->refcount != NULL) {
     strongptr_drop(sptr);
   }
 }
 
-// Purpose: cleanup hook to drop a WeakPtr at scope exit.
-// Inputs: wptr points to a local WeakPtr variable.
-// Preconditions: wptr is non-NULL.
-// Postconditions: weakptr_drop called for non-NULL refcount.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Drop a scoped WeakPtr automatically at scope exit.
 static void weakptr_cleanup(struct WeakPtr* wptr) {
   if (wptr != NULL && wptr->refcount != NULL) {
     weakptr_drop(wptr);
   }
 }
 
-// Purpose: destroy a payload and track destruction count.
-// Inputs: ptr is a Payload allocated by the test.
-// Preconditions: ptr is non-NULL.
-// Postconditions: destroyed increments by one; ptr freed.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Free the payload and record that its destructor ran.
 static void payload_destructor(void* ptr) {
   struct Payload* payload = (struct Payload*)ptr;
   free(payload);
   __atomic_fetch_add(&destroyed, 1);
 }
 
+// Walk one strong/weak lifetime sequence and verify the expected transitions.
 void kernel_main(void) {
   say("***shared_ptr test start\n", NULL);
 
@@ -69,6 +70,7 @@ void kernel_main(void) {
   struct WeakPtr wptr __attribute__((cleanup(weakptr_cleanup)));
   weakptr_init(&wptr, &sptr);
 
+  // The first drop should leave the payload alive because one strong ref remains.
   strongptr_drop(&sptr);
   if (__atomic_load_n(&destroyed) != 0) {
     int args[2] = { __atomic_load_n(&destroyed), 0 };
@@ -76,6 +78,7 @@ void kernel_main(void) {
     panic("shared_ptr test: destructor ran too early\n");
   }
 
+  // The second drop should run the destructor exactly once.
   strongptr_drop(&sptr2);
   if (__atomic_load_n(&destroyed) != 1) {
     int args[2] = { __atomic_load_n(&destroyed), 1 };
@@ -83,6 +86,7 @@ void kernel_main(void) {
     panic("shared_ptr test: destructor did not run\n");
   }
 
+  // After destruction, weak promotion must fail.
   struct StrongPtr promoted = weakptr_promote(&wptr);
   if (strongptr_not_null(&promoted)) {
     say("***shared_ptr FAIL weak promoted after destruction\n", NULL);

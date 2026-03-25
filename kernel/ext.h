@@ -26,7 +26,12 @@ struct CachedInode {
   unsigned data_block_count;
   unsigned refcount;
   bool valid;
-  struct BlockingLock lock; // protects writes to this node's blocks
+  // Once the last directory link is removed, keep the inode cached until the
+  // final wrapper releases it. That prevents inode-number reuse and block
+  // reclamation from racing with still-live `struct Node*` users.
+  bool delete_pending;
+  // Serializes inode size, block-tree, link-count, and delete-pending updates.
+  struct BlockingLock lock;
   struct Gate valid_gate; // threads waiting for valid == true
 };
 
@@ -204,17 +209,20 @@ bool node_is_symlink(struct Node* node);
 // Creates one regular file entry inside `dir`. `dir` must be a directory, and
 // `name` must be one non-empty directory-entry component without '/' and must
 // not be "." or "..". Returns a heap-owned wrapper for the new inode, or NULL
-// if the basename already exists in `dir`.
+// if the basename already exists in `dir` or `dir` has already been unlinked
+// and is only being kept alive by existing wrappers.
 struct Node* node_make_file(struct Node* dir, char* name);
 
 // Creates one subdirectory inside `dir`. The same basename rules as
 // `node_make_file(...)` apply. The new directory is initialized with "." and
-// ".." and returned as a heap-owned wrapper, or NULL on duplicate basename.
+// ".." and returned as a heap-owned wrapper, or NULL on duplicate basename or
+// when `dir` has already been unlinked.
 struct Node* node_make_dir(struct Node* dir, char* name);
 
 // Creates one symlink entry inside `dir`. `name` follows the same basename
 // rules as other create helpers. `target` is stored verbatim and may be either
-// absolute or relative. Returns NULL on duplicate basename.
+// absolute or relative. Returns NULL on duplicate basename or when `dir` has
+// already been unlinked.
 struct Node* node_make_symlink(struct Node* dir, char* name, char* target);
 
 // Renames one existing entry inside the supplied parent directory. This helper
@@ -226,7 +234,9 @@ void node_rename(struct Node* dir, char* old_name, char* new_name);
 
 // Deletes one entry from `dir`. `name` must be one non-empty entry component
 // without '/' and may not be "." or "..". Directory targets must already be
-// empty except for "." and "..".
+// empty except for "." and "..". If this removes the final directory link, the
+// pathname disappears immediately but block/inode reclamation is deferred until
+// every live wrapper for that inode has been released.
 void node_delete(struct Node* dir, char* name);
 
 // For symlink nodes only. `dest` must have space for the raw target plus one

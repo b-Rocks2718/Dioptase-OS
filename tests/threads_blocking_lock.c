@@ -1,5 +1,16 @@
-// Blocking lock test.
-// Purpose: validate that blocking_lock enforces mutual exclusion under contention.
+/*
+ * Blocking lock test.
+ *
+ * Validates:
+ * - blocking_lock serializes every increment under contention
+ * - all workers eventually make progress through repeated acquire/release cycles
+ *
+ * How:
+ * - spawn NUM_THREADS workers
+ * - each worker waits for the full set to start, then increments one shared
+ *   counter LOCK_ROUNDS times while holding the blocking lock
+ * - the final counter must equal NUM_THREADS * LOCK_ROUNDS
+ */
 
 #include "../kernel/blocking_lock.h"
 #include "../kernel/threads.h"
@@ -21,20 +32,18 @@ static int started = 0;
 static int finished = 0;
 static int shared_counter = 0;
 
-// Purpose: increment shared_counter while holding the blocking lock.
-// Inputs: arg points to ThreadArg.
-// Preconditions: kernel mode; blocking lock initialized.
-// Postconditions: shared_counter incremented rounds times by this thread.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Repeatedly take the lock, bump the shared counter, and yield.
 static void worker_thread(void* arg) {
   struct ThreadArg* a = (struct ThreadArg*)arg;
   __atomic_fetch_add(&started, 1);
 
+  // Wait until all workers are ready so the loop runs under contention.
   while (__atomic_load_n(&started) != NUM_THREADS) {
     yield();
   }
 
   for (int i = 0; i < a->rounds; i++) {
+    // Take one protected step, then yield to hand the lock around.
     blocking_lock_acquire(&lock);
     shared_counter += 1;
     blocking_lock_release(&lock);
@@ -44,17 +53,13 @@ static void worker_thread(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
-// Purpose: stress blocking_lock under multi-threaded contention.
-// Inputs: none.
-// Outputs: prints pass/fail status; panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: shared_counter == NUM_THREADS * LOCK_ROUNDS.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Spawn the worker set and verify the shared counter reaches the expected total.
 void kernel_main(void) {
   say("***blocking lock test start\n", NULL);
 
   blocking_lock_init(&lock);
 
+  // Start the contending workers.
   for (int i = 0; i < NUM_THREADS; i++) {
     struct ThreadArg* arg = malloc(sizeof(struct ThreadArg));
     assert(arg != NULL, "blocking lock test: ThreadArg allocation failed.\n");
@@ -73,6 +78,7 @@ void kernel_main(void) {
     yield();
   }
 
+  // Every worker should have contributed LOCK_ROUNDS increments.
   int expected = NUM_THREADS * LOCK_ROUNDS;
   if (shared_counter != expected) {
     int args[2] = { shared_counter, expected };

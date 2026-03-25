@@ -1,11 +1,21 @@
 /*
- * Queue data structure test summary:
- * - Verifies FIFO queue and spin queue operations, including remove_all and the
- *   stale-next clearing required when reusing detached nodes.
- * - Verifies sleep queue ordering, equal-deadline stability, and readiness
- *   checks against current_jiffies.
- * - Verifies generic queue, generic spin queue, and ring buffer operations,
- *   including wrap-around and full detection.
+ * Queue data structure test.
+ *
+ * Validates:
+ * - FIFO queue and spin queue operations preserve order and clear stale next
+ *   pointers when nodes are detached
+ * - sleep queues release threads in wakeup order and keep equal-deadline
+ *   elements stable
+ * - generic queue, generic spin queue, and ring buffer helpers preserve their
+ *   documented size, ordering, wrap-around, and full/empty behavior
+ *
+ * How:
+ * - build small queue fixtures with deliberately stale next pointers so remove()
+ *   and remove_all() must sanitize detached nodes
+ * - drive sleep queue removals at several current_jiffies values to check early,
+ *   on-time, and equal-deadline wakeups
+ * - repeat the same ordering checks for the generic queue types
+ * - exercise ring buffer wrap-around, full detection, and destroy/free cleanup
  */
 
 #include "../kernel/queue.h"
@@ -20,29 +30,34 @@ struct TestElement {
   int id;
 };
 
+// Report a pointer mismatch with the queue-test prefix.
 static void fail_ptr(char* msg, void* got, void* expected) {
   int args[2] = { (int)got, (int)expected };
   say("***queue FAIL got=0x%X expected=0x%X\n", args);
   panic(msg);
 }
 
+// Report an unsigned mismatch with the queue-test prefix.
 static void fail_uint(char* msg, unsigned got, unsigned expected) {
   int args[2] = { (int)got, (int)expected };
   say("***queue FAIL got=%u expected=%u\n", args);
   panic(msg);
 }
 
+// Report a boolean mismatch with the queue-test prefix.
 static void fail_bool(char* msg, bool got, bool expected) {
   int args[2] = { got, expected };
   say("***queue FAIL got=%d expected=%d\n", args);
   panic(msg);
 }
 
+// Initialize one TCB with the requested wakeup time and next pointer.
 static void init_tcb(struct TCB* tcb, unsigned wakeup_jiffies, struct TCB* stale_next) {
   tcb->wakeup_jiffies = wakeup_jiffies;
   tcb->next = stale_next;
 }
 
+// Initialize one generic queue element, optionally with a stale next pointer.
 static void init_element(struct TestElement* element, int id, struct TestElement* stale_next) {
   element->id = id;
   if (stale_next == NULL) {
@@ -52,41 +67,48 @@ static void init_element(struct TestElement* element, int id, struct TestElement
   }
 }
 
+// Expect one TCB pointer result.
 static void expect_tcb(struct TCB* got, struct TCB* expected, char* msg) {
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }
 }
 
+// Expect one raw pointer result.
 static void expect_ptr(void* got, void* expected, char* msg) {
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }
 }
 
+// Expect one generic queue element result.
 static void expect_element(struct GenericQueueElement* got, struct GenericQueueElement* expected, char* msg) {
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }
 }
 
+// Expect one unsigned result.
 static void expect_uint(unsigned got, unsigned expected, char* msg) {
   if (got != expected) {
     fail_uint(msg, got, expected);
   }
 }
 
+// Expect one boolean result.
 static void expect_bool(bool got, bool expected, char* msg) {
   if (got != expected) {
     fail_bool(msg, got, expected);
   }
 }
 
+// Add one sleep queue node through the helper API that takes an integer array.
 static void add_sleep_node(struct SleepQueue* queue, struct TCB* node) {
   int args[2] = { (int)queue, (int)node };
   sleep_queue_add(args);
 }
 
+// Remove a sleep queue node at one simulated jiffies value.
 static struct TCB* remove_sleep_node_at(struct SleepQueue* queue, unsigned jiffies) {
   unsigned was = interrupts_disable();
   current_jiffies = jiffies;
@@ -95,6 +117,7 @@ static struct TCB* remove_sleep_node_at(struct SleepQueue* queue, unsigned jiffi
   return node;
 }
 
+// Check FIFO queue order, empty cases, and remove_all() cleanup.
 static void test_queue(void) {
   struct Queue queue;
   struct TCB a;
@@ -113,6 +136,7 @@ static void test_queue(void) {
   init_tcb(&b, 0, &extra);
   init_tcb(&c, 0, NULL);
 
+  // Queue three nodes, then remove them to verify FIFO order and next clearing.
   queue_add(&queue, &a);
   queue_add(&queue, &b);
   queue_add(&queue, &c);
@@ -136,6 +160,7 @@ static void test_queue(void) {
   queue_add(&queue, &b);
   queue_add(&queue, &c);
 
+  // Rebuild the queue and verify remove_all() preserves the same order.
   struct TCB* head = queue_remove_all(&queue);
   struct TCB* second = head != NULL ? head->next : NULL;
   struct TCB* third = second != NULL ? second->next : NULL;
@@ -148,6 +173,7 @@ static void test_queue(void) {
   expect_tcb(queue_remove(&queue), NULL, "queue test: remove after remove_all mismatch\n");
 }
 
+// Check spin queue order, empty cases, and remove_all() cleanup.
 static void test_spin_queue(void) {
   struct SpinQueue queue;
   struct TCB a;
@@ -166,6 +192,7 @@ static void test_spin_queue(void) {
   init_tcb(&b, 0, &extra);
   init_tcb(&c, 0, NULL);
 
+  // Queue three nodes, then remove them to verify FIFO order and next clearing.
   spin_queue_add(&queue, &a);
   spin_queue_add(&queue, &b);
   spin_queue_add(&queue, &c);
@@ -189,6 +216,7 @@ static void test_spin_queue(void) {
   spin_queue_add(&queue, &b);
   spin_queue_add(&queue, &c);
 
+  // Rebuild the queue and verify remove_all() preserves the same order.
   struct TCB* head = spin_queue_remove_all(&queue);
   struct TCB* second = head != NULL ? head->next : NULL;
   struct TCB* third = second != NULL ? second->next : NULL;
@@ -201,6 +229,7 @@ static void test_spin_queue(void) {
   expect_tcb(spin_queue_remove(&queue), NULL, "queue test: spin remove after remove_all mismatch\n");
 }
 
+// Check sleep queue ordering across early, equal-deadline, and late wakeups.
 static void test_sleep_queue(void) {
   struct SleepQueue queue;
   struct TCB early_1;
@@ -219,6 +248,7 @@ static void test_sleep_queue(void) {
   init_tcb(&early_1, 15, NULL);
   init_tcb(&early_2, 15, &extra);
 
+  // Add nodes out of wakeup order so the sleep queue must sort them.
   add_sleep_node(&queue, &late);
   add_sleep_node(&queue, &mid);
   add_sleep_node(&queue, &early_1);
@@ -250,6 +280,7 @@ static void test_sleep_queue(void) {
   expect_uint(sleep_queue_size(&queue), 0, "queue test: sleep queue size after removals mismatch\n");
 }
 
+// Check the generic queue helpers with the same FIFO and remove_all() patterns.
 static void test_generic_queue(void) {
   struct GenericQueue queue;
   struct TestElement a;
@@ -268,6 +299,7 @@ static void test_generic_queue(void) {
   init_element(&b, 2, &extra);
   init_element(&c, 3, NULL);
 
+  // Queue three elements, then remove them to verify FIFO order and next clearing.
   generic_queue_add(&queue, &a.link);
   generic_queue_add(&queue, &b.link);
   generic_queue_add(&queue, &c.link);
@@ -292,6 +324,7 @@ static void test_generic_queue(void) {
   generic_queue_add(&queue, &b.link);
   generic_queue_add(&queue, &c.link);
 
+  // Rebuild the queue and verify remove_all() preserves the same order.
   struct GenericQueueElement* head = generic_queue_remove_all(&queue);
   struct GenericQueueElement* second = head != NULL ? head->next : NULL;
   struct GenericQueueElement* third = second != NULL ? second->next : NULL;
@@ -305,6 +338,7 @@ static void test_generic_queue(void) {
                  "queue test: generic remove after remove_all mismatch\n");
 }
 
+// Check the generic spin queue helpers with the same FIFO and remove_all() patterns.
 static void test_generic_spin_queue(void) {
   struct GenericSpinQueue queue;
   struct TestElement a;
@@ -325,6 +359,7 @@ static void test_generic_spin_queue(void) {
   init_element(&b, 2, &extra);
   init_element(&c, 3, NULL);
 
+  // Queue three elements, then remove them to verify FIFO order and next clearing.
   generic_spin_queue_add(&queue, &a.link);
   generic_spin_queue_add(&queue, &b.link);
   generic_spin_queue_add(&queue, &c.link);
@@ -353,6 +388,7 @@ static void test_generic_spin_queue(void) {
   generic_spin_queue_add(&queue, &b.link);
   generic_spin_queue_add(&queue, &c.link);
 
+  // Rebuild the queue and verify remove_all() preserves the same order.
   struct GenericQueueElement* head = generic_spin_queue_remove_all(&queue);
   struct GenericQueueElement* second = head != NULL ? head->next : NULL;
   struct GenericQueueElement* third = second != NULL ? second->next : NULL;
@@ -367,6 +403,7 @@ static void test_generic_spin_queue(void) {
                  "queue test: generic spin remove after remove_all mismatch\n");
 }
 
+// Check ring buffer add/remove order, wrap-around, and cleanup.
 static void test_ringbuf(void) {
   struct RingBuf ringbuf;
   int a = 1;
@@ -380,6 +417,7 @@ static void test_ringbuf(void) {
   expect_ptr(ringbuf_remove_front(&ringbuf), NULL, "queue test: empty ringbuf remove_front mismatch\n");
   expect_ptr(ringbuf_remove_back(&ringbuf), NULL, "queue test: empty ringbuf remove_back mismatch\n");
 
+  // Fill the buffer from both ends and verify full detection.
   expect_bool(ringbuf_add_front(&ringbuf, &a), true, "queue test: ringbuf add_front a failed\n");
   expect_bool(ringbuf_add_front(&ringbuf, &b), true, "queue test: ringbuf add_front b failed\n");
   expect_bool(ringbuf_add_back(&ringbuf, &c), true, "queue test: ringbuf add_back c failed\n");
@@ -389,6 +427,7 @@ static void test_ringbuf(void) {
   expect_bool(ringbuf_add_back(&ringbuf, &e), false,
               "queue test: ringbuf add_back should fail when full\n");
 
+  // Remove and re-add across the boundary to force the wrapped layout.
   expect_ptr(ringbuf_remove_front(&ringbuf), &b, "queue test: ringbuf remove_front mismatch\n");
   expect_bool(ringbuf_add_back(&ringbuf, &d), true,
               "queue test: ringbuf add_back after wrap-around failed\n");
@@ -413,6 +452,7 @@ static void test_ringbuf(void) {
   ringbuf_free(heap_ringbuf);
 }
 
+// Run the full queue helper suite variant by variant.
 void kernel_main(void) {
   say("***queue test start\n", NULL);
 

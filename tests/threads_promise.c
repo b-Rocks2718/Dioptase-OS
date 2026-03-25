@@ -1,6 +1,16 @@
-// Promise test.
-// Purpose: verify that promise_get blocks until promise_set and that all
-// waiters observe the same value.
+/*
+ * Promise test.
+ *
+ * Validates:
+ * - promise_get blocks until promise_set publishes a value
+ * - every waiter receives the exact same published pointer
+ *
+ * How:
+ * - start NUM_WAITERS threads that immediately call promise_get()
+ * - yield for a short window to prove none of them returns early
+ * - publish one stack value with promise_set()
+ * - verify every waiter records the same address
+ */
 
 #include "../kernel/promise.h"
 #include "../kernel/threads.h"
@@ -17,18 +27,22 @@ static int started = 0;
 static int done = 0;
 static void* results[NUM_WAITERS];
 
+// Block on the shared promise and store the value this waiter receives.
 static void waiter_thread(void* arg) {
   int id = *(int*)arg;
   __atomic_fetch_add(&started, 1);
+  // Wait until main publishes the promise value.
   results[id] = promise_get(&promise);
   __atomic_fetch_add(&done, 1);
 }
 
+// Start the waiter set, publish one value, and verify every waiter sees it.
 void kernel_main(void) {
   say("***promise test start\n", NULL);
 
   promise_init(&promise);
 
+  // Start the waiters that will block on the unset promise.
   for (int i = 0; i < NUM_WAITERS; i++) {
     int* id = malloc(sizeof(int));
     assert(id != NULL, "promise test: id allocation failed.\n");
@@ -45,6 +59,7 @@ void kernel_main(void) {
     yield();
   }
 
+  // Give the waiters time to prove they really block before set().
   for (int i = 0; i < PRE_SET_YIELDS; i++) {
     yield();
   }
@@ -55,6 +70,7 @@ void kernel_main(void) {
     panic("promise test: waiters ran before set\n");
   }
 
+  // Publish one value and wait for everyone to observe it.
   int value = 0x1234;
   promise_set(&promise, &value);
 

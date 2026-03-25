@@ -1,5 +1,18 @@
-// Shared pointer parallel test.
-// Purpose: validate shared pointer lifetime under concurrent cloning/dropping.
+/*
+ * Shared pointer parallel test.
+ *
+ * Validates:
+ * - many threads can clone and dereference the same StrongPtr concurrently
+ * - dropping the root while workers still hold clones does not destroy the
+ *   payload too early
+ * - the payload destructor still runs exactly once after the last clone drops
+ *
+ * How:
+ * - create one root StrongPtr and spawn WORKER_COUNT cloning threads
+ * - use a start barrier so every worker holds a clone before the root drops
+ * - have each worker repeatedly dereference the shared payload
+ * - wait at a done barrier and then verify the destructor count
+ */
 
 #include "../kernel/shared.h"
 #include "../kernel/threads.h"
@@ -26,22 +39,14 @@ struct WorkerArg {
 
 static int destroyed = 0;
 
-// Purpose: payload destructor that tracks the number of destructions.
-// Inputs: ptr points to a Payload allocated by the test.
-// Preconditions: ptr is non-NULL.
-// Postconditions: payload freed; destroyed incremented by one.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Free the payload and record that its destructor ran.
 static void payload_destructor(void* ptr) {
   struct Payload* payload = (struct Payload*)ptr;
   free(payload);
   __atomic_fetch_add(&destroyed, 1);
 }
 
-// Purpose: worker that clones a shared pointer and verifies deref stability.
-// Inputs: arg points to a WorkerArg allocated by the test.
-// Preconditions: arg is non-NULL; root/start/done are valid.
-// Postconditions: local strong ref dropped; completion barrier reached.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Clone the root pointer, pound on deref(), then drop the local clone.
 static void sharedptr_worker(void* arg) {
   struct WorkerArg* w = (struct WorkerArg*)arg;
   assert(w != NULL, "shared_ptr_parallel: WorkerArg is NULL.\n");
@@ -54,6 +59,7 @@ static void sharedptr_worker(void* arg) {
   barrier_sync(w->start);
 
   for (int i = 0; i < ITERATIONS; ++i) {
+    // Every dereference should see the same payload value.
     int value = ((struct Payload*)strongptr_deref(&local))->value;
     if (value != PAYLOAD_MAGIC) {
       int args[3] = { w->id, value, PAYLOAD_MAGIC };
@@ -69,6 +75,7 @@ static void sharedptr_worker(void* arg) {
   barrier_sync(w->done);
 }
 
+// Start the worker set, drop the root, and verify one final destruction.
 void kernel_main(void) {
   say("***shared_ptr_parallel test start\n", NULL);
 
@@ -88,6 +95,7 @@ void kernel_main(void) {
   barrier_init(&start, WORKER_COUNT + 1);
   barrier_init(&done, WORKER_COUNT + 1);
 
+  // Spawn workers that all clone the same root pointer.
   for (int i = 0; i < WORKER_COUNT; ++i) {
     struct WorkerArg* arg = malloc(sizeof(struct WorkerArg));
     assert(arg != NULL, "shared_ptr_parallel: WorkerArg allocation failed.\n");
@@ -103,6 +111,7 @@ void kernel_main(void) {
     thread(fun);
   }
 
+  // Drop the root only after every worker holds its own clone.
   barrier_sync(&start);
   strongptr_drop(&root);
 

@@ -1,7 +1,21 @@
 /*
- * Covers ext2 read-side behavior for files, directories, symlinks, and path
- * traversal. The test includes both sequential contract checks and a short
- * concurrent read phase to stress inode-cache and block-cache sharing.
+ * ext2 read test.
+ *
+ * Validates:
+ * - file, directory, and symlink lookups decode the right inode type and data
+ * - path traversal handles nested paths, absolute paths, empty paths, and
+ *   missing paths correctly
+ * - read helpers honor EOF and preserve cross-block marker positions
+ * - concurrent readers can share inode-cache and block-cache state safely
+ *
+ * How:
+ * - open the root fixtures from tests/ext_read.dir and validate their metadata,
+ *   contents, and traversal behavior one helper at a time
+ * - locate the marker inside blocks.txt and re-read both the direct block and a
+ *   smaller marker window to prove offset handling stays correct
+ * - exercise EOF-clamped reads and missing lookups
+ * - launch a short concurrent phase where several readers hit hello.txt and
+ *   blocks.txt together through the shared caches
  */
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -16,10 +30,8 @@ struct Ext2 fs;
 #define EXT2_BLOCK_SIZE_1K 1024
 #define EXT2_BLOCK_SIZE_2K 2048
 #define EXT2_BLOCK_SIZE_4K 4096
-#define CONCURRENT_READERS 2
-// Two readers are enough to create real cache contention while keeping the
-// host-side emulator run short enough that this test does not look hung.
-#define CONCURRENT_ROUNDS 1
+#define CONCURRENT_READERS 8
+#define CONCURRENT_ROUNDS 3
 #define MARKER_WINDOW_LEAD_BYTES 32
 #define MARKER_WINDOW_MAX_BYTES 320
 #define BLOCKS_MARKER "BLOCK1-MARKER\n"
@@ -427,8 +439,7 @@ static void check_concurrent_blocks_once(unsigned block_size) {
 
 // Each worker runs the same sequence after a shared start barrier. The barrier
 // forces all readers to enter the hottest inode-cache and block-cache paths
-// together, which keeps real concurrent coverage while avoiding a very long
-// silent runtime in the host-side test harness.
+// together
 static void concurrent_reader_thread(void* arg) {
   struct ConcurrentReadArgs* read_args = (struct ConcurrentReadArgs*)arg;
 
@@ -493,6 +504,7 @@ static void check_concurrent_reads(unsigned block_size) {
   say("***Concurrent reads: threads=%d rounds=%d ops=%d\n", args);
 }
 
+// Run the sequential ext2 read checks first, then the short concurrent phase.
 int kernel_main(void) {
   // The ext2 image is built from tests/ext_read.dir. Each helper targets one
   // part of the ext2 implementation so the test can identify which behavior
@@ -518,12 +530,14 @@ int kernel_main(void) {
   assert(node_entry_count(root) >= 5,
     "ext_read: root directory should contain '.', '..', and the test fixtures.\n");
 
+  // Cover path lookup and content reads before stressing cache sharing.
   check_root_lookup_contract(root);
   unsigned hello_inumber = check_hello_file(root, block_size);
   check_nested_entries(root, hello_inumber);
   check_blocks_fixture(root, block_size);
   check_eof_short_reads(root);
   check_missing_path(root);
+  // Finish with the concurrent cache-read phase.
   check_concurrent_reads(block_size);
 
   ext2_destroy(&fs);

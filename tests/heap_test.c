@@ -1,9 +1,26 @@
+/*
+ * Heap stress test.
+ *
+ * Validates:
+ * - malloc() and free() preserve payload bytes across randomized allocation and
+ *   free patterns
+ * - freeing in shuffled order does not corrupt neighboring live allocations
+ * - allocator reuse does not leak stale bytes into newly allocated blocks
+ *
+ * How:
+ * - allocate a batch of random-sized blocks, fill each one with a deterministic
+ *   pattern, and remember its metadata
+ * - free half the blocks in shuffled order after verifying their contents
+ * - allocate and immediately churn a second batch to force reuse of freed holes
+ * - verify and free the remaining original blocks, then repeat for several rounds
+ */
+
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 #include "../kernel/constants.h"
 
-// Simple xorshift RNG (deterministic)
+// Generate deterministic pseudo-random values for the stress pattern.
 static unsigned rng_state = 0xC0FFEE01u;
 static unsigned rnd_u32(void) {
   unsigned x = rng_state;
@@ -14,13 +31,14 @@ static unsigned rnd_u32(void) {
   return x;
 }
 
+// Fill one block with a recognizable byte pattern.
 static void mem_fill(unsigned char* p, unsigned n, unsigned seed) {
-  // Fill with a recognizable per-block pattern
   for (unsigned i = 0; i < n; i++) {
     p[i] = (unsigned char)((seed + i * 131u) ^ (seed >> 8));
   }
 }
 
+// Check that a block still holds the exact bytes written at allocation time.
 static void mem_check(unsigned char* p, unsigned n, unsigned seed) {
   for (unsigned i = 0; i < n; i++) {
     unsigned char expect = (unsigned char)((seed + i * 131u) ^ (seed >> 8));
@@ -32,8 +50,8 @@ static void mem_check(unsigned char* p, unsigned n, unsigned seed) {
   }
 }
 
+// Shuffle an index array so frees happen in a different order every round.
 static void shuffle(unsigned* a, unsigned n) {
-  // Fisher-Yates
   for (unsigned i = n; i > 1; i--) {
     unsigned j = rnd_u32() % i;
     unsigned tmp = a[i - 1];
@@ -48,20 +66,17 @@ struct BlockInfo {
   unsigned seed;
 };
 
-// Main stress routine
+// Run one heap stress workload with randomized sizes and free order.
 static void heap_stress(unsigned rounds, unsigned N) {
-  // N should be moderate (e.g. 256..4096) depending on heap size
   static struct BlockInfo blocks[4096];
   static unsigned order[4096];
 
   for (unsigned r = 0; r < rounds; r++) {
-    // Phase 1: allocate N blocks of random-ish sizes
+    // Phase 1: allocate and fill a baseline set of live blocks.
     for (unsigned i = 0; i < N; i++) {
-      // Sizes: mix small, medium, and occasional larger blocks
       unsigned roll = rnd_u32();
       unsigned sz;
       if ((roll & 15u) == 0) {
-        // occasional larger
         sz = 512 + (roll % 2048);
       } else if ((roll & 3u) == 0) {
         sz = 64 + (roll % 512);
@@ -87,10 +102,9 @@ static void heap_stress(unsigned rounds, unsigned N) {
       order[i] = i;
     }
 
-    // Phase 2: free in random order, but validate before freeing
+    // Phase 2: free half the blocks in shuffled order after validating them.
     shuffle(order, N);
 
-    // Optional: free only some first, then allocate again to force reuse
     unsigned halfway = N / 2;
     for (unsigned k = 0; k < halfway; k++) {
       unsigned idx = order[k];
@@ -100,7 +114,7 @@ static void heap_stress(unsigned rounds, unsigned N) {
       b->ptr = NULL;
     }
 
-    // Phase 3: allocate some more to fragment and reuse holes
+    // Phase 3: churn smaller blocks to force reuse of the freed holes.
     for (unsigned i = 0; i < halfway; i++) {
       unsigned roll = rnd_u32();
       unsigned sz = 16 + (roll % 256);
@@ -109,12 +123,11 @@ static void heap_stress(unsigned rounds, unsigned N) {
       unsigned seed = 0xA5A5A5A5u ^ (r << 16) ^ i ^ roll;
       mem_fill((unsigned char*)p, sz, seed);
 
-      // Immediately check and free some of them to churn
       mem_check((unsigned char*)p, sz, seed);
       free(p);
     }
 
-    // Phase 4: free the remaining original blocks (still out of order)
+    // Phase 4: verify and free the surviving original blocks.
     for (unsigned k = halfway; k < N; k++) {
       unsigned idx = order[k];
       struct BlockInfo* b = &blocks[idx];
@@ -130,6 +143,7 @@ static void heap_stress(unsigned rounds, unsigned N) {
   say("***heap stress test completed OK\n", NULL);
 }
 
+// Run a moderate heap stress workload that fits the test image comfortably.
 void kernel_main(void) {
   heap_stress(/*rounds=*/5, /*N=*/64);
 }

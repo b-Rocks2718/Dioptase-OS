@@ -11,5 +11,5 @@
 ***blocks.txt reads: ok
 ***EOF short reads: ok
 ***Missing path: ok
-***Concurrent reads start: threads=2 rounds=1 ops=2
-***Concurrent reads: threads=2 rounds=1 ops=2
+***Concurrent reads start: threads=8 rounds=3 ops=24
+***Concurrent reads: threads=8 rounds=3 ops=24

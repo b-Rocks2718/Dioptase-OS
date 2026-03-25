@@ -38,6 +38,7 @@ static int turn = 0;
 static int per_thread[NUM_THREADS];
 static int total_steps = 0;
 
+// Spin until this worker owns the shared turn counter.
 static void wait_for_turn(int id) {
   while (__atomic_load_n(&turn) != id) {
     // Busy-wait until preemption runs the thread that owns the turn.
@@ -45,6 +46,7 @@ static void wait_for_turn(int id) {
   }
 }
 
+// Advance this worker through its scheduled turns without ever yielding.
 static void thread_worker(void* arg) {
   struct ThreadArg* a = (struct ThreadArg*)arg;
   __atomic_fetch_add(&started, 1);
@@ -56,6 +58,7 @@ static void thread_worker(void* arg) {
 
   for (int i = 0; i < a->rounds; i++) {
     wait_for_turn(a->id);
+    // Owning the turn means this thread gets exactly one step of progress.
     __atomic_fetch_add(&per_thread[a->id], 1);
     __atomic_fetch_add(&total_steps, 1);
     __atomic_store_n(&turn, (a->id + 1) % NUM_THREADS);
@@ -64,6 +67,7 @@ static void thread_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
+// Allocate and start the full worker set for the preemption ring.
 static void spawn_threads(void) {
   for (int i = 0; i < NUM_THREADS; i++) {
     struct ThreadArg* arg = malloc(sizeof(struct ThreadArg));
@@ -80,6 +84,7 @@ static void spawn_threads(void) {
   }
 }
 
+// Check that every worker ran the expected number of timer-driven turns.
 static void verify_results(void) {
   int expected = NUM_THREADS * PREEMPT_ROUNDS;
   int total = __atomic_load_n(&total_steps);
@@ -105,7 +110,7 @@ void kernel_main(void) {
   spawn_threads();
 
   while (__atomic_load_n(&finished) != NUM_THREADS) {
-    // Wait for all threads to complete (no yields).
+    // The main thread also refuses to yield, so only PIT preemption can make progress.
     pause();
   }
 

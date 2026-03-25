@@ -1,21 +1,20 @@
-// Thread race stress test.
-// What this test does, step-by-step:
-// 1) Spawns many kernel threads and waits until all have started.
-// 2) Each thread runs for a fixed number of rounds. In each round it:
-//    - Marks itself "in step" using an atomic exchange, and fails if it was
-//      already marked. This detects the same thread running concurrently
-//      (e.g., being scheduled on two cores at once).
-//    - Increments per-thread and total counters to validate progress.
-//    - Periodically allocates a small heap block, fills it with a unique
-//      pattern derived from (thread id, round), yields a few times to encourage
-//      preemption, then verifies the pattern before freeing.
-//    - Yields again to maximize context switches and interleavings.
-// 3) After all threads finish, the test checks that every per-thread counter
-//    and the total counter match the expected values.
-// Failure signals:
-// - "thread running concurrently" => the same TCB executed in parallel.
-// - "heap pattern mismatch" => memory corruption or stale pointers.
-// - "count mismatch" => lost updates or missed rounds.
+/*
+ * Thread race stress test.
+ *
+ * Validates:
+ * - one TCB never runs concurrently on multiple cores
+ * - repeated yields still let every worker make forward progress
+ * - concurrent heap churn does not corrupt live allocations
+ *
+ * How:
+ * - spawn NUM_THREADS workers and wait until all of them are ready
+ * - each worker marks itself "in step" before touching shared counters; seeing
+ *   that marker already set means the same logical thread ran twice at once
+ * - workers periodically allocate, fill, yield on, verify, and free heap blocks
+ *   to mix scheduler races with allocator reuse
+ * - the final check verifies that every worker and the global total hit the
+ *   exact expected round counts
+ */
 
 #include "../kernel/threads.h"
 #include "../kernel/heap.h"
@@ -43,18 +42,21 @@ static int total_steps = 0;
 static int per_thread[NUM_THREADS];
 static int in_step[NUM_THREADS];
 
+// Wait until every worker has reached the starting line.
 static void wait_for_all_threads(void) {
   while (__atomic_load_n(&started) != NUM_THREADS) {
     yield();
   }
 }
 
+// Fill one allocation with a deterministic pattern for later verification.
 static void fill_words(unsigned* p, unsigned words, unsigned pattern) {
   for (unsigned i = 0; i < words; i++) {
     p[i] = pattern;
   }
 }
 
+// Verify that a live allocation still holds the pattern written by this worker.
 static void check_words(unsigned* p, unsigned words, unsigned pattern, int id, int round) {
   for (unsigned i = 0; i < words; i++) {
     if (p[i] != pattern) {
@@ -65,6 +67,7 @@ static void check_words(unsigned* p, unsigned words, unsigned pattern, int id, i
   }
 }
 
+// Periodically churn the heap to mix allocator reuse into the scheduler stress.
 static void maybe_alloc_work(int id, int round) {
   if ((round % ALLOC_INTERVAL) != 0) {
     return;
@@ -83,6 +86,7 @@ static void maybe_alloc_work(int id, int round) {
   fill_words(p, words, pattern);
 
   for (int i = 0; i < YIELD_SPINS; i++) {
+    // Yield while the block is live so concurrent heap traffic has time to overlap.
     yield();
   }
 
@@ -90,6 +94,7 @@ static void maybe_alloc_work(int id, int round) {
   free(p);
 }
 
+// Repeatedly enter a critical test step and fail if this logical thread overlaps itself.
 static void thread_worker(void* arg) {
   struct ThreadArg* a = (struct ThreadArg*)arg;
   __atomic_fetch_add(&started, 1);
@@ -97,6 +102,7 @@ static void thread_worker(void* arg) {
   wait_for_all_threads();
 
   for (int i = 0; i < a->rounds; i++) {
+    // If this marker is already set, the same TCB is executing on two cores at once.
     int prev = __atomic_exchange_n(&in_step[a->id], 1);
     if (prev != 0) {
       int args[2] = { a->id, i };
@@ -119,6 +125,7 @@ static void thread_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
+// Allocate and queue the full worker set.
 static void spawn_threads(void) {
   for (int i = 0; i < NUM_THREADS; i++) {
     struct ThreadArg* arg = malloc(sizeof(struct ThreadArg));
@@ -135,6 +142,7 @@ static void spawn_threads(void) {
   }
 }
 
+// Check that every worker and the total counter reached the planned round count.
 static void verify_results(void) {
   int expected = NUM_THREADS * ROUNDS;
   int total = __atomic_load_n(&total_steps);

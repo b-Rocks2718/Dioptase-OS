@@ -1,3 +1,17 @@
+/*
+ * Parallel Mandelbrot framebuffer test.
+ *
+ * Validates:
+ * - the Mandelbrot helpers can be used safely from several worker threads
+ * - multiple threads can draw disjoint framebuffer regions in parallel
+ *
+ * How:
+ * - reuse the same Q16.16 helpers as the single-threaded Mandelbrot test
+ * - split the framebuffer into four quadrants
+ * - launch three worker threads for three quadrants and let kernel_main render
+ *   the fourth before waiting for q
+ */
+
 #include "../kernel/machine.h"
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -21,6 +35,7 @@ struct Complex {
   fix32 y;
 };
 
+// Multiply two Q16.16 fixed-point values without requiring 64-bit arithmetic.
 fix32 mul_fixed(fix32 a, fix32 b){
   unsigned ua = (unsigned)a;
   unsigned ub = (unsigned)b;
@@ -37,24 +52,28 @@ fix32 mul_fixed(fix32 a, fix32 b){
   return (fix32)(hi + mid + lo);
 }
 
+// Add two complex values component-wise.
 void add_complex(struct Complex* a, struct Complex* b, 
                  struct Complex* out){
   out->x = a->x + b->x;
   out->y = a->y + b->y;
 }
 
+// Multiply two complex values in Q16.16 form.
 void mul_complex(struct Complex* a, struct Complex* b, 
                  struct Complex* out){
   out->x = mul_fixed(a->x, b->x) - mul_fixed(a->y, b->y);
   out->y = mul_fixed(a->x, b->y) + mul_fixed(a->y, b->x);
 }
 
+// Compute the squared magnitude of one complex value.
 fix32 norm(struct Complex* z){
   return mul_fixed(z->x, z->x) + mul_fixed(z->y, z->y);
 }
 
 #define COLOR_COUNT 56
 
+// Count Mandelbrot iterations for one complex coordinate.
 int mandelbrot_count(struct Complex* c){
   struct Complex z = {0, 0};
   int i;
@@ -78,6 +97,7 @@ unsigned colors[COLOR_COUNT] =
    0xFB4, 0xFA4, 0xF94, 0xF84, 0xF74, 0xF64, 0xF54, 0xF44,
    0xF44, 0xF45, 0xF46, 0xF47, 0xF48, 0xF49, 0xF4A, 0xF4B};
 
+// Render one framebuffer quadrant described by the five-word argument array.
 void display_mandelbrot(void* arg){
   int* arg_arr = (int*)arg;  
   int start_j = arg_arr[0];
@@ -88,7 +108,7 @@ void display_mandelbrot(void* arg){
 
   for (int i = start_i; i < start_i + ((FB_HEIGHT/2) >> RESOLUTION); ++i){
     for (int j = start_j; j < start_j + ((FB_WIDTH/2) >> RESOLUTION); ++j){
-      //struct Complex c = {start_x + diff * j, start_y - diff * i};
+      // This test intentionally uses one fixed point in the set for every pixel.
       struct Complex c = {-0x00010000, 0x00010000};
       int count = mandelbrot_count(&c);
       if (count >= 0){
@@ -100,6 +120,7 @@ void display_mandelbrot(void* arg){
   }
 }
 
+// Split the framebuffer into quadrants and render them across four threads.
 int kernel_main(void){
   make_tiles_transparent();
 
@@ -110,6 +131,7 @@ int kernel_main(void){
 
   fix32 diff = 0x00000266 << RESOLUTION;
 
+  // Queue three quadrants onto worker threads.
   struct Fun* fun1 = (struct Fun*)malloc(sizeof(struct Fun));
   fun1->func = (void*)display_mandelbrot;
   fun1->arg = (void*)malloc(5 * sizeof(int));
@@ -141,6 +163,7 @@ int kernel_main(void){
   thread(fun2);
   thread(fun3);
 
+  // Render the fourth quadrant on the main thread.
   int args[5] = {(FB_WIDTH/2) >> RESOLUTION, (FB_HEIGHT/2) >> RESOLUTION, start_x, start_y, diff};
   display_mandelbrot(args);
 

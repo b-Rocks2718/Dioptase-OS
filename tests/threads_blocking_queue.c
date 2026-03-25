@@ -1,5 +1,16 @@
-// Blocking queue test.
-// Purpose: verify blocking removal and FIFO delivery under contention.
+/*
+ * Blocking queue test.
+ *
+ * Validates:
+ * - blocking_queue_remove blocks consumers until producers add work
+ * - every produced item is delivered exactly once under contention
+ *
+ * How:
+ * - start all consumers first and yield long enough for them to block
+ * - start producers that publish disjoint id ranges
+ * - enqueue one sentinel per consumer after the real items are produced
+ * - verify every id in [0, TOTAL_ITEMS) was seen exactly once
+ */
 
 #include "../kernel/blocking_queue.h"
 #include "../kernel/threads.h"
@@ -26,6 +37,7 @@ static int consumed = 0;
 static int consumers_done = 0;
 static int seen[TOTAL_ITEMS];
 
+// Publish one producer's fixed range of item ids into the queue.
 static void producer_thread(void* arg) {
   int producer_id = *(int*)arg;
   for (int i = 0; i < ITEMS_PER_PRODUCER; i++) {
@@ -39,6 +51,7 @@ static void producer_thread(void* arg) {
   }
 }
 
+// Remove items until this consumer receives its sentinel.
 static void consumer_thread(void* arg) {
   (void)arg;
   while (true) {
@@ -50,6 +63,7 @@ static void consumer_thread(void* arg) {
       return;
     }
 
+    // Each real item must be delivered exactly once.
     int old = __atomic_exchange_n(&seen[item->id], 1);
     if (old != 0) {
       int args[2] = { item->id, old };
@@ -61,11 +75,13 @@ static void consumer_thread(void* arg) {
   }
 }
 
+// Run the producer/consumer workload and verify nothing is lost or duplicated.
 void kernel_main(void) {
   say("***blocking_queue test start\n", NULL);
 
   blocking_queue_init(&queue);
 
+  // Start consumers first so remove() has to block.
   for (int i = 0; i < NUM_CONSUMERS; i++) {
     struct Fun* fun = malloc(sizeof(struct Fun));
     assert(fun != NULL, "blocking_queue test: Fun allocation failed.\n");
@@ -74,6 +90,7 @@ void kernel_main(void) {
     thread(fun);
   }
 
+  // Give consumers time to park on the empty queue.
   for (int i = 0; i < PRE_PRODUCE_YIELDS; i++) {
     yield();
   }
@@ -84,6 +101,7 @@ void kernel_main(void) {
     panic("blocking_queue test: consumers ran without producers\n");
   }
 
+  // Now start the producers that fill the queue.
   for (int i = 0; i < NUM_PRODUCERS; i++) {
     int* id = malloc(sizeof(int));
     assert(id != NULL, "blocking_queue test: id allocation failed.\n");
@@ -100,6 +118,7 @@ void kernel_main(void) {
     yield();
   }
 
+  // One sentinel per consumer lets every worker exit cleanly.
   for (int i = 0; i < NUM_CONSUMERS; i++) {
     struct Item* item = malloc(sizeof(struct Item));
     assert(item != NULL, "blocking_queue test: sentinel allocation failed.\n");
@@ -115,6 +134,7 @@ void kernel_main(void) {
     yield();
   }
 
+  // Every real item id should have been observed exactly once.
   for (int i = 0; i < TOTAL_ITEMS; i++) {
     if (seen[i] != 1) {
       int args[2] = { i, seen[i] };

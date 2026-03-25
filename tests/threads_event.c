@@ -46,12 +46,7 @@ static int reuse_overlap_observed = 0;
 static int round_ready[EVENT_ROUNDS];
 static int round_done[EVENT_ROUNDS];
 
-// Purpose: read the number of threads blocked in event_wait().
-// Inputs: none.
-// Outputs: current waiter count.
-// Preconditions: event initialized.
-// Postconditions: none.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Read the number of threads currently blocked in event_wait().
 static unsigned event_waiter_count(void) {
   spin_lock_acquire(&event.cv.lock);
   unsigned waiters = event.cv.waiters;
@@ -59,11 +54,7 @@ static unsigned event_waiter_count(void) {
   return waiters;
 }
 
-// Purpose: block on the global event once and record phase progress.
-// Inputs: arg points to EventWaitArgs for this waiter.
-// Preconditions: event initialized; arg, ready, and done are non-NULL.
-// Postconditions: increments *ready before waiting and *done after returning.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Wait once on the shared event and record when this waiter starts and finishes.
 static void initial_waiter_thread(void* arg) {
   struct EventWaitArgs* args = (struct EventWaitArgs*)arg;
   __atomic_fetch_add(args->ready, 1);
@@ -71,11 +62,7 @@ static void initial_waiter_thread(void* arg) {
   __atomic_fetch_add(args->done, 1);
 }
 
-// Purpose: repeatedly wait on the same event across many generations.
-// Inputs: arg points to the worker id.
-// Preconditions: event initialized.
-// Postconditions: increments round_ready[round] and round_done[round] once per round.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Reuse one event across many rounds and detect stale-signal leakage.
 static void reuse_waiter_thread(void* arg) {
   int id = *(int*)arg;
 
@@ -83,6 +70,7 @@ static void reuse_waiter_thread(void* arg) {
 
   for (int round = 0; round < EVENT_ROUNDS; round++) {
     if (round > 0 && __atomic_load_n(&round_done[round - 1]) != REUSE_WAITERS) {
+      // Record that the test really exercised overlap between generations.
       __atomic_store_n(&reuse_overlap_observed, 1);
     }
 
@@ -90,6 +78,7 @@ static void reuse_waiter_thread(void* arg) {
 
     event_wait(&event);
 
+    // A stale signal would let one waiter return before every round peer arrived.
     int seen = __atomic_load_n(&round_ready[round]);
     if (seen != REUSE_WAITERS) {
       int args[3] = { round, seen, REUSE_WAITERS };
@@ -109,11 +98,7 @@ static void reuse_waiter_thread(void* arg) {
   __atomic_fetch_add(&reuse_finished, 1);
 }
 
-// Purpose: allocate and start one initial waiter thread.
-// Inputs: ready and done counters for the phase.
-// Preconditions: event initialized; ready and done are non-NULL.
-// Postconditions: one new waiter thread has been scheduled.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Allocate and start one waiter for the one-shot signal phase.
 static void spawn_initial_waiter(int* ready, int* done) {
   struct EventWaitArgs* args = malloc(sizeof(struct EventWaitArgs));
   assert(args != NULL, "event test: initial waiter arg allocation failed.\n");
@@ -127,11 +112,7 @@ static void spawn_initial_waiter(int* ready, int* done) {
   thread(fun);
 }
 
-// Purpose: allocate and start one reusable event waiter thread.
-// Inputs: id is the worker id for this waiter.
-// Preconditions: event initialized.
-// Postconditions: one reusable waiter thread has been scheduled.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Allocate and start one worker for the reusable event phase.
 static void spawn_reuse_waiter(int id) {
   int* arg = malloc(sizeof(int));
   assert(arg != NULL, "event test: reuse waiter id allocation failed.\n");
@@ -149,6 +130,7 @@ void kernel_main(void) {
 
   event_init(&event);
 
+  // First prove that one signal wakes every waiter currently blocked.
   for (int i = 0; i < INITIAL_WAITERS; i++) {
     spawn_initial_waiter(&initial_ready, &initial_done);
   }
@@ -197,6 +179,7 @@ void kernel_main(void) {
     panic("event test: initial waiters remained queued after signal\n");
   }
 
+  // Then reuse the same event across many rounds to catch stale wakeups.
   for (int i = 0; i < REUSE_WAITERS; i++) {
     spawn_reuse_waiter(i);
   }
@@ -235,6 +218,7 @@ void kernel_main(void) {
       panic("event test: a future waiter failed to block before the next signal\n");
     }
 
+    // Each signal should release exactly one full generation of waiters.
     event_signal(&event);
 
     for (int i = 0; i < DONE_WAIT_BUDGET &&

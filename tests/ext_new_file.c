@@ -1,10 +1,20 @@
 /*
- * Covers ext2 create operations for regular files, directories, and symlinks.
- * The test also checks link-count and used_dirs_count metadata so directory
- * creates do not accidentally perturb ext2 accounting for other inode types,
- * and it includes one concurrent duplicate-create race on the same basename.
- * The symlink cases exercise both the exact fast-symlink inline boundary and
- * longer targets stored in allocated data blocks.
+ * ext2 create test.
+ *
+ * Validates:
+ * - regular-file, directory, and symlink creates return the right inode type
+ *   and update directory metadata correctly
+ * - regular-file and symlink creates do not perturb used_dirs_count
+ * - the fast-symlink inline boundary and a longer block-backed symlink target
+ *   both round-trip correctly
+ * - two concurrent creates of the same basename produce exactly one winner
+ *
+ * How:
+ * - create one regular file, one directory, nested files, and two symlinks
+ *   while checking entry counts, link counts, and used_dirs_count
+ * - reopen the symlinks and compare their stored targets
+ * - race several workers to create the same basename behind one barrier and verify
+ *   that only one directory entry is added
  */
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -19,13 +29,14 @@ struct Ext2 fs;
 #define FAST_SYMLINK_TARGET_BUFFER_BYTES 61
 #define LONG_SYMLINK_TARGET_BYTES 64
 #define LONG_SYMLINK_TARGET_BUFFER_BYTES 65
-#define CONCURRENT_CREATE_WORKERS 2
+#define CONCURRENT_CREATE_WORKERS 8
 #define CONCURRENT_CREATE_NAME "concurrent-create.txt"
 
 static struct Barrier concurrent_create_start_barrier;
 static int concurrent_create_finished = 0;
 static int concurrent_create_successes = 0;
 
+// Sum ext2 used_dirs_count across every block group.
 static unsigned count_used_dirs(struct Ext2* fs) {
   unsigned count = 0;
 
@@ -36,6 +47,7 @@ static unsigned count_used_dirs(struct Ext2* fs) {
   return count;
 }
 
+// Fill a symlink target buffer with deterministic printable bytes.
 static void fill_target_pattern(char* dest, unsigned size) {
   char* alphabet = "0123456789abcdef";
 
@@ -46,12 +58,14 @@ static void fill_target_pattern(char* dest, unsigned size) {
   dest[size] = '\0';
 }
 
+// Race one worker to create the shared duplicate-create basename.
 static void concurrent_duplicate_create_thread(void* unused) {
   struct Node* created;
   (void)unused;
 
   barrier_sync(&concurrent_create_start_barrier);
 
+  // Exactly one worker should observe a successful create.
   created = node_make_file(&fs.root, CONCURRENT_CREATE_NAME);
   if (created != NULL) {
     __atomic_fetch_add(&concurrent_create_successes, 1);
@@ -61,7 +75,7 @@ static void concurrent_duplicate_create_thread(void* unused) {
   __atomic_fetch_add(&concurrent_create_finished, 1);
 }
 
-// Two threads race to create the same basename in the same directory. Exactly
+// Several threads race to create the same basename in the same directory. Exactly
 // one create may succeed, and the parent directory may gain only one entry.
 static void check_concurrent_duplicate_create(struct Node* root, unsigned expected_entry_count) {
   struct Node* existing = node_find(root, CONCURRENT_CREATE_NAME);
@@ -105,6 +119,7 @@ static void check_concurrent_duplicate_create(struct Node* root, unsigned expect
   say("***Concurrent duplicate create: ok\n", NULL);
 }
 
+// Run the create suite across regular files, directories, symlinks, and the duplicate race.
 int kernel_main(void) {
   say("***Hello from ext2 new file test!\n", NULL);
 
@@ -123,6 +138,7 @@ int kernel_main(void) {
   say("***Original root directory:\n", NULL);
   node_print_dir(root);
 
+  // Start with duplicate-create rejection on an existing fixture name.
   struct Node* existing_file = node_make_file(root, "test.txt");
   assert(existing_file == NULL,
     "node_make_file: duplicate create should fail when the name already exists.\n");
@@ -148,6 +164,7 @@ int kernel_main(void) {
   
   say("***New file creation: ok\n", NULL);
 
+  // Then cover directory metadata and nested creates.
   struct Node* new_dir = node_make_dir(root, "new-dir");
   assert(new_dir != NULL, "node_make_dir: failed to create new directory.\n");
   assert(node_is_dir(new_dir), "node_make_dir: new directory is not a directory.\n");
@@ -174,6 +191,7 @@ int kernel_main(void) {
   node_free(nested_file);
   say("***New file in new directory: ok\n", NULL);
 
+  // Finish the sequential phase with inline and block-backed symlink targets.
   struct Node* inline_link = node_make_symlink(root, "inline-link", inline_symlink_target);
   assert(inline_link != NULL, "node_make_symlink: failed to create inline symlink.\n");
   assert(node_is_symlink(inline_link), "node_make_symlink: inline symlink did not create a symlink inode.\n");

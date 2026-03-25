@@ -1,12 +1,17 @@
-// Reader-writer lock test.
-// Purpose: validate reader concurrency and writer preference.
 /*
- * Test overview:
- * - Spawn initial readers that acquire the lock and wait.
- * - Start a writer that must block while readers hold the lock.
- * - Enqueue late readers after the writer is waiting.
- * - Release initial readers and verify the writer acquires before late readers.
- * - Verify readers overlap (shared access) and writers are exclusive.
+ * Reader-writer lock test.
+ *
+ * Validates:
+ * - multiple readers can hold the lock at the same time
+ * - a writer waits until existing readers leave
+ * - late readers do not bypass a waiting writer
+ *
+ * How:
+ * - spawn two initial readers that hold the read lock until main releases them
+ * - enqueue one writer and wait until it is visibly blocked in the rw_lock
+ * - enqueue late readers after the writer is already waiting
+ * - release the initial readers and verify the writer acquires before any late
+ *   reader, while reader overlap still occurs on the read side
  */
 
 #include "../kernel/rw_lock.h"
@@ -35,11 +40,7 @@ static int late_done = 0;
 static int event_seq = 0;
 static int late_seq[NUM_LATE_READERS];
 
-// Purpose: update reader counters under a stats lock.
-// Inputs: delta is +1 on entry, -1 on exit.
-// Preconditions: kernel mode.
-// Postconditions: active_readers updated; max_readers reflects peak.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Update the reader overlap counters under one stats lock.
 static void update_reader_stats(int delta) {
   spin_lock_acquire(&stats_lock);
   active_readers += delta;
@@ -49,12 +50,7 @@ static void update_reader_stats(int delta) {
   spin_lock_release(&stats_lock);
 }
 
-// Purpose: read the current number of active readers under the stats lock.
-// Inputs: none.
-// Outputs: active reader count.
-// Preconditions: kernel mode.
-// Postconditions: none.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Read the number of readers currently inside the critical section.
 static int get_active_readers(void) {
   spin_lock_acquire(&stats_lock);
   int count = active_readers;
@@ -62,11 +58,7 @@ static int get_active_readers(void) {
   return count;
 }
 
-// Purpose: initial readers hold the lock until released by the main thread.
-// Inputs: arg is unused.
-// Preconditions: rwlock and release_sem initialized.
-// Postconditions: increments initial_ready and holds a read slot until release.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Hold a read slot until main explicitly releases the initial readers.
 static void initial_reader(void* arg) {
   (void)arg;
   rw_lock_acquire_read(&rwlock);
@@ -80,17 +72,14 @@ static void initial_reader(void* arg) {
   rw_lock_release_read(&rwlock);
 }
 
-// Purpose: writer must acquire after initial readers and before late readers.
-// Inputs: arg is unused.
-// Preconditions: rwlock initialized.
-// Postconditions: sets writer_seq when lock acquired; releases write lock.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Acquire the write lock once and record when the writer entered the sequence.
 static void writer_thread(void* arg) {
   (void)arg;
   __atomic_store_n(&writer_started, 1);
 
   rw_lock_acquire_write(&rwlock);
 
+  // Writers must stay exclusive with both readers and other writers.
   int prior = __atomic_exchange_n(&writer_inside, 1);
   if (prior != 0) {
     say("***rw_lock FAIL concurrent writers detected\n", NULL);
@@ -109,11 +98,7 @@ static void writer_thread(void* arg) {
   __atomic_store_n(&writer_done, 1);
 }
 
-// Purpose: late readers must not acquire before the writer.
-// Inputs: arg points to reader id.
-// Preconditions: rwlock initialized; writer enqueued.
-// Postconditions: records acquisition order in late_seq.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Acquire the read lock after the writer is queued and record acquisition order.
 static void late_reader(void* arg) {
   int id = *(int*)arg;
 
@@ -134,12 +119,7 @@ static void late_reader(void* arg) {
   __atomic_fetch_add(&late_done, 1);
 }
 
-// Purpose: validate reader concurrency and writer preference semantics.
-// Inputs: none.
-// Outputs: prints pass/fail status; panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: late readers acquire after writer; max_readers >= 2.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Drive the reader-overlap and writer-preference scenario end to end.
 void kernel_main(void) {
   say("***rw_lock test start\n", NULL);
 
@@ -169,7 +149,7 @@ void kernel_main(void) {
     yield();
   }
 
-  // Wait for the writer to enqueue before starting late readers.
+  // Wait until the writer is visibly queued so late readers cannot win by racing.
   while (true) {
     spin_lock_acquire(&rwlock.lock);
     int waiting = rwlock.waiting_writers.size;
@@ -192,6 +172,7 @@ void kernel_main(void) {
     thread(fun);
   }
 
+  // Releasing the initial readers should hand control to the queued writer first.
   for (int i = 0; i < NUM_INITIAL_READERS; i++) {
     sem_up(&release_sem);
   }

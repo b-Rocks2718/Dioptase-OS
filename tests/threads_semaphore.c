@@ -1,5 +1,16 @@
-// Semaphore test.
-// Purpose: validate basic sem_down/sem_up behavior and wakeup ordering.
+/*
+ * Semaphore test.
+ *
+ * Validates:
+ * - sem_down blocks workers until main posts the semaphore
+ * - one sem_up wakes one waiter and no worker runs more than once
+ *
+ * How:
+ * - start NUM_WORKERS waiters on start_sem
+ * - release them one at a time with sem_up()
+ * - use done_sem plus per-thread progress counters to prove each worker runs
+ *   exactly once
+ */
 
 #include "../kernel/semaphore.h"
 #include "../kernel/threads.h"
@@ -18,16 +29,13 @@ static int started = 0;
 static int finished = 0;
 static int progress[NUM_WORKERS];
 
-// Purpose: wait on start_sem, then signal completion through done_sem.
-// Inputs: arg points to worker id.
-// Preconditions: kernel mode; semaphores initialized.
-// Postconditions: progress[id] increments once; done_sem signaled once.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Wait on start_sem, then record one unit of progress for this worker.
 static void worker_thread(void* arg) {
   int id = *(int*)arg;
 
   __atomic_fetch_add(&ready, 1);
 
+  // Stay blocked until main explicitly releases this worker.
   sem_down(&start_sem);
 
   __atomic_fetch_add(&started, 1);
@@ -37,18 +45,14 @@ static void worker_thread(void* arg) {
   sem_up(&done_sem);
 }
 
-// Purpose: verify semaphore wakeups for multiple waiting threads.
-// Inputs: none.
-// Outputs: prints pass/fail and panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: all workers run exactly once after start signals.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Release the waiter set one by one and verify each runs exactly once.
 void kernel_main(void) {
   say("***semaphore test start\n", NULL);
 
   sem_init(&start_sem, 0);
   sem_init(&done_sem, 0);
 
+  // Start the full waiter set on an empty semaphore.
   for (int i = 0; i < NUM_WORKERS; i++) {
     int* id = malloc(sizeof(int));
     assert(id != NULL, "semaphore test: id allocation failed.\n");
@@ -66,7 +70,7 @@ void kernel_main(void) {
     yield();
   }
 
-  // Release workers one by one and wait for completion each time.
+  // Release workers one by one and wait for each completion signal.
   for (int i = 0; i < NUM_WORKERS; i++) {
     sem_up(&start_sem);
     sem_down(&done_sem);

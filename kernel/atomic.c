@@ -65,8 +65,9 @@ void preempt_spin_lock_acquire(struct PreemptSpinLock* lock){
   while (true){
     bool was = preemption_disable();
     if (!__atomic_exchange_n(&lock->the_lock, 1)){
-      // value was 0, now we have the lock
-      __atomic_store_n(&lock->preempt_state, true);
+      // Save the caller's prior preemption state so release restores callers
+      // that were already non-preemptible before they acquired the lock.
+      __atomic_store_n(&lock->preempt_state, was);
       return;
     }
     preemption_restore(was);
@@ -80,8 +81,9 @@ void preempt_spin_lock_acquire(struct PreemptSpinLock* lock){
 bool preempt_spin_lock_try_acquire(struct PreemptSpinLock* lock){
   bool was = preemption_disable();
   if (!__atomic_exchange_n(&lock->the_lock, 1)){
-    // value was 0, now we have the lock
-    __atomic_store_n(&lock->preempt_state, true);
+    // Save the caller's prior preemption state so release restores callers
+    // that were already non-preemptible before they acquired the lock.
+    __atomic_store_n(&lock->preempt_state, was);
     return true;
   }
   preemption_restore(was);

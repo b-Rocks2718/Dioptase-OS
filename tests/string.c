@@ -1,12 +1,26 @@
 /*
- * Covers every helper in kernel/string.c.
- * The test checks string equality and prefix semantics, documents the current
- * kernel-specific strncpy behavior, and verifies memcpy/memset on raw bytes.
+ * String helper test.
+ *
+ * Validates:
+ * - strlen(), streq(), and strneq() follow the kernel's expected string and
+ *   prefix semantics
+ * - strncpy() matches the current kernel-specific contract for truncation and
+ *   trailing NUL handling
+ * - memcpy() and memset() operate on raw bytes without touching bytes outside
+ *   the requested range
+ *
+ * How:
+ * - build small fixed byte arrays that cover empty strings, embedded NUL bytes,
+ *   prefix comparisons, and truncated copies
+ * - compare whole byte regions after strncpy(), memcpy(), and memset() so the
+ *   test checks untouched bytes as well as the written range
+ * - run each helper in a dedicated function so failures identify the exact API
  */
 #include "../kernel/string.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 
+// Compare two byte regions and fail if any position differs.
 static void assert_byte_region(unsigned char* actual, unsigned char* expected,
   unsigned size, char* failure_message) {
   int mismatch = 0;
@@ -20,6 +34,7 @@ static void assert_byte_region(unsigned char* actual, unsigned char* expected,
   assert(mismatch == 0, failure_message);
 }
 
+// Check strlen() on empty strings, normal strings, and embedded NUL bytes.
 static void check_strlen(void) {
   char embedded_nul[5];
 
@@ -39,6 +54,7 @@ static void check_strlen(void) {
   say("***strlen: ok\n", NULL);
 }
 
+// Check exact string equality on equal and unequal inputs.
 static void check_streq(void) {
   assert(streq("kernel", "kernel"),
     "string: streq should return true for identical strings.\n");
@@ -50,6 +66,7 @@ static void check_streq(void) {
   say("***streq: ok\n", NULL);
 }
 
+// Check prefix equality semantics for several boundary cases.
 static void check_strneq(void) {
   assert(strneq("kernel", "kernal", 4),
     "string: strneq should accept equal prefixes shorter than the mismatch.\n");
@@ -65,6 +82,7 @@ static void check_strneq(void) {
   say("***strneq: ok\n", NULL);
 }
 
+// Check the kernel's strncpy() behavior for short and truncated copies.
 static void check_strncpy(void) {
   char short_dest[5];
   char short_expected[5];
@@ -106,6 +124,7 @@ static void check_strncpy(void) {
   say("***strncpy: ok\n", NULL);
 }
 
+// Check memcpy() raw byte copies and zero-length behavior.
 static void check_memcpy(void) {
   unsigned char source[6];
   unsigned char dest[8];
@@ -161,6 +180,7 @@ static void check_memcpy(void) {
   say("***memcpy: ok\n", NULL);
 }
 
+// Check memset() raw byte writes and zero-length behavior.
 static void check_memset(void) {
   unsigned char buf[6];
   unsigned char expected[6];
@@ -202,6 +222,7 @@ static void check_memset(void) {
   say("***memset: ok\n", NULL);
 }
 
+// Run the string helper checks one API at a time.
 int kernel_main(void) {
   check_strlen();
   check_streq();

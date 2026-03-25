@@ -1,9 +1,17 @@
 /*
- * Hash map test summary:
- * - Verifies insert/get/contains for empty and populated maps.
- * - Verifies collision chains support update, try_insert, and removal from the
- *   head, middle, and tail.
- * - Verifies both stack-backed destroy and heap-backed free paths.
+ * Hash map test.
+ *
+ * Validates:
+ * - empty and populated maps agree across get() and contains()
+ * - collision chains support insert, update, try_insert, and removals from the
+ *   head, middle, and tail
+ * - both stack-backed destroy() and heap-backed free() clean up correctly
+ *
+ * How:
+ * - initialize a small table so several keys collide into one bucket chain
+ * - insert, update, and try_insert keys while checking both lookup helpers
+ * - remove keys in several positions across the chain and re-check the survivors
+ * - repeat a small insertion flow on a heap-allocated map and free it
  */
 
 #include "../kernel/hashmap.h"
@@ -18,18 +26,21 @@ static int value_d = 44;
 static int value_e = 55;
 static int value_f = 66;
 
+// Report a lookup mismatch for one key.
 static void fail_lookup(unsigned key, void* got, void* expected) {
   int args[3] = { (int)key, (int)got, (int)expected };
   say("***hashmap FAIL key=%u got=0x%X expected=0x%X\n", args);
   panic("hashmap test: lookup mismatch\n");
 }
 
+// Report a contains() mismatch for one key.
 static void fail_contains(unsigned key, bool got, bool expected) {
   int args[3] = { (int)key, got, expected };
   say("***hashmap FAIL contains key=%u got=%d expected=%d\n", args);
   panic("hashmap test: contains mismatch\n");
 }
 
+// Check both lookup APIs for one key/value expectation.
 static void check_lookup(struct HashMap* map, unsigned key, void* expected_value, bool expected_contains) {
   void* got = hash_map_get(map, key);
   if (got != expected_value) {
@@ -42,12 +53,14 @@ static void check_lookup(struct HashMap* map, unsigned key, void* expected_value
   }
 }
 
+// Check the previous value returned by insert-style operations.
 static void expect_removed(unsigned key, void* got, void* expected) {
   if (got != expected) {
     fail_lookup(key, got, expected);
   }
 }
 
+// Run the collision-heavy insert/update/remove coverage and the heap free path.
 void kernel_main(void) {
   say("***hashmap test start\n", NULL);
 
@@ -58,6 +71,7 @@ void kernel_main(void) {
   check_lookup(&map, 5, NULL, false);
   check_lookup(&map, 9, NULL, false);
 
+  // Keys 1, 5, 9, and 13 collide when the map has four buckets.
   expect_removed(1, hash_map_insert(&map, 1, &value_a), NULL);
   expect_removed(5, hash_map_insert(&map, 5, &value_b), NULL);
   expect_removed(9, hash_map_insert(&map, 9, &value_c), NULL);
@@ -79,6 +93,7 @@ void kernel_main(void) {
 
   say("***hashmap insert ok\n", NULL);
 
+  // Remove from the middle, head, tail, and then an already-missing key.
   expect_removed(5, hash_map_remove(&map, 5), &value_e);
   check_lookup(&map, 5, NULL, false);
   check_lookup(&map, 1, &value_a, true);
@@ -107,6 +122,7 @@ void kernel_main(void) {
 
   hash_map_destroy(&map);
 
+  // Repeat a small flow on a heap-owned map to cover hash_map_free().
   struct HashMap* heap_map = malloc(sizeof(struct HashMap));
   assert(heap_map != NULL, "hashmap test: heap map allocation failed.\n");
 

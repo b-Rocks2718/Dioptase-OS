@@ -37,14 +37,7 @@ static int worker_ready = 0;
 static int worker_progress = 0;
 static int worker_retry_count = 0;
 
-// Purpose: keep retrying until the worker lands on target_core, then pin there
-// so preemption_disable() can be observed against a same-core thread.
-// Inputs: arg is unused.
-// Preconditions: placement semaphores initialized and target_core set.
-// Postconditions: worker_ready becomes 1 only after the worker runs on and
-// pins itself to target_core; worker_progress increments once per round
-// afterward.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Retry until the worker runs on target_core, then pin it there and yield.
 static void worker_thread(void* arg) {
   (void)arg;
 
@@ -52,6 +45,7 @@ static void worker_thread(void* arg) {
     sem_down(&placement_sem);
 
     if ((int)get_core_id() != __atomic_load_n(&target_core)) {
+      // Tell main to try again until the worker is placed on the pinned core.
       __atomic_fetch_add(&worker_retry_count, 1);
       sem_up(&placement_done_sem);
       continue;
@@ -69,12 +63,7 @@ static void worker_thread(void* arg) {
   }
 }
 
-// Purpose: allocate and start the worker thread used to probe same-core
-// preemption behavior.
-// Inputs: none.
-// Preconditions: heap and scheduler initialized.
-// Postconditions: one worker thread is queued to run.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Allocate and start the worker used to probe same-core scheduling.
 static void spawn_worker(void) {
   struct Fun* fun = malloc(sizeof(struct Fun));
   assert(fun != NULL, "preempt toggle: Fun allocation failed.\n");
@@ -94,6 +83,7 @@ void kernel_main(void) {
 
   spawn_worker();
 
+  // Drive block/wake retries until the worker actually lands on the pinned core.
   bool placed = false;
   for (int i = 0; i < PLACEMENT_RETRY_BUDGET; i++) {
     sem_up(&placement_sem);
@@ -117,6 +107,7 @@ void kernel_main(void) {
   bool prev = preemption_disable();
 
   for (int i = 0; i < PREEMPT_DISABLE_PAUSES; i++) {
+    // Stay runnable without yielding so only involuntary preemption could run the worker.
     pause();
   }
 
@@ -129,6 +120,7 @@ void kernel_main(void) {
 
   preemption_restore(prev);
 
+  // Once preemption is restored, a same-core runnable worker should move again.
   bool saw_progress = false;
   for (int i = 0; i < POST_ENABLE_YIELD_BUDGET; i++) {
     if (__atomic_load_n(&worker_progress) > before) {

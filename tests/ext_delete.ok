@@ -1,1 +1,3 @@
 ***Hello from ext2 delete test!
+***Concurrent busy-file delete: ok
+***Concurrent busy-dir delete: ok

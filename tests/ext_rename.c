@@ -1,7 +1,15 @@
 /*
- * Covers ext2 same-directory rename of one regular file.
- * Verifies the renamed entry keeps the same inode and contents and that the
- * old pathname is removed from the directory.
+ * ext2 rename test.
+ *
+ * Validates:
+ * - same-directory rename preserves inode identity and file contents
+ * - the old pathname disappears after the rename completes
+ *
+ * How:
+ * - open the source file and record its inode number and payload
+ * - rename it within the same directory
+ * - verify the old name no longer resolves and the new name resolves to the
+ *   same inode with the same bytes
  */
 #include "../kernel/ext.h"
 #include "../kernel/print.h"
@@ -25,6 +33,7 @@ static char* read_node_text(struct Node* node) {
   return text;
 }
 
+// Rename one file in place and verify the inode and contents are unchanged.
 int kernel_main(void){
   say("***ext_rename test start\n", NULL);
 
@@ -40,6 +49,7 @@ int kernel_main(void){
   free(original_text);
   node_free(original);
 
+  // Rename within the same directory, then check both names.
   node_rename(&fs.root, "hello.txt", "goodbye.txt");
 
   struct Node* old_name = node_find(&fs.root, "hello.txt");

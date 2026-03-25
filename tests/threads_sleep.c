@@ -1,6 +1,16 @@
-// Sleep test.
-// Purpose: verify that sleep blocks a thread for at least the requested
-// number of jiffies and eventually resumes it.
+/*
+ * Sleep test.
+ *
+ * Validates:
+ * - sleep blocks a thread for at least SLEEP_JIFFIES ticks
+ * - sleeping threads eventually resume
+ * - multiple sleepers with different delays can all complete
+ *
+ * How:
+ * - start one measured sleeper and record the observed jiffy delta
+ * - wait for it with a timeout so the test fails cleanly if it never resumes
+ * - then launch three fixed-delay sleepers to exercise a few more wakeup times
+ */
 
 #include "../kernel/threads.h"
 #include "../kernel/pit.h"
@@ -15,11 +25,7 @@
 static int done = 0;
 static unsigned observed_sleep = 0;
 
-// Purpose: sleep and report the observed jiffy delta.
-// Inputs: arg is unused.
-// Preconditions: PIT initialized; kernel mode.
-// Postconditions: done is set and observed_sleep contains elapsed jiffies.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
+// Sleep once and record how many jiffies elapsed.
 static void sleeper_thread(void* arg) {
   (void)arg;
 
@@ -31,27 +37,25 @@ static void sleeper_thread(void* arg) {
   __atomic_store_n(&done, 1);
 }
 
+// Sleep for a short fixed delay and report completion.
 static void sleep_1(void* arg) {
   sleep(25);
   say("*** sleep_1 ok\n", NULL);
 }
 
+// Sleep for a medium fixed delay and report completion.
 static void sleep_2(void* arg) {
   sleep(50);
   say("*** sleep_2 ok\n", NULL);
 }
 
+// Sleep for the longest fixed delay and report completion.
 static void sleep_3(void* arg) {
   sleep(75);
   say("*** sleep_3 ok\n", NULL);
 }
 
-// Purpose: validate basic sleep semantics.
-// Inputs: none.
-// Outputs: prints pass/fail status; panics on failure.
-// Preconditions: kernel mode; scheduler initialized; PIT running.
-// Postconditions: sleeper thread resumes after at least SLEEP_JIFFIES ticks.
-// CPU state assumptions: kernel mode; interrupts enabled except where noted.
+// Run the measured sleeper first, then a few fixed-delay follow-up sleeps.
 void kernel_main(void) {
   say("***sleep test start\n", NULL);
 
@@ -61,6 +65,7 @@ void kernel_main(void) {
   fun->arg = NULL;
   thread(fun);
 
+  // Wait for the measured sleeper with a timeout.
   unsigned wait_start = current_jiffies;
   while (__atomic_load_n(&done) == 0) {
     unsigned elapsed = current_jiffies - wait_start;
@@ -72,12 +77,14 @@ void kernel_main(void) {
     yield();
   }
 
+  // The measured sleep must last at least the requested duration.
   if (observed_sleep < SLEEP_JIFFIES) {
     int args[2] = { (int)observed_sleep, SLEEP_JIFFIES };
     say("***sleep FAIL slept=%d expected_min=%d\n", args);
     panic("sleep test: resumed too early\n");
   }
 
+  // Launch a few more sleepers to exercise staggered wakeup ordering.
   struct Fun* sleep_1_fun = malloc(sizeof(struct Fun));
   struct Fun* sleep_2_fun = malloc(sizeof(struct Fun));
   struct Fun* sleep_3_fun = malloc(sizeof(struct Fun));

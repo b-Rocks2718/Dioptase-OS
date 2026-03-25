@@ -1,7 +1,19 @@
 /*
- * Covers concurrent same-directory renames of disjoint files.
- * Verifies each rename preserves inode identity and contents while several
- * threads mutate the same parent directory at the same time.
+ * ext2 concurrent rename test.
+ *
+ * Validates:
+ * - concurrent same-directory renames of disjoint files preserve inode identity
+ *   and file contents
+ * - parent-directory mutation stays consistent while several workers rename in
+ *   the same directory at once
+ *
+ * How:
+ * - load each worker fixture up front so the test records its expected inode
+ *   number and payload
+ * - start the workers behind one barrier and have them rename between two
+ *   alternate names for several rounds
+ * - verify that each worker ends with exactly one visible pathname pointing at
+ *   the original inode and contents
  */
 #include "../kernel/ext.h"
 #include "../kernel/print.h"
@@ -101,6 +113,7 @@ static void assert_name_pair(unsigned id, unsigned expected_inumber,
   }
 }
 
+// Repeatedly rename one worker-owned file between two alternate names.
 static void rename_worker(void* arg) {
   struct RenameWorkerArgs* args = (struct RenameWorkerArgs*)arg;
   struct Barrier* done = args->done;
@@ -148,6 +161,7 @@ static unsigned load_worker_fixture(unsigned id) {
   return inumber;
 }
 
+// Launch the worker race, then verify the final visible names and inode identity.
 int kernel_main(void) {
   say("***ext_rename_concurrent test start\n", NULL);
 
