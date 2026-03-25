@@ -2,20 +2,63 @@
   .align 4
   .text
 
+  # Permanantly halt this core
+  # in the emulator, and core running this will end the emulation
+  .global shutdown
+shutdown:
+  mode halt
+  ret
+
+  # Put this core to sleep until an interrupt wakes it up
+  # Ensure interrupts are enabled before sleeping, or the core may never wake up
+  .global mode_sleep
+mode_sleep:
+  mode sleep
+  ret
+
+  # return the core's id (0 - 3)
+  # read from the cores cr9 register, which is read-only
   .global get_core_id
 get_core_id:
   mov r1, cid
   ret
 
-  # cr0 holds the core's kernel state (0 => user mode, nonzero => kernel mode)
+  # return the core's cr0 value, which determines whether we're in user mode or kernel mode
+  # 0 = user mode, nonzero = kernel mode
+  # cr0 is a counter that is incremented on syscalls/exceptions/interrupts, and decremented when they exit
   .global get_cr0
 get_cr0:
   mov r1, cr0
   ret
+  
+  # Return the core's interrupt status register (cr2) value
+  .global get_isr
+get_isr:
+  mov r1, isr
+  ret
 
-  .global get_pc
-get_pc:
-  adpc r1, 0
+  # Return the current interrupt mask register (cr3) value
+  .global get_imr
+get_imr:
+  mov r1, imr
+  ret
+
+  # Return the exception program counter (cr4) value
+  .global get_epc
+get_epc:
+  mov r1, epc
+  ret
+
+  # Return the exception flags (cr6) value
+  .global get_efg
+get_efg:
+  mov r1, efg
+  ret
+
+  # Return the TLB miss address register (cr7) value
+  .global get_tlb_addr
+get_tlb_addr:
+  mov r1, tlb
   ret
 
   .global get_return_address
@@ -41,31 +84,6 @@ get_caller_return_address:
   lwa  r1, [r1]     # caller bp
   lwa  r1, [r1]     # caller's caller bp
   lwa  r1, [r1, 4]  # caller's caller ra
-  ret
-
-  .global get_isr
-get_isr:
-  mov r1, isr
-  ret
-
-  .global get_imr
-get_imr:
-  mov r1, imr
-  ret
-
-  .global get_epc
-get_epc:
-  mov r1, epc
-  ret
-
-  .global get_efg
-get_efg:
-  mov r1, efg
-  ret
-
-  .global get_tlb_addr
-get_tlb_addr:
-  mov r1, cr7
   ret
 
   .global __atomic_exchange_n
@@ -96,7 +114,7 @@ __atomic_store_n:
 
   .global wakeup_core
 wakeup_core:
-  # wake up other cores based on number in r1
+  # wake up other cores based on number in r1 by sending an IPI
   # puts success in r1
   cmp r1, 4
   bbe wakeup_core_error
@@ -125,17 +143,13 @@ wakeup_core_error:
   movi r1, 0xEEEE
   mode halt
 
-  .global shutdown
-shutdown:
-  mode halt
-  ret
-
-  .global mode_sleep
-mode_sleep:
-  mode sleep
-  ret
-
-  .global context_switch # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was)
+  # Perform a context switch from the current thread (me) to the next thread (next)
+  # Run func(arg) in the context of the next thread before switching to it
+  # Needs pointer to current_thread entry of the core's PerCore struct
+  # Assumes interrupts are disabled when this is called, and will re-enable them in the new thread's context
+  
+  # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was)
+  .global context_switch
 context_switch:
   mov  imr, r0 # temporarily disable interrupts
 
@@ -162,7 +176,7 @@ context_switch:
   mov  r9, psr
   swa  r9,  [r1, 128]
 
-  # TCB offset 132 stores per-thread IMR state (see kernel thread-state ABI).
+  # TCB offset 132 stores per-thread IMR state
   # The caller passes the outgoing thread's pre-switch IMR in r6 ("was").
   # We must save that value, not the live IMR register, because IMR was
   # already cleared above to keep the switch atomic.

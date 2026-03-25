@@ -3,11 +3,13 @@
 
 #include "constants.h"
 
+// function and argument for a thread to run
 struct Fun {
   void (*func)(void *);
   void *arg;
 };
 
+// The core a thread is pinned to, if any
 enum CoreAffinity {
   CORE_0 = 0,
   CORE_1 = 1,
@@ -18,12 +20,15 @@ enum CoreAffinity {
 
 #define PRIORITY_LEVELS 3
 
+// priority levels for threads, used for scheduling decisions
 enum ThreadPriority {
   LOW_PRIORITY = 0,
   NORMAL_PRIORITY = 1,
   HIGH_PRIORITY = 2,
 };
 
+// Thread Control Block
+// One per thread, stores all info about the thread including its context for switching
 struct TCB {
 
   unsigned r1; // offset 0

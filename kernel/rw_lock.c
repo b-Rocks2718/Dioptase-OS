@@ -16,6 +16,7 @@ void rw_lock_init(struct RwLock* rwlock){
   rwlock->writer_active = false;
 }
 
+// block() callback for readers: either claim a read slot or enqueue
 static void rw_add_reader(void* arg){
   int** args = (int**)arg;
   struct RwLock* rwlock = (struct RwLock*)args[0];
@@ -60,6 +61,7 @@ void rw_lock_release_read(struct RwLock* rwlock){
 
   rwlock->readers--;
 
+  // check if there's no waiting readers and there are waiting writers
   if (rwlock->readers == 0 && rwlock->waiting_writers.size > 0){
     // Wake up one waiting writer
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
@@ -71,6 +73,7 @@ void rw_lock_release_read(struct RwLock* rwlock){
   }
 }
 
+// block() callback for writers: either claim write ownership or enqueue
 static void rw_add_writer(void* arg){
   int** args = (int**)arg;
   struct RwLock* rwlock = (struct RwLock*)args[0];
@@ -78,11 +81,14 @@ static void rw_add_writer(void* arg){
 
   spin_lock_acquire(&rwlock->lock);
 
+  // check if nobody else has the lock
   if (!rwlock->writer_active && rwlock->readers == 0){
+    // take the lock
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
     global_queue_add(tcb);
   } else {
+    // wait in the writers queue
     queue_add(&rwlock->waiting_writers, tcb);
     spin_lock_release(&rwlock->lock);
   }

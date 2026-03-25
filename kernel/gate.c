@@ -1,6 +1,7 @@
 #include "gate.h"
 #include "heap.h"
 
+// initialize lock, condition variable, and signaled state
 void gate_init(struct Gate* gate) {
   gate->signaled = false;
   blocking_lock_init(&gate->lock);
@@ -31,10 +32,14 @@ void gate_reset(struct Gate *gate) {
   blocking_lock_release(&gate->lock);
 }
 
+// Free the resources associated with the gate, but do not free the gate itself
+// waiting threads will be reaped
 void gate_destroy(struct Gate* gate) {
   cond_var_destroy(&gate->cv);
 }
 
+// Free the resources associated with the gate and the gate itself
+// waiting threads will be reaped
 void gate_free(struct Gate* gate) {
   gate_destroy(gate);
   free(gate);

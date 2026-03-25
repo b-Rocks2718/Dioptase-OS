@@ -13,17 +13,18 @@ Supported Sync Primatives:
 - enable/disable interrupts
 - enable/disable preemption
 - core pinning
-- spinlock
+- spinlock (disables interrupts on acquire, restores on release)
+- preemption spinlock (disables preemption on acquire, restores on release)
 - blocking lock
 - semaphore
 - promise
 - bounded buffer
 - blocking queue
 - rwlock
-- shared pointers
 - barrier
 - gate (implements wait(), signal(), and reset(); signal unblocks waiters, and calls to wait() after signal will not block)
 - event (like gate, except it does not remain open after call to signal(). Therefore does not need a reset() method)
+- shared pointers
 
 ## Heap
 Global heap shared by all cores, free blocks kept in doubly linked list  

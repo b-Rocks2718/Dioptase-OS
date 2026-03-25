@@ -12,6 +12,9 @@ void sem_init(struct Semaphore* sem, int initial_count){
   queue_init(&sem->wait_queue);
 }
 
+// callback for when sem_down blocks
+// adds the current thread to the semaphore wait queue,
+// or if the count is > 0, just decrements the count and adds the thread to the ready queue
 static void sem_add(void* arg){
   int** args = (int**)arg;
   struct Semaphore* sem = (struct Semaphore*)args[0];
@@ -30,6 +33,8 @@ static void sem_add(void* arg){
 }
 
 void sem_down(struct Semaphore* sem){
+  // if the count is > 0, decrement it and return, 
+  // otherwise block until another thread calls sem_up
   spin_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
@@ -49,6 +54,7 @@ void sem_down(struct Semaphore* sem){
 }
 
 void sem_up(struct Semaphore* sem){
+  // try to wake up a waiting thread, if there are none, increment the count
   spin_lock_acquire(&sem->lock);
 
   struct TCB* wakeup = queue_remove(&sem->wait_queue);
@@ -62,6 +68,7 @@ void sem_up(struct Semaphore* sem){
   }
 }
 
+// add all threads waiting on the semaphore to the reaper queue
 void sem_destroy(struct Semaphore* sem) {
   spin_lock_acquire(&sem->lock);
 

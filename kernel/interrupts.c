@@ -2,21 +2,9 @@
 #include "print.h"
 #include "machine.h"
 
-// Purpose: perform per-core interrupt setup.
-// Inputs: none.
-// Outputs: none.
-// Preconditions: kernel mode; core ID register is readable.
-// Postconditions: interrupt subsystem is ready for ISR entry.
-// Invariants: PIT handler saves state on the interrupted stack (no ISA register).
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled.
-void interrupts_init(void){
-  (void)get_core_id();
-}
-
+// report unexpected interrupt/exception state and halt
+// filled into all unused IVT entries to catch spurious interrupts and exceptions
 void spurious_interrupt_handler(void){
-  // Purpose: report unexpected interrupt/exception state and halt.
-  // Inputs: none (entered via spurious IVT entry).
-  // Outputs: diagnostic prints; does not return.
   int me = get_core_id();
   unsigned isr = get_isr();
   unsigned imr = get_imr();

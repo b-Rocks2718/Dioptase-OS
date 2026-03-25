@@ -3,19 +3,16 @@
 
 #include "constants.h"
 
-// returns current isr value
-extern unsigned clear_isr(void);
+// disables interrupts and returns previous imr value
+extern unsigned interrupts_disable(void);
 
 // restores imr to prev, returns value that was in imr
 extern unsigned interrupts_restore(unsigned prev);
 
-// returns current imr value
-extern unsigned interrupts_disable(void);
-
-extern void register_spurious_handlers(void);
-
+// register the given handler function for the given IVT entry
 void register_handler(void* func, void* ivt_entry);
 
-void interrupts_init(void);
+// register spurious_interrupt_handler for all IVT entries to catch unexpected interrupts and exceptions
+extern void register_spurious_handlers(void);
 
 #endif // INTERRUPTS_H

@@ -1,5 +1,6 @@
   
-  # indices into tile map
+  # indices into tile map for pixels we need to turn on to draw the character
+  # list is NUL-terminated
   .align 4
   .data
   .global text_tiles

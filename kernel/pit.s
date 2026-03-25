@@ -1,6 +1,7 @@
   .align 4
   .text
 
+  # Mark the current PIT interrupt as handled, allowing the PIT to send more interrupts
   .global mark_pit_handled
 mark_pit_handled:
   mov r1, isr
@@ -11,11 +12,9 @@ mark_pit_handled:
 
   .global pit_handler_
 pit_handler_:
-  # Purpose: ISR wrapper for PIT that preserves interrupted CPU state.
-  # Preconditions: IMR top bit already cleared by HW so nested interrupts are
-  # disabled on entry; stack pointer (r31/ksp) is 4-byte aligned per ABI.
-  # Postconditions: ISR status bit cleared by callee; IMR top bit re-enabled by rfi.
-  # Invariants: save area stays on the interrupted thread's stack until it resumes.
+  # ISR wrapper for PIT that preserves interrupted CPU state.
+  # Interrupts have been disabled by hardware, will be re-enabled by rfi
+  # ISR status bit must be cleared by pit_handler
 
   # Save caller-saved registers.
   push  r1

@@ -5,9 +5,14 @@
 #include "debug.h"
 #include "vga.h"
 
-struct SpinLock print_lock = { 0 };
+struct PreemptSpinLock print_lock = { 0 };
 
 char* UART_PADDR = (char*)0x7FE5802;
+
+#define DECIMAL_BASE 10u
+#define HEX_BASE 16u
+#define MAX_INT_DEC_DIGITS 10      // ABI: int is 4 bytes, so the largest decimal magnitude has 10 digits.
+#define MAX_UNSIGNED_HEX_DIGITS 8  // ABI: unsigned is 4 bytes, so hexadecimal output needs at most 8 digits.
 
 int text_color = 0xFF; // Note: access only when holding print_lock
 
@@ -15,17 +20,23 @@ static int vga_index = 0;
 bool scrolling = false;
 static bool was_newline = false;
 
+// print a single character to the console
 void putchar(char c){
   putchar_color(c, text_color);
 }
 
+// print a character with a specific color
+// color is in the format 0bRRRGGGBB
+// scrolls the screen if we run out of room
 void putchar_color(char c, int color){
   if (CONFIG.use_vga){
 
     if (was_newline && scrolling){
+      // clear the new line we're about to write on if we just scrolled
       for (int i = 0; i < TILE_ROW_WIDTH; ++i){
         TILE_FB[vga_index + i] = 0;
       }
+      // scroll up by one line
       *TILE_VSCROLL = *TILE_VSCROLL - 8;
       was_newline = false;
     }
@@ -41,10 +52,12 @@ void putchar_color(char c, int color){
     }
 
     if (vga_index >= FB_NUM_TILES) {
+      // screen is full, scroll up by one line
       vga_index -= FB_NUM_TILES;
       scrolling = true;
     }
   } else {
+    // just write to UART, ignoring color
     *UART_PADDR = c;
   }
 }
@@ -53,6 +66,7 @@ bool isnum(char c){
   return ('0' <= c && c <= '9');
 }
 
+// print a string
 unsigned puts(char* str){
   unsigned count = 0;
   while (*str != '\0'){
@@ -63,25 +77,37 @@ unsigned puts(char* str){
   return count;
 }
 
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// acquires print_lock for serialized output
 unsigned say(char* fmt, void* arr){
-  spin_lock_acquire(&print_lock);
+  preempt_spin_lock_acquire(&print_lock);
   unsigned count = printf(fmt, arr);
-  spin_lock_release(&print_lock);
+  preempt_spin_lock_release(&print_lock);
   return count;
 }
 
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// acquires print_lock for serialized output and allows specifying text color
 unsigned say_color(char* fmt, void* arr, int color){
-  spin_lock_acquire(&print_lock);
+  preempt_spin_lock_acquire(&print_lock);
   int old_color = text_color;
   text_color = color;
   unsigned count = printf(fmt, arr);
   text_color = old_color;
-  spin_lock_release(&print_lock);
+  preempt_spin_lock_release(&print_lock);
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X
-// accepts an array instead of variadic arguments
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// does not acquire print_lock, 
+// so output can be interleaved if other threads are printing
+// to avoid this, call say() instead of printf()
 unsigned printf(char* fmt, void* arr){
   unsigned count = 0;
   unsigned i = 0;
@@ -120,85 +146,112 @@ unsigned printf(char* fmt, void* arr){
   return count;
 }
 
+// print the number n to the console as a signed decimal
+// returns the number of characters printed
 unsigned print_signed(int n){
+  char digits[MAX_INT_DEC_DIGITS];
+  unsigned magnitude;
+  unsigned len = 0;
+  unsigned count;
+
   if(n == 0){
     putchar('0');
     return 1;
   }
+
   if(n < 0){
     putchar('-');
-    n = -n;
-  }
-
-  unsigned d = n % 10;
-  n = n / 10;
-  
-  unsigned count = 1;
-
-  if (n != 0){
-    count += print_signed(n);
-  } 
-  putchar('0' + d);
-  
-  // return number of characters printed
-  return count;
-}
-
-unsigned print_unsigned(unsigned n){
-  if(n == 0){
-    putchar('0');
-    return 1;
-  }
-
-  unsigned d = n % 10;
-  n = n / 10;
-  
-  unsigned count = 1;
-
-  if (n != 0){
-    count += print_unsigned(n);
-  } 
-  putchar('0' + d);
-  
-  // return number of characters printed
-  return count;
-}
-
-unsigned print_hex(unsigned n, bool uppercase){
-  if(n == 0){
-    putchar('0');
-    return 1;
-  }
-
-  unsigned d = n % 16;
-  n = n / 16;
-  
-  unsigned count = 1;
-
-  if (n != 0){
-    count += print_hex(n, uppercase);
-  } 
-  if (d < 10){
-    putchar('0' + d);
+    magnitude = 0u - (unsigned)n;
   } else {
-    putchar((uppercase ? 'A' : 'a') + (d - 10));
+    magnitude = (unsigned)n;
+  }
+
+  while (magnitude != 0){
+    digits[len++] = (char)('0' + (magnitude % DECIMAL_BASE));
+    magnitude /= DECIMAL_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar(digits[--len]);
+  }
+  
+  // return number of characters printed
+  return (n < 0) ? (count + 1) : count;
+}
+
+// print the number n to the console as an unsigned decimal
+// returns the number of characters printed
+unsigned print_unsigned(unsigned n){
+  char digits[MAX_INT_DEC_DIGITS];
+  unsigned len = 0;
+  unsigned count;
+
+  if(n == 0){
+    putchar('0');
+    return 1;
+  }
+
+  while (n != 0){
+    digits[len++] = (char)('0' + (n % DECIMAL_BASE));
+    n /= DECIMAL_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar(digits[--len]);
   }
   
   // return number of characters printed
   return count;
 }
 
+// print the number n to the console as a hexadecimal
+// returns the number of characters printed
+unsigned print_hex(unsigned n, bool uppercase){
+  char digits[MAX_UNSIGNED_HEX_DIGITS];
+  unsigned len = 0;
+  unsigned count;
+
+  if(n == 0){
+    putchar('0');
+    return 1;
+  }
+
+  while (n != 0){
+    unsigned digit = n % HEX_BASE;
+
+    if (digit < DECIMAL_BASE){
+      digits[len++] = (char)('0' + digit);
+    } else {
+      digits[len++] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
+    }
+
+    n /= HEX_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar(digits[--len]);
+  }
+  
+  // return number of characters printed
+  return count;
+}
+
+// load text mode tiles and initialize VGA text mode
 void vga_text_init(void){
   if (CONFIG.use_vga){
-    load_text_tiles();
+    load_text_tiles(); // text tileset is included in kernel image
 
     *TILE_SCALE = 0;
     *TILE_VSCROLL = 0;
   }
 }
 
+// clear the screen of all text characters and reset scroll/cursor state
 void clear_screen(void){
-  spin_lock_acquire(&print_lock);
+  preempt_spin_lock_acquire(&print_lock);
 
   vga_index = 0;
   scrolling = false;
@@ -208,11 +261,12 @@ void clear_screen(void){
     TILE_FB[i] = 0;
   }
 
-  spin_lock_release(&print_lock);
+  preempt_spin_lock_release(&print_lock);
 }
 
-// text_tiles is a list of addresses that we need to store 0xC000 at
+// set the current tileset to the text mode tileset and clear the screen
 void load_text_tiles(void){
+  // text_tiles is a list of addresses that we need to store 0xC000 at
   for (int i = 0; i < TILEMAP_PIXELS; ++i){
     TILEMAP[i] = 0;
   }
@@ -232,9 +286,11 @@ void load_text_tiles(void){
     TILEMAP[16320 + i] = 0xF000;
   }
 }
-
-// text_tiles is a list of addresses that we need to store 0xC000 at
+ 
+// set the current tileset to the text mode tileset with the given text and background colors, 
+// then clear the screen
 void load_text_tiles_colored(short text_color, short bg_color){
+  // text_tiles is a list of addresses that we need to store text_color at
   for (int i = 0; i < TILEMAP_PIXELS; ++i){
     TILEMAP[i] = bg_color;
   }

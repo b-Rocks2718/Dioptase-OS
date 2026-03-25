@@ -1,18 +1,21 @@
-
-# Physmem address range: 0x00000 - 0x3FFFF
+  # BIOS reset stub
+  # Reset PC is at physical address 0x400.
+  # Current BIOS startup assumes only the boot core executes this path before
+  # the kernel wakes any secondary cores
 
 .define BIOS_STACK_TOP, 0x10000
 
-# bios entry point
+  # BIOS entry point
   .origin 0x400
+  .text
   .global _start
 _start:
-
-  # initialize bios stack
-  mov  r1, cid # get core id
+  # Initialize the temporary BIOS stack. The stack grows downward from low
+  # physical memory and is only used until bios_entry hands off to the kernel.
   movi sp, BIOS_STACK_TOP
 
+  # Switch to the C BIOS once a stack is available.
   call bios_entry
 
+  # bios_entry only returns after a fatal boot error.
   mode halt
-  

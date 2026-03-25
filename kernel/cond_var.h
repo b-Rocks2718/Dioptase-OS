@@ -28,8 +28,10 @@ struct CondVar {
   unsigned waiters;
 };
 
+// initialize an empty condition variable
 void cond_var_init(struct CondVar* cv);
 
+// release external_lock, block, and re-acquire it before returning
 void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock);
 
 // wake exactly one waiter, if any.
@@ -38,8 +40,10 @@ void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock);
 // wake all current waiters.
 void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock);
 
+// destroy the condition variable and reap any waiters
 void cond_var_destroy(struct CondVar* cv);
 
+// destroy the condition variable and free its memory
 void cond_var_free(struct CondVar* cv);
 
 #endif // COND_VAR_H

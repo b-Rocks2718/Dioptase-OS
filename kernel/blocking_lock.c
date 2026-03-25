@@ -4,13 +4,19 @@
 #include "debug.h"
 #include "threads.h"
 
-// port of Gheith kernel implementation
+/*
+  Lock implementation is a semaphore(1),
+  plus disabling/restoring preemption on acquire/release
+*/
 
+// initialize lock in unlocked state
 void blocking_lock_init(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock init: lock is NULL.\n");
   sem_init(&lock->semaphore, 1);
 }
 
+// block until lock is acquired
+// acquiring a blocking lock disables preemption
 void blocking_lock_acquire(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock acquire: lock is NULL.\n");
   bool was_preempt = preemption_disable();
@@ -21,6 +27,7 @@ void blocking_lock_acquire(struct BlockingLock* lock){
   lock->is_held = true;
 }
 
+// release lock and restore preemption state
 void blocking_lock_release(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock release: lock is NULL.\n");
   assert(lock->is_held, "blocking lock release: lock is not currently held.\n");
@@ -33,11 +40,15 @@ void blocking_lock_release(struct BlockingLock* lock){
   preemption_restore(was_preempt);
 }
 
+// destroy lock and free any resources it holds, but not the lock itself
+// waiting threads will be reaped
 void blocking_lock_destroy(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock destroy: lock is NULL.\n");
   sem_destroy(&lock->semaphore);
 }
 
+// free lock and its resources
+// waiting threads will be reaped
 void blocking_lock_free(struct BlockingLock* lock){
   blocking_lock_destroy(lock);
   free(lock);

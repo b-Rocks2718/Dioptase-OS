@@ -5,28 +5,51 @@
 #include "TCB.h"
 #include "queue.h"
 
-// Be super careful using these!!!
-// Weird behavior will happen if preemption occurs
-// during a call to these functions
-
-struct TCB;
-
+// Stores all core-local data
 struct PerCore {
-  struct TCB idle_thread;
-  struct TCB* current_thread;
-  struct Queue ready_queue;
-  struct SpinQueue pinned_queue;
-  struct SleepQueue sleep_queue;
+  struct TCB idle_thread; // TCB for the idle thread on this core
+  struct TCB* current_thread; // TCB for the currently running thread on this core
+  struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
+  struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
+  struct Queue ready_queue; // queue of threads ready to run on this core
+  struct SpinQueue pinned_queue; // queue of threads pinned to this core
+  struct SleepQueue sleep_queue; // queue of threads sleeping on this core
 };
 
 extern struct PerCore per_core_data[MAX_CORES];
 
+// return a pointer to the PerCore struct for the current core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
 struct PerCore* get_per_core(void);
 
-struct TCB* get_current_tcb();
-
+// return a pointer to the TCB for the idle thread on this core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
 struct TCB* get_idle_tcb();
 
+// return a pointer to the TCB for the currently running thread on this core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+struct TCB* get_current_tcb();
+
+// return a pointer to the thread waiting for SD drive 0 on this core, 
+// or NULL if no thread is waiting
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+struct TCB* get_sd_wait_thread_0();
+
+// return a pointer to the thread waiting for SD drive 1 on this core, 
+// or NULL if no thread is waiting
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+struct TCB* get_sd_wait_thread_1();
+
+// return a pointer to the ready queue for this core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
 struct Queue* get_ready_queue();
+
+// return a pointer to the pinned queue for this core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+struct SpinQueue* get_pinned_queue();
+
+// return a pointer to the sleep queue for this core
+// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+struct SleepQueue* get_sleep_queue();
 
 #endif // PER_CORE_H

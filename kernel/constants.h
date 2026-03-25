@@ -1,6 +1,8 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
+// common constants used throughout the kernel
+
 #define NULL 0
 
 #define bool int

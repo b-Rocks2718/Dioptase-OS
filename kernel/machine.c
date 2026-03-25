@@ -1,8 +1,8 @@
 #include "machine.h"
 #include "pit.h"
 
+// Put this core to sleep if it is safe to do so, otherwise just return
 void pause(void){
-  // sleep if it is safe to do so
   unsigned imr = get_imr();
 
   // ASSUMPTION: if an interrupt happens here, it correctly restores imr

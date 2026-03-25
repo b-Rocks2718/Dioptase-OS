@@ -7,6 +7,7 @@
 
 // port of Gheith kernel implementation
 
+// initialize a new control block around ptr
 void refcount_init(struct RefCount* refcount, void* ptr, void (*destructor)(void*)){
   assert(refcount != NULL, "refcount_init: refcount is NULL");
   assert(ptr != NULL, "refcount_init: ptr is NULL");
@@ -29,6 +30,8 @@ struct RefCount* refcount_add_strong(struct RefCount* refcount){
   return refcount;
 }
 
+// drop a strong reference; the pointee dies at 0 strong refs,
+// and the control block dies once both counts reach 0
 struct RefCount* refcount_drop_strong(struct RefCount* refcount){
   if (refcount != NULL) {
     spin_lock_acquire(&refcount->lock);
@@ -97,6 +100,7 @@ struct RefCount* refcount_drop_weak(struct RefCount* refcount){
   return refcount;
 }
 
+// only weak references remain, so promotion succeeds only while a strong owner still exists
 struct RefCount* refcount_promote_strong(struct RefCount* refcount){
   if (refcount != NULL) {
     spin_lock_acquire(&refcount->lock);
@@ -114,6 +118,7 @@ struct RefCount* refcount_promote_strong(struct RefCount* refcount){
 }
 
 
+// NULL raw pointers become empty StrongPtrs instead of allocating a control block
 void strongptr_init(struct StrongPtr* sptr, void* ptr, void (*destructor)(void*)){
   if (ptr == NULL) {
     sptr->refcount = NULL;

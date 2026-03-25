@@ -12,6 +12,7 @@ void hash_map_init(struct HashMap* hmap, unsigned num_buckets){
   hmap->arr = arr;
 }
 
+// allocate one detached bucket-chain entry
 static struct HashEntry* create_hash_entry(unsigned key, void* value){
   struct HashEntry* entry = malloc(sizeof(struct HashEntry));
 
@@ -22,6 +23,7 @@ static struct HashEntry* create_hash_entry(unsigned key, void* value){
   return entry;
 }
 
+// walk one collision chain, updating the existing key or appending a new tail
 static void* hash_entry_insert(struct HashEntry* entry, unsigned key, void* value){
   while (true){
     if (entry->key == key){
@@ -50,6 +52,7 @@ void* hash_map_insert(struct HashMap* hmap, unsigned key, void* value){
   }
 }
 
+// walk one collision chain without overwriting an existing mapping
 void* hash_entry_try_insert(struct HashEntry* entry, unsigned key, void* value){
   while (true){
     if (entry->key == key){
@@ -120,6 +123,7 @@ bool hash_map_contains(struct HashMap* hmap, unsigned key){
   }
 }
 
+// remove one key from a bucket chain by relinking through the previous next pointer
 static void* hash_entry_remove(struct HashEntry** head, unsigned key){
   while (*head != NULL){
     struct HashEntry* entry = *head;
@@ -147,6 +151,7 @@ void* hash_map_remove(struct HashMap* hmap, unsigned key){
   }
 }
 
+// free an entire collision chain
 static void hash_entry_free(struct HashEntry* entry){
   while (entry != NULL){
     struct HashEntry* next = entry->next;

@@ -39,15 +39,17 @@ struct InodeCache {
   struct BlockingLock lock;
 };
 
+// small write-through cache for ext2 logical blocks
 struct BlockCache {
   struct Ext2* fs;
-  unsigned tags[BCACHE_SIZE];
-  unsigned char ages[BCACHE_SIZE];
+  unsigned tags[BCACHE_SIZE]; // cached logical block numbers, or UINT_MAX when empty
+  unsigned char ages[BCACHE_SIZE]; // pseudo-LRU ages; 0 is most recently used
   char block_cache[BCACHE_SIZE_BYTES];
   struct BlockingLock lock;
   unsigned block_size;
 };
 
+// one wrapper around a cached inode plus traversal context
 struct Node {
   struct CachedInode* cached;
 
@@ -60,6 +62,7 @@ struct Node {
   struct Ext2* filesystem;
 };
 
+// the main ext2 filesystem struct, containing the superblock, block group descriptors, and caches
 struct Ext2 {
   struct Superblock superblock;
   struct InodeCache icache;
@@ -108,6 +111,8 @@ void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path);
 
 struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* path);
 
+// replace the current symlink component with its target path and choose the
+// correct restart directory for relative vs absolute targets
 struct Node* ext2_expand_symlink(struct Ext2* fs, struct Node* parent, struct Node* dir, struct RingBuf* path);
 
 
@@ -115,6 +120,7 @@ struct Node* ext2_expand_symlink(struct Ext2* fs, struct Node* parent, struct No
 // that reference one inode and are released by reference count.
 void icache_init(struct InodeCache* cache);
 
+// return a shared cached inode, reading it from disk on the first miss
 struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber);
 
 // Inserts a newly created inode into the cache
@@ -128,8 +134,10 @@ void icache_set(struct InodeCache* cache, struct CachedInode* inode);
 // Note that the caller is responsible for writing back dirty cache entries before releasing them
 void icache_release(struct InodeCache* cache, struct CachedInode* inode);
 
+// destroy the inode cache and release its internal storage
 void icache_destroy(struct InodeCache* cache);
 
+// destroy the inode cache and free the cache struct
 void icache_free(struct InodeCache* cache);
 
 
@@ -137,8 +145,10 @@ void icache_free(struct InodeCache* cache);
 // ext2 logical block number.
 void bcache_init(struct BlockCache* cache, unsigned block_size);
 
+// read one cached logical block into dest
 void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest);
 
+// write one logical block range through the cache and out to disk
 void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigned offset, unsigned size);
 
 
@@ -176,14 +186,19 @@ void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned
 // requested write size on success.
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src);
 
+// return the ext2 inode type bits
 unsigned short node_get_type(struct Node* node);
 
+// report whether the inode is a directory
 bool node_is_dir(struct Node* node);
 
+// print each live directory entry name on its own line
 void node_print_dir(struct Node* node);
 
+// report whether the inode is a regular file
 bool node_is_file(struct Node* node);
 
+// report whether the inode is a symbolic link
 bool node_is_symlink(struct Node* node);
 
 // Creates one regular file entry inside `dir`. `dir` must be a directory, and

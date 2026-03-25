@@ -7,11 +7,6 @@
 // Reader-Writer Lock
 // Allows multiple readers or one writer at a time.
 // Write-preferring implementation: readers block if any writer is waiting.
-// Invariants:
-// - readers > 0 implies writer_active == false.
-// - writer_active == true implies readers == 0 and either a writer holds
-//   the lock or has been granted it and is about to run.
-// On destruction, all waiting threads are reaped
 struct RwLock {
   struct SpinLock lock;
   struct Queue waiting_readers;
@@ -20,18 +15,25 @@ struct RwLock {
   bool writer_active;
 };
 
+// initialize an empty write-preferring reader-writer lock
 void rw_lock_init(struct RwLock* rwlock);
 
+// acquire shared access; blocks behind active or queued writers
 void rw_lock_acquire_read(struct RwLock* rwlock);
 
+// release shared access
 void rw_lock_release_read(struct RwLock* rwlock);
 
+// acquire exclusive access
 void rw_lock_acquire_write(struct RwLock* rwlock);
 
+// release exclusive access and hand off to queued writers or readers
 void rw_lock_release_write(struct RwLock* rwlock);
 
+// destroy the lock and reap queued readers and writers
 void rw_lock_destroy(struct RwLock* rwlock);
 
+// destroy the lock and free its memory
 void rw_lock_free(struct RwLock* rwlock);
 
 #endif // RW_LOCK_H

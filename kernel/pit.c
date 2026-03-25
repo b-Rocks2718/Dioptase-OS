@@ -9,20 +9,15 @@
 #include "debug.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
-static unsigned CLOCK_FREQ = 100000000; // 100MHz clock
+static unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
 static void* PIT_IVT_ENTRY = (void*)0x3C0;
 
+// number of jiffies since boot; incremented by PIT handler on each timer interrupt
 unsigned current_jiffies = 0;
 
-// Purpose: handle PIT interrupts and perform preemptive scheduling.
-// Inputs: save_area points to the interrupted thread's stack save area.
-// Outputs: returns the TCB to resume; does not return if the core halts.
-// Preconditions: kernel mode; interrupts disabled on entry; save_area valid.
-// Postconditions: current thread state saved to TCB; ready queue updated.
-// Invariants: save_area layout matches pit.s; per-core current_thread stable
-// across the handler except when block() switches contexts.
+// Handle PIT interrupts and perform preemptive scheduling
 void pit_handler(void){
-  mark_pit_handled();
+  mark_pit_handled(); // clear ISR bit so we don't get duplicate interrupts
 
   int me = get_core_id();
 
@@ -30,6 +25,7 @@ void pit_handler(void){
   assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   if (me == 0){
+    // core 0 is responsible for incrementing jiffies
     current_jiffies++;
   }
 
@@ -39,6 +35,8 @@ void pit_handler(void){
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
   if (tcb != &per_core->idle_thread && tcb->can_preempt){
+    // if we aren't idle and can be preempted, 
+    // block and add ourselves back to the core-local ready queue 
     unsigned was = get_imr();
     block(was, local_queue_add, tcb);
   }
@@ -52,11 +50,12 @@ void pit_handler(void){
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
 }
 
+// Initialize the PIT to generate interrupts at the specified frequency in hertz
 void pit_init(unsigned hertz){
   // register pit handler
   register_handler(pit_handler_, PIT_IVT_ENTRY);
 
   // configure pit device
-  unsigned cycles_per_tick = CLOCK_FREQ / hertz;
+  unsigned cycles_per_tick = PIT_CLOCK_FREQ / hertz;
   *PIT_ADDR = cycles_per_tick;
 }

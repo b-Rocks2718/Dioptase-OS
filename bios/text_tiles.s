@@ -1,5 +1,5 @@
-  
-  # indices into tile map
+  # indices into tile map for pixels we need to turn on to draw the character
+  # list is NUL-terminated so load_text_tiles() can stop at the final sentinel
   .align 4
   .data
   .global text_tiles

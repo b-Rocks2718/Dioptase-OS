@@ -2,6 +2,8 @@
 
 #include "constants.h"
 
+// MMIO addresses for VGA text mode
+
 short* TILEMAP = (short*)0x7FE8000;
 short* TILE_FB = (short*)0x7FBD000;
 short* TILE_VSCROLL = (short*)0x7FE5B42;
@@ -10,6 +12,7 @@ char* PIXEL_SCALE = (char*)0x7FE5B54;
 
 short* PIXEL_FB = (short*)0x7FC0000;
 
+// write a transparent tile to every tile in the framebuffer
 void make_tiles_transparent(void){
   for (int i = 0; i < FB_NUM_TILES; ++i){
     TILE_FB[i] = TRANSPARENT;

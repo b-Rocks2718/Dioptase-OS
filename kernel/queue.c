@@ -148,8 +148,8 @@ void sleep_queue_init(struct SleepQueue* queue){
   queue->size = 0;
 }
 
-// Adds a TCB to the sleep queue.
-// sort by wakeup_jiffies
+// block() uses this callback shape, so args packs { queue, tcb }.
+// Insert in wakeup order and keep equal deadlines in FIFO order.
 void sleep_queue_add(void* args){
   int* args_array = (int*)args;
   struct SleepQueue* queue = (struct SleepQueue*)args_array[0];
@@ -186,8 +186,7 @@ void sleep_queue_add(void* args){
   __atomic_fetch_add(&queue->size, 1);
 }
 
-// return first TCB if its wakeup_jiffies <= current jiffies
-// else return NULL
+// The list is sorted, so only the head can be ready to wake.
 struct TCB* sleep_queue_remove(struct SleepQueue* queue){
 
   if (queue->head == NULL){
@@ -339,6 +338,7 @@ unsigned generic_spin_queue_size(struct GenericSpinQueue* queue){
 }
 
 
+// The ring buffer leaves one slot empty so head == tail means empty.
 void ringbuf_init(struct RingBuf* rb, unsigned capacity){
   rb->buf = malloc(capacity * sizeof(void*));
   rb->capacity = capacity;
@@ -346,6 +346,7 @@ void ringbuf_init(struct RingBuf* rb, unsigned capacity){
   rb->tail = 0;
 }
 
+// Front pushes advance head.
 bool ringbuf_add_front(struct RingBuf* rb, void* p){
   if ((rb->head + 1) % rb->capacity == rb->tail){
     // full
@@ -357,6 +358,7 @@ bool ringbuf_add_front(struct RingBuf* rb, void* p){
   return true;
 }
 
+// Back pushes retreat tail.
 bool ringbuf_add_back(struct RingBuf* rb, void* p){
   if ((rb->head + 1) % rb->capacity == rb->tail){
     // full
@@ -368,6 +370,7 @@ bool ringbuf_add_back(struct RingBuf* rb, void* p){
   return true;
 }
 
+// Front pops retreat head.
 void* ringbuf_remove_front(struct RingBuf* rb){
   if (rb->head == rb->tail){
     // empty
@@ -378,6 +381,7 @@ void* ringbuf_remove_front(struct RingBuf* rb){
   return rb->buf[rb->head];
 }
 
+// Back pops advance tail.
 void* ringbuf_remove_back(struct RingBuf* rb){
   if (rb->head == rb->tail){
     // empty

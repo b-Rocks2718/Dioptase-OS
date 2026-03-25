@@ -17,11 +17,11 @@ extern void kernel_main(void);
 
 int start_barrier = 0;
 
+// BIOS switches to init.s, which wakes up all cores and then calls kernel_entry on each core
+// Here we do core-local initialization and then have the final core run kernel_main
 void kernel_entry(void){
 
   int me = get_core_id();
-
-  // get number of cores from config
   int num_cores = CONFIG.num_cores;
 
   static int awake_cores = 0;
@@ -65,9 +65,6 @@ void kernel_entry(void){
   } else {
     say("| Core %d starting up...\n", &me);
   }
-
-  say("| Core %d initializing interrupts...\n", &me);
-  interrupts_init();
 
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();

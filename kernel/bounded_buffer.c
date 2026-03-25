@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "machine.h"
 
+// initialize queue state plus the slot/item semaphores
 void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
   generic_spin_queue_init(&b->queue);
   sem_init(&b->add_sem, capacity);
@@ -10,6 +11,7 @@ void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
   b->capacity = capacity;
 }
 
+// block for space, then enqueue one element
 void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* element) {
   assert(element != NULL, "Cannot add NULL element to blocking queue.\n");
   bool added = false;
@@ -39,6 +41,7 @@ void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* ele
   sem_up(&b->remove_sem);
 }
 
+// block for an available item, then dequeue one element
 struct GenericQueueElement* bounded_buffer_remove(struct BoundedBuffer* b) {
   struct GenericQueueElement* element = NULL;
   while (element == NULL) {

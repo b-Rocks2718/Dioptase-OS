@@ -20,36 +20,60 @@
 extern struct SpinQueue global_ready_queue;
 extern struct SpinQueue reaper_queue;
 
-// should only be called once on one core
+// true until the first thread is created, 
+// after which we consider the system to be done with bootstrapping and fully operational
+extern bool bootstrapping;
+
+// initialize scheduler structures; should only be called once on one core
 void threads_init(void);
 
+// Switch away from the current thread and run a completion callback
+// Inputs: was is the interrupt mask to restore when this thread is resumed
+// func/arg execute on the next context after the switch
+// Preconditions: interrupts are disabled; current thread is core->current_thread
 void block(unsigned was, void (*func)(void *), void *arg);
 
+// called when a new thread first runs
+// calls the thread's main function and calls stop() when it returns
 void thread_entry(void);
 
+// idle thread loop
+// calls to block() context switch to here, 
+// where we decide which thread to run next and switch to it
 void event_loop(void);
 
+// create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun);
 
+// set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void);
 
+// add a thread to the global ready queue, or if it's pinned, to its core's pinned queue
 void global_queue_add(void* tcb);
 
+// add a thread to the core-local ready queue
 void local_queue_add(void* tcb);
 
+// voluntarily yield the CPU and re-queue the current thread
 void yield(void);
 
-// Sleep the current thread for at least jiffies timer ticks.
+// block the current thread until a target jiffy count is reached
 void sleep(unsigned jiffies);
 
+// terminate the current thread and 
+// place it on the reaper queue to eventually free its resources
 void stop(void);
 
+// disable preemption and return whether it was previously enabled or not
 bool preemption_disable(void);
 
+// restore preemption to the given value
 void preemption_restore(bool was);
 
+// pin a thread to the current core, preventing it from being scheduled on other cores
 void core_pin(void);
 
+// allow a thread to be scheduled on any core
 void core_unpin(void);
 
 #endif // THREADS_H

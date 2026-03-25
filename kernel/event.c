@@ -1,13 +1,14 @@
 #include "event.h"
 #include "heap.h"
 
+// initialize lock, condition variable, and generation counter
 void event_init(struct Event* event){
   blocking_lock_init(&event->lock);
   cond_var_init(&event->cv);
   event->generation = 0;
 }
 
-// wait until event is signaled, then return
+// wait for generation to advance so only signals after this call count
 void event_wait(struct Event* event){
   blocking_lock_acquire(&event->lock);
   unsigned gen = event->generation;
@@ -19,7 +20,7 @@ void event_wait(struct Event* event){
   blocking_lock_release(&event->lock);
 }
 
-// signal the event, waking all waiters. If there are no waiters, this has no effect
+// advance the generation and wake all current waiters
 void event_signal(struct Event* event){
   blocking_lock_acquire(&event->lock);
   event->generation++;

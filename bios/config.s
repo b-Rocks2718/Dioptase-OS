@@ -1,9 +1,5 @@
-  # Build-time BIOS configuration blob.
-  # Inputs:
-  # - NUM_CORES from the Makefile.
-  # - USE_VGA from the Makefile (0/1).
-  # Output:
-  # - CONFIG symbol with fields matching bios/config.h.
+  # Build-time BIOS configuration blob
+  # Makefile passes in NUM_CORES and USE_VGA to assembler
   .align 4
   .data
   .global CONFIG

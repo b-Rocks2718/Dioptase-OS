@@ -14,14 +14,19 @@
 #ifndef HEAP_H
 #define HEAP_H
 
+// initialize the heap allocator over one writable memory range
 void heap_init(void* start, unsigned size);
 
+// allocate at least size bytes, or panic on allocator failure
 void* malloc(unsigned size);
 
+// allocate memory and count it as intentionally leaked for leak reporting
 void* leak(unsigned size);
 
+// free one allocation returned by malloc/leak; NULL is ignored
 void free(void* p);
 
+// print the allocator leak summary
 void check_leaks(void);
 
 #endif // HEAP_H

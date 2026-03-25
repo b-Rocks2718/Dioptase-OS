@@ -49,6 +49,7 @@ static void free_tcb(struct TCB* tcb) {
   __atomic_fetch_add(&n_active, -1);
 }
 
+// reaper thread that runs forever and frees resources of threads that have been stopped
 static void reaper(void){
   while (true){
     struct TCB* tcb = spin_queue_remove_all(&reaper_queue);
@@ -62,6 +63,8 @@ static void reaper(void){
   panic("reaper thread tried to exit\n");
 }
 
+// return a TCB struct
+// defaults to: preemption enabled, not pinned, normal priority
 static struct TCB* make_tcb(bool leak_mem){
   struct TCB* tcb = leak_mem ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
 
@@ -108,6 +111,7 @@ static struct TCB* make_tcb(bool leak_mem){
   return tcb;
 }
 
+// create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun){
   struct TCB* tcb = make_tcb(false);
   __atomic_fetch_add(&n_active, 1);
@@ -150,7 +154,7 @@ static void setup_thread(struct Fun* thread_fun){
   global_queue_add(tcb);
 }
 
-// should only be called once on one core
+// initialize scheduler structures; should only be called once on one core
 void threads_init(void){
   spin_queue_init(&global_ready_queue);
   spin_queue_init(&reaper_queue);
@@ -168,13 +172,10 @@ void threads_init(void){
   setup_thread(reaper_fun);
 }
 
-// Purpose: switch away from the current thread and run a completion callback.
-// Inputs: was is the interrupt mask to restore when this thread is resumed;
-// func/arg execute on the next context after the switch.
-// Preconditions: interrupts are disabled; current thread is core->current_thread.
-// Postconditions: current thread state saved; next context runs func(arg).
-// Invariants: core->current_thread refers to the running thread on entry.
-// CPU state assumptions: kernel mode; local interrupts disabled.
+// switch away from the current thread and run a completion callback
+// Inputs: was is the interrupt mask to restore when this thread is resumed
+// func/arg execute on the next context after the switch
+// Preconditions: interrupts are disabled; current thread is core->current_thread
 void block(unsigned was, void (*func)(void *), void *arg) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
@@ -183,6 +184,8 @@ void block(unsigned was, void (*func)(void *), void *arg) {
   context_switch(me, idle, func, arg, &core->current_thread, was);
 }
 
+// called when a new thread first runs
+// calls the thread's main function and calls stop() when it returns
 void thread_entry(void) {
   int was = interrupts_disable();
   struct TCB* current_tcb = get_current_tcb();
@@ -219,6 +222,9 @@ static void nothing(void* unused) {}
 #define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
 #define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
 
+// idle thread loop
+// calls to block() context switch to here, 
+// where we decide which thread to run next and switch to it
 void event_loop(void) {
   /* only the idle thread can enter this function */
   unsigned event_loop_iters = 0;
@@ -288,10 +294,12 @@ void event_loop(void) {
     }
 
     if (next == NULL) {
+      // if no global work (or we didn't check), run local work
       next = queue_remove(&core->ready_queue);
     }
 
     if (next == NULL) {
+      // if no local work, steal from global queue
       next = spin_queue_remove(&global_ready_queue);
     }
 
@@ -313,11 +321,16 @@ void event_loop(void) {
       context_switch(me, next, nothing, NULL, &core->current_thread, was);
     } else {
       interrupts_restore(was);
+
+      // put core to sleep to save power until the next interrupt if there's no work to do
       pause();
     }
 
     event_loop_iters++;
   }
+
+  // Core 0 will print results and shut down the system, 
+  // other cores will wait for this to happen
   if (get_core_id() == 0) {
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
 
@@ -359,6 +372,7 @@ void event_loop(void) {
   }
 }
 
+// set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void){
   // interrupts should be disabled when calling this function
   // but we'll be safe
@@ -418,6 +432,7 @@ void bootstrap(void){
   interrupts_restore(was);
 }
 
+// add a thread to the global ready queue, or if it's pinned, to its core's pinned queue
 void global_queue_add(void* tcb){
   struct TCB* thread = (struct TCB*)tcb;
 
@@ -432,44 +447,27 @@ void global_queue_add(void* tcb){
   spin_queue_add(&target_core->pinned_queue, thread);
 }
 
+// add a thread to the core-local ready queue
 void local_queue_add(void* tcb){
   int was = interrupts_disable();
+  // leave interrupts disabled around queue_add to avoid re-entrancy issues
   queue_add(&get_per_core()->ready_queue, (struct TCB*)tcb);
   interrupts_restore(was);
 }
 
-// voluntarily yield the CPU and re-queue the current thread.
+// voluntarily yield the CPU and re-queue the current thread
 void yield(void){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   block(was, local_queue_add, (void*)tcb);
 }
 
+// add a thread to the reaper queue to have its resources freed by the reaper thread
 void reap_tcb(void* tcb){
   spin_queue_add(&reaper_queue, (struct TCB*)tcb);
 }
 
-// terminate the current thread and free its resources.
-void stop(void) {
-  unsigned was = interrupts_disable();
-  struct PerCore* core = get_per_core();
-  struct TCB* current = core->current_thread;
-  bool is_idle = (current == &core->idle_thread);
-
-  if (is_idle) {
-    interrupts_restore(was);
-    // idle thread should not be stopped
-    event_loop();
-  } else {
-    // free current thread resources and block forever
-    assert(n_active > 0, "no active threads to stop.\n");
-    block(was, reap_tcb, (struct TCB*)current);
-  }
-
-  panic("unreachable code reached in stop().\n");
-}
-
-// block the current thread until a target jiffy count is reached.
+// block the current thread until a target jiffy count is reached
 void sleep(unsigned jiffies){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -480,6 +478,26 @@ void sleep(unsigned jiffies){
   block(was, sleep_queue_add, (void*)args);
 }
 
+// terminate the current thread and 
+// place it on the reaper queue to eventually free its resources
+void stop(void) {
+  unsigned was = interrupts_disable();
+  struct PerCore* core = get_per_core();
+  struct TCB* current = core->current_thread;
+  bool is_idle = (current == &core->idle_thread);
+
+  if (is_idle) {
+    panic("idle thread cannot call stop().\n");
+  } else {
+    // free current thread resources and block forever
+    assert(n_active > 0, "no active threads to stop.\n");
+    block(was, reap_tcb, (struct TCB*)current);
+  }
+
+  panic("unreachable code reached in stop().\n");
+}
+
+// disable preemption and return whether it was previously enabled or not
 bool preemption_disable(void){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -489,6 +507,7 @@ bool preemption_disable(void){
   return prev;
 }
 
+// restore preemption to the given value
 void preemption_restore(bool was){
   int intrs = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -496,6 +515,7 @@ void preemption_restore(bool was){
   interrupts_restore(intrs);
 }
 
+// pin a thread to the current core, preventing it from being scheduled on other cores
 void core_pin(void){
   int was = interrupts_disable();
   unsigned me = get_core_id();
@@ -504,6 +524,7 @@ void core_pin(void){
   interrupts_restore(was);
 }
 
+// allow a thread to be scheduled on any core
 void core_unpin(void){
   int was = interrupts_disable();
   unsigned me = get_core_id();

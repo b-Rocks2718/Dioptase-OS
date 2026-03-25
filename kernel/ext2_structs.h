@@ -1,6 +1,7 @@
 #ifndef EXT2_STRUCTS_H
 #define EXT2_STRUCTS_H
 
+// Ext2 superblock structure, containing filesystem metadata and configuration parameters
 struct Superblock {
   unsigned inodes_count;
   unsigned blocks_count;
@@ -113,6 +114,8 @@ struct BGD {
   unsigned char  reserved[12];
 };
 
+// Ext2 inode structure
+// contains metadata about a file or directory and pointers to its data blocks
 struct Inode {
   unsigned short mode;
   unsigned short uid;
@@ -184,6 +187,7 @@ struct Inode {
 #define EXT2_JOURNAL_DATA_FL 0x00004000
 #define EXT2_RESERVED_FL     0x80000000
 
+// Directory entry structure, used for entries in directory data blocks
 struct DirEntry {
   unsigned inode;
   unsigned short rec_len;

@@ -33,7 +33,7 @@ static unsigned n_leak = 0;
 static unsigned *array;
 static unsigned len;
 static bool safe = false;
-static unsigned avail = 0; // index 0 will not be available by design
+static unsigned avail = 0; // head of the free-list; index 0 stays reserved as a sentinel
 static struct BlockingLock theLock;
 
 static void makeTaken(unsigned i, unsigned entries);
@@ -70,13 +70,11 @@ static void heap_debug_log_block(unsigned op_id, unsigned i, unsigned entry_coun
 // Postconditions: no heap state changes.
 // CPU state assumptions: kernel mode; safe to call print routines.
 static void heap_debug_log_bad_free(unsigned p_addr, int idx) {
-  unsigned pc = get_pc();
   unsigned core = get_core_id();
   unsigned heap_start = (unsigned)array;
   unsigned heap_end = heap_start + (len * HEAP_WORD_BYTES);
-  int args[8] = {
+  int args[7] = {
     (int)core,
-    (int)pc,
     (int)p_addr,
     (int)idx,
     (int)heap_start,
@@ -84,7 +82,7 @@ static void heap_debug_log_bad_free(unsigned p_addr, int idx) {
     (int)len,
     (int)avail
   };
-  say("| HEAP debug: bad free core=%d pc=0x%X p=0x%X idx=%d heap=0x%X-0x%X len=%d avail=%d\n",
+  say("| HEAP debug: bad free core=%d p=0x%X idx=%d heap=0x%X-0x%X len=%d avail=%d\n",
       args);
 }
 #endif
@@ -184,6 +182,7 @@ static void setNext(unsigned i, unsigned x) { array[i + 1] = x; }
 
 static void setPrev(unsigned i, unsigned x) { array[i + 2] = x; }
 
+// detach one free block from the intrusive avail list
 static void remove(unsigned i) {
   unsigned prevIndex = prev(i);
   unsigned nextIndex = next(i);
@@ -200,6 +199,7 @@ static void remove(unsigned i) {
   }
 }
 
+// mark one block free and splice it at the head of the avail list
 static void makeAvail(unsigned i, unsigned entry_count) {
 #ifdef HEAP_DEBUG
   if ((entry_count & 1) != 0) {
@@ -217,6 +217,7 @@ static void makeAvail(unsigned i, unsigned entry_count) {
   avail = i;
 }
 
+// mark one block allocated by setting the low-bit tag in header/footer
 static void makeTaken(unsigned i, unsigned entry_count) {
 #ifdef HEAP_DEBUG
   if ((entry_count & 1) != 0) {
@@ -273,6 +274,8 @@ void heap_init(void* base, unsigned bytes) {
   array = (unsigned *)base;
 
   len = bytes / 4;
+  // The heap is framed by permanently taken sentinels so free() can safely
+  // inspect left/right neighbors without special-casing the ends.
   makeTaken(0, 2);
   makeAvail(2, len - 4);
   makeTaken(len - 2, 2);
@@ -304,6 +307,8 @@ void *malloc(unsigned bytes) {
   unsigned it = 0;
 
   {
+    // Best-fit search keeps fragmentation lower than first-fit for this simple
+    // free-list allocator.
     int countDown = 20;
     unsigned p = avail;
     while (p != 0) {
@@ -397,6 +402,7 @@ void free(void *p) {
   int leftIndex = left(idx);
   int rightIndex = right(idx);
 
+  // Coalesce adjacent free blocks before re-inserting the merged block.
   if (isAvail(leftIndex)) {
     remove(leftIndex);
     idx = leftIndex;

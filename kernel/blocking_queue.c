@@ -3,17 +3,21 @@
 
 // port of Gheith kernel implementation
 
+// initialize queue state and zero the available-item count
 void blocking_queue_init(struct BlockingQueue* b) {
   generic_spin_queue_init(&b->queue);
   sem_init(&b->sem, 0);
 }
 
+// enqueue one element and publish one available item
 void blocking_queue_add(struct BlockingQueue* b, struct GenericQueueElement* element) {
   assert(element != NULL, "Cannot add NULL element to blocking queue.\n");
   generic_spin_queue_add(&b->queue, element);
   sem_up(&b->sem);
 }
 
+// retry after wakeup because remove_all() can drain the queue between sem_up()
+// and the actual dequeue
 struct GenericQueueElement* blocking_queue_remove(struct BlockingQueue* b) {
   struct GenericQueueElement* element = NULL;
   while (element == NULL) {

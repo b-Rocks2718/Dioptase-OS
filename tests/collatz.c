@@ -35,7 +35,7 @@ void int_list_append(struct IntList** head, struct IntList** tail, struct IntLis
 }
 
 void print_int_list(struct IntList* seq){
-  spin_lock_acquire(&print_lock);
+  preempt_spin_lock_acquire(&print_lock);
   int old_color = text_color;
   text_color = 0x1F;
   puts("***");
@@ -47,7 +47,7 @@ void print_int_list(struct IntList* seq){
   }
   putchar('\n');
   text_color = old_color;
-  spin_lock_release(&print_lock);
+  preempt_spin_lock_release(&print_lock);
 }
 
 void free_int_list(struct IntList* seq){

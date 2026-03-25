@@ -3,6 +3,12 @@
 #include "blocking_lock.h"
 #include "debug.h"
 #include "print.h"
+#include "threads.h"
+#include "interrupts.h"
+#include "per_core.h"
+#include "machine.h"
+
+// SD MMIO addresses 
 
 int* DMA_MEM_REG_0 =  (int*)0x7FE5810;
 int* DMA_BLOCK_REG_0 = (int*)0x7FE5814;
@@ -22,7 +28,6 @@ int* DMA_ERR_REG_1 = (int*)0x7FE583C;
 // - DMA_LEN is measured in 512-byte blocks.
 // - CTRL bit 0 starts DMA and bit 3 starts SD init. Both are clear-on-write command bits.
 // - STATUS/DONE/ERR are shared between DMA and SD init.
-#define SD_DMA_BLOCKS_PER_TRANSFER 1
 #define SD_BLOCK_SIZE_BYTES 512
 
 #define SD_DMA_CTRL_START 0x1
@@ -35,6 +40,7 @@ int* DMA_ERR_REG_1 = (int*)0x7FE583C;
 static struct BlockingLock sd_lock_0;
 static struct BlockingLock sd_lock_1;
 
+// get the BlockingLock for the given drive
 void sd_lock_acquire(enum SdDrive drive){
   if (drive == SD_DRIVE_0) {
     blocking_lock_acquire(&sd_lock_0);
@@ -43,6 +49,7 @@ void sd_lock_acquire(enum SdDrive drive){
   }
 }
 
+// release the BlockingLock for the given drive
 void sd_lock_release(enum SdDrive drive){
   if (drive == SD_DRIVE_0) {
     blocking_lock_release(&sd_lock_0);
@@ -51,9 +58,7 @@ void sd_lock_release(enum SdDrive drive){
   }
 }
 
-// Purpose: clear sticky DONE/ERR state before issuing a new SD command.
-// Preconditions: SD MMIO is mapped and writable.
-// Postconditions: DONE/ERR and DMA_ERR are cleared; BUSY is unaffected.
+// clear sticky DONE/ERR state before issuing a new SD command.
 static void sd_clear_status(enum SdDrive drive){
   if (drive == SD_DRIVE_0) {
     *DMA_STATUS_REG_0 = 0;
@@ -62,20 +67,51 @@ static void sd_clear_status(enum SdDrive drive){
   }
 }
 
-// Purpose: wait for shared SD status to report completion and surface failures.
-// Returns: 0 on success, negative DMA error code on failure.
-// Behavior: status is cleared before returning so callers can issue the next command.
+// thread function for blocking on SD commands. Will be passed to block() in sd_wait_done()
+// stores the threads waiting for each drive in per-core data 
+// so that the SD interrupt handler can wake them up when the command is done
+void sd_block_thread(void* arg){
+  int* args = (int*)arg;
+  enum SdDrive drive = (enum SdDrive)args[0];
+  struct TCB* tcb = (struct TCB*)args[1];
+
+  int was = interrupts_disable();
+  if (drive == SD_DRIVE_0) {
+    struct PerCore* per_core = get_per_core();
+    assert(per_core->sd_wait_thread_0 == NULL, 
+      "sd_block_thread: sd_wait_thread_0 is not NULL");
+    per_core->sd_wait_thread_0 = tcb;
+  } else {
+    struct PerCore* per_core = get_per_core();
+    assert(per_core->sd_wait_thread_1 == NULL, 
+      "sd_block_thread: sd_wait_thread_1 is not NULL");
+    per_core->sd_wait_thread_1 = tcb;
+  }
+  interrupts_restore(was);
+}
+
+// wait for shared SD status to report completion and surface failures.
 static int sd_wait_done(enum SdDrive drive){
   int status;
   int err;
 
-  do {
-    if (drive == SD_DRIVE_0) {
-      status = *DMA_STATUS_REG_0;
-    } else {
-      status = *DMA_STATUS_REG_1;
-    }
-  } while ((status & SD_DMA_STATUS_DONE) == 0);
+  if (__atomic_load_n(&bootstrapping) || true) { // blocking is TODO
+    // During bootstrapping, we don't have threads or interrupts set up yet, 
+    // so we have to busy wait
+    do {
+      if (drive == SD_DRIVE_0) {
+        status = *DMA_STATUS_REG_0;
+      } else {
+        status = *DMA_STATUS_REG_1;
+      }
+    } while ((status & SD_DMA_STATUS_DONE) == 0);
+  } else {
+    // block until we get an interrupt from the SD controller indicating the command is done
+    int was = interrupts_disable(); 
+    struct TCB* current_tcb = get_current_tcb();
+    int args[2] = { (int)drive, (int)current_tcb };
+    block(was, sd_block_thread, (void*)(args));
+  }
 
   if (drive == SD_DRIVE_0) {
     err = *DMA_ERR_REG_0;
@@ -91,6 +127,7 @@ static int sd_wait_done(enum SdDrive drive){
   return 0;
 }
 
+// Initialize the SD driver and both drives. This must be called before any other SD functions
 void sd_init(void){
   blocking_lock_init(&sd_lock_0);
   sd_clear_status(SD_DRIVE_0);
@@ -107,26 +144,9 @@ void sd_init(void){
   }
 }
 
-int sd_read_block(enum SdDrive drive, int block_num, void* dest){
-  // Set up DMA to read from SD card to memory.
-  sd_clear_status(drive);
-  if (drive == SD_DRIVE_0) {
-    *(DMA_MEM_REG_0) = (int)dest;
-    *(DMA_BLOCK_REG_0) = block_num;
-    *(DMA_LEN_REG_0) = SD_DMA_BLOCKS_PER_TRANSFER;
-  } else {
-    *(DMA_MEM_REG_1) = (int)dest;
-    *(DMA_BLOCK_REG_1) = block_num;
-    *(DMA_LEN_REG_1) = SD_DMA_BLOCKS_PER_TRANSFER;
-  }
-  if (drive == SD_DRIVE_0) {
-    *(DMA_CTRL_REG_0) = SD_DMA_CTRL_START;
-  } else {
-    *(DMA_CTRL_REG_1) = SD_DMA_CTRL_START;
-  }
-  return sd_wait_done(drive);
-}
-
+// Read multiple blocks starting from the given block number into the destination buffer
+// The buffer must be at least num_blocks * 512 bytes
+// Returns 0 on success or a negative error code on failure
 int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* dest){
   if (drive == SD_DRIVE_1 && start_block == 0) {
     // warn about access to block 0
@@ -134,34 +154,33 @@ int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* de
   }
 
   sd_lock_acquire(drive);
-  for(int i = 0; i < num_blocks; i++){
-    int rc = sd_read_block(drive, start_block + i, (char*)dest + (i * SD_BLOCK_SIZE_BYTES));
-    if (rc != 0){
-      sd_lock_release(drive);
-      return rc;
-    }
-  }
-  sd_lock_release(drive);
-  return 0;
-}
 
-int sd_write_block(enum SdDrive drive, int block_num, void* src){
-  // Set up DMA to write from memory to SD card.
+  // Set up DMA to read from SD card to memory.
   sd_clear_status(drive);
   if (drive == SD_DRIVE_0) {
-    *(DMA_MEM_REG_0) = (int)src;
-    *(DMA_BLOCK_REG_0) = block_num;
-    *(DMA_LEN_REG_0) = SD_DMA_BLOCKS_PER_TRANSFER;
-    *(DMA_CTRL_REG_0) = SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD;
+    *(DMA_MEM_REG_0) = (int)dest;
+    *(DMA_BLOCK_REG_0) = start_block;
+    *(DMA_LEN_REG_0) = num_blocks;
   } else {
-    *(DMA_MEM_REG_1) = (int)src;
-    *(DMA_BLOCK_REG_1) = block_num;
-    *(DMA_LEN_REG_1) = SD_DMA_BLOCKS_PER_TRANSFER;
-    *(DMA_CTRL_REG_1) = SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD;
+    *(DMA_MEM_REG_1) = (int)dest;
+    *(DMA_BLOCK_REG_1) = start_block;
+    *(DMA_LEN_REG_1) = num_blocks;
   }
-  return sd_wait_done(drive);
+  if (drive == SD_DRIVE_0) {
+    *(DMA_CTRL_REG_0) = SD_DMA_CTRL_START;
+  } else {
+    *(DMA_CTRL_REG_1) = SD_DMA_CTRL_START;
+  }
+  int rc = sd_wait_done(drive);
+
+  sd_lock_release(drive);
+
+  return rc;
 }
 
+// Write multiple blocks starting from the given block number from the source buffer
+// The buffer must be at least num_blocks * 512 bytes
+// Returns 0 on success or a negative error code on failure
 int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* src){
   if (drive == SD_DRIVE_1 && start_block == 0) {
     // warn about access to block 0
@@ -169,13 +188,23 @@ int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* s
   }
 
   sd_lock_acquire(drive);
-  for(int i = 0; i < num_blocks; i++){
-    int rc = sd_write_block(drive, start_block + i, (char*)src + (i * SD_BLOCK_SIZE_BYTES));
-    if (rc != 0){
-      sd_lock_release(drive);
-      return rc;
-    }
+
+  // Set up DMA to write from memory to SD card.
+  sd_clear_status(drive);
+  if (drive == SD_DRIVE_0) {
+    *(DMA_MEM_REG_0) = (int)src;
+    *(DMA_BLOCK_REG_0) = start_block;
+    *(DMA_LEN_REG_0) = num_blocks;
+    *(DMA_CTRL_REG_0) = SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD;
+  } else {
+    *(DMA_MEM_REG_1) = (int)src;
+    *(DMA_BLOCK_REG_1) = start_block;
+    *(DMA_LEN_REG_1) = num_blocks;
+    *(DMA_CTRL_REG_1) = SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD;
   }
+  int rc = sd_wait_done(drive);
+
   sd_lock_release(drive);
-  return 0;
+
+  return rc;
 }
