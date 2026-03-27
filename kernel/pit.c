@@ -38,7 +38,10 @@ void pit_handler(void){
     // if we aren't idle and can be preempted, 
     // block and add ourselves back to the core-local ready queue 
     unsigned was = get_imr();
-    block(was, local_queue_add, tcb);
+
+    int args[2] = {(int)tcb, (int)&per_core->idle_thread};
+
+    block(was, local_queue_add, tcb, true);
   }
 
   imr = get_imr();

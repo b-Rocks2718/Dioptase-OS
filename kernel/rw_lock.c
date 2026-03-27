@@ -51,7 +51,7 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
   struct TCB* current_tcb = get_current_tcb();
 
   int* args[2] = { (int*)rwlock, (int*)current_tcb };
-  block(was, (void (*)(void *))rw_add_reader, (void*)(args));
+  block(was, (void (*)(void *))rw_add_reader, (void*)(args), true);
 }
 
 void rw_lock_release_read(struct RwLock* rwlock){
@@ -111,7 +111,7 @@ void rw_lock_acquire_write(struct RwLock* rwlock){
   struct TCB* current_tcb = get_current_tcb();
 
   int* args[2] = { (int*)rwlock, (int*)current_tcb };
-  block(was, (void (*)(void *))rw_add_writer, (void*)(args));
+  block(was, (void (*)(void *))rw_add_writer, (void*)(args), true);
 }
 
 void rw_lock_release_write(struct RwLock* rwlock){

@@ -50,7 +50,7 @@ void sem_down(struct Semaphore* sem){
   struct TCB* current_tcb = get_current_tcb();
   
   int* args[2] = { (int*)sem, (int*)current_tcb };
-  block(was, (void (*)(void *))sem_add, (void*)(args));
+  block(was, (void (*)(void *))sem_add, (void*)(args), true);
 }
 
 void sem_up(struct Semaphore* sem){

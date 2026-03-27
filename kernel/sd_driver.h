@@ -20,4 +20,12 @@ int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* de
 // Returns 0 on success or a negative error code on failure
 int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* src);
 
+// Mark the current SD interrupt as handled, preventing duplicate interrupts
+extern void mark_sd0_handled(void);
+extern void mark_sd1_handled(void);
+
+// SD interrupt handlers, defined in sd_driver.s
+extern void sd0_handler_(void);
+extern void sd1_handler_(void);
+
 #endif // SD_DRIVER_H

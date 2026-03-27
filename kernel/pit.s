@@ -4,10 +4,9 @@
   # Mark the current PIT interrupt as handled, allowing the PIT to send more interrupts
   .global mark_pit_handled
 mark_pit_handled:
-  mov r1, isr
-  movi r2, 0xFFFFFFFE # pit is lowest bit
-  and r1, r2, r1
-  mov isr, r1
+  # Acknowledge only the timer bit in ISR.
+  # `eoi` performs the clear atomically with respect to new pending interrupts.
+  eoi 0
   ret
 
   .global pit_handler_

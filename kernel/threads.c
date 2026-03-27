@@ -28,9 +28,18 @@
 struct SpinQueue global_ready_queue;
 struct SpinQueue reaper_queue;
 
+bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
+struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
+
+bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
+struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
+
 int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
+
+unsigned DEFAULT_INTERRUPT_MASK = 
+  GLOBAL_INT_ENABLE | SD_0_INT_ENABLE | SD_1_INT_ENABLE | PIT_INT_ENABLE;
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -99,8 +108,7 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->r27 = 0;
   tcb->r28 = 0;
 
-  // interrupts enabled, timer interrupt enabled
-  tcb->imr = 0x80000001;
+  tcb->imr = DEFAULT_INTERRUPT_MASK;
 
   tcb->can_preempt = true;
   tcb->core_affinity = ANY_CORE;
@@ -169,19 +177,28 @@ void threads_init(void){
   reaper_fun->func = (void (*)(void *))reaper;
   reaper_fun->arg = NULL;
 
+  sd_wait_thread_0_pending = false;
+  sd_wait_thread_0 = NULL;
+
+  sd_wait_thread_1_pending = false;
+  sd_wait_thread_1 = NULL;
+
   setup_thread(reaper_fun);
 }
 
 // switch away from the current thread and run a completion callback
 // Inputs: was is the interrupt mask to restore when this thread is resumed
 // func/arg execute on the next context after the switch
+// run_with_interrupts indicates whether to restore interrupts before running the callback
+// If false, they are enabled after the callback returns
+// Assumes callback doesn't modify the 'next' TCB
 // Preconditions: interrupts are disabled; current thread is core->current_thread
-void block(unsigned was, void (*func)(void *), void *arg) {
+void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrupts) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
 
-  context_switch(me, idle, func, arg, &core->current_thread, was);
+  context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
 }
 
 // called when a new thread first runs
@@ -234,7 +251,7 @@ void event_loop(void) {
     // check sleep queue
     struct TCB* wakeup = sleep_queue_remove(&core->sleep_queue);
     while (wakeup != NULL) {
-      queue_add(&core->ready_queue, wakeup);
+      local_queue_add(wakeup);
       wakeup = sleep_queue_remove(&core->sleep_queue);
     }
 
@@ -243,7 +260,7 @@ void event_loop(void) {
     while (pinned != NULL) {
       struct TCB* next = pinned->next;
       pinned->next = NULL;
-      queue_add(&core->ready_queue, pinned);
+      local_queue_add(pinned);
       pinned = next;
     }
 
@@ -263,11 +280,11 @@ void event_loop(void) {
         unsigned scan_budget = local_size;
         int moved = 0;
         while (moved < to_move && scan_budget > 0) {
-          struct TCB* tcb = queue_remove(&core->ready_queue);
+          struct TCB* tcb = local_queue_remove();
           if (tcb == NULL) break;
           if (tcb->core_affinity != ANY_CORE) {
-            // Keep pinned threads on their home core's local queue.
-            queue_add(&core->ready_queue, tcb);
+            // Keep pinned threads on their home core's local queue
+            local_queue_add(tcb);
           } else {
             global_queue_add(tcb);
             moved++;
@@ -278,9 +295,9 @@ void event_loop(void) {
         // if we have < 70% of our ideal number of threads, try to take some from the global queue
         int to_move = ideal - local_size;
         for (int i = 0; i < to_move; i++) {
-          struct TCB* tcb = spin_queue_remove(&global_ready_queue);
+          struct TCB* tcb = global_queue_remove();
           if (tcb == NULL) break;
-          queue_add(&core->ready_queue, tcb);
+          local_queue_add(tcb);
         }
       }
     }
@@ -290,17 +307,17 @@ void event_loop(void) {
     // Periodically check global work first so threads woken onto the global
     // queue cannot starve behind a permanently "balanced" local queue set.
     if ((event_loop_iters % GLOBAL_CHECK_INTERVAL) == 0) {
-      next = spin_queue_remove(&global_ready_queue);
+      next = global_queue_remove();
     }
 
     if (next == NULL) {
       // if no global work (or we didn't check), run local work
-      next = queue_remove(&core->ready_queue);
+      next = local_queue_remove();
     }
 
     if (next == NULL) {
       // if no local work, steal from global queue
-      next = spin_queue_remove(&global_ready_queue);
+      next = global_queue_remove();
     }
 
     assert(core != NULL, "per-core data is NULL.\n");
@@ -318,7 +335,7 @@ void event_loop(void) {
     int was = interrupts_disable();
 
     if (next != NULL) {
-      context_switch(me, next, nothing, NULL, &core->current_thread, was);
+      context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
     } else {
       interrupts_restore(was);
 
@@ -447,6 +464,10 @@ void global_queue_add(void* tcb){
   spin_queue_add(&target_core->pinned_queue, thread);
 }
 
+struct TCB* global_queue_remove(void){
+  return spin_queue_remove(&global_ready_queue);
+}
+
 // add a thread to the core-local ready queue
 void local_queue_add(void* tcb){
   int was = interrupts_disable();
@@ -455,11 +476,21 @@ void local_queue_add(void* tcb){
   interrupts_restore(was);
 }
 
+// remove a thread from the core-local ready queue
+struct TCB* local_queue_remove(void){
+  int was = interrupts_disable();
+  // leave interrupts disabled around queue_add to avoid re-entrancy issues
+  struct TCB* tcb = queue_remove(&get_per_core()->ready_queue);
+  interrupts_restore(was);
+
+  return tcb;
+}
+
 // voluntarily yield the CPU and re-queue the current thread
 void yield(void){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  block(was, local_queue_add, (void*)tcb);
+  block(was, local_queue_add, (void*)tcb, true);
 }
 
 // add a thread to the reaper queue to have its resources freed by the reaper thread
@@ -475,7 +506,7 @@ void sleep(unsigned jiffies){
   assert(tcb != &core->idle_thread, "sleep: idle thread cannot sleep.\n");
   tcb->wakeup_jiffies = current_jiffies + jiffies;
   int args[2] = {(int)&core->sleep_queue, (int)tcb};
-  block(was, sleep_queue_add, (void*)args);
+  block(was, sleep_queue_add, (void*)args, true);
 }
 
 // terminate the current thread and 
@@ -491,7 +522,7 @@ void stop(void) {
   } else {
     // free current thread resources and block forever
     assert(n_active > 0, "no active threads to stop.\n");
-    block(was, reap_tcb, (struct TCB*)current);
+    block(was, reap_tcb, (struct TCB*)current, true);
   }
 
   panic("unreachable code reached in stop().\n");

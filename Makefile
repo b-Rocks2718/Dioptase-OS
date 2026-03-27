@@ -7,8 +7,9 @@
 # emulator config
 NUM_CORES ?= 4
 SCHEDULER ?= free # free, rr, or random
-EMU_VGA ?= no
-TRACE_INTS ?= no
+EMU_VGA ?= no # whether to build with VGA support and emulate a VGA device
+TRACE_INTS ?= no # print a line for every interrupt delivery
+SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
 # memory map
 TEXT_LOAD_ADDR := 0x10000
@@ -31,14 +32,14 @@ DEPGEN ?= gcc
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER)
 
-ifeq ($(EMU_VGA),yes)
+ifeq ($(EMU_VGA),yes )
 EMU_FLAGS += --vga
 USE_VGA_DEFINE := 1
 else
 USE_VGA_DEFINE := 0
 endif
 
-ifeq ($(TRACE_INTS),yes)
+ifeq ($(TRACE_INTS),yes )
 EMU_FLAGS += --trace-ints
 endif
 
@@ -111,7 +112,7 @@ define prepare_emulator_cmd
 sd1_dir="tests/$*.dir"; \
 sd1_output_image=""; \
 sd1_output_dir=""; \
-set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin"; \
+set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin" --sd-dma-ticks $(SD_DMA_TICKS); \
 if [ -d "$$sd1_dir" ]; then \
   sd1_image="$(BUILD_DIR)/$*.sd1.ext2"; \
   sd1_output_image="$(BUILD_DIR)/$*.sd1.out.ext2"; \

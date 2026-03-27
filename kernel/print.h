@@ -32,7 +32,7 @@ unsigned print_unsigned(unsigned n);
 // returns the number of characters printed
 unsigned print_hex(unsigned n, bool uppercase);
 
-// print a string
+// print a NUL-terminated string
 unsigned puts(char* str);
 
 // simple printf implementation supporting %d, %u, %x, %X, %s, %%

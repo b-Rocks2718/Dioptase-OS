@@ -20,7 +20,7 @@ _start:
   mov imr, r0
 
   # clear isr so no pending interrupts
-  mov  isr, r0
+  eoi all
 
   # ensure kernel depth is 1
   movi r1, 1
@@ -50,7 +50,7 @@ skip_handler_register:
 
 ipi_handler_:
   # Clear pending IPI so we don't immediately re-enter.
-  mov isr, r0
+  eoi 5
 
   # disable interrupts
   mov imr, r0

@@ -70,8 +70,8 @@ void kernel_entry(void){
   bootstrap();
 
   say("| Core %d enabling interrupts...\n", &me);
-  interrupts_restore(0x80000001); // only PIT interrupt enabled for now
-
+  interrupts_restore(DEFAULT_INTERRUPT_MASK);
+  
   // wait for all cores to be awake and set up
   say("| Core %d waiting at start barrier...\n", &me);
   spin_barrier_sync(&start_barrier);

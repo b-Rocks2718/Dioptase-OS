@@ -74,6 +74,9 @@ extern void wakeup_core(int core_num);
 // Run func(arg) in the context of the next thread before switching to it
 // Needs pointer to current_thread entry of the core's PerCore struct
 // Assumes interrupts are disabled when this is called, and will re-enable them in the new thread's context
-extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was);
+// run_with_interrupts determines whether to re-enable interrupts before calling the callback function, or after
+// Assumes callback doesn't modify the 'next' TCB 
+extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, 
+  struct TCB** cur_thread, int was, bool run_with_interrupts);
 
 #endif // MACHINE_H

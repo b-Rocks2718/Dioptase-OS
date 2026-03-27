@@ -147,12 +147,17 @@ wakeup_core_error:
   # Run func(arg) in the context of the next thread before switching to it
   # Needs pointer to current_thread entry of the core's PerCore struct
   # Assumes interrupts are disabled when this is called, and will re-enable them in the new thread's context
-  
-  # (struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, struct TCB** cur_thread, int was)
+  # Assumes callback doesn't modify the 'next' TCB
+
+  # r1 = struct TCB* me
+  # r2 = struct TCB* next
+  # r3 = void (*func)(void *)
+  # r4 = void *arg
+  # r5 = struct TCB** cur_thread
+  # r6 = int was
+  # r7 = bool run_with_interrupts
   .global context_switch
 context_switch:
-  mov  imr, r0 # temporarily disable interrupts
-
   # save current state
   swa  r20, [r1, 76]
   swa  r21, [r1, 80]
@@ -177,9 +182,7 @@ context_switch:
   swa  r9,  [r1, 128]
 
   # TCB offset 132 stores per-thread IMR state
-  # The caller passes the outgoing thread's pre-switch IMR in r6 ("was").
-  # We must save that value, not the live IMR register, because IMR was
-  # already cleared above to keep the switch atomic.
+  # The caller passes the outgoing thread's pre-switch IMR in r6 ("was")
   swa  r6,  [r1, 132]
 
   lwa  r9, [r2, 128]
@@ -209,13 +212,27 @@ context_switch:
   # update current thread
   swa  r2,  [r5]
 
+  # check if we should restore interrupts before the callback
+  cmp  r7, r0
+  bz   context_switch_no_interrupts
+
 	# restore interrupt flags
   lwa  r9,  [r2, 132]
   mov  imr, r9
 
+context_switch_no_interrupts:
   # call the function we were passed, after the switch
+  push r2
+
   mov  r1, r4
   bra  ra, r3
+
+  pop r2
+
+  # restore interrupts after callback regardless of run_with_interrupts
+  # since either way we want interrupts restored at this point
+  lwa  r9,  [r2, 132]
+  mov  imr, r9
 
   pop  ra
 
