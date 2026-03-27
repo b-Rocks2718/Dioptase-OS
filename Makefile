@@ -32,14 +32,14 @@ DEPGEN ?= gcc
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER)
 
-ifeq ($(EMU_VGA),yes )
+ifeq ($(EMU_VGA),yes)
 EMU_FLAGS += --vga
 USE_VGA_DEFINE := 1
 else
 USE_VGA_DEFINE := 0
 endif
 
-ifeq ($(TRACE_INTS),yes )
+ifeq ($(TRACE_INTS),yes)
 EMU_FLAGS += --trace-ints
 endif
 

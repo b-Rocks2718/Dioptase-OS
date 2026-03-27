@@ -365,8 +365,7 @@ void event_loop(void) {
       // This avoids accidental exit from a stray/glitched make event.
       int saw_q_make = 0;
       while (true) {
-        int key = getkey();
-        if (key == 0) continue;
+        int key = waitkey_spin();
 
         int is_release = ((key & 0xFF00) != 0);
         key &= 0xFF;

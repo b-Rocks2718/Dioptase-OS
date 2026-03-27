@@ -237,6 +237,7 @@ static int sd_wait_done(enum SdDrive drive, int was){
   return 0;
 }
 
+// Sd interrupt handler, called by assembly stub in sd_driver.s
 void sd_handler(enum SdDrive drive){
   // clear ISR bit so we don't get duplicate interrupts
   if (drive == SD_DRIVE_0){
@@ -259,7 +260,12 @@ void sd_handler(enum SdDrive drive){
   // spin until the thread has called block and set the wait_thread variable
   // I'm willing to spin in the interrupt handler here, because the thread that will set
   // sd_wait_thread disabled interrupts before sending the SD command, and will not restore them
-  // until after setting sd_wait_thread. 
+  // until after setting sd_wait_thread. Therefore there is a (small) constant number
+  // of instructions that need to be run on another core before we stop spinning.
+  
+  // The deadlock where the thread that was setting sd_wait_thread is the one that got interrupted,
+  // and won't make progress until we return, is avoided because the thread has interrupts disabled
+  // so it can only be interrupted after sd_wait_thread is set
   
   // wake up the thread waiting for this interrupt
   if (drive == SD_DRIVE_0) {

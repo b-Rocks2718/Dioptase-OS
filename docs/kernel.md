@@ -33,8 +33,6 @@ TODO: slab allocator, buddy allocator, per-core freelists/partial slabs
 ## File System
 ext2 rev 0
 
-TODO: use interrupts instead of spinning to wait for DMA to finish
-
 Supported:
 - Read files, directories, and symlinks
 - create new files, directories, and symlinks

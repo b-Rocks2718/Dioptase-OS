@@ -111,10 +111,10 @@ int kernel_main(void) {
     int key = 0;
     int num = 0;
     while (true){
-      key = getkey();
+      key = waitkey();
       if ((key & 0xFF) == '\r') break;
 
-      if (key != 0 && ((key & 0xFF00) == 0)) {
+      if ((key & 0xFF00) == 0) {
         // Only accept printable digit keys in the VGA input path.
         if (!isnum(key)) panic("key was not a number\n");
         num = num * 10 + (key - '0');

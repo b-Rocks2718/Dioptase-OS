@@ -221,13 +221,13 @@ context_switch:
   mov  imr, r9
 
 context_switch_no_interrupts:
-  # call the function we were passed, after the switch
-  push r2
+  push r2 # save/restore r2 across the callback so we can still read the TCB after it returns
 
+  # call the function we were passed, after the switch
   mov  r1, r4
   bra  ra, r3
 
-  pop r2
+  pop r2 
 
   # restore interrupts after callback regardless of run_with_interrupts
   # since either way we want interrupts restored at this point
