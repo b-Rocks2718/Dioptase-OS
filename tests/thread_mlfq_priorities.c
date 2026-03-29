@@ -13,8 +13,9 @@
  *   bottom LOW
  * - inside each panel, the three track rows correspond to MLFQ levels 0, 1,
  *   and 2
- * - a moving marker shows CPU share, and an arrow jumps between the 0/1/2 rows
- *   when the worker's current MLFQ level changes
+ * - a moving marker shows instantaneous CPU share, a cumulative counter shows
+ *   total CPU share over time, and an arrow jumps between the 0/1/2 rows when
+ *   the worker's current MLFQ level changes
  */
 
 #include "../kernel/constants.h"
@@ -37,11 +38,13 @@
 #define PANEL_HEIGHT 6
 #define PANEL_GAP_X 2
 #define PANEL_GAP_Y 1
-#define START_ROW 6
+#define START_ROW 10
 #define START_COL 1
 #define TRACK_LEN 10
-#define UPDATE_DIVISOR 8
+#define UPDATE_DIVISOR 4
+#define INPUT_SLEEP_JIFFIES 100
 #define FINISH_WAIT_BUDGET 100000
+#define COUNTER_DIGITS 5
 
 struct TileVisualArg {
   int panel_x;
@@ -59,6 +62,20 @@ static void put_tile_at(int x, int y, char c, int color) {
   TILE_FB[y * TILE_ROW_WIDTH + x] = (short)((color << 8) | c);
 }
 
+// Return one hex digit character.
+static char hex_digit(unsigned value) {
+  if (value < 10) return '0' + value;
+  return 'A' + (value - 10);
+}
+
+// Draw a fixed-width hexadecimal counter.
+static void draw_hex_counter(int x, int y, unsigned value, int digits, int color) {
+  for (int digit = digits - 1; digit >= 0; digit--) {
+    put_tile_at(x + digit, y, hex_digit(value & 0xF), color);
+    value >>= 4;
+  }
+}
+
 // Fill a rectangle in tile space with one character/color pair.
 static void fill_tile_rect(int x, int y, int width, int height, char c, int color) {
   int row;
@@ -73,9 +90,9 @@ static void fill_tile_rect(int x, int y, int width, int height, char c, int colo
 
 // Border/text color used for one scheduler priority.
 static int priority_color(enum ThreadPriority priority) {
-  if (priority == HIGH_PRIORITY) return 0xFC;
-  if (priority == NORMAL_PRIORITY) return 0xFF;
-  return 0xE0;
+  if (priority == HIGH_PRIORITY) return 0x1D;
+  if (priority == NORMAL_PRIORITY) return 0xFC;
+  return 0xE8;
 }
 
 // Draw the static frame and labels for one worker panel.
@@ -113,6 +130,9 @@ static void draw_panel_frame(struct TileVisualArg* arg) {
   put_tile_at(x + 5, y + 1, 'L', border_color);
   put_tile_at(x + 6, y + 1, ':', border_color);
   put_tile_at(x + 7, y + 1, '?', border_color);
+  put_tile_at(x + 9, y + 1, 'C', border_color);
+  put_tile_at(x + 10, y + 1, ':', border_color);
+  draw_hex_counter(x + 11, y + 1, 0, COUNTER_DIGITS, border_color);
 
   for (track_row = 0; track_row < MLFQ_LEVELS; track_row++) {
     int row_y = y + 2 + track_row;
@@ -156,6 +176,12 @@ static void set_marker(struct TileVisualArg* arg, int level, int previous_pos, i
   put_tile_at(arg->panel_x + 5 + current_pos, row_y, '*', arg->marker_color);
 }
 
+// Update the cumulative CPU-share counter for one worker.
+static void set_cpu_counter(struct TileVisualArg* arg, unsigned cpu_steps) {
+  draw_hex_counter(arg->panel_x + 11, arg->panel_y + 1,
+                   cpu_steps, COUNTER_DIGITS, priority_color(arg->priority));
+}
+
 // CPU-bound worker that renders its own scheduler state with only a few tile writes.
 static void tile_visual_worker(void* raw_arg) {
   struct TileVisualArg* arg;
@@ -165,6 +191,7 @@ static void tile_visual_worker(void* raw_arg) {
   int marker_pos;
   int previous_marker_pos;
   int last_drawn_step;
+  unsigned cpu_steps;
   unsigned was;
   struct TCB* self;
 
@@ -173,6 +200,7 @@ static void tile_visual_worker(void* raw_arg) {
   previous_marker_pos = -1;
   marker_step = 0;
   last_drawn_step = -1;
+  cpu_steps = 0;
 
   while (__atomic_load_n(&stop_visual) == 0) {
     // Read the current thread's MLFQ level with interrupts disabled so
@@ -194,11 +222,13 @@ static void tile_visual_worker(void* raw_arg) {
       previous_marker_pos = -1;
     }
 
+    cpu_steps++;
     marker_step++;
     if ((marker_step / UPDATE_DIVISOR) != last_drawn_step) {
       last_drawn_step = marker_step / UPDATE_DIVISOR;
       marker_pos = last_drawn_step % TRACK_LEN;
       set_marker(arg, current_level, previous_marker_pos, marker_pos);
+      set_cpu_counter(arg, cpu_steps);
       previous_marker_pos = marker_pos;
     }
   }
@@ -211,7 +241,7 @@ static void spawn_tile_visual_worker(int panel_x, int panel_y,
                                      enum ThreadPriority priority, int worker_index) {
   struct TileVisualArg* arg;
   struct Fun* fun;
-
+  
   arg = malloc(sizeof(struct TileVisualArg));
   assert(arg != NULL,
          "thread_mlfq_visual_tiles: TileVisualArg allocation failed.\n");
@@ -238,6 +268,7 @@ int kernel_main(void) {
   int panel_y;
   int total_workers;
   int wait_count;
+  int key;
   enum ThreadPriority priority;
 
   load_text_tiles();
@@ -248,6 +279,7 @@ int kernel_main(void) {
   say("Inside each box, tracks 0/1/2 are MLFQ levels\n", NULL);
   say("> jumps when the worker changes MLFQ level\n", NULL);
   say("* moves faster when that worker gets more CPU time\n", NULL);
+  say("C:xxxxx is cumulative run count in hex\n", NULL);
   say("Press q to exit\n", NULL);
 
   total_workers = PRIORITY_ROWS * WORKERS_PER_ROW;
@@ -269,7 +301,11 @@ int kernel_main(void) {
     }
   }
 
-  while (waitkey() != 'q');
+  while (true) {
+    key = getkey();
+    if (key == 'q' || key == 'Q') break;
+    sleep(INPUT_SLEEP_JIFFIES);
+  }
 
   __atomic_store_n(&stop_visual, 1);
   set_priority(HIGH_PRIORITY);

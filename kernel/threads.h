@@ -17,7 +17,7 @@
 #include "TCB.h"
 #include "queue.h"
 
-extern struct SpinQueue global_ready_queue;
+extern struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 extern struct SpinQueue reaper_queue;
 
 extern bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?

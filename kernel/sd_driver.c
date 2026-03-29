@@ -174,9 +174,9 @@ int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* s
   return rc;
 }
 
-// thread function for blocking on SD commands. Will be passed to block() in sd_wait_done()
-// stores the threads waiting for each drive in per-core data 
-// so that the SD interrupt handler can wake them up when the command is done
+// thread function for blocking on SD commands. Will be passed to block() in sd_wait_done().
+// Stores the single waiter for each drive in a global slot so the corresponding
+// SD completion interrupt can detach and wake that thread later.
 void sd_block_thread(void* arg){
   int* args = (int*)arg;
   enum SdDrive drive = (enum SdDrive)args[0];
@@ -277,5 +277,5 @@ void sd_handler(enum SdDrive drive){
     sd_wait_thread_1_pending = false;
   }
 
-  local_queue_add(tcb);
+  scheduler_wake_thread_from_interrupt(tcb);
 }

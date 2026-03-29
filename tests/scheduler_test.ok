@@ -1,6 +1,0 @@
-***scheduler test start
-***scheduler mlfq levels ok
-***scheduler priority over level ok
-***scheduler priority weights ok
-***scheduler boost ok
-***scheduler test complete

@@ -10,6 +10,7 @@ struct PerCore {
   struct TCB idle_thread;
   struct TCB* current_thread;
   struct Queue ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
+  struct Queue deferred_interrupt_wake_queue;
   struct SpinQueue pinned_queue;
   struct SleepQueue sleep_queue;
   unsigned scheduler_iters;

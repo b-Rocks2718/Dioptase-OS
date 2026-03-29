@@ -2,8 +2,8 @@
  * Low-overhead visual MLFQ workload test.
  *
  * Validates:
- * - threads that voluntarily yield immediately stay near MLFQ level 0
- * - threads that burn enough CPU to demote once, then yield, settle near
+ * - threads that do a tiny burst and then truly block stay near MLFQ level 0
+ * - threads that burn enough CPU to demote once, then block, settle near
  *   MLFQ level 1
  * - fully CPU-bound threads sink to MLFQ level 2
  *
@@ -12,12 +12,15 @@
  *   few tiles
  * - keep every worker at NORMAL priority so the visible separation comes from
  *   MLFQ behavior, not from the priority-weighted scheduler
- * - top row workers are interactive/yield-heavy, middle row workers do a short
- *   CPU burst until they reach level 1 and then yield, and bottom row workers
- *   are CPU-bound
+ * - top row workers do one tiny burst and then sleep, middle row workers do a
+ *   short CPU burst until they reach level 1 and then sleep, and bottom row
+ *   workers are CPU-bound
+ * - the sleeping rows use small per-worker phase offsets so a one-core run
+ *   does not collapse into one worker repeatedly getting the same post-wakeup
+ *   slot every tick
  * - each worker panel contains tracks for levels 0/1/2; the '>' marker shows
- *   the current level and the moving '*' marker shows how much CPU that worker
- *   is receiving
+ *   the current level, the moving '*' marker shows instantaneous CPU share, and
+ *   the counter shows cumulative CPU share over time
  */
 
 #include "../kernel/constants.h"
@@ -38,11 +41,16 @@
 #define PANEL_HEIGHT 6
 #define PANEL_GAP_X 2
 #define PANEL_GAP_Y 1
-#define START_ROW 6
+#define START_ROW 10
 #define START_COL 1
 #define TRACK_LEN 10
-#define UPDATE_DIVISOR 8
+#define UPDATE_DIVISOR 4
+#define INPUT_SLEEP_JIFFIES 1
 #define FINISH_WAIT_BUDGET 100000
+#define INTERACTIVE_SLEEP_BASE 2
+#define BURSTY_SLEEP_BASE 2
+#define SLEEP_STAGGER_VARIANTS 2
+#define COUNTER_DIGITS 5
 
 enum WorkloadKind {
   WORKLOAD_INTERACTIVE = 0,
@@ -55,6 +63,8 @@ struct TileWorkloadArg {
   int panel_y;
   int worker_index;
   int marker_color;
+  int sleep_jiffies;
+  int initial_stagger_jiffies;
   enum WorkloadKind workload;
 };
 
@@ -66,11 +76,25 @@ static void put_tile_at(int x, int y, char c, int color) {
   TILE_FB[y * TILE_ROW_WIDTH + x] = (short)((color << 8) | c);
 }
 
+// Return one hex digit character.
+static char hex_digit(unsigned value) {
+  if (value < 10) return '0' + value;
+  return 'A' + (value - 10);
+}
+
+// Draw a fixed-width hexadecimal counter.
+static void draw_hex_counter(int x, int y, unsigned value, int digits, int color) {
+  for (int digit = digits - 1; digit >= 0; digit--) {
+    put_tile_at(x + digit, y, hex_digit(value & 0xF), color);
+    value >>= 4;
+  }
+}
+
 // Border/text color used for one workload class.
 static int workload_color(enum WorkloadKind workload) {
   if (workload == WORKLOAD_INTERACTIVE) return 0xAF;
-  if (workload == WORKLOAD_BURSTY) return 0xFC;
-  return 0xF0;
+  if (workload == WORKLOAD_BURSTY) return 0x1F;
+  return 0x1D;
 }
 
 // One-letter label used in the panel header.
@@ -112,6 +136,9 @@ static void draw_panel_frame(struct TileWorkloadArg* arg) {
   put_tile_at(x + 5, y + 1, 'L', border_color);
   put_tile_at(x + 6, y + 1, ':', border_color);
   put_tile_at(x + 7, y + 1, '?', border_color);
+  put_tile_at(x + 9, y + 1, 'C', border_color);
+  put_tile_at(x + 10, y + 1, ':', border_color);
+  draw_hex_counter(x + 11, y + 1, 0, COUNTER_DIGITS, border_color);
 
   for (track_row = 0; track_row < MLFQ_LEVELS; track_row++) {
     int row_y = y + 2 + track_row;
@@ -157,6 +184,12 @@ static void set_marker(struct TileWorkloadArg* arg,
   put_tile_at(arg->panel_x + 5 + current_pos, row_y, '*', arg->marker_color);
 }
 
+// Update the cumulative CPU-share counter for one worker.
+static void set_cpu_counter(struct TileWorkloadArg* arg, unsigned cpu_steps) {
+  draw_hex_counter(arg->panel_x + 11, arg->panel_y + 1,
+                   cpu_steps, COUNTER_DIGITS, workload_color(arg->workload));
+}
+
 // Read the current thread's MLFQ level with the per-core accessor preconditions satisfied.
 static int read_current_level(void) {
   unsigned was;
@@ -171,15 +204,19 @@ static int read_current_level(void) {
   return level;
 }
 
-// Interactive workers yield immediately, so they should stay near level 0.
-static void interactive_step(void) {
-  yield();
+// Interactive workers do a tiny burst and then truly block, so they should
+// stay near level 0. The per-worker sleep variation prevents same-phase wakeup
+// convoys from dominating the one-core visual.
+static void interactive_step(struct TileWorkloadArg* arg) {
+  sleep(arg->sleep_jiffies);
 }
 
-// Bursty workers burn CPU until they reach level 1, then become cooperative.
-static void bursty_step(int current_level) {
+// Bursty workers burn CPU until they reach level 1, then truly block so they
+// settle there. The per-worker sleep variation serves the same anti-convoy
+// purpose as the interactive row.
+static void bursty_step(struct TileWorkloadArg* arg, int current_level) {
   if (current_level >= LEVEL_ONE) {
-    yield();
+    sleep(arg->sleep_jiffies);
   }
 }
 
@@ -196,12 +233,18 @@ static void workload_visual_worker(void* raw_arg) {
   int marker_pos;
   int previous_marker_pos;
   int last_drawn_step;
+  unsigned cpu_steps;
 
   arg = (struct TileWorkloadArg*)raw_arg;
   previous_level = -1;
   previous_marker_pos = -1;
   marker_step = 0;
   last_drawn_step = -1;
+  cpu_steps = 0;
+
+  if (arg->initial_stagger_jiffies > 0) {
+    sleep(arg->initial_stagger_jiffies);
+  }
 
   while (__atomic_load_n(&stop_visual) == 0) {
     current_level = read_current_level();
@@ -218,18 +261,20 @@ static void workload_visual_worker(void* raw_arg) {
       previous_marker_pos = -1;
     }
 
+    cpu_steps++;
     marker_step++;
     if ((marker_step / UPDATE_DIVISOR) != last_drawn_step) {
       last_drawn_step = marker_step / UPDATE_DIVISOR;
       marker_pos = last_drawn_step % TRACK_LEN;
       set_marker(arg, current_level, previous_marker_pos, marker_pos);
+      set_cpu_counter(arg, cpu_steps);
       previous_marker_pos = marker_pos;
     }
 
     if (arg->workload == WORKLOAD_INTERACTIVE) {
-      interactive_step();
+      interactive_step(arg);
     } else if (arg->workload == WORKLOAD_BURSTY) {
-      bursty_step(current_level);
+      bursty_step(arg, current_level);
     } else {
       cpu_bound_step();
     }
@@ -243,7 +288,7 @@ static void spawn_workload_visual_worker(int panel_x, int panel_y,
                                          enum WorkloadKind workload, int worker_index) {
   struct TileWorkloadArg* arg;
   struct Fun* fun;
-
+  
   arg = malloc(sizeof(struct TileWorkloadArg));
   assert(arg != NULL,
          "thread_mlfq_workloads_tiles: TileWorkloadArg allocation failed.\n");
@@ -252,6 +297,17 @@ static void spawn_workload_visual_worker(int panel_x, int panel_y,
   arg->worker_index = worker_index;
   arg->marker_color = workload_color(workload);
   arg->workload = workload;
+  arg->sleep_jiffies = 0;
+  arg->initial_stagger_jiffies = (workload * WORKERS_PER_ROW + worker_index) %
+                                 (WORKERS_PER_ROW + 1);
+
+  if (workload == WORKLOAD_INTERACTIVE) {
+    arg->sleep_jiffies = INTERACTIVE_SLEEP_BASE +
+                         (worker_index % SLEEP_STAGGER_VARIANTS);
+  } else if (workload == WORKLOAD_BURSTY) {
+    arg->sleep_jiffies = BURSTY_SLEEP_BASE +
+                         (worker_index % SLEEP_STAGGER_VARIANTS);
+  }
 
   draw_panel_frame(arg);
 
@@ -270,6 +326,7 @@ int kernel_main(void) {
   int panel_y;
   int total_workers;
   int wait_count;
+  int key;
   enum WorkloadKind workload;
 
   load_text_tiles();
@@ -277,10 +334,11 @@ int kernel_main(void) {
 
   say("MLFQ workload visual\n", NULL);
   say("All workers are NORMAL priority\n", NULL);
-  say("Top row: interactive/yield-heavy\n", NULL);
-  say("Mid row: short burst then yield, so it settles near level 1\n", NULL);
+  say("Top row: tiny burst then staggered sleep, so it stays near level 0\n", NULL);
+  say("Mid row: short burst then staggered sleep, so it settles near level 1\n", NULL);
   say("Bot row: CPU-bound, so it sinks to level 2\n", NULL);
   say("> shows current MLFQ level, * shows CPU share\n", NULL);
+  say("C:xxxxx is cumulative run count in hex\n", NULL);
   say("Press q to exit\n", NULL);
 
   total_workers = WORKLOAD_ROWS * WORKERS_PER_ROW;
@@ -295,7 +353,11 @@ int kernel_main(void) {
     }
   }
 
-  while (waitkey() != 'q');
+  while (true) {
+    key = getkey();
+    if (key == 'q' || key == 'Q') break;
+    sleep(INPUT_SLEEP_JIFFIES);
+  }
 
   __atomic_store_n(&stop_visual, 1);
   set_priority(HIGH_PRIORITY);

@@ -26,7 +26,7 @@ static void sem_add(void* arg){
   if (sem->count > 0){
     sem->count--;
     spin_lock_release(&sem->lock);
-    global_queue_add(tcb);
+    scheduler_wake_thread(tcb);
   } else {
     queue_add(&sem->wait_queue, tcb);
     spin_lock_release(&sem->lock);
@@ -65,7 +65,7 @@ void sem_up(struct Semaphore* sem){
   spin_lock_release(&sem->lock);
 
   if (wakeup != NULL){
-    global_queue_add(wakeup);
+    scheduler_wake_thread(wakeup);
   }
 }
 

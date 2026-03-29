@@ -28,7 +28,7 @@ static void rw_add_reader(void* arg){
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     rwlock->readers++;
     spin_lock_release(&rwlock->lock);
-    global_queue_add(tcb);
+    scheduler_wake_thread(tcb);
   } else {
     queue_add(&rwlock->waiting_readers, tcb);
     spin_lock_release(&rwlock->lock);
@@ -68,7 +68,7 @@ void rw_lock_release_read(struct RwLock* rwlock){
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    global_queue_add(writer);
+    scheduler_wake_thread(writer);
   } else {
     spin_lock_release(&rwlock->lock);
   }
@@ -87,7 +87,7 @@ static void rw_add_writer(void* arg){
     // take the lock
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    global_queue_add(tcb);
+    scheduler_wake_thread(tcb);
   } else {
     // wait in the writers queue
     queue_add(&rwlock->waiting_writers, tcb);
@@ -127,7 +127,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
     spin_lock_release(&rwlock->lock);
-    global_queue_add(writer);
+    scheduler_wake_thread(writer);
   } else {
     // Wake up all waiting readers.
     // Count and claim reader slots while holding the lock so writers cannot slip in.
@@ -139,7 +139,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     while (readers != NULL){
       struct TCB* next = readers->next;
       readers->next = NULL;
-      global_queue_add(readers);
+      scheduler_wake_thread(readers);
       readers = next;
     }
   }

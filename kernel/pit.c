@@ -28,20 +28,28 @@ void pit_handler(void){
   if (me == 0){
     // core 0 is responsible for incrementing jiffies
     current_jiffies++;
+
+    // core 0 is responsible for setting mlfq_boost_pending and rebalance_pending on all cores
+    // If each core set the value itself, there is a race where it checks current_jiffies
+    // before core 0 has incremented it.
+    // Each core will clear the value itself
+    if (current_jiffies % MLFQ_BOOST_INTERVAL == 0){
+      for (int core = 0; core < MAX_CORES; core++){
+        __atomic_store_n(&per_core_data[core].mlfq_boost_pending, true);
+      }
+    }
+
+    if (current_jiffies % REBALANCE_INTERVAL == 0){
+      for (int core = 0; core < MAX_CORES; core++){
+        __atomic_store_n(&per_core_data[core].rebalance_pending, true);
+      }
+    }
   }
 
   struct PerCore* per_core = get_per_core();
 
   struct TCB* tcb = per_core->current_thread;
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
-
-  if (current_jiffies % MLFQ_BOOST_INTERVAL == 0){
-    per_core->mlfq_boost_pending = true;
-  }
-
-  if (current_jiffies % REBALANCE_INTERVAL == 0){
-    per_core->rebalance_pending = true;
-  }
 
   if (tcb != &per_core->idle_thread){
     tcb->remaining_quantum--;

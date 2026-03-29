@@ -26,7 +26,7 @@
 #include "ps2.h"
 #include "scheduler.h"
 
-struct SpinQueue global_ready_queue;
+struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
 bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
@@ -372,6 +372,7 @@ void bootstrap(void){
 void yield(void){
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
+  scheduler_charge_yield(tcb);
   block(was, local_queue_add, (void*)tcb, true);
 }
 
