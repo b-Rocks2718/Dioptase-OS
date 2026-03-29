@@ -24,6 +24,7 @@
 #include "interrupts.h"
 #include "config.h"
 #include "ps2.h"
+#include "scheduler.h"
 
 struct SpinQueue global_ready_queue;
 struct SpinQueue reaper_queue;
@@ -121,6 +122,13 @@ static struct TCB* make_tcb(bool leak_mem){
 
 // create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun){
+  thread_priority(thread_fun, NORMAL_PRIORITY);
+}
+
+
+// create a thread to run the given function, and add it to the global ready queue
+// allows specifying the thread's priority
+void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
   struct TCB* tcb = make_tcb(false);
   __atomic_fetch_add(&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
@@ -136,6 +144,7 @@ void thread(struct Fun* thread_fun){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
+  tcb->priority = priority;
   global_queue_add(tcb);
 }
 
@@ -162,26 +171,13 @@ static void setup_thread(struct Fun* thread_fun){
   global_queue_add(tcb);
 }
 
-// initialize scheduler structures; should only be called once on one core
+// initialize thread structures; should only be called once on one core
 void threads_init(void){
-  spin_queue_init(&global_ready_queue);
-  spin_queue_init(&reaper_queue);
-
-  for (int i = 0; i < MAX_CORES; i++) {
-    queue_init(&per_core_data[i].ready_queue);
-    sleep_queue_init(&per_core_data[i].sleep_queue);
-    spin_queue_init(&per_core_data[i].pinned_queue);
-  }
+  scheduler_init();
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
   reaper_fun->arg = NULL;
-
-  sd_wait_thread_0_pending = false;
-  sd_wait_thread_0 = NULL;
-
-  sd_wait_thread_1_pending = false;
-  sd_wait_thread_1 = NULL;
 
   setup_thread(reaper_fun);
 }
@@ -234,92 +230,15 @@ void thread_entry(void) {
 // when we don't need to run any callback
 static void nothing(void* unused) {}
 
-#define GLOBAL_CHECK_INTERVAL 8 // every 8 iterations of the event loop, check the global queue for new work
-#define REBALANCE_INTERVAL 32 // only check for rebalancing every 32 iterations to avoid excessive overhead
-#define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
-#define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
-
 // idle thread loop
 // calls to block() context switch to here, 
 // where we decide which thread to run next and switch to it
 void event_loop(void) {
   /* only the idle thread can enter this function */
-  unsigned event_loop_iters = 0;
   while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
+    // on each iteration, try to find a thread to switch to
+
     struct PerCore* core = get_per_core();
-    
-    // check sleep queue
-    struct TCB* wakeup = sleep_queue_remove(&core->sleep_queue);
-    while (wakeup != NULL) {
-      local_queue_add(wakeup);
-      wakeup = sleep_queue_remove(&core->sleep_queue);
-    }
-
-    // empty pinned queue into local ready queue
-    struct TCB* pinned = spin_queue_remove_all(&core->pinned_queue);
-    while (pinned != NULL) {
-      struct TCB* next = pinned->next;
-      pinned->next = NULL;
-      local_queue_add(pinned);
-      pinned = next;
-    }
-
-    if (event_loop_iters % REBALANCE_INTERVAL == 0) {
-      // work out if our local queue has too many or too few threads
-
-      // Use ceiling division so remainder runnable threads do not remain stuck
-      // on the global queue when the active count is not divisible by core count.
-      unsigned total_active = __atomic_load_n(&n_active) + __atomic_load_n(&n_active_others);
-      unsigned ideal = (total_active + CONFIG.num_cores - 1) / CONFIG.num_cores;
-      unsigned local_size = __atomic_load_n(&core->ready_queue.size);
-      unsigned global_size = __atomic_load_n(&global_ready_queue.size);
-
-      if (local_size * 100 > ideal * MAX_REBALANCE_PERCENT) {
-        // if we have > 130% of our ideal number of threads, move some to the global queue
-        int to_move = local_size - ideal;
-        unsigned scan_budget = local_size;
-        int moved = 0;
-        while (moved < to_move && scan_budget > 0) {
-          struct TCB* tcb = local_queue_remove();
-          if (tcb == NULL) break;
-          if (tcb->core_affinity != ANY_CORE) {
-            // Keep pinned threads on their home core's local queue
-            local_queue_add(tcb);
-          } else {
-            global_queue_add(tcb);
-            moved++;
-          }
-          scan_budget--;
-        }
-      } else if (local_size * 100 < ideal * MIN_REBALANCE_PERCENT) {
-        // if we have < 70% of our ideal number of threads, try to take some from the global queue
-        int to_move = ideal - local_size;
-        for (int i = 0; i < to_move; i++) {
-          struct TCB* tcb = global_queue_remove();
-          if (tcb == NULL) break;
-          local_queue_add(tcb);
-        }
-      }
-    }
-
-    struct TCB* next = NULL;
-
-    // Periodically check global work first so threads woken onto the global
-    // queue cannot starve behind a permanently "balanced" local queue set.
-    if ((event_loop_iters % GLOBAL_CHECK_INTERVAL) == 0) {
-      next = global_queue_remove();
-    }
-
-    if (next == NULL) {
-      // if no global work (or we didn't check), run local work
-      next = local_queue_remove();
-    }
-
-    if (next == NULL) {
-      // if no local work, steal from global queue
-      next = global_queue_remove();
-    }
-
     assert(core != NULL, "per-core data is NULL.\n");
     if (core->current_thread != &core->idle_thread) {
       int args[2] = {get_core_id(), (int)core->current_thread};
@@ -328,12 +247,9 @@ void event_loop(void) {
     }
 
     struct TCB* me = core->current_thread;
+    struct TCB* next = schedule_next_thread();
 
-    // if we actually are an idle thread, preemption is disabled
-    // and we don't actually need to disable interrupts here
-    // this is just for debugging
     int was = interrupts_disable();
-
     if (next != NULL) {
       context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
     } else {
@@ -342,8 +258,6 @@ void event_loop(void) {
       // put core to sleep to save power until the next interrupt if there's no work to do
       pause();
     }
-
-    event_loop_iters++;
   }
 
   // Core 0 will print results and shut down the system, 
@@ -446,43 +360,6 @@ void bootstrap(void){
     "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
   interrupts_restore(was);
-}
-
-// add a thread to the global ready queue, or if it's pinned, to its core's pinned queue
-void global_queue_add(void* tcb){
-  struct TCB* thread = (struct TCB*)tcb;
-
-  if (thread->core_affinity == ANY_CORE) {
-    spin_queue_add(&global_ready_queue, thread);
-    return;
-  }
-
-  // If the thread is pinned to a specific core, add it to that core's pinned queue
-  // The idle thread on that core will move it to the ready queue
-  struct PerCore* target_core = &per_core_data[thread->core_affinity];
-  spin_queue_add(&target_core->pinned_queue, thread);
-}
-
-struct TCB* global_queue_remove(void){
-  return spin_queue_remove(&global_ready_queue);
-}
-
-// add a thread to the core-local ready queue
-void local_queue_add(void* tcb){
-  int was = interrupts_disable();
-  // leave interrupts disabled around queue_add to avoid re-entrancy issues
-  queue_add(&get_per_core()->ready_queue, (struct TCB*)tcb);
-  interrupts_restore(was);
-}
-
-// remove a thread from the core-local ready queue
-struct TCB* local_queue_remove(void){
-  int was = interrupts_disable();
-  // leave interrupts disabled around queue_add to avoid re-entrancy issues
-  struct TCB* tcb = queue_remove(&get_per_core()->ready_queue);
-  interrupts_restore(was);
-
-  return tcb;
 }
 
 // voluntarily yield the CPU and re-queue the current thread

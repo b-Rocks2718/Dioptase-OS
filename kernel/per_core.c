@@ -26,7 +26,7 @@ struct TCB* get_current_tcb() {
 // return a pointer to the ready queue for this core
 // Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
 struct Queue* get_ready_queue() {
-  return &get_per_core()->ready_queue;
+  return get_per_core()->ready_queue;
 }
 
 // return a pointer to the pinned queue for this core

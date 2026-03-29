@@ -108,8 +108,7 @@ void display_mandelbrot(void* arg){
 
   for (int i = start_i; i < start_i + ((FB_HEIGHT/2) >> RESOLUTION); ++i){
     for (int j = start_j; j < start_j + ((FB_WIDTH/2) >> RESOLUTION); ++j){
-      // This test intentionally uses one fixed point in the set for every pixel.
-      struct Complex c = {-0x00010000, 0x00010000};
+      struct Complex c = {start_x + j * diff, start_y - i * diff};
       int count = mandelbrot_count(&c);
       if (count >= 0){
         PIXEL_FB[i * FB_WIDTH + j] = colors[count % COLOR_COUNT];

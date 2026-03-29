@@ -4,6 +4,7 @@
 #include "per_core.h"
 #include "debug.h"
 #include "heap.h"
+#include "scheduler.h"
 
 // Reader-writer lock implementation (write-preferring).
 // Waiting readers and writers are queued; writers are granted priority when present.

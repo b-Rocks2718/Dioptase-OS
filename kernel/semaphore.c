@@ -3,6 +3,7 @@
 #include "per_core.h"
 #include "threads.h"
 #include "interrupts.h"
+#include "scheduler.h"
 
 // port of Gheith kernel implementation
 

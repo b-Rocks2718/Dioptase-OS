@@ -26,13 +26,16 @@ extern struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
 extern bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
 extern struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
 
+extern int n_active;
+extern int n_active_others; // number of running threads not counted in n_active
+
 extern unsigned DEFAULT_INTERRUPT_MASK;
 
 // true until the first thread is created, 
 // after which we consider the system to be done with bootstrapping and fully operational
 extern bool bootstrapping;
 
-// initialize scheduler structures; should only be called once on one core
+// initialize thread structures; should only be called once on one core
 void threads_init(void);
 
 // switch away from the current thread and run a completion callback
@@ -56,20 +59,12 @@ void event_loop(void);
 // create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun);
 
+// create a thread to run the given function, and add it to the global ready queue
+// allows specifying the thread's priority
+void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority);
+
 // set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void);
-
-// add a thread to the global ready queue, or if it's pinned, to its core's pinned queue
-void global_queue_add(void* tcb);
-
-// remove a thread from the global ready queue
-struct TCB* global_queue_remove(void);
-
-// add a thread to the core-local ready queue
-void local_queue_add(void* tcb);
-
-// remove a thread from the core-local ready queue
-struct TCB* local_queue_remove(void);
 
 // voluntarily yield the CPU and re-queue the current thread
 void yield(void);

@@ -7,6 +7,7 @@
 #include "interrupts.h"
 #include "per_core.h"
 #include "machine.h"
+#include "scheduler.h"
 
 // SD MMIO addresses 
 

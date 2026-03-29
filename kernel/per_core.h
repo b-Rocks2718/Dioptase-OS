@@ -7,11 +7,12 @@
 
 // Stores all core-local data
 struct PerCore {
-  struct TCB idle_thread; // TCB for the idle thread on this core
-  struct TCB* current_thread; // TCB for the currently running thread on this core
-  struct Queue ready_queue; // queue of threads ready to run on this core
-  struct SpinQueue pinned_queue; // queue of threads pinned to this core
-  struct SleepQueue sleep_queue; // queue of threads sleeping on this core
+  struct TCB idle_thread;
+  struct TCB* current_thread;
+  struct Queue ready_queue[PRIORITY_LEVELS];
+  struct SpinQueue pinned_queue;
+  struct SleepQueue sleep_queue;
+  unsigned scheduler_iters;
 };
 
 extern struct PerCore per_core_data[MAX_CORES];

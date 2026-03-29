@@ -7,6 +7,7 @@
 #include "threads.h"
 #include "per_core.h"
 #include "debug.h"
+#include "scheduler.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
 static unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
