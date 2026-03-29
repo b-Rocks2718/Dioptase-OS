@@ -6,7 +6,7 @@
 
 # emulator config
 NUM_CORES ?= 4
-SCHEDULER ?= free # free, rr, or random
+SCHEDULER ?= free # emulator scheduler, determines when cores run. free, rr, or random
 EMU_VGA ?= no # whether to build with VGA support and emulate a VGA device
 TRACE_INTS ?= no # print a line for every interrupt delivery
 SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
@@ -30,16 +30,20 @@ VERSION ?= release
 PYTHON3 ?= python3
 DEPGEN ?= gcc
 
-EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER)
+EMU_VGA_STRIPPED := $(strip $(EMU_VGA))
+SCHEDULER_STRIPPED := $(strip $(SCHEDULER))
+TRACE_INTS_STRIPPED := $(strip $(TRACE_INTS))
 
-ifeq ($(EMU_VGA),yes)
+EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER_STRIPPED)
+
+ifeq ($(EMU_VGA_STRIPPED),yes)
 EMU_FLAGS += --vga
 USE_VGA_DEFINE := 1
 else
 USE_VGA_DEFINE := 0
 endif
 
-ifeq ($(TRACE_INTS),yes)
+ifeq ($(TRACE_INTS_STRIPPED),yes)
 EMU_FLAGS += --trace-ints
 endif
 

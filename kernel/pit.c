@@ -35,14 +35,33 @@ void pit_handler(void){
   struct TCB* tcb = per_core->current_thread;
   assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
-  if (tcb != &per_core->idle_thread && tcb->can_preempt){
-    // if we aren't idle and can be preempted, 
-    // block and add ourselves back to the core-local ready queue 
-    unsigned was = get_imr();
+  if (current_jiffies % MLFQ_BOOST_INTERVAL == 0){
+    per_core->mlfq_boost_pending = true;
+  }
 
-    int args[2] = {(int)tcb, (int)&per_core->idle_thread};
+  if (current_jiffies % REBALANCE_INTERVAL == 0){
+    per_core->rebalance_pending = true;
+  }
 
-    block(was, local_queue_add, tcb, true);
+  if (tcb != &per_core->idle_thread){
+    tcb->remaining_quantum--;
+    if (tcb->can_preempt && tcb->remaining_quantum <= 0){
+      // if we aren't idle and can be preempted, and used up our quantum
+      // block and add ourselves back to the core-local ready queue 
+      // and demote our MLFQ level
+      if (tcb->mlfq_level < LEVEL_TWO){
+        tcb->mlfq_level++;
+      }
+
+      // reset quantum
+      tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
+
+      unsigned was = get_imr();
+
+      int args[2] = {(int)tcb, (int)&per_core->idle_thread};
+
+      block(was, local_queue_add, tcb, true);
+    }
   }
 
   imr = get_imr();

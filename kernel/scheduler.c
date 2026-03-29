@@ -11,18 +11,21 @@
 #include "config.h"
 
 #define GLOBAL_CHECK_INTERVAL 8 // every 8 iterations of the event loop, check the global queue for new work
-#define REBALANCE_INTERVAL 32 // only check for rebalancing every 32 iterations to avoid excessive overhead
-#define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
-#define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
 
 // The ratios of these weights determine the relative frequency with which threads
 // of different priorities are scheduled. For example, with the default weights
 // of 4:2:1, high priority threads are scheduled approximately four times as
 // often as low priority threads, and twice as often as mid priority threads.
-
 #define HIGH_PRIORITY_WEIGHT 4 
 #define MID_PRIORITY_WEIGHT 2
 #define LOW_PRIORITY_WEIGHT 1
+
+unsigned TIME_QUANTUM[MLFQ_LEVELS] = {2, 4, 8};
+unsigned MLFQ_BOOST_INTERVAL = 500; // boost all threads to highest MLFQ level every 500 jiffies
+
+unsigned REBALANCE_INTERVAL = 256; // only check for rebalancing every 256 iterations to avoid excessive overhead
+#define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
+#define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
 
 // initialize scheduler structures; should only be called by threads_init
 void scheduler_init(void){
@@ -31,11 +34,15 @@ void scheduler_init(void){
 
   for (int i = 0; i < MAX_CORES; i++) {
     for (int j = 0; j < PRIORITY_LEVELS; j++) {
-      queue_init(&per_core_data[i].ready_queue[j]);
+      for (int k = 0; k < MLFQ_LEVELS; k++) {
+        queue_init(&per_core_data[i].ready_queue[j][k]);
+      }
     }
     sleep_queue_init(&per_core_data[i].sleep_queue);
     spin_queue_init(&per_core_data[i].pinned_queue);
     per_core_data[i].scheduler_iters = 0;
+    per_core_data[i].mlfq_boost_pending = false;
+    per_core_data[i].rebalance_pending = false;
   }
 
   sd_wait_thread_0_pending = false;
@@ -69,8 +76,17 @@ void local_queue_add(void* tcb){
   struct TCB* thread = (struct TCB*)tcb;
   int was = interrupts_disable();
   // leave interrupts disabled around queue_add to avoid re-entrancy issues
-  queue_add(&get_per_core()->ready_queue[thread->priority], thread);
+  queue_add(&get_per_core()->ready_queue[thread->priority][thread->mlfq_level], thread);
   interrupts_restore(was);
+}
+
+// MLFQ removes from the highest non-empty level first
+struct TCB* mlfq_remove(struct Queue* mlfq) {
+  for (int i = 0; i < MLFQ_LEVELS; i++) {
+    struct TCB* tcb = queue_remove(&mlfq[i]);
+    if (tcb != NULL) return tcb;
+  }
+  return NULL;
 }
 
 // Remove from the first non-empty queue in the given priority order.
@@ -79,13 +95,13 @@ void local_queue_add(void* tcb){
 // queue is empty. Must be called with interrupts disabled to avoid re-entrancy issues
 struct TCB* local_remove_in_priority_order(struct PerCore* per_core,
   enum ThreadPriority first, enum ThreadPriority second, enum ThreadPriority third) {
-  struct TCB* tcb = queue_remove(&per_core->ready_queue[first]);
+  struct TCB* tcb = mlfq_remove(per_core->ready_queue[first]);
   if (tcb != NULL) return tcb;
 
-  tcb = queue_remove(&per_core->ready_queue[second]);
+  tcb = mlfq_remove(per_core->ready_queue[second]);
   if (tcb != NULL) return tcb;
 
-  return queue_remove(&per_core->ready_queue[third]);
+  return mlfq_remove(per_core->ready_queue[third]);
 }
 
 // remove a thread from the core-local ready queue
@@ -136,47 +152,66 @@ struct TCB* local_or_global_queue_remove(void){
   return next;
 }
 
+// Boost all threads to the highest MLFQ level
+// Only to be called by schedule_next_thread()
+void mlfq_boost(void){
+  struct PerCore* core = get_per_core();
+  for (int i = LOW_PRIORITY; i <= HIGH_PRIORITY; i++) {
+    for (int k = LEVEL_ONE; k <= LEVEL_TWO; k++) {
+      struct TCB* tcb = queue_remove(&core->ready_queue[i][k]);
+      while (tcb != NULL) {
+        tcb->mlfq_level = LEVEL_ZERO;
+        tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
+        local_queue_add(tcb);
+        tcb = queue_remove(&core->ready_queue[i][k]);
+      }
+    }
+  }
+}
+
 // Attempt to rebalance the number of threads between the local and global queues
 // Only to be called by schedule_next_thread()
 void rebalance_queues(void){
   struct PerCore* core = get_per_core();
 
-  // work out if our local queue has too many or too few threads
-  if (core->scheduler_iters % REBALANCE_INTERVAL == 0) {
-    // Use ceiling division so remainder runnable threads do not remain stuck
-    // on the global queue when the active count is not divisible by core count.
-    unsigned total_active = __atomic_load_n(&n_active) + __atomic_load_n(&n_active_others);
-    unsigned ideal = (total_active + CONFIG.num_cores - 1) / CONFIG.num_cores;
-    unsigned local_size = __atomic_load_n(&core->ready_queue[HIGH_PRIORITY].size) + 
-                          __atomic_load_n(&core->ready_queue[NORMAL_PRIORITY].size) +
-                          __atomic_load_n(&core->ready_queue[LOW_PRIORITY].size);
-    unsigned global_size = __atomic_load_n(&global_ready_queue.size);
+  // Use ceiling division so remainder runnable threads do not remain stuck
+  // on the global queue when the active count is not divisible by core count.
+  unsigned total_active = __atomic_load_n(&n_active) + __atomic_load_n(&n_active_others);
+  unsigned ideal = (total_active + CONFIG.num_cores - 1) / CONFIG.num_cores;
 
-    if (local_size * 100 > ideal * MAX_REBALANCE_PERCENT) {
-      // if we too many more than our ideal number of threads, move some to the global queue
-      int to_move = local_size - ideal;
-      unsigned scan_budget = local_size;
-      int moved = 0;
-      while (moved < to_move && scan_budget > 0) {
-        struct TCB* tcb = local_queue_remove();
-        if (tcb == NULL) break;
-        if (tcb->core_affinity != ANY_CORE) {
-          // Keep pinned threads on their home core's local queue
-          local_queue_add(tcb);
-        } else {
-          global_queue_add(tcb);
-          moved++;
-        }
-        scan_budget--;
-      }
-    } else if (local_size * 100 < ideal * MIN_REBALANCE_PERCENT) {
-      // if we have too few threads compared to our ideal number of threads, try to take some from the global queue
-      int to_move = ideal - local_size;
-      for (int i = 0; i < to_move; i++) {
-        struct TCB* tcb = global_queue_remove();
-        if (tcb == NULL) break;
+  unsigned local_size = 0;
+  for (int i = LOW_PRIORITY; i <= HIGH_PRIORITY; i++) {
+    for (int k = 0; k < MLFQ_LEVELS; k++) {
+      local_size += __atomic_load_n(&core->ready_queue[i][k].size);
+    }
+  }
+
+  unsigned global_size = __atomic_load_n(&global_ready_queue.size);
+
+  if (local_size * 100 > ideal * MAX_REBALANCE_PERCENT) {
+    // if we too many more than our ideal number of threads, move some to the global queue
+    int to_move = local_size - ideal;
+    unsigned scan_budget = local_size;
+    int moved = 0;
+    while (moved < to_move && scan_budget > 0) {
+      struct TCB* tcb = local_queue_remove();
+      if (tcb == NULL) break;
+      if (tcb->core_affinity != ANY_CORE) {
+        // Keep pinned threads on their home core's local queue
         local_queue_add(tcb);
+      } else {
+        global_queue_add(tcb);
+        moved++;
       }
+      scan_budget--;
+    }
+  } else if (local_size * 100 < ideal * MIN_REBALANCE_PERCENT) {
+    // if we have too few threads compared to our ideal number of threads, try to take some from the global queue
+    int to_move = ideal - local_size;
+    for (int i = 0; i < to_move; i++) {
+      struct TCB* tcb = global_queue_remove();
+      if (tcb == NULL) break;
+      local_queue_add(tcb);
     }
   }
 }
@@ -203,11 +238,28 @@ struct TCB* schedule_next_thread(void){
     pinned = next;
   }
 
-  rebalance_queues();
+  if (core->rebalance_pending) {
+    rebalance_queues();
+    __atomic_store_n(&core->rebalance_pending, false);
+  }
+
+  if (core->mlfq_boost_pending) {
+    mlfq_boost();
+    __atomic_store_n(&core->mlfq_boost_pending, false);
+  }
 
   struct TCB* next = local_or_global_queue_remove();
 
   core->scheduler_iters++;
 
   return next;
+}
+
+void set_priority(enum ThreadPriority priority){
+  int was = interrupts_disable();
+  struct TCB* current = get_current_tcb();
+  if (current != NULL) {
+    current->priority = priority;
+  }
+  interrupts_restore(was);
 }

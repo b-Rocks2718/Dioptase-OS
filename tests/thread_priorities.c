@@ -1,15 +1,16 @@
 /*
- * Thread fairness test
+ * Thread priorities test
  *
  * Validates:
- * - threads are scheduled in a fair manner and can all make progress
- * - Threads doing similar work get a similar amount of CPU time
+ * - threads are scheduled according to their priorities
+ * - Higher priority threads get more CPU time than lower priority threads
+ * - All threads can still make progress
  *
  * How:
  * - split the framebuffer into 16 squares
  * - launch 16 worker threads, each worker fills in a square with a solid color
  * - artificially slow down workers with a loop, so the rate they do work if visible
- * - if the scheduler is unfair, some squares will fill in much faster than others
+ * - higher priority threads should finish before lower priority ones
  */
 
 #include "../kernel/machine.h"
@@ -149,22 +150,22 @@ int kernel_main(void){
 
   set_priority(LOW_PRIORITY);
 
-  thread(fun1);
-  thread(fun2);
-  thread(fun3);
-  thread(fun4);
-  thread(fun5);
-  thread(fun6);
-  thread(fun7);
-  thread(fun8);
-  thread(fun9);
-  thread(fun10);
-  thread(fun11);
-  thread(fun12);
-  thread(fun13);
-  thread(fun14);
-  thread(fun15);
-  thread(fun16);
+  thread_priority(fun1, HIGH_PRIORITY);
+  thread_priority(fun2, HIGH_PRIORITY);
+  thread_priority(fun3, HIGH_PRIORITY);
+  thread_priority(fun4, HIGH_PRIORITY);
+  thread_priority(fun5, NORMAL_PRIORITY);
+  thread_priority(fun6, NORMAL_PRIORITY);
+  thread_priority(fun7, NORMAL_PRIORITY);
+  thread_priority(fun8, NORMAL_PRIORITY);
+  thread_priority(fun9, LOW_PRIORITY);
+  thread_priority(fun10, LOW_PRIORITY);
+  thread_priority(fun11, LOW_PRIORITY);
+  thread_priority(fun12, LOW_PRIORITY);
+  thread_priority(fun13, NORMAL_PRIORITY);
+  thread_priority(fun14, NORMAL_PRIORITY);
+  thread_priority(fun15, NORMAL_PRIORITY);
+  thread_priority(fun16, NORMAL_PRIORITY);
 
   while (waitkey() != 'q');
 

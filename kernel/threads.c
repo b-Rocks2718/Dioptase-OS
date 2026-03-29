@@ -145,6 +145,9 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
   tcb->priority = priority;
+  tcb->mlfq_level = LEVEL_ZERO;
+  tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
+
   global_queue_add(tcb);
 }
 
@@ -167,7 +170,10 @@ static void setup_thread(struct Fun* thread_fun){
 
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  
+  tcb->priority = LOW_PRIORITY;
+  tcb->mlfq_level = LEVEL_ZERO;
+  tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
+
   global_queue_add(tcb);
 }
 

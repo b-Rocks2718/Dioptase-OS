@@ -19,12 +19,19 @@ enum CoreAffinity {
 };
 
 #define PRIORITY_LEVELS 3
+#define MLFQ_LEVELS 3
 
 // priority levels for threads, used for scheduling decisions
 enum ThreadPriority {
   LOW_PRIORITY = 0,
   NORMAL_PRIORITY = 1,
   HIGH_PRIORITY = 2,
+};
+
+enum MLFQ_LEVEL {
+  LEVEL_ZERO = 0,
+  LEVEL_ONE = 1,
+  LEVEL_TWO = 2
 };
 
 // Thread Control Block
@@ -74,6 +81,8 @@ struct TCB {
   bool can_preempt;
   enum CoreAffinity core_affinity;
   enum ThreadPriority priority;
+  enum MLFQ_LEVEL mlfq_level;
+  int remaining_quantum;
   unsigned wakeup_jiffies;
 
   struct TCB* next;
