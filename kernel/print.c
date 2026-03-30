@@ -25,6 +25,11 @@ void putchar(char c){
   putchar_color(c, text_color);
 }
 
+// print a single character to uart, ignoring CONFIG.use_vga
+void putchar_uart(char c){
+  *UART_PADDR = c;
+}
+
 // print a character with a specific color
 // color is in the format 0bRRRGGGBB
 // scrolls the screen if we run out of room
@@ -77,6 +82,17 @@ unsigned puts(char* str){
   return count;
 }
 
+// print a string to uart, ignoring CONFIG.use_vga
+unsigned puts_uart(char* str){
+  unsigned count = 0;
+  while (*str != '\0'){
+    putchar_uart(*str);
+    ++str;
+    ++count;
+  }
+  return count;
+}
+
 // simple printf implementation supporting %d, %u, %x, %X, %s, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
@@ -84,6 +100,18 @@ unsigned puts(char* str){
 unsigned say(char* fmt, void* arr){
   preempt_spin_lock_acquire(&print_lock);
   unsigned count = printf(fmt, arr);
+  preempt_spin_lock_release(&print_lock);
+  return count;
+}
+
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// acquires print_lock for serialized output
+// ignores CONFIG.use_vga
+unsigned say_uart(char* fmt, void* arr){
+  preempt_spin_lock_acquire(&print_lock);
+  unsigned count = printf_uart(fmt, arr);
   preempt_spin_lock_release(&print_lock);
   return count;
 }
@@ -146,6 +174,51 @@ unsigned printf(char* fmt, void* arr){
   return count;
 }
 
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// does not acquire print_lock, 
+// so output can be interleaved if other threads are printing
+// to avoid this, call say() instead of printf()
+// ignores CONFIG.use_vga
+unsigned printf_uart(char* fmt, void* arr){
+  unsigned count = 0;
+  unsigned i = 0;
+  while (*fmt != '\0'){
+    if (*fmt == '%') {
+      if (*(fmt + 1) == 'd') {
+        ++fmt;
+        count += print_signed_uart(((int*)arr)[i++]);
+      } else if (*(fmt + 1) == 'u') {
+        ++fmt;
+        count += print_unsigned_uart(((unsigned*)arr)[i++]);
+      } else if (*(fmt + 1) == 'x') {
+        ++fmt;
+        count += print_hex_uart(((unsigned*)arr)[i++], false);
+      } else if (*(fmt + 1) == 'X') {
+        ++fmt;
+        count += print_hex_uart(((unsigned*)arr)[i++], true);
+      } else if (*(fmt + 1) == 's') {
+        ++fmt;
+        count += puts_uart((char*)((void**)arr)[i++]);
+      } else if (*(fmt + 1) == '%') {
+        ++fmt;
+        putchar_uart('%');
+        ++count;
+      } else {
+        // unsupported format specifier, print as is
+        putchar_uart(*fmt);
+        ++count;
+      }
+    } else {
+      putchar_uart(*fmt);
+      ++count;
+    }
+    ++fmt;
+  }
+  return count;
+}
+
 // print the number n to the console as a signed decimal
 // returns the number of characters printed
 unsigned print_signed(int n){
@@ -180,6 +253,41 @@ unsigned print_signed(int n){
   return (n < 0) ? (count + 1) : count;
 }
 
+// print the number n to the console as a signed decimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_signed_uart(int n){
+  char digits[MAX_INT_DEC_DIGITS];
+  unsigned magnitude;
+  unsigned len = 0;
+  unsigned count;
+
+  if(n == 0){
+    putchar_uart('0');
+    return 1;
+  }
+
+  if(n < 0){
+    putchar_uart('-');
+    magnitude = 0u - (unsigned)n;
+  } else {
+    magnitude = (unsigned)n;
+  }
+
+  while (magnitude != 0){
+    digits[len++] = (char)('0' + (magnitude % DECIMAL_BASE));
+    magnitude /= DECIMAL_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar_uart(digits[--len]);
+  }
+  
+  // return number of characters printed
+  return (n < 0) ? (count + 1) : count;
+}
+
 // print the number n to the console as an unsigned decimal
 // returns the number of characters printed
 unsigned print_unsigned(unsigned n){
@@ -200,6 +308,33 @@ unsigned print_unsigned(unsigned n){
   count = len;
   while (len != 0){
     putchar(digits[--len]);
+  }
+  
+  // return number of characters printed
+  return count;
+}
+
+// print the number n to the console as an unsigned decimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_unsigned_uart(unsigned n){
+  char digits[MAX_INT_DEC_DIGITS];
+  unsigned len = 0;
+  unsigned count;
+
+  if(n == 0){
+    putchar_uart('0');
+    return 1;
+  }
+
+  while (n != 0){
+    digits[len++] = (char)('0' + (n % DECIMAL_BASE));
+    n /= DECIMAL_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar_uart(digits[--len]);
   }
   
   // return number of characters printed
@@ -233,6 +368,40 @@ unsigned print_hex(unsigned n, bool uppercase){
   count = len;
   while (len != 0){
     putchar(digits[--len]);
+  }
+  
+  // return number of characters printed
+  return count;
+}
+
+// print the number n to the console as a hexadecimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_hex_uart(unsigned n, bool uppercase){
+  char digits[MAX_UNSIGNED_HEX_DIGITS];
+  unsigned len = 0;
+  unsigned count;
+
+  if(n == 0){
+    putchar_uart('0');
+    return 1;
+  }
+
+  while (n != 0){
+    unsigned digit = n % HEX_BASE;
+
+    if (digit < DECIMAL_BASE){
+      digits[len++] = (char)('0' + digit);
+    } else {
+      digits[len++] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
+    }
+
+    n /= HEX_BASE;
+  }
+
+  count = len;
+  while (len != 0){
+    putchar_uart(digits[--len]);
   }
   
   // return number of characters printed

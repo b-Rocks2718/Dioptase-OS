@@ -20,12 +20,6 @@
 extern struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 extern struct SpinQueue reaper_queue;
 
-extern bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
-extern struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
-
-extern bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
-extern struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
-
 extern int n_active;
 extern int n_active_others; // number of running threads not counted in n_active
 
@@ -47,6 +41,15 @@ void threads_init(void);
 // Preconditions: interrupts are disabled; current thread is core->current_thread
 void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrupts);
 
+// Perform a context switch from the current thread (me) to the next thread (next)
+// Run func(arg) in the context of the next thread before switching to it
+// Needs pointer to current_thread entry of the core's PerCore struct
+// Assumes interrupts are disabled when this is called, and will re-enable them in the new thread's context
+// run_with_interrupts determines whether to re-enable interrupts before calling the callback function, or after
+// Assumes callback doesn't modify the 'next' TCB 
+extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, 
+  struct TCB** cur_thread, int was, bool run_with_interrupts);
+
 // called when a new thread first runs
 // calls the thread's main function and calls stop() when it returns
 void thread_entry(void);
@@ -58,6 +61,12 @@ void event_loop(void);
 
 // create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun);
+
+// same as thread(), but doesn't modify bootstrapping or n_active
+// used to make stuff like reaper threads that won't count as active threads
+// and leave the system in the bootstrapping phase
+// leaks mem because it assumes these threads run forever
+void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority);
 
 // create a thread to run the given function, and add it to the global ready queue
 // allows specifying the thread's priority

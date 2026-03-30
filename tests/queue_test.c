@@ -6,8 +6,9 @@
  *   pointers when nodes are detached
  * - sleep queues release threads in wakeup order and keep equal-deadline
  *   elements stable
- * - generic queue, generic spin queue, and ring buffer helpers preserve their
- *   documented size, ordering, wrap-around, and full/empty behavior
+ * - generic queue, generic spin queue, ring buffer, and key buffer helpers
+ *   preserve their documented size, ordering, wrap-around, and full/empty
+ *   behavior
  *
  * How:
  * - build small queue fixtures with deliberately stale next pointers so remove()
@@ -15,7 +16,8 @@
  * - drive sleep queue removals at several current_jiffies values to check early,
  *   on-time, and equal-deadline wakeups
  * - repeat the same ordering checks for the generic queue types
- * - exercise ring buffer wrap-around, full detection, and destroy/free cleanup
+ * - exercise ring buffer and key buffer wrap-around, full detection, and
+ *   cleanup behavior
  */
 
 #include "../kernel/queue.h"
@@ -452,6 +454,34 @@ static void test_ringbuf(void) {
   ringbuf_free(heap_ringbuf);
 }
 
+// Check the SPSC key buffer FIFO order, wrap-around, and full detection.
+static void test_keybuf(void) {
+  struct KeyBuf keybuf;
+  short a = 'a';
+  short b = 'b';
+  short c = 'c';
+
+  keybuf_init(&keybuf);
+  expect_uint(keybuf_size(&keybuf), 0, "queue test: keybuf_init size mismatch\n");
+  expect_uint((unsigned)keybuf_remove(&keybuf), 0,
+              "queue test: empty keybuf remove mismatch\n");
+
+  expect_bool(keybuf_add(&keybuf, a), true, "queue test: keybuf add a failed\n");
+  expect_bool(keybuf_add(&keybuf, b), true, "queue test: keybuf add b failed\n");
+  expect_uint(keybuf_size(&keybuf), 2, "queue test: keybuf size after add mismatch\n");
+  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)a,
+              "queue test: keybuf first FIFO remove mismatch\n");
+  expect_bool(keybuf_add(&keybuf, c), true,
+              "queue test: keybuf add after wrap-around failed\n");
+  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)b,
+              "queue test: keybuf second FIFO remove mismatch\n");
+  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)c,
+              "queue test: keybuf wrapped FIFO remove mismatch\n");
+  expect_uint((unsigned)keybuf_remove(&keybuf), 0,
+              "queue test: keybuf should be empty after drain\n");
+  expect_uint(keybuf_size(&keybuf), 0, "queue test: keybuf size after drain mismatch\n");
+}
+
 // Run the full queue helper suite variant by variant.
 void kernel_main(void) {
   say("***queue test start\n", NULL);
@@ -473,6 +503,9 @@ void kernel_main(void) {
 
   test_ringbuf();
   say("***ringbuf ok\n", NULL);
+
+  test_keybuf();
+  say("***keybuf ok\n", NULL);
 
   say("***queue test complete\n", NULL);
 }

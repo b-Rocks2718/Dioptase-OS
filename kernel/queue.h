@@ -56,6 +56,15 @@ struct RingBuf {
   unsigned tail;
 };
 
+#define KEYBUF_CAPACITY 64
+
+// Circular buffer that leaves one slot empty to distinguish full from empty
+// SPSC queue
+struct KeyBuf {
+  short buf[KEYBUF_CAPACITY];
+  unsigned head;
+  unsigned tail;
+};
 
 // initialize an empty spin-locked FIFO queue
 void spin_queue_init(struct SpinQueue* queue);
@@ -163,5 +172,18 @@ void ringbuf_destroy(struct RingBuf* rb);
 
 // destroy the ring buffer and free the RingBuf struct
 void ringbuf_free(struct RingBuf* rb);
+
+
+// initialize keybuf
+void keybuf_init(struct KeyBuf* kb);
+
+// push an element at the front; returns false if the buffer is full
+bool keybuf_add(struct KeyBuf* kb, short p);
+
+// pop and return the back element, or 0 if empty
+short keybuf_remove(struct KeyBuf* kb);
+
+// return the current number of stored elements
+unsigned keybuf_size(struct KeyBuf* kb);
 
 #endif // QUEUE_H

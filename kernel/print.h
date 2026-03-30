@@ -13,27 +13,46 @@ extern short text_tiles[42]; // size is ignored, just there for compiler
 // print a single character to the console
 void putchar(char c);
 
+// print a single character to uart, ignoring CONFIG.use_vga
+void putchar_uart(char c);
+
 // print a character with a specific color
 // color is in the format 0bRRRGGGBB
 // scrolls the screen if we run out of room
 void putchar_color(char c, int color);
 
-bool isnum(char c);
-
 // print the number n to the console as a signed decimal
 // returns the number of characters printed
 unsigned print_signed(int n);
+
+// print the number n to the console as a signed decimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_signed_uart(int n);
 
 // print the number n to the console as an unsigned decimal
 // returns the number of characters printed
 unsigned print_unsigned(unsigned n);
 
+// print the number n to the console as an unsigned decimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_unsigned_uart(unsigned n);
+
 // print the number n to the console as a hexadecimal
 // returns the number of characters printed
 unsigned print_hex(unsigned n, bool uppercase);
 
+// print the number n to the console as a hexadecimal
+// returns the number of characters printed
+// ignores CONFIG.use_vga
+unsigned print_hex_uart(unsigned n, bool uppercase);
+
 // print a NUL-terminated string
 unsigned puts(char* str);
+
+// print a string to uart, ignoring CONFIG.use_vga
+unsigned puts_uart(char* str);
 
 // simple printf implementation supporting %d, %u, %x, %X, %s, %%
 // accepts an array because the compiler does not yet support variadic functions
@@ -46,8 +65,24 @@ unsigned printf(char* fmt, void* arr);
 // simple printf implementation supporting %d, %u, %x, %X, %s, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
+// does not acquire print_lock, 
+// so output can be interleaved if other threads are printing
+// to avoid this, call say() instead of printf()
+// ignores CONFIG.use_vga
+unsigned printf_uart(char* fmt, void* arr);
+
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
 // acquires print_lock for serialized output
 unsigned say(char* fmt, void* arr);
+
+// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// accepts an array because the compiler does not yet support variadic functions
+// array can contain integers and string pointers
+// acquires print_lock for serialized output
+// ignores CONFIG.use_vga
+unsigned say_uart(char* fmt, void* arr);
 
 // simple printf implementation supporting %d, %u, %x, %X, %s, %%
 // accepts an array because the compiler does not yet support variadic functions
@@ -67,5 +102,7 @@ void load_text_tiles(void);
 // set the current tileset to the text mode tileset with the given text and background colors, 
 // then clear the screen
 void load_text_tiles_colored(short text_color, short bg_color);
+
+bool isnum(char c);
 
 #endif // PRINT_H

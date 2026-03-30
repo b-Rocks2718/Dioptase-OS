@@ -29,18 +29,15 @@
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
-bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
-struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
-
-bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
-struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
-
 int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
 
 unsigned DEFAULT_INTERRUPT_MASK = 
-  GLOBAL_INT_ENABLE | SD_0_INT_ENABLE | SD_1_INT_ENABLE | PIT_INT_ENABLE;
+  GLOBAL_INT_ENABLE | 
+  SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
+  PIT_INT_ENABLE |
+  PS2_INT_ENABLE;
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -155,7 +152,7 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-static void setup_thread(struct Fun* thread_fun){
+void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority){
   struct TCB* tcb = make_tcb(true);
 
   __atomic_fetch_add(&n_active_others, 1);
@@ -170,7 +167,7 @@ static void setup_thread(struct Fun* thread_fun){
 
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->priority = LOW_PRIORITY;
+  tcb->priority = priority;
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
 
@@ -185,7 +182,7 @@ void threads_init(void){
   reaper_fun->func = (void (*)(void *))reaper;
   reaper_fun->arg = NULL;
 
-  setup_thread(reaper_fun);
+  setup_thread(reaper_fun, LOW_PRIORITY);
 }
 
 // switch away from the current thread and run a completion callback

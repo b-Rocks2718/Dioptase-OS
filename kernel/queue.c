@@ -414,3 +414,49 @@ void ringbuf_free(struct RingBuf* rb){
   ringbuf_destroy(rb);
   free(rb);
 }
+
+
+// initialize keybuf
+void keybuf_init(struct KeyBuf* kb){
+  for (int i = 0; i < KEYBUF_CAPACITY; i++){
+    kb->buf[i] = 0;
+  }
+  kb->head = 0;
+  kb->tail = 0;
+}
+
+// push an element at the front; returns false if the buffer is full
+bool keybuf_add(struct KeyBuf* kb, short p){
+  if ((kb->head + 1) % KEYBUF_CAPACITY == kb->tail){
+    // full
+    return false;
+  }
+
+  kb->buf[kb->head] = p;
+  kb->head = (kb->head + 1) % KEYBUF_CAPACITY;
+  return true;
+}
+
+// pop and return the back element, or 0 if empty
+short keybuf_remove(struct KeyBuf* kb){
+  if (kb->head == kb->tail){
+    // empty
+    return 0;
+  }
+
+  // Consume the current tail slot before advancing it. This matches the
+  // one-empty-slot FIFO invariant used by keybuf_add() and preserves the
+  // oldest queued key for the single consumer.
+  short key = kb->buf[kb->tail];
+  kb->tail = (kb->tail + 1) % KEYBUF_CAPACITY;
+  return key;
+}
+
+// return the current number of stored elements
+unsigned keybuf_size(struct KeyBuf* kb){
+  if (kb->head >= kb->tail){
+    return kb->head - kb->tail;
+  } else {
+    return KEYBUF_CAPACITY - (kb->tail - kb->head);
+  }
+}

@@ -9,6 +9,7 @@
 #include "debug.h"
 #include "per_core.h"
 #include "sd_driver.h"
+#include "ps2.h"
 
 unsigned HEAP_START = 0x100000;
 unsigned HEAP_SIZE =  0x700000;
@@ -53,6 +54,9 @@ void kernel_entry(void){
 
     say("| Initializing sd driver...\n", NULL);
     sd_init();
+
+    say("| Initializing PS/2 driver...\n", NULL);
+    ps2_init();
 
     // create barrier for all cores to sync on
     start_barrier = num_cores;

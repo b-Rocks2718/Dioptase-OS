@@ -8,6 +8,7 @@
 #include "per_core.h"
 #include "debug.h"
 #include "scheduler.h"
+#include "ps2.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
 static unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
@@ -42,6 +43,16 @@ void pit_handler(void){
     if (current_jiffies % REBALANCE_INTERVAL == 0){
       for (int core = 0; core < MAX_CORES; core++){
         __atomic_store_n(&per_core_data[core].rebalance_pending, true);
+      }
+    }
+
+    if (current_jiffies % PS2_WAKE_INTERVAL == 0){
+      // decide if we need to wake ps2 worker thread
+      // atomic exchange prevents a double wakeup
+      struct TCB* worker = (struct TCB*)__atomic_exchange_n((int*)&ps2_worker_thread, NULL);
+
+      if (worker != NULL) {
+        scheduler_wake_thread_from_interrupt(worker);
       }
     }
   }

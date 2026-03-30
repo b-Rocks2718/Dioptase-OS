@@ -28,6 +28,12 @@ int* DMA_ERR_REG_1 = (int*)0x7FE583C;
 static void* SD_0_IVT_ENTRY = (void*)0x3CC;
 static void* SD_1_IVT_ENTRY = (void*)0x3D8;
 
+bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
+struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
+
+bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
+struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
+
 // SD DMA register contract from docs/mem_map.md:
 // - DMA_LEN is measured in 512-byte blocks.
 // - CTRL bit 0 starts DMA and bit 3 starts SD init. Both are clear-on-write command bits.
@@ -94,6 +100,13 @@ void sd_init(void){
   // register SD interrupt handlers
   register_handler(sd0_handler_, SD_0_IVT_ENTRY);
   register_handler(sd1_handler_, SD_1_IVT_ENTRY);
+
+  // initialize threads
+  sd_wait_thread_0_pending = false;
+  sd_wait_thread_0 = NULL;
+
+  sd_wait_thread_1_pending = false;
+  sd_wait_thread_1 = NULL;
 }
 
 // Write a command to DMA_CTRL_REG and wait for completion

@@ -166,7 +166,7 @@ int kernel_main(void){
   int args[5] = {(FB_WIDTH/2) >> RESOLUTION, (FB_HEIGHT/2) >> RESOLUTION, start_x, start_y, diff};
   display_mandelbrot(args);
 
-  while (getkey() != 'q');
+  while (waitkey() != 'q');
 
   return 0;
 }

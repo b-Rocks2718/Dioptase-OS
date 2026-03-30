@@ -302,7 +302,7 @@ int kernel_main(void) {
   }
 
   while (true) {
-    key = getkey();
+    key = waitkey();
     if (key == 'q' || key == 'Q') break;
     sleep(INPUT_SLEEP_JIFFIES);
   }

@@ -1,6 +1,15 @@
 #ifndef SD_DRIVER_H
 #define SD_DRIVER_H
 
+#include "constants.h"
+#include "TCB.h"
+
+extern bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
+extern struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
+
+extern bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
+extern struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
+
 // Enum of the SD ports on the Dioptase board
 enum SdDrive {
   SD_DRIVE_0 = 0,

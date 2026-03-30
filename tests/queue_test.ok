@@ -5,4 +5,5 @@
 ***generic_queue ok
 ***generic_spin_queue ok
 ***ringbuf ok
+***keybuf ok
 ***queue test complete

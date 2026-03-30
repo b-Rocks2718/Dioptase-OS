@@ -48,11 +48,9 @@ static void makeAvail(unsigned i, unsigned entries);
 // Postconditions: no heap state changes.
 // CPU state assumptions: kernel mode; safe to call print routines.
 static void heap_debug_log_block(unsigned op_id, unsigned i, unsigned entry_count) {
-  unsigned pc = get_caller_return_address();
   unsigned core = get_core_id();
-  int args[8] = {
+  int args[7] = {
     (int)core,
-    (int)pc,
     (int)op_id,
     (int)i,
     (int)entry_count,
@@ -60,7 +58,7 @@ static void heap_debug_log_block(unsigned op_id, unsigned i, unsigned entry_coun
     (int)avail,
     (int)array
   };
-  say("| HEAP debug: core=%d pc=0x%X op=%d idx=%d entries=%d len=%d avail=%d base=0x%X\n", args);
+  say("| HEAP debug: core=%d op=%d idx=%d entries=%d len=%d avail=%d base=0x%X\n", args);
 }
 
 // Purpose: report an invalid pointer passed to free.
@@ -147,22 +145,22 @@ unsigned sanity(unsigned i) {
     if (i == 0)
       return 0;
     if (i >= len) {
-      int args[4] = {(int)i, (int)len, (int)array, (int)get_caller_return_address()};
-      say("| HEAP sanity: i=%d len=%d base=0x%X caller=0x%X\n", args);
+      int args[3] = {(int)i, (int)len, (int)array};
+      say("| HEAP sanity: i=%d len=%d base=0x%X\n", args);
       panic("bad header index\n");
     }
     unsigned footer = footerFromHeader(i);
     if (footer >= len) {
-      int args[4] = {(int)i, (int)footer, (int)len, (int)get_caller_return_address()};
-      say("| HEAP bad footer: header=%d footer=%d len=%d caller=0x%X\n", args);
+      int args[3] = {(int)i, (int)footer, (int)len};
+      say("| HEAP bad footer: header=%d footer=%d len=%d\n", args);
       panic("bad footer index\n");
     }
     unsigned hv = array[i];
     unsigned fv = array[footer];
 
     if (hv != fv) {
-      int args[4] = {(int)i, (int)hv, (int)fv, (int)get_caller_return_address()};
-      say("| HEAP bad block: header=%d hv=0x%X fv=0x%X caller=0x%X\n", args);
+      int args[3] = {(int)i, (int)hv, (int)fv};
+      say("| HEAP bad block: header=%d hv=0x%X fv=0x%X\n", args);
       panic("bad block\n");
     }
   }
@@ -245,6 +243,9 @@ void heap_init(void* base, unsigned bytes) {
     int args[2] = {(int)base, bytes};
     say("| Heap init (start=0x%X, size=0x%X)\n", args); 
   }
+
+  struct BlockingLock* lock_addr = &theLock;
+  say_uart("| lock at 0x%X\n", (int*)&lock_addr);
 
   blocking_lock_init(&theLock);
 

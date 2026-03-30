@@ -54,6 +54,19 @@ void sem_down(struct Semaphore* sem){
   block(was, (void (*)(void *))sem_add, (void*)(args), true);
 }
 
+bool sem_try_down(struct Semaphore* sem){
+  spin_lock_acquire(&sem->lock);
+
+  if (sem->count > 0){
+    sem->count--;
+    spin_lock_release(&sem->lock);
+    return true;
+  }
+
+  spin_lock_release(&sem->lock);
+  return false;
+}
+
 void sem_up(struct Semaphore* sem){
   // try to wake up a waiting thread, if there are none, increment the count
   spin_lock_acquire(&sem->lock);

@@ -20,6 +20,10 @@ void sem_init(struct Semaphore* sem, int initial_count);
 // decrement the semaphore count, or block if the count is 0 until another thread calls sem_up
 void sem_down(struct Semaphore* sem);
 
+// attempt to decrement the semaphore count without blocking
+// returns true if a permit was consumed, false if the count was 0
+bool sem_try_down(struct Semaphore* sem);
+
 // waking one waiting thread if any are waiting, or incrementing the count if not
 void sem_up(struct Semaphore* sem);
 

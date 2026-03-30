@@ -3,6 +3,7 @@
 #include "heap.h"
 #include "debug.h"
 #include "threads.h"
+#include "print.h"
 
 /*
   Lock implementation is a semaphore(1),
@@ -30,6 +31,10 @@ void blocking_lock_acquire(struct BlockingLock* lock){
 // release lock and restore preemption state
 void blocking_lock_release(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock release: lock is NULL.\n");
+  if (!lock->is_held){
+    int args[1] = {(int)lock};
+    printf_uart("blocking lock at %X is not currently held.\n", args);
+  }
   assert(lock->is_held, "blocking lock release: lock is not currently held.\n");
   // Snapshot the holder's saved state before waking the next waiter. Another
   // core may acquire the lock immediately after sem_up() and replace

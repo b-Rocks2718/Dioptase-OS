@@ -114,7 +114,7 @@ int kernel_main(void){
   // Draw one static Mandelbrot view for manual inspection.
   display_mandelbrot(start_x, start_y, diff);
 
-  while (getkey() != 'q');
+  while (waitkey() != 'q');
 
   return 0;
 }

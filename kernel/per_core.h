@@ -16,6 +16,7 @@ struct PerCore {
   unsigned scheduler_iters;
   bool mlfq_boost_pending;
   bool rebalance_pending;
+  struct KeyBuf keybuf;
 };
 
 extern struct PerCore per_core_data[MAX_CORES];

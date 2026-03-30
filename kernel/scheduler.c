@@ -83,12 +83,6 @@ void scheduler_init(void){
   }
 
   global_admission_iters = 0;
-
-  sd_wait_thread_0_pending = false;
-  sd_wait_thread_0 = NULL;
-
-  sd_wait_thread_1_pending = false;
-  sd_wait_thread_1 = NULL;
 }
 
 // Add one ANY_CORE thread to the shared ready buckets that mirror the per-core
