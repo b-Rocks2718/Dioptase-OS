@@ -1,7 +1,6 @@
 #ifndef COND_VAR_H
 #define COND_VAR_H
 
-#include "semaphore.h"
 #include "atomic.h"
 #include "queue.h"
 #include "blocking_lock.h"
@@ -22,9 +21,13 @@
 // Notes:
 // - This implementation does not track or validate which external lock is
 //   paired with a CondVar; callers must keep usage consistent.
+// - Waiters are kept in an explicit FIFO so signal/broadcast can wake the
+//   threads that were already waiting when the wakeup was issued. This avoids
+//   a future waiter stealing a stale wakeup token during reusable-generation
+//   patterns such as Event reuse.
 struct CondVar {
-  struct Semaphore semaphore;
   struct SpinLock lock;
+  struct GenericQueue wait_queue;
   unsigned waiters;
 };
 
