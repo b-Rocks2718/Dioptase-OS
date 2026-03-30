@@ -9,7 +9,7 @@
 // waiter from stealing a wakeup that belonged to an already-queued waiter.
 
 struct CondVarWaiter {
-  struct GenericQueueElement* link;
+  struct GenericQueueElement link;
   struct Semaphore semaphore;
 };
 
@@ -34,7 +34,7 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   // signal/broadcast can target this exact waiter, even if it has not reached
   // sem_down() yet.
   spin_lock_acquire(&cv->lock);
-  generic_queue_add(&cv->wait_queue, waiter.link);
+  generic_queue_add(&cv->wait_queue, &waiter.link);
   cv->waiters += 1;
   spin_lock_release(&cv->lock);
 
@@ -86,8 +86,8 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
   spin_lock_release(&cv->lock);
 
   while (waiter != NULL) {
-    struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link->next;
-    waiter->link->next = NULL;
+    struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
+    waiter->link.next = NULL;
     sem_up(&waiter->semaphore);
     waiter = next;
   }
@@ -103,8 +103,8 @@ void cond_var_destroy(struct CondVar* cv){
   spin_lock_release(&cv->lock);
 
   while (waiter != NULL) {
-    struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link->next;
-    waiter->link->next = NULL;
+    struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
+    waiter->link.next = NULL;
     sem_destroy(&waiter->semaphore);
     waiter = next;
   }
