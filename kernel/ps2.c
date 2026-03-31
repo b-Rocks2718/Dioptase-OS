@@ -106,9 +106,20 @@ short waitkey(void){
 }
 
 // read a key from the PS/2 keyboard
+// return the ASCII code of the key, or 0 if no key is pressed
+// clears the key from the buffer
+// reads directly from MMIO, bypassing the queue of keypresses
+// only should be used when threading is not set up (boot/shutdown)
+short getkey_raw(void){
+  return *ps2_in;
+}
+
+// read a key from the PS/2 keyboard
 // If no key is pressed, spin until one is pressed and return it
 // return the ASCII code of the key, clears the key from the buffer
-short waitkey_spin(void){
+// reads directly from MMIO, bypassing the queue of keypresses
+// only should be used when threading is not set up (boot/shutdown)
+short waitkey_raw(void){
   short key = 0;
   while ((key = *ps2_in) == 0) {
     // spin until a key is pressed

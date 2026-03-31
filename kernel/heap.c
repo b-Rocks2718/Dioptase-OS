@@ -244,9 +244,6 @@ void heap_init(void* base, unsigned bytes) {
     say("| Heap init (start=0x%X, size=0x%X)\n", args); 
   }
 
-  struct BlockingLock* lock_addr = &theLock;
-  say_uart("| lock at 0x%X\n", (int*)&lock_addr);
-
   blocking_lock_init(&theLock);
 
   unsigned alignedBase = ((unsigned)base + 4 + 3) / 4 * 4 - 4;

@@ -14,6 +14,8 @@
 void blocking_lock_init(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock init: lock is NULL.\n");
   sem_init(&lock->semaphore, 1);
+  lock->preempt = false;
+  lock->is_held = false;
 }
 
 // block until lock is acquired
@@ -22,6 +24,7 @@ void blocking_lock_acquire(struct BlockingLock* lock){
   assert(lock != NULL, "blocking lock acquire: lock is NULL.\n");
   bool was_preempt = preemption_disable();
   sem_down(&lock->semaphore);
+
   // Save the caller's preemption state only after this thread actually owns the
   // lock. Waiting threads must not overwrite the holder's saved state.
   lock->preempt = was_preempt;
@@ -30,11 +33,7 @@ void blocking_lock_acquire(struct BlockingLock* lock){
 
 // release lock and restore preemption state
 void blocking_lock_release(struct BlockingLock* lock){
-  assert(lock != NULL, "blocking lock release: lock is NULL.\n");
-  if (!lock->is_held){
-    int args[1] = {(int)lock};
-    printf_uart("blocking lock at %X is not currently held.\n", args);
-  }
+  assert(lock != NULL, "blocking lock release: lock is NULL.\n"); 
   assert(lock->is_held, "blocking lock release: lock is not currently held.\n");
   // Snapshot the holder's saved state before waking the next waiter. Another
   // core may acquire the lock immediately after sem_up() and replace

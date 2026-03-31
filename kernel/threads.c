@@ -33,6 +33,8 @@ int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
 
+int shutdown_barrier = 0;
+
 unsigned DEFAULT_INTERRUPT_MASK = 
   GLOBAL_INT_ENABLE | 
   SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
@@ -145,7 +147,7 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
 
-  global_queue_add(tcb);
+  scheduler_wake_thread(tcb);
 }
 
 // same as thread(), but doesn't modify bootstrapping or n_active
@@ -171,12 +173,14 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
 
-  global_queue_add(tcb);
+  scheduler_wake_thread(tcb);
 }
 
 // initialize thread structures; should only be called once on one core
 void threads_init(void){
   scheduler_init();
+
+  shutdown_barrier = CONFIG.num_cores;
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
@@ -196,6 +200,8 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
+
+  assert(me != idle, "threads block: idle thread attempted to block.\n");
 
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
 }
@@ -233,6 +239,62 @@ void thread_entry(void) {
 // when we don't need to run any callback
 static void nothing(void* unused) {}
 
+// cleanup and shutdown the system
+void kernel_shutdown(void){
+  interrupts_disable(); // move from interrupt-based keyboard handling to polling
+
+  // wait for other cores to finish what they are doing
+  spin_barrier_sync(&shutdown_barrier);
+
+  // Core 0 will print results and shut down the system, 
+  // other cores will wait for this to happen
+  if (get_core_id() == 0) {
+
+    // all cores are now in shutdown, so heap operations should not block
+    struct GenericQueueElement* keys = blocking_queue_remove_all(&ps2_queue);
+    while (keys != NULL){
+      // free existing keyboard events
+      struct GenericQueueElement* next = keys->next;
+      free(keys);
+      keys = next;
+    }
+
+    say("| Finished in %d jiffies\n", (int*)&current_jiffies);
+
+    say("| Checking leaks\n", NULL);
+    
+    check_leaks();
+
+    if (CONFIG.use_vga){
+      say("| Press Q to exit...\n", NULL);
+
+      // Wait for a full 'q' key cycle (make then break).
+      // This avoids accidental exit from a stray/glitched make event.
+      int saw_q_make = 0;
+      while (true) {
+        int key = waitkey_raw();
+
+        int is_release = ((key & 0xFF00) != 0);
+        key &= 0xFF;
+
+        if (!is_release) {
+          saw_q_make = (key == 'q' || key == 'Q');
+          continue;
+        }
+
+        if (saw_q_make && (key == 'q' || key == 'Q')) break;
+        saw_q_make = 0;
+      }
+    } else {
+      say("| Halting...\n", NULL);
+    }
+
+    while (true) shutdown();
+  } else {
+    while (true) pause();
+  }
+}
+
 // idle thread loop
 // calls to block() context switch to here, 
 // where we decide which thread to run next and switch to it
@@ -263,46 +325,7 @@ void event_loop(void) {
     }
   }
 
-  // Core 0 will print results and shut down the system, 
-  // other cores will wait for this to happen
-  if (get_core_id() == 0) {
-    say("| Finished in %d jiffies\n", (int*)&current_jiffies);
-
-    say("| Checking leaks\n", NULL);
-    
-    check_leaks();
-
-    if (CONFIG.use_vga){
-      say("| Press Q to exit...\n", NULL);
-
-      // Discard any stale keyboard events so only a fresh user keypress exits.
-      while (getkey() != 0);
-
-      // Wait for a full 'q' key cycle (make then break).
-      // This avoids accidental exit from a stray/glitched make event.
-      int saw_q_make = 0;
-      while (true) {
-        int key = waitkey_spin();
-
-        int is_release = ((key & 0xFF00) != 0);
-        key &= 0xFF;
-
-        if (!is_release) {
-          saw_q_make = (key == 'q' || key == 'Q');
-          continue;
-        }
-
-        if (saw_q_make && (key == 'q' || key == 'Q')) break;
-        saw_q_make = 0;
-      }
-    } else {
-      say("| Halting...\n", NULL);
-    }
-
-    while (true) shutdown();
-  } else {
-    while (true) pause();
-  }
+  kernel_shutdown();
 }
 
 // set up thread context for the first thread on this core (which is now the idle thread)
@@ -412,6 +435,13 @@ void stop(void) {
 bool preemption_disable(void){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
+
+  // no-op if threading not initialized yet
+  if (tcb == NULL) {
+    interrupts_restore(was);
+    return false;
+  }
+
   bool prev = tcb->can_preempt;
   tcb->can_preempt = false;
   interrupts_restore(was);
@@ -422,7 +452,12 @@ bool preemption_disable(void){
 void preemption_restore(bool was){
   int intrs = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  tcb->can_preempt = was;
+
+  // no-op if threading not initialized yet
+  if (tcb != NULL) {
+    tcb->can_preempt = was;
+  }
+
   interrupts_restore(intrs);
 }
 

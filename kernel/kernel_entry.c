@@ -18,8 +18,10 @@ extern void kernel_main(void);
 
 int start_barrier = 0;
 
-// BIOS switches to init.s, which wakes up all cores and then calls kernel_entry on each core
-// Here we do core-local initialization and then have the final core run kernel_main
+// BIOS switches to init.s, which wakes up all cores and then calls kernel_entry on each core.
+// Core 0 performs global initialization, creates the first runnable kernel_main
+// thread while no other core can contend for heap locks, then all cores
+// bootstrap their idle-thread scheduler context and enter event_loop().
 void kernel_entry(void){
 
   int me = get_core_id();
@@ -58,6 +60,13 @@ void kernel_entry(void){
     say("| Initializing PS/2 driver...\n", NULL);
     ps2_init();
 
+    // do this before waking other cores so that the heap doesnt block
+    say("| Creating kernel_main thread...\n", NULL);
+    struct Fun* kernel_main_fun = malloc(sizeof(struct Fun));
+    kernel_main_fun->arg = NULL;
+    kernel_main_fun->func = (void (*)(void*))kernel_main;
+    thread(kernel_main_fun);
+
     // create barrier for all cores to sync on
     start_barrier = num_cores;
 
@@ -79,14 +88,6 @@ void kernel_entry(void){
   // wait for all cores to be awake and set up
   say("| Core %d waiting at start barrier...\n", &me);
   spin_barrier_sync(&start_barrier);
-
-  // have the final core run kernel_main
-  if (me == num_cores - 1) {
-    struct Fun* kernel_main_fun = malloc(sizeof (struct Fun));
-    kernel_main_fun->arg = NULL;
-    kernel_main_fun->func = (void (*)(void*))kernel_main;
-    thread(kernel_main_fun);
-  }
 
   event_loop();
 
