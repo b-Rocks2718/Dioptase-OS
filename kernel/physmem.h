@@ -1,6 +1,10 @@
 #ifndef PHYSMEM_H
 #define PHYSMEM_H
 
+#define FRAME_SIZE 4096
+#define FRAMES_ADDR_START 4096
+#define FRAMES_ADDR_END 0x7FBD000
+
 // free pages store metadata to form a linked list
 struct FreePageNode {
   struct FreePageNode *next;
