@@ -35,7 +35,10 @@ void gate_reset(struct Gate *gate) {
 // Free the resources associated with the gate, but do not free the gate itself
 // waiting threads will be reaped
 void gate_destroy(struct Gate* gate) {
+  // Waiters may be parked either inside the condition variable or on the gate's
+  // internal blocking lock before they enter gate_wait().
   cond_var_destroy(&gate->cv);
+  blocking_lock_destroy(&gate->lock);
 }
 
 // Free the resources associated with the gate and the gate itself

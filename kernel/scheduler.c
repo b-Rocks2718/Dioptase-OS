@@ -27,9 +27,9 @@
 #define LOW_PRIORITY_WEIGHT 1
 
 unsigned TIME_QUANTUM[MLFQ_LEVELS] = {2, 4, 8};
-unsigned MLFQ_BOOST_INTERVAL = 250; // boost queued work often enough to avoid indefinite starvation without constantly resetting CPU-bound threads
+unsigned MLFQ_BOOST_INTERVAL = 256; // boost queued work often enough to avoid indefinite starvation without constantly resetting CPU-bound threads
 
-unsigned REBALANCE_INTERVAL = 32; // rebalance often enough that per-core priority/MLFQ skew does not persist for long on 4-core runs
+unsigned REBALANCE_INTERVAL = 512; // rebalance often enough that per-core priority/MLFQ skew does not persist for long on 4-core runs
 #define MAX_REBALANCE_PERCENT 130 // rebalance if we have >130% of our ideal number of threads
 #define MIN_REBALANCE_PERCENT 70 // rebalance if we have <70% of our ideal number of threads
 

@@ -46,7 +46,7 @@ int bios_entry(void){
   }
 
   puts("| Valid MBR found. Loading kernel...\n");
-  // Current boot-sector word layout:
+  // boot-sector word layout:
   // [0..2]  text   = start_block, num_blocks, load_address
   // [3..5]  data   = start_block, num_blocks, load_address
   // [6..8]  rodata = start_block, num_blocks, load_address

@@ -60,8 +60,11 @@ void barrier_sync(struct Barrier* barrier) {
 // waiting threads will be reaped
 void barrier_destroy(struct Barrier* barrier) {
   assert(barrier != NULL, "barrier destroy: barrier is NULL.\n");
+  // Barrier waiters may be blocked either on one of the two turnstiles or on
+  // the internal blocking lock while trying to enter barrier_sync().
   sem_destroy(&barrier->sem_1);
   sem_destroy(&barrier->sem_2);
+  blocking_lock_destroy(&barrier->lock);
 }
 
 // free the barrier struct and all resources used by the barrier

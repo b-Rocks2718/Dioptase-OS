@@ -4,10 +4,11 @@
 
 Structure:
 - Allocates a fixed size stack per thread (TODO: use page allocator instead of heap, and use guard pages to detect overflow)
-- Per-core and global ready queues
-- round-robin scheduling
+- Per-core and global ready queues with load-balancing
+- Kernel can set threads as `HIGH_PRIORITY`, `NORMAL_PRIORITY`, and `LOW_PRIORITY`. Within each priority, MLFQ is used to schedule threads
 - Preemptive, timer isr context switches to idle threads, idle thread cannot be preempted and finds next ready thread to switch to
-- TODO: better scheduling
+
+See `threading.md` and `scheduling.md` for more details.
 
 Supported Sync Primatives:
 - enable/disable interrupts
@@ -26,9 +27,11 @@ Supported Sync Primatives:
 - event (like gate, except it does not remain open after call to signal(). Therefore does not need a reset() method)
 - shared pointers
 
+See `sync.md` for more details.
+
 ## Heap
 Global heap shared by all cores, free blocks kept in doubly linked list  
-TODO: slab allocator, buddy allocator, per-core freelists/partial slabs
+TODO: replace with slab allocator
 
 ## File System
 ext2 rev 0
@@ -43,6 +46,8 @@ Supported:
 Not yet supported:
 - rwx permissions
 - uid/gid
+
+See `filesystem.md` for more details.
 
 ## Virtual Memory
 TLB is software managed

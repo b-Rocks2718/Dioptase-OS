@@ -2,9 +2,13 @@
 
 The BIOS expects sd slot zero has a bootable drive. A drive is marked bootable by having the last two bytes of the first 512 byte sector set to 0xAA55.
 
-If the BIOS finds a bootable drive, it reads the first 12 bytes to figure out how to load the kernel.  
-The first 4 bytes of the boot sector specify a block offset for where in the drive the kernel code begins
-The next 4 bytes specify the number of blocks the kernel code takes up.
-The final 4 bytes specify the physical address to load the kernel at.
+If the BIOS finds a bootable drive, it reads the first 44 bytes to figure out how to load the kernel. These bytes form an array of 11 4-byte integers. The entries determine how to load each section of the kernel into memory. Each section has a `start_block` for it's location within the drive, a `num_blocks` the section takes up within the drive, and a `load_address` for which physical address to write the section at in RAM. The exception is the bss section, which does not have a `start_block` field.  
 
-The BIOS will use this info to load the kernel and then jump to the address it loaded it at.
+```
+[0..2]  text   = start_block, num_blocks, load_address
+[3..5]  data   = start_block, num_blocks, load_address
+[6..8]  rodata = start_block, num_blocks, load_address
+[9..10] bss    = num_blocks, load_address
+```
+
+After loading each section, the bios jumps to the `load_address` of the text section.

@@ -1,4 +1,9 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
 #include "constants.h"
+
+#define MAX_CORES 4
 
 // Compile time configuration constants
 struct Config {
@@ -7,3 +12,5 @@ struct Config {
 };
 
 extern struct Config CONFIG;
+
+#endif // CONFIG_H

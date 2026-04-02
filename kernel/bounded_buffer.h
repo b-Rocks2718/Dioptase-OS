@@ -21,7 +21,8 @@ void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* ele
 // remove and return one element, blocking while the buffer is empty
 struct GenericQueueElement* bounded_buffer_remove(struct BoundedBuffer* b);
 
-// detach and return the current contents without blocking
+// detach and return all currently available elements without blocking
+// while keeping the slot/item semaphores consistent for later reuse
 struct GenericQueueElement* bounded_buffer_remove_all(struct BoundedBuffer* b);
 
 // return the current number of queued elements

@@ -4,6 +4,7 @@
 #include "constants.h"
 #include "TCB.h"
 #include "queue.h"
+#include "config.h"
 
 // Stores all core-local data
 struct PerCore {

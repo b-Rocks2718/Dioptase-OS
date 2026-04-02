@@ -55,7 +55,29 @@ struct GenericQueueElement* bounded_buffer_remove(struct BoundedBuffer* b) {
 }
 
 struct GenericQueueElement* bounded_buffer_remove_all(struct BoundedBuffer* b){
-  return generic_spin_queue_remove_all(&b->queue);
+  struct GenericQueueElement* head = NULL;
+  struct GenericQueueElement* tail = NULL;
+
+  // Drain only the items that already have published remove permits. This keeps
+  // remove_sem aligned with the queue contents and returns one slot permit per
+  // removed element so the buffer can be reused immediately afterward.
+  while (sem_try_down(&b->remove_sem)) {
+    struct GenericQueueElement* element = generic_spin_queue_remove(&b->queue);
+    assert(element != NULL,
+      "bounded_buffer_remove_all: semaphore permit had no matching queued element.\n");
+
+    if (head == NULL) {
+      head = element;
+      tail = element;
+    } else {
+      tail->next = element;
+      tail = element;
+    }
+
+    sem_up(&b->add_sem);
+  }
+
+  return head;
 }
 
 unsigned bounded_buffer_size(struct BoundedBuffer* b) {

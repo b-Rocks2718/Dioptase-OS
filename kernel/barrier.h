@@ -21,8 +21,9 @@ void barrier_init(struct Barrier* barrier, unsigned count);
 // last call to sync() allows all threads to continue, and then resets the barrier
 void barrier_sync(struct Barrier* barrier);
 
-// free resources used by the barrier, but does not free the barrier struct itself
-// waiting threads will be reaped
+// free resources used by the barrier, but does not free the barrier struct itself.
+// Waiters blocked on either turnstile semaphore or the internal blocking lock
+// will be reaped.
 void barrier_destroy(struct Barrier* barrier);
 
 // free the barrier struct and all resources used by the barrier
