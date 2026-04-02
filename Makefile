@@ -93,6 +93,7 @@ TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(basename $(notdir $(TEST_OK_FILES)))
 TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
+PERSISTENT_TEST_NAMES := $(filter snake,$(TEST_NAMES))
 EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
 EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
 THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))
@@ -110,8 +111,9 @@ KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
 DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
 # Build the emulator argv in shell positional parameters. When tests/<name>.dir
-# exists, package it as an ext2 filesystem image, attach it as SD1, and request
-# the final SD1 image be written back for later extraction to tests/<name>.out.dir.
+# exists, package it as an ext2 filesystem image and attach it as SD1. Most
+# tests extract the final SD1 image into tests/<name>.out.dir; persistent tests
+# instead replace their source tests/<name>.dir with the extracted result.
 define prepare_emulator_cmd
 sd1_dir="tests/$*.dir"; \
 sd1_output_image=""; \
@@ -120,7 +122,7 @@ set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin" --sd-dma-ticks $(
 if [ -d "$$sd1_dir" ]; then \
   sd1_image="$(BUILD_DIR)/$*.sd1.ext2"; \
   sd1_output_image="$(BUILD_DIR)/$*.sd1.out.ext2"; \
-  sd1_output_dir="tests/$*.out.dir"; \
+  sd1_output_dir="$(if $(filter $*,$(PERSISTENT_TEST_NAMES)),tests/$*.dir,tests/$*.out.dir)"; \
   dir_kib=$$(du -sk "$$sd1_dir" | cut -f1); \
   dir_blocks=$$(((dir_kib * 1024 + $(BLOCK_SIZE) - 1) / $(BLOCK_SIZE))); \
   fs_blocks=$$((dir_blocks + $(SD_IMAGE_EXTRA_BLOCKS))); \
@@ -135,8 +137,9 @@ set -- "$$@" $(EMU_FLAGS);
 endef
 
 # Extract an SD1 ext2 output image back into a host directory when the test used
-# tests/<name>.dir. Extraction warnings are non-fatal so guest filesystem bugs do
-# not hide the program's own exit status.
+# tests/<name>.dir. Persistent tests target the original source directory while
+# normal tests target tests/<name>.out.dir. Extraction warnings are non-fatal
+# so guest filesystem bugs do not hide the program's own exit status.
 define extract_sd1_output_dir
 if [ -n "$$sd1_output_image" ] && [ -f "$$sd1_output_image" ]; then \
   "$(PYTHON3)" "$(EXT2_DIR_EXTRACTOR)" "$$sd1_output_image" "$$sd1_output_dir" || \
@@ -146,7 +149,7 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
-  $(TEST_NAMES) test test-no-ok ext ext-no-ok threads threads-no-ok \
+  $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
@@ -164,6 +167,12 @@ test: $(if $(TEST_OK_SUMMARY_TARGETS),$(TEST_OK_SUMMARY_TARGETS),test-no-ok)
 
 test-no-ok:
 	@echo "No tests with .ok baselines were found under tests/."
+
+# Aggregate tests whose SD1 output replaces the original tests/<name>.dir.
+persistent: $(if $(PERSISTENT_TEST_NAMES),$(PERSISTENT_TEST_NAMES),persistent-no-tests)
+
+persistent-no-tests:
+	@echo "No persistent tests were configured."
 
 # Aggregate ext2 operation summary targets.
 ext: $(if $(EXT_SUMMARY_TARGETS),$(EXT_SUMMARY_TARGETS),ext-no-ok)
