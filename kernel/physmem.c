@@ -25,7 +25,9 @@ void physmem_init(void){
   for (unsigned phys_addr = FRAMES_ADDR_START; 
       phys_addr < FRAMES_ADDR_END; 
       phys_addr += FRAME_SIZE) {
-    physmem_free((void*)phys_addr);
+    struct FreePageNode* node = (struct FreePageNode*)phys_addr;
+    node->next = free_page_list;
+    free_page_list = node;
   }
 }
 

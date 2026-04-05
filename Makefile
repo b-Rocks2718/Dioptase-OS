@@ -260,10 +260,10 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	echo "[$$test_name] summary: $$success/$$runs"
 
 # Quiet aggregate target used by `make test`; prints once after all runs complete.
-# threads_physmem exhausts the full frame pool every run, so keep its summary
+# physmem_test exhausts the full frame pool every run, so keep its summary
 # repetition count lower than the default 10-run smoke loop.
-threads_physmem.summary-test: TEST_RUNS=2
-threads_physmem.summary-test: TIMEOUT_SECONDS=180
+physmem_test.summary-test: TEST_RUNS=2
+physmem_test.summary-test: TIMEOUT_SECONDS=180
 
 %.summary-test: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
