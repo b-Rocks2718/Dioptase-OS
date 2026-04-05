@@ -5,9 +5,11 @@
 #include "TCB.h"
 #include "queue.h"
 #include "config.h"
+#include "physmem.h"
 
 // Stores all core-local data
 struct PerCore {
+  // threads/scheduling
   struct TCB idle_thread;
   struct TCB* current_thread;
   struct Queue ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
@@ -17,7 +19,12 @@ struct PerCore {
   unsigned scheduler_iters;
   bool mlfq_boost_pending;
   bool rebalance_pending;
+  
+  // I/O
   struct KeyBuf keybuf;
+
+  // allocator
+  struct PhysmemLocalCache physmem_cache;
 };
 
 extern struct PerCore per_core_data[MAX_CORES];
