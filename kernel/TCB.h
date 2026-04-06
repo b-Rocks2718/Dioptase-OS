@@ -2,6 +2,7 @@
 #define TCB_H
 
 #include "constants.h"
+//#include "vmem.h"
 
 // function and argument for a thread to run
 struct Fun {
@@ -65,6 +66,8 @@ struct TCB {
   enum MLFQ_LEVEL mlfq_level;
   int remaining_quantum;
   unsigned wakeup_jiffies;
+
+  //struct VME* vme_list;
 
   struct TCB* next;
 };

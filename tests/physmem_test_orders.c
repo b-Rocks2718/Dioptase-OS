@@ -46,6 +46,8 @@
 // regions without exhausting all 30,653 frames on every 4-core run.
 #define GLOBAL_WALK_PAGE_COUNT 8192
 
+#define MAX_TEST_ORDER 12
+
 struct ThreadArg {
   int id;
 };
@@ -202,7 +204,10 @@ static void physmem_worker(void* arg) {
 
   for (int round = 0; round < CONCURRENCY_ROUNDS; round++) {
     for (int slot = 0; slot < LIVE_PAGES_PER_WORKER; slot++) {
-      void* page = physmem_alloc();
+      unsigned order = (slot + round * tid) % MAX_TEST_ORDER;
+
+      void* page = (order == 0 && slot & 1) ? physmem_alloc() : physmem_alloc_order(order);
+
       note_live_page(page, tid);
       stamp_page(page, tid, round, slot);
       local_pages[slot] = page;
@@ -213,10 +218,17 @@ static void physmem_worker(void* arg) {
     }
 
     for (int slot = LIVE_PAGES_PER_WORKER - 1; slot >= 0; slot--) {
+      unsigned order = (slot + round * tid) % MAX_TEST_ORDER;
+
       void* page = local_pages[slot];
       check_page(page, tid, round, slot);
       note_freed_page(page, tid);
-      physmem_free(page);
+
+      if (order == 0 && slot & 1) {
+        physmem_free(page);
+      } else {
+        physmem_free_order(page, order);
+      }
 
       if (((round + slot + tid) & 1) != 0) {
         yield();
@@ -225,19 +237,6 @@ static void physmem_worker(void* arg) {
   }
 
   sem_up(&finished_sem);
-}
-
-// Smoke-test higher-order allocations sequentially. This avoids cross-core
-// cache effects while still validating alignment, range membership, and that
-// the first/middle/last pages of each block remain writable.
-static void higher_order_smoke_test(void) {
-  for (int order = 1; order <= PHYS_FRAME_MAX_ORDER; order++) {
-    void* block = physmem_alloc_order(order);
-    check_block_alignment(block, order);
-    stamp_block(block, order);
-    check_block(block, order);
-    physmem_free_order(block, order);
-  }
 }
 
 void kernel_main(void) {
@@ -285,10 +284,6 @@ void kernel_main(void) {
   for (int i = 0; i < NUM_WORKERS; i++) {
     sem_down(&finished_sem);
   }
-
-  say("***testing large order allocations\n", NULL);
-  
-  higher_order_smoke_test();
 
   say("***physmem test complete\n", NULL);
 }

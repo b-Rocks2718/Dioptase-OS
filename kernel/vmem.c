@@ -10,3 +10,13 @@ void vmem_core_init(void){
 
   set_pid(0);
 }
+
+// Map a file into memory, returning a pointer to the mapped region
+// If the file is NULL, do an anonymous mapping
+void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset){
+
+}
+
+void munmap(void* p){
+
+}

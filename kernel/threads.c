@@ -341,10 +341,10 @@ void bootstrap(void){
   tcb->psr = 1;
   tcb->imr = 0;
 
-  tcb->stack = (unsigned*)(0x10000 - (me * 0x4000));
+  tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 
   struct PerCore* core = get_per_core();
-  assert((was & 0x80000000) == 0, 
+  assert((was & GLOBAL_INT_ENABLE) == 0, 
     "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
   interrupts_restore(was);

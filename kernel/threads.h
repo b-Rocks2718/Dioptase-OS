@@ -19,6 +19,9 @@
 
 #define TCB_STACK_SIZE 16384 // 16KiB
 
+#define IDLE_STACK_SIZE 16384 // 16KiB
+#define IDLE_STACKS_TOP 0x10000
+
 extern struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 extern struct SpinQueue reaper_queue;
 
