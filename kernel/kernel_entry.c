@@ -11,6 +11,7 @@
 #include "sd_driver.h"
 #include "ps2.h"
 #include "physmem.h"
+#include "vmem.h"
 
 unsigned HEAP_START = 0x100000;
 unsigned HEAP_SIZE =  0x700000;
@@ -44,6 +45,9 @@ void kernel_entry(void){
 
     say("| Initializing physmem allocator...\n", NULL);
     physmem_init();
+
+    say("| Initializing virtual memory...\n", NULL);
+    vmem_global_init();
 
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
@@ -82,6 +86,8 @@ void kernel_entry(void){
   } else {
     say("| Core %d starting up...\n", &me);
   }
+
+  vmem_core_init();
 
   say("| Core %d creating idle thread context...\n", &me);
   bootstrap();

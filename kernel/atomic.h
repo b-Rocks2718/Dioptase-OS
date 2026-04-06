@@ -49,4 +49,16 @@ void preempt_spin_lock_release(struct PreemptSpinLock* lock);
 // threads spin until all threads have reached the barrier
 void spin_barrier_sync(int* barrier);
 
+// Atomically set *ptr to val, and return the old value of *ptr
+extern int __atomic_exchange_n(int *ptr, int val);
+
+// Atomically add val to *ptr, and return the old value of *ptr
+extern int __atomic_fetch_add(int* ptr, int val);
+
+// Atomically load value stored in *ptr
+extern int __atomic_load_n(int* ptr);
+
+// Atomically store val into *ptr
+extern void __atomic_store_n(int* ptr, int val);
+
 #endif // ATOMIC_H

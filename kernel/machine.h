@@ -24,6 +24,9 @@ extern unsigned get_core_id(void);
 // cr0 is a counter that is incremented on syscalls/exceptions/interrupts, and decremented when they exit
 extern unsigned get_cr0(void);
 
+// set the core's current process id (cr1)
+extern void set_pid(unsigned val);
+
 // Return the core's interrupt status register (cr2) value
 extern unsigned get_isr(void);
 
@@ -39,17 +42,8 @@ extern unsigned get_efg(void);
 // Return the TLB miss address register (cr7) value
 extern unsigned get_tlb_addr(void);
 
-// Atomically set *ptr to val, and return the old value of *ptr
-extern int __atomic_exchange_n(int *ptr, int val);
-
-// Atomically add val to *ptr, and return the old value of *ptr
-extern int __atomic_fetch_add(int* ptr, int val);
-
-// Atomically load value stored in *ptr
-extern int __atomic_load_n(int* ptr);
-
-// Atomically store val into *ptr
-extern void __atomic_store_n(int* ptr, int val);
+// invalidate all tlb entries on this core
+extern void flush_tlb(void);
 
 // Wake up the core with the given core_num (0 - 3) by sending an IPI
 extern void wakeup_core(int core_num);

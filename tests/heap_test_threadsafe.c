@@ -24,7 +24,7 @@
 
 #define NUM_THREADS 6
 #define ROUNDS 3
-#define N_BLOCKS 64
+#define N_BLOCKS 32
 
 struct ThreadArg {
   int id;

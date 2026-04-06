@@ -17,54 +17,54 @@
   .global context_switch
 context_switch:
   # save current state
-  swa  r20, [r1, 76]
-  swa  r21, [r1, 80]
-  swa  r22, [r1, 84]
-  swa  r23, [r1, 88]
-  swa  r24, [r1, 92]
-  swa  r25, [r1, 96]
-  swa  r26, [r1, 100]
-  swa  r27, [r1, 104]
-  swa  r28, [r1, 108]
+  swa  r20, [r1, 0]
+  swa  r21, [r1, 4]
+  swa  r22, [r1, 8]
+  swa  r23, [r1, 12]
+  swa  r24, [r1, 16]
+  swa  r25, [r1, 20]
+  swa  r26, [r1, 24]
+  swa  r27, [r1, 28]
+  swa  r28, [r1, 32]
 
-  swa  sp,  [r1, 112]
-  swa  bp,  [r1, 116]
+  swa  sp,  [r1, 36]
+  swa  bp,  [r1, 40]
 
   # use r9 as scratch
   mov  r9, flg
-  swa  r9,  [r1, 120]
+  swa  r9,  [r1, 44]
 
-  swa  ra,  [r1, 124]
+  swa  ra,  [r1, 48]
 
   mov  r9, psr
-  swa  r9,  [r1, 128]
+  swa  r9,  [r1, 52]
 
-  # TCB offset 132 stores per-thread IMR state
+  # TCB offset 56 stores per-thread IMR state
   # The caller passes the outgoing thread's pre-switch IMR in r6 ("was")
-  swa  r6,  [r1, 132]
+  swa  r6,  [r1, 56]
 
-  lwa  r9, [r2, 128]
+  lwa  r9, [r2, 52] # load new thread's PSR
   mov  psr, r9
 
   # restore old state
-  lwa  r20, [r2, 76]
-  lwa  r21, [r2, 80]
-  lwa  r22, [r2, 84]
-  lwa  r23, [r2, 88]
-  lwa  r24, [r2, 92]
-  lwa  r25, [r2, 96]
-  lwa  r26, [r2, 100]
-  lwa  r27, [r2, 104]
-  lwa  r28, [r2, 108]
+  lwa  r20, [r2, 0]
+  lwa  r21, [r2, 4]
+  lwa  r22, [r2, 8]
+  lwa  r23, [r2, 12]
+  lwa  r24, [r2, 16]
+  lwa  r25, [r2, 20]
+  lwa  r26, [r2, 24]
+  lwa  r27, [r2, 28]
+  lwa  r28, [r2, 32]
 
-  lwa  sp,  [r2, 112]
-  lwa  bp,  [r2, 116]
+  lwa  sp,  [r2, 36]
+  lwa  bp,  [r2, 40]
 
   # use r10 as scratch
-  lwa  r10, [r2, 120]
+  lwa  r10, [r2, 44]
   mov  flg, r10
 
-  lwa  r10, [r2, 124] # r10 holds our return address
+  lwa  r10, [r2, 48] # r10 holds our return address
   push r10
 
   # update current thread
@@ -75,7 +75,7 @@ context_switch:
   bz   context_switch_no_interrupts
 
 	# restore interrupt flags
-  lwa  r9,  [r2, 132]
+  lwa  r9,  [r2, 56]
   mov  imr, r9
 
 context_switch_no_interrupts:
@@ -89,7 +89,7 @@ context_switch_no_interrupts:
 
   # restore interrupts after callback regardless of run_with_interrupts
   # since either way we want interrupts restored at this point
-  lwa  r9,  [r2, 132]
+  lwa  r9,  [r2, 56]
   mov  imr, r9
 
   pop  ra

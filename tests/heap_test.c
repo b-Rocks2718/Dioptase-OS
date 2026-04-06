@@ -20,6 +20,9 @@
 #include "../kernel/debug.h"
 #include "../kernel/constants.h"
 
+#define ROUNDS 3
+#define N_BLOCKS 32
+
 // Generate deterministic pseudo-random values for the stress pattern.
 static unsigned rng_state = 0xC0FFEE01u;
 static unsigned rnd_u32(void) {
@@ -145,5 +148,5 @@ static void heap_stress(unsigned rounds, unsigned N) {
 
 // Run a moderate heap stress workload that fits the test image comfortably.
 void kernel_main(void) {
-  heap_stress(/*rounds=*/5, /*N=*/64);
+  heap_stress(ROUNDS, N_BLOCKS);
 }

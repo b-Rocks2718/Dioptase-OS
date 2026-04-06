@@ -30,6 +30,12 @@ get_core_id:
 get_cr0:
   mov r1, cr0
   ret
+
+  # set the core's current process id (cr1) to the value in r1
+  .global set_pid
+set_pid:
+  mov cr1, r1
+  ret
   
   # Return the core's interrupt status register (cr2) value
   .global get_isr
@@ -61,30 +67,10 @@ get_tlb_addr:
   mov r1, tlb
   ret
 
-  .global __atomic_exchange_n
-__atomic_exchange_n:
-  # atomic exchange: swap value in r1 with value in r2
-  # put old value in r1
-  swpa r1, r2, [r1]
-  ret
-
-  .global __atomic_fetch_add
-__atomic_fetch_add:
-  # atomic fetch add: add value in r2 to value stored at r1
-  # put old value in r1
-  fada r1, r2, [r1]
-  ret
-
-  .global __atomic_load_n
-__atomic_load_n:
-  # atomic load: load value stored at r1 into r1
-  lwa r1, [r1]
-  ret
-
-  .global __atomic_store_n
-__atomic_store_n:
-  # atomic store: store value in r2 to address in r1
-  swa r2, [r1]
+  # invalidate all tlb entries on this core
+  .global flush_tlb
+flush_tlb:
+  tlbc
   ret
 
   .global wakeup_core

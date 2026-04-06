@@ -79,25 +79,6 @@ static struct TCB* make_tcb(bool leak_mem){
 
   tcb->flags = 0;
 
-  tcb->r1 = 0;
-  tcb->r2 = 0;
-  tcb->r3 = 0;
-  tcb->r4 = 0;
-  tcb->r5 = 0;
-  tcb->r6 = 0;
-  tcb->r7 = 0;
-  tcb->r8 = 0;
-  tcb->r9 = 0;
-  tcb->r10 = 0;
-  tcb->r11 = 0;
-  tcb->r12 = 0;
-  tcb->r13 = 0;
-  tcb->r14 = 0;
-  tcb->r15 = 0;
-  tcb->r16 = 0;
-  tcb->r17 = 0;
-  tcb->r18 = 0;
-  tcb->r19 = 0;
   tcb->r20 = 0;
   tcb->r21 = 0;
   tcb->r22 = 0;
@@ -338,25 +319,6 @@ void bootstrap(void){
 
   tcb->flags = 0;
 
-  tcb->r1 = 0;
-  tcb->r2 = 0;
-  tcb->r3 = 0;
-  tcb->r4 = 0;
-  tcb->r5 = 0;
-  tcb->r6 = 0;
-  tcb->r7 = 0;
-  tcb->r8 = 0;
-  tcb->r9 = 0;
-  tcb->r10 = 0;
-  tcb->r11 = 0;
-  tcb->r12 = 0;
-  tcb->r13 = 0;
-  tcb->r14 = 0;
-  tcb->r15 = 0;
-  tcb->r16 = 0;
-  tcb->r17 = 0;
-  tcb->r18 = 0;
-  tcb->r19 = 0;
   tcb->r20 = 0;
   tcb->r21 = 0;
   tcb->r22 = 0;
