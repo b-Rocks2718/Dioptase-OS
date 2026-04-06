@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
 
   # Mark the current SD0 interrupt as handled, allowing the SD0 to send more interrupts
   .global mark_sd0_handled

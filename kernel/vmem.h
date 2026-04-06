@@ -26,4 +26,7 @@ void vmem_core_init(void);
 // Map a file into memory, returning a pointer to the mapped region
 void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset);
 
+// Unmap a previously mapped memory region
+void munmap(void* p);
+
 #endif // VMEM_H

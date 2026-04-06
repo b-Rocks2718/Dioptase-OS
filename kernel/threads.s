@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
   
   # Perform a context switch from the current thread (me) to the next thread (next)
   # Run func(arg) in the context of the next thread before switching to it

@@ -1,7 +1,9 @@
   # indices into tile map for pixels we need to turn on to draw the character
   # list is NUL-terminated so load_text_tiles() can stop at the final sentinel
-  .align 4
   .data
+  # Align after selecting .data so preceding byte-oriented literals do not
+  # misalign this word-addressed table.
+  .align 4
   .global text_tiles
 text_tiles:
   # space

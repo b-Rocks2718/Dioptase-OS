@@ -1,8 +1,10 @@
   
   # indices into tile map for pixels we need to turn on to draw the character
   # list is NUL-terminated
-  .align 4
   .data
+  # Align after selecting .data so preceding byte-oriented literals do not
+  # misalign this word-addressed table.
+  .align 4
   .global text_tiles
 text_tiles:
   # space

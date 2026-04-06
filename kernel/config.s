@@ -1,5 +1,7 @@
-  .align 4
   .data
+  # Align after selecting .data. A prior file can end its data contribution on an
+  # odd byte boundary because compiler-emitted string literals are byte-sized.
+  .align 4
 
   # Compile time configuration constants
   # These are macros, the Makefile defines them

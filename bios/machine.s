@@ -1,7 +1,7 @@
   # BIOS machine helpers used during early boot before kernel_entry
 
-  .align 4
   .text
+  .align 4
 
   .global get_cr0
 get_cr0:

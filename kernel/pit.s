@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
 
   # Mark the current PIT interrupt as handled, allowing the PIT to send more interrupts
   .global mark_pit_handled

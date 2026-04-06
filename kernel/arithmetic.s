@@ -1,7 +1,7 @@
   # Software arithmetic helpers used by compiler-generated code.
 
-  .align 4
   .text
+  .align 4
 
   .global smul
 smul:

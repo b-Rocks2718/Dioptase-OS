@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
 
   .global memcpy
 memcpy:

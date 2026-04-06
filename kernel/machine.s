@@ -1,6 +1,6 @@
   
-  .align 4
   .text
+  .align 4
 
   # Permanantly halt this core
   # in the emulator, and core running this will end the emulation

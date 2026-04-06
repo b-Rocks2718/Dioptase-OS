@@ -1,6 +1,6 @@
     
-  .align 4
   .text
+  .align 4
   
   .global __atomic_exchange_n
 __atomic_exchange_n:

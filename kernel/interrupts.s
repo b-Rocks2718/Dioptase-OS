@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
   
   # disables interrupts and returns previous imr value
   .global interrupts_disable

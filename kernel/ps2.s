@@ -1,5 +1,5 @@
-  .align 4
   .text
+  .align 4
 
   # Mark the current PS/2 interrupt as handled, allowing the PS/2 to send more interrupts
   .global mark_ps2_handled
