@@ -15,7 +15,7 @@ Writes to the `can_preempt` field of the current thread's TCB, with interrupts b
 Tested in `threads_preempt_toggle.c`
 
 #### Core Pinning
-Writes to the `core_affinity` field of the current thread's TCB. `core_pin()` pins the thread to the current core, and `core_unpin()` restores `ANY_CORE`. The scheduler respects this field when choosing where a thread may run.
+Writes to the `core_affinity` field of the current thread's TCB. `core_pin()` pins the thread to the current core, and `core_unpin()` restores to the old core affinity. The scheduler respects this field when choosing where a thread may run.
 
 Tested in `threads_core_pin.c`
 

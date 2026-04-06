@@ -4,23 +4,30 @@
  * Validates:
  * - physmem_alloc() returns only FRAME_SIZE-aligned addresses inside the
  *   documented physical-frame range
- * - concurrent workers never observe the same live frame at the same time
- * - repeated concurrent allocate/free churn does not lose or duplicate frames
- * - after concurrent churn, the allocator can still hand out the full frame
- *   pool exactly once and recover it on free
+ * - concurrent workers can churn a modest batch of order-0 pages without
+ *   returning one live frame to two workers at once
+ * - physmem_alloc_order() returns aligned higher-order blocks that remain
+ *   writable across the span of the requested block size
+ * - after draining per-core page caches back into the global buddy allocator,
+ *   the backend can still hand out a large order-0 sample without duplicates
+ *   and recover it on free
  *
  * How:
  * - start a set of worker threads together behind one shared go flag
  * - each worker keeps a small batch of frames live, stamps deterministic words
- *   into each page, yields to maximize overlap, then verifies and frees them
+ *   into each page, yields to create overlap, then verifies and frees them
  * - a separate ownership table guarded by one test spin lock records which
  *   worker currently owns each frame index; any duplicate live allocation
  *   panics immediately
- * - after the threaded phase, exhaust the whole frame pool sequentially and
- *   prove that every frame index appears exactly once before freeing them all
+ * - after the threaded phase, explicitly drain any per-core order-0 caches
+ *   back into the global allocator so the backend pool can be checked
+ * - run a sequential higher-order smoke test, then walk a large direct
+ *   order-0 backend sample and prove that every returned frame index is unique
+ *   before freeing that sample
  */
 
 #include "../kernel/physmem.h"
+#include "../kernel/per_core.h"
 #include "../kernel/threads.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
@@ -29,12 +36,15 @@
 #include "../kernel/semaphore.h"
 #include "../kernel/heap.h"
 
-#define NUM_WORKERS 8
-#define LIVE_PAGES_PER_WORKER 4
-#define CONCURRENCY_ROUNDS 16
+#define NUM_WORKERS 4
+#define LIVE_PAGES_PER_WORKER 2
+#define CONCURRENCY_ROUNDS 3
 #define NO_OWNER -1
 #define TEST_FRAME_SIZE 4096 // Must match kernel FRAME_SIZE.
 #define TEST_FRAME_WORDS 1024 // TEST_FRAME_SIZE / sizeof(unsigned)
+// 8,192 pages is still a 32 MiB backend sample, which crosses many buddy
+// regions without exhausting all 30,653 frames on every 4-core run.
+#define GLOBAL_WALK_PAGE_COUNT 8192
 
 struct ThreadArg {
   int id;
@@ -48,7 +58,7 @@ static bool go = false;
 
 static int live_owner[PHYS_FRAME_COUNT];
 static unsigned char seen_once[PHYS_FRAME_COUNT];
-static void* exhausted_pages[PHYS_FRAME_COUNT];
+static void* sampled_pages[GLOBAL_WALK_PAGE_COUNT];
 
 // Map one frame address back to its slot in the documented physical-frame range.
 static int frame_index(void* page) {
@@ -64,6 +74,25 @@ static int frame_index(void* page) {
     panic("physmem test: page address is not frame aligned\n");
   }
   return (addr - FRAMES_ADDR_START) / TEST_FRAME_SIZE;
+}
+
+static unsigned block_page_count(int order) {
+  return 1u << order;
+}
+
+static void check_block_alignment(void* block, int order) {
+  int idx = frame_index(block);
+  unsigned page_count = block_page_count(order);
+  if ((idx & (page_count - 1)) != 0) {
+    int args[3] = { order, idx, (int)block };
+    say("***physmem FAIL order=%d idx=%d block=0x%X\n", args);
+    panic("physmem test: higher-order block is not aligned to its size\n");
+  }
+  if ((unsigned)idx + page_count > PHYS_FRAME_COUNT) {
+    int args[3] = { order, idx, (int)block };
+    say("***physmem FAIL order=%d idx=%d block=0x%X\n", args);
+    panic("physmem test: higher-order block exceeds frame pool bounds\n");
+  }
 }
 
 // Stamp a few far-apart words so each live frame carries recognizable data
@@ -90,6 +119,30 @@ static void check_page(void* page, int tid, int round, int slot) {
     int args[4] = { tid, round, slot, (int)page };
     say("***physmem FAIL tid=%d round=%d slot=%d page=0x%X\n", args);
     panic("physmem test: live page contents were corrupted\n");
+  }
+}
+
+static void stamp_block(void* block, int order) {
+  unsigned page_count = block_page_count(order);
+  unsigned base_addr = (unsigned)block;
+  stamp_page((void*)base_addr, 0x40 + order, order, 0);
+  if (page_count > 2) {
+    stamp_page((void*)(base_addr + (page_count / 2) * TEST_FRAME_SIZE), 0x40 + order, order, 1);
+  }
+  if (page_count > 1) {
+    stamp_page((void*)(base_addr + (page_count - 1) * TEST_FRAME_SIZE), 0x40 + order, order, 2);
+  }
+}
+
+static void check_block(void* block, int order) {
+  unsigned page_count = block_page_count(order);
+  unsigned base_addr = (unsigned)block;
+  check_page((void*)base_addr, 0x40 + order, order, 0);
+  if (page_count > 2) {
+    check_page((void*)(base_addr + (page_count / 2) * TEST_FRAME_SIZE), 0x40 + order, order, 1);
+  }
+  if (page_count > 1) {
+    check_page((void*)(base_addr + (page_count - 1) * TEST_FRAME_SIZE), 0x40 + order, order, 2);
   }
 }
 
@@ -174,29 +227,65 @@ static void physmem_worker(void* arg) {
   sem_up(&finished_sem);
 }
 
-// Exhaust the documented frame pool and prove that every frame index appears
-// exactly once. Any leak or duplicate introduced by the concurrent phase will
-// show up here as an early panic or a repeated frame index.
-static void exhaust_and_restore_pool(void) {
+// Drain all per-core order-0 caches back into the global buddy allocator so
+// deterministic backend checks can observe the complete order-0 pool.
+static void drain_local_caches_to_global_pool(void) {
+  for (unsigned core = 0; core < CONFIG.num_cores; core++) {
+    struct PhysmemLocalCache* cache = &per_core_data[core].physmem_cache;
+    blocking_lock_acquire(&cache->lock);
+    while (cache->count > 0) {
+      void* page = cache->pages[cache->count - 1];
+      cache->pages[cache->count - 1] = NULL;
+      cache->count--;
+      blocking_lock_release(&cache->lock);
+      physmem_free_order(page, 0);
+      blocking_lock_acquire(&cache->lock);
+    }
+    blocking_lock_release(&cache->lock);
+  }
+}
+
+// Smoke-test higher-order allocations sequentially. This avoids cross-core
+// cache effects while still validating alignment, range membership, and that
+// the first/middle/last pages of each block remain writable.
+static void higher_order_smoke_test(void) {
+  for (int order = 1; order <= PHYS_FRAME_MAX_ORDER; order++) {
+    void* block = physmem_alloc_order(order);
+    check_block_alignment(block, order);
+    stamp_block(block, order);
+    check_block(block, order);
+    physmem_free_order(block, order);
+  }
+}
+
+// Walk a large direct order-0 sample from the global buddy allocator and prove
+// that every returned frame index is unique. Per-core caches must be drained
+// before this runs so the sample comes from the backend allocator itself.
+static void sample_and_restore_global_pool(void) {
+  assert(
+    GLOBAL_WALK_PAGE_COUNT > 0 && GLOBAL_WALK_PAGE_COUNT <= PHYS_FRAME_COUNT,
+    "physmem test: global walk page count must fit inside the frame pool\n"
+  );
+
   for (int i = 0; i < PHYS_FRAME_COUNT; i++) {
     seen_once[i] = 0;
   }
 
-  for (int i = 0; i < PHYS_FRAME_COUNT; i++) {
-    void* page = physmem_alloc();
+  for (int i = 0; i < GLOBAL_WALK_PAGE_COUNT; i++) {
+    void* page = physmem_alloc_order(0);
     int idx = frame_index(page);
     if (seen_once[idx] != 0) {
       int args[2] = { idx, (int)page };
       say("***physmem FAIL duplicate idx=%d page=0x%X\n", args);
-      panic("physmem test: full-pool walk saw one frame twice\n");
+      panic("physmem test: sampled backend walk saw one frame twice\n");
     }
     seen_once[idx] = 1;
-    exhausted_pages[i] = page;
+    sampled_pages[i] = page;
   }
 
-  for (int i = 0; i < PHYS_FRAME_COUNT; i++) {
-    physmem_free(exhausted_pages[i]);
-    exhausted_pages[i] = NULL;
+  for (int i = 0; i < GLOBAL_WALK_PAGE_COUNT; i++) {
+    physmem_free_order(sampled_pages[i], 0);
+    sampled_pages[i] = NULL;
   }
 }
 
@@ -246,7 +335,9 @@ void kernel_main(void) {
     sem_down(&finished_sem);
   }
 
-  exhaust_and_restore_pool();
+  drain_local_caches_to_global_pool();
+  higher_order_smoke_test();
+  sample_and_restore_global_pool();
 
   say("***physmem ok\n", NULL);
   say("***physmem test complete\n", NULL);

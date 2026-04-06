@@ -78,7 +78,7 @@ void kernel_main(void) {
   sem_init(&placement_sem, 0);
   sem_init(&placement_done_sem, 0);
 
-  core_pin();
+  enum CoreAffinity prev_affinity = core_pin();
   __atomic_store_n(&target_core, (int)get_core_id());
 
   spawn_worker();
@@ -136,7 +136,7 @@ void kernel_main(void) {
     panic("preempt toggle: worker did not run after preemption was restored\n");
   }
 
-  core_unpin();
+  core_unpin(prev_affinity);
   sem_destroy(&placement_sem);
   sem_destroy(&placement_done_sem);
 

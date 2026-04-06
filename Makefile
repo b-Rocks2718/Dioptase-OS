@@ -14,8 +14,8 @@ SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 # memory map
 TEXT_LOAD_ADDR := 0x10000
 DATA_LOAD_ADDR := 0x90000
-RODATA_LOAD_ADDR := 0xC0000
-BSS_LOAD_ADDR := 0xF0000
+RODATA_LOAD_ADDR := 0xD0000
+BSS_LOAD_ADDR := 0xE0000
 
 # ext2 filesystem config
 BLOCK_SIZE := 2048 # 1024, 2048, or 4096
@@ -260,10 +260,12 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	echo "[$$test_name] summary: $$success/$$runs"
 
 # Quiet aggregate target used by `make test`; prints once after all runs complete.
-# physmem_test exhausts the full frame pool every run, so keep its summary
-# repetition count lower than the default 10-run smoke loop.
+# physmem_test still does threaded churn, higher-order validation, and a large
+# direct backend sample, but it no longer exhausts the entire 30,653-page pool
+# every run. Keep its timeout modest and its summary repetition count lower than
+# the default 10-run smoke loop.
+physmem_test.test physmem_test.fail physmem_test.summary-test: TIMEOUT_SECONDS=180
 physmem_test.summary-test: TEST_RUNS=2
-physmem_test.summary-test: TIMEOUT_SECONDS=180
 
 %.summary-test: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \

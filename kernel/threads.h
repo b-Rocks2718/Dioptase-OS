@@ -94,9 +94,9 @@ bool preemption_disable(void);
 void preemption_restore(bool was);
 
 // pin a thread to the current core, preventing it from being scheduled on other cores
-void core_pin(void);
+enum CoreAffinity core_pin(void);
 
 // allow a thread to be scheduled on any core
-void core_unpin(void);
+void core_unpin(enum CoreAffinity prev);
 
 #endif // THREADS_H

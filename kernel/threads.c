@@ -462,19 +462,22 @@ void preemption_restore(bool was){
 }
 
 // pin a thread to the current core, preventing it from being scheduled on other cores
-void core_pin(void){
+enum CoreAffinity core_pin(void){
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
+  enum CoreAffinity prev = tcb->core_affinity;
   tcb->core_affinity = me;
   interrupts_restore(was);
+
+  return prev;
 }
 
 // allow a thread to be scheduled on any core
-void core_unpin(void){
+void core_unpin(enum CoreAffinity prev){
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
-  tcb->core_affinity = ANY_CORE;
+  tcb->core_affinity = prev;
   interrupts_restore(was);
 }

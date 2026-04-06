@@ -5,6 +5,7 @@
 #include "constants.h"
 #include "blocking_lock.h"
 #include "per_core.h"
+#include "threads.h"
 
 static struct BlockingLock physmem_lock;
 
@@ -126,13 +127,12 @@ void physmem_init(void){
   unsigned frames_remaining = PHYS_FRAME_COUNT;
   unsigned next_frame_index = 0;
   while (frames_remaining > 0) {
-    int order = 0;
+    int order = PHYS_FRAME_MAX_ORDER;
 
     // find max order that will fit in the remaining frames
-    while (order < PHYS_FRAME_MAX_ORDER && (1u << order) <= frames_remaining) {
-      order++;
+    while (order > 0 && (1u << order) > frames_remaining) {
+      order--;
     }
-    order--;
 
     // find max order that is aligned with the next frame address
     while (order > 0 && ((next_frame_index & ((1u << order) - 1)) != 0)) {
@@ -145,6 +145,15 @@ void physmem_init(void){
 
     next_frame_index += (1u << order);
     frames_remaining -= (1u << order);
+  }
+
+  // init per core caches
+  for (int i = 0; i < MAX_CORES; i++) {
+    blocking_lock_init(&per_core_data[i].physmem_cache.lock);
+    per_core_data[i].physmem_cache.count = 0;
+    for (int j = 0; j < LOCAL_CACHE_SIZE; j++) {
+      per_core_data[i].physmem_cache.pages[j] = NULL;
+    }
   }
 }
 
@@ -240,12 +249,53 @@ void physmem_free_order(void* page, int order){
   blocking_lock_release(&physmem_lock);
 }
 
-// allocate a physical page
+// allocate a physical page from core-local cache
 void* physmem_alloc(void){
-  return physmem_alloc_order(0);
+  enum CoreAffinity prev = core_pin();
+  struct PerCore* per_core = get_per_core();
+
+  // protect against re-entrance, needed because physmem_alloc_order can block
+  blocking_lock_acquire(&per_core->physmem_cache.lock);
+
+  // refill cache if necessary, then pop and return a page
+  if (per_core->physmem_cache.count == 0) {
+    // refill cache
+    for (int i = 0; i < LOCAL_CACHE_SIZE; i++) {
+      per_core->physmem_cache.pages[i] = physmem_alloc_order(0);
+    }
+    per_core->physmem_cache.count = LOCAL_CACHE_SIZE;
+  }
+
+  // pop from local cache
+  per_core->physmem_cache.count--;
+  void* page = per_core->physmem_cache.pages[per_core->physmem_cache.count];
+
+  blocking_lock_release(&per_core->physmem_cache.lock);
+
+  core_unpin(prev);
+
+  return page;
 }
 
 // free a physical page
 void physmem_free(void* page){
-  physmem_free_order(page, 0);
+  enum CoreAffinity prev = core_pin();
+  struct PerCore* per_core = get_per_core();
+
+  // protect against re-entrance
+  blocking_lock_acquire(&per_core->physmem_cache.lock);
+  
+  // push to local cache if there is room, otherwise free to global pool
+  if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
+    per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
+    per_core->physmem_cache.count++;
+
+    blocking_lock_release(&per_core->physmem_cache.lock);
+    core_unpin(prev);
+  } else {
+    blocking_lock_release(&per_core->physmem_cache.lock);
+    core_unpin(prev);
+
+    physmem_free_order(page, 0);
+  }
 }

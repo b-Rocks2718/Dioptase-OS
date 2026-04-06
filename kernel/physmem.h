@@ -1,6 +1,8 @@
 #ifndef PHYSMEM_H
 #define PHYSMEM_H
 
+#include "blocking_lock.h"
+
 #define FRAME_SIZE 4096
 
 #define FRAMES_ADDR_START 0x800000
@@ -19,6 +21,7 @@
 struct PhysmemLocalCache {
   void* pages[LOCAL_CACHE_SIZE];
   unsigned count;
+  struct BlockingLock lock;
 };
 
 // free pages store metadata to form a linked list
