@@ -21,8 +21,11 @@ struct Queue {
   int size;
 };
 
-// SleepQueue is a queue of threads sleeping until a certain time
-// It is sorted by wakeup_jiffies
+// SleepQueue is a single-owner queue of threads sleeping until wakeup_jiffies.
+// Invariant: entries are sorted by increasing wakeup_jiffies, and equal
+// deadlines retain FIFO order. There is no internal lock; production callers
+// rely on the per-core sleep queue ownership and interrupt discipline described
+// by the scheduler, while tests may call the explicit-time helper directly.
 struct SleepQueue {
   struct TCB* head;
   int size;
@@ -107,10 +110,21 @@ struct TCB* queue_peek(struct Queue* queue);
 // initialize an empty sleep queue
 void sleep_queue_init(struct SleepQueue* queue);
 
-// insert a sleeping thread, keeping the queue sorted by wakeup_jiffies
+// insert a sleeping thread, keeping the queue sorted by wakeup_jiffies.
+// Precondition: caller owns this queue or otherwise excludes concurrent
+// sleep_queue_add/remove operations on the same SleepQueue.
+// Postcondition: data is linked into the queue with stale next linkage cleared.
 void sleep_queue_add(void* args);
 
-// remove the head thread if its wakeup time has arrived
+// remove the head thread if its wakeup time has arrived at the provided time.
+// Precondition: caller owns this queue or otherwise excludes concurrent
+// sleep_queue_add/remove operations on the same SleepQueue.
+// Postcondition: if non-NULL is returned, that node is detached and next=NULL;
+// if NULL is returned, the queue is unchanged.
+struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies);
+
+// remove the head thread if its wakeup time has arrived according to current_jiffies.
+// Same ownership and postconditions as sleep_queue_remove_at().
 struct TCB* sleep_queue_remove(struct SleepQueue* queue);
 
 // return the current number of sleeping threads

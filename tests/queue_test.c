@@ -13,7 +13,7 @@
  * How:
  * - build small queue fixtures with deliberately stale next pointers so remove()
  *   and remove_all() must sanitize detached nodes
- * - drive sleep queue removals at several current_jiffies values to check early,
+ * - drive sleep queue removals at several explicit jiffies values to check early,
  *   on-time, and equal-deadline wakeups
  * - repeat the same ordering checks for the generic queue types
  * - exercise ring buffer and key buffer wrap-around, full detection, and
@@ -24,8 +24,6 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
-#include "../kernel/pit.h"
-#include "../kernel/interrupts.h"
 
 struct TestElement {
   struct GenericQueueElement link;
@@ -112,11 +110,11 @@ static void add_sleep_node(struct SleepQueue* queue, struct TCB* node) {
 
 // Remove a sleep queue node at one simulated jiffies value.
 static struct TCB* remove_sleep_node_at(struct SleepQueue* queue, unsigned jiffies) {
-  unsigned was = interrupts_disable();
-  current_jiffies = jiffies;
-  struct TCB* node = sleep_queue_remove(queue);
-  interrupts_restore(was);
-  return node;
+  // Use the explicit-time helper instead of overwriting current_jiffies. On a
+  // multicore test run, disabling interrupts on this core does not stop core 0's
+  // PIT handler from advancing the global timekeeper between the write and the
+  // removal check.
+  return sleep_queue_remove_at(queue, jiffies);
 }
 
 // Check FIFO queue order, empty cases, and remove_all() cleanup.
