@@ -29,4 +29,7 @@ void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset);
 // Unmap a previously mapped memory region
 void munmap(void* p);
 
+extern void tlb_kmiss_handler_(void);
+extern void tlb_umiss_handler_(void);
+
 #endif // VMEM_H

@@ -43,6 +43,9 @@ void kernel_entry(void){
 
     say("| Mem size: 128MiB\n", NULL);
 
+    say("| Registering spurious interrupt handlers...\n", NULL);
+    register_spurious_handlers();
+
     say("| Initializing physmem allocator...\n", NULL);
     physmem_init();
 
@@ -51,9 +54,6 @@ void kernel_entry(void){
 
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
-
-    say("| Registering spurious interrupt handlers...\n", NULL);
-    register_spurious_handlers();
 
     say("| Initializing PIT...\n", NULL);
     pit_init(3000); // trigger interrupts at 3,000Hz 

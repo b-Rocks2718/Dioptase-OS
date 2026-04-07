@@ -5,8 +5,8 @@
 #include "interrupts.h"
 
 void vmem_global_init(void){
-  //register_handler(tlb_kmiss_handler_, (void*)0x20C);
-  //register_handler(tlb_umiss_handler_, (void*)0x208);
+  register_handler(tlb_kmiss_handler_, (void*)0x20C);
+  register_handler(tlb_umiss_handler_, (void*)0x208);
 }
 
 void vmem_core_init(void){
@@ -25,6 +25,10 @@ void munmap(void* p){
 
 }
 
-void mystery(void){
-  puts("hello\n");
+void tlb_kmiss_handler(void* fault_addr){
+  printf("Kernel TLB miss vpn %X!\n", &fault_addr);
+}
+
+void tlb_umiss_handler(void* fault_addr){
+  printf("User TLB miss vpn %X!\n", &fault_addr);
 }
