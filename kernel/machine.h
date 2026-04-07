@@ -42,8 +42,19 @@ extern unsigned get_efg(void);
 // Return the TLB miss address register (cr7) value
 extern unsigned get_tlb_addr(void);
 
+// Read the TLB entry for the given virtual address, returning the physical address it maps to
+// returns 0 if there is no TLB entry for the given virtual address
+extern unsigned tlb_read(void* vaddr);
+
+// Write a TLB entry for the given virtual address to physical address mapping, 
+// with the given permissions
+extern void tlb_write(unsigned entry, unsigned paddr);
+
+// Invalidate the TLB entry for the given virtual address
+extern void tlb_invalidate(void* vaddr);
+
 // invalidate all tlb entries on this core
-extern void flush_tlb(void);
+extern void tlb_flush(void);
 
 // Wake up the core with the given core_num (0 - 3) by sending an IPI
 extern void wakeup_core(int core_num);

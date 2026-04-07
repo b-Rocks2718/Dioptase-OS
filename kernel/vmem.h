@@ -4,6 +4,14 @@
 #include "constants.h"
 #include "ext.h"
 
+#define TLB_GLOBAL 0x10
+#define TLB_USER   0x08
+#define TLB_EXEC   0x04
+#define TLB_WRITE  0x02
+#define TLB_READ   0x01
+
+extern unsigned* test_page;
+
 struct VME {
   struct VME* next;
 
@@ -28,5 +36,8 @@ void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset);
 
 // Unmap a previously mapped memory region
 void munmap(void* p);
+
+extern void tlb_kmiss_handler_(void);
+extern void tlb_umiss_handler_(void);
 
 #endif // VMEM_H
