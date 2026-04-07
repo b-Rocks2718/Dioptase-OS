@@ -1,5 +1,5 @@
 /*
- * ext2 concurrent rename test.
+ * ext2 rename test.
  *
  * Validates:
  * - concurrent same-directory renames of disjoint files preserve inode identity
@@ -63,11 +63,11 @@ static char* read_node_text(struct Node* node) {
   unsigned size = node_size_in_bytes(node);
   char* text = malloc(size + 1);
   assert(text != NULL,
-    "ext_rename_concurrent: failed to allocate a file read buffer.\n");
+    "ext_rename: failed to allocate a file read buffer.\n");
 
   unsigned cnt = node_read_all(node, 0, size, text);
   assert(cnt == size,
-    "ext_rename_concurrent: failed to read the full file contents.\n");
+    "ext_rename: failed to read the full file contents.\n");
   text[size] = 0;
 
   return text;
@@ -75,7 +75,7 @@ static char* read_node_text(struct Node* node) {
 
 static void rename_worker_fail(unsigned id, unsigned round, char* message) {
   int args[2] = { id, round };
-  say("***ext_rename_concurrent FAIL worker=%d round=%d\n", args);
+  say("***ext_rename FAIL worker=%d round=%d\n", args);
   panic(message);
 }
 
@@ -86,13 +86,13 @@ static void assert_name_pair(unsigned id, unsigned expected_inumber,
   struct Node* present = node_find(&fs.root, present_name);
   if (present == NULL) {
     rename_worker_fail(id, round,
-      "ext_rename_concurrent: expected renamed pathname is missing.\n");
+      "ext_rename: expected renamed pathname is missing.\n");
   }
 
   if (present->cached->inumber != expected_inumber) {
     node_free(present);
     rename_worker_fail(id, round,
-      "ext_rename_concurrent: rename changed the inode number.\n");
+      "ext_rename: rename changed the inode number.\n");
   }
 
   char* text = read_node_text(present);
@@ -100,7 +100,7 @@ static void assert_name_pair(unsigned id, unsigned expected_inumber,
     free(text);
     node_free(present);
     rename_worker_fail(id, round,
-      "ext_rename_concurrent: rename changed the file contents.\n");
+      "ext_rename: rename changed the file contents.\n");
   }
   free(text);
   node_free(present);
@@ -109,7 +109,7 @@ static void assert_name_pair(unsigned id, unsigned expected_inumber,
   if (absent != NULL) {
     node_free(absent);
     rename_worker_fail(id, round,
-      "ext_rename_concurrent: both pathnames resolved after one rename.\n");
+      "ext_rename: both pathnames resolved after one rename.\n");
   }
 }
 
@@ -140,30 +140,30 @@ static void rename_worker(void* arg) {
 static unsigned load_worker_fixture(unsigned id) {
   int id_args[1] = { id };
   struct Node* node = node_find(&fs.root, initial_names[id]);
-  say("| ext_rename_concurrent: fixture %d initial lookup done\n", id_args);
+  say("| ext_rename: fixture %d initial lookup done\n", id_args);
   assert(node != NULL,
-    "ext_rename_concurrent: initial worker fixture is missing.\n");
+    "ext_rename: initial worker fixture is missing.\n");
 
   char* text = read_node_text(node);
   assert(streq(text, expected_texts[id]),
-    "ext_rename_concurrent: worker fixture contents do not match expectations.\n");
+    "ext_rename: worker fixture contents do not match expectations.\n");
   free(text);
 
   unsigned inumber = node->cached->inumber;
   node_free(node);
-  say("| ext_rename_concurrent: fixture %d initial release done\n", id_args);
+  say("| ext_rename: fixture %d initial release done\n", id_args);
 
   struct Node* alternate = node_find(&fs.root, alternate_names[id]);
-  say("| ext_rename_concurrent: fixture %d alternate lookup done\n", id_args);
+  say("| ext_rename: fixture %d alternate lookup done\n", id_args);
   assert(alternate == NULL,
-    "ext_rename_concurrent: alternate worker pathname should not exist before the test starts.\n");
+    "ext_rename: alternate worker pathname should not exist before the test starts.\n");
 
   return inumber;
 }
 
 // Launch the worker race, then verify the final visible names and inode identity.
 int kernel_main(void) {
-  say("***ext_rename_concurrent test start\n", NULL);
+  say("***ext_rename test start\n", NULL);
 
   ext2_init(&fs);
 
@@ -175,7 +175,7 @@ int kernel_main(void) {
 
     struct RenameWorkerArgs* args = malloc(sizeof(struct RenameWorkerArgs));
     assert(args != NULL,
-      "ext_rename_concurrent: failed to allocate worker args.\n");
+      "ext_rename: failed to allocate worker args.\n");
     args->start = &rename_start_barrier;
     args->done = &rename_done_barrier;
     args->id = i;
@@ -186,7 +186,7 @@ int kernel_main(void) {
 
     struct Fun* fun = malloc(sizeof(struct Fun));
     assert(fun != NULL,
-      "ext_rename_concurrent: failed to allocate worker thread metadata.\n");
+      "ext_rename: failed to allocate worker thread metadata.\n");
     fun->func = rename_worker;
     fun->arg = args;
     thread(fun);
@@ -207,6 +207,6 @@ int kernel_main(void) {
 
   ext2_destroy(&fs);
 
-  say("***ext_rename_concurrent test complete\n", NULL);
+  say("***ext_rename test complete\n", NULL);
   return 0;
 }

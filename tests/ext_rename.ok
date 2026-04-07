@@ -1,3 +1,3 @@
-***ext_rename_concurrent test start
+***ext_rename test start
 ***Concurrent same-dir renames: ok
-***ext_rename_concurrent test complete
+***ext_rename test complete

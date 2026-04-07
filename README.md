@@ -36,8 +36,7 @@ These tools are expected to be built already (default `VERSION=release`):
 - `make test` runs every test that has a checked-in `tests/<test>.ok` baseline
   through the quiet `.summary-test` path.
 - `make ext` runs the ext2-related baseline-checked subset:
-  `ext_read`, `ext_new_file`, `ext_write`, `ext_rename`,
-  `ext_rename_concurrent`, and `ext_delete`.
+  `ext_read`, `ext_new_file`, `ext_write`, `ext_rename`, and `ext_delete`.
 - `make threads` runs every baseline-checked `threads_*` test.
 - `make datastructs` runs the baseline-checked utility tests:
   `hashmap_test`, `queue_test`, and `string`.
