@@ -39,6 +39,12 @@ context_switch:
   mov  r9, psr
   swa  r9,  [r1, 52]
 
+  mov  r9, pid
+  swa  r9,  [r1, 60]
+
+  mov  r9, tlb
+  swa  r9,  [r1, 64]
+
   # TCB offset 56 stores per-thread IMR state
   # The caller passes the outgoing thread's pre-switch IMR in r6 ("was")
   swa  r6,  [r1, 56]
@@ -63,6 +69,12 @@ context_switch:
   # use r10 as scratch
   lwa  r10, [r2, 44]
   mov  flg, r10
+
+  lwa  r10, [r2, 60]
+  mov  pid, r10
+
+  lwa  r10, [r2, 64]
+  mov  tlb, r10
 
   lwa  r10, [r2, 48] # r10 holds our return address
   push r10

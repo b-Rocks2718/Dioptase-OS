@@ -428,6 +428,13 @@ enum CoreAffinity core_pin(void){
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
+
+  // no-op if threading not initialized yet
+  if (tcb == NULL) {
+    interrupts_restore(was);
+    return ANY_CORE;
+  }
+
   enum CoreAffinity prev = tcb->core_affinity;
   tcb->core_affinity = me;
   interrupts_restore(was);
@@ -440,6 +447,13 @@ void core_unpin(enum CoreAffinity prev){
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
+
+  // no-op if threading not initialized yet
+  if (tcb == NULL) {
+    interrupts_restore(was);
+    return;
+  }
+
   tcb->core_affinity = prev;
   interrupts_restore(was);
 }

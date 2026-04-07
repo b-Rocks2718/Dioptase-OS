@@ -67,9 +67,27 @@ get_tlb_addr:
   mov r1, tlb
   ret
 
+  # Read the TLB entry for the virtual address in r1, and put the result in r1
+  .global tlb_read
+tlb_read:
+  tlbr r1, r1
+  ret
+
+  # Write the TLB entry for the virtual address in r1, with the value in r2
+  .global tlb_write
+tlb_write:
+  tlbw r2, r1
+  ret
+
+  # Invalidate the TLB entry for the virtual address in r1
+  .global tlb_invalidate
+tlb_invalidate:
+  tlbi r1
+  ret
+
   # invalidate all tlb entries on this core
-  .global flush_tlb
-flush_tlb:
+  .global tlb_flush
+tlb_flush:
   tlbc
   ret
 
