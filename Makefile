@@ -265,7 +265,7 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 # every run. Keep its timeout modest and its summary repetition count lower than
 # the default 10-run smoke loop.
 physmem_test.test physmem_test.fail physmem_test.summary-test: TIMEOUT_SECONDS=180
-physmem_test.summary-test: TEST_RUNS=2
+physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 
 %.summary-test: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
