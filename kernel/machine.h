@@ -24,6 +24,9 @@ extern unsigned get_core_id(void);
 // cr0 is a counter that is incremented on syscalls/exceptions/interrupts, and decremented when they exit
 extern unsigned get_cr0(void);
 
+// get the core's current process id (cr1)
+extern unsigned* get_pid(void);
+
 // set the core's current process id (cr1)
 extern void set_pid(unsigned val);
 

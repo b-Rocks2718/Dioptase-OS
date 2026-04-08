@@ -12,6 +12,14 @@ static struct BlockingLock physmem_lock;
 static struct FreePageNode* free_page_list[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static unsigned char free_page_bitmap[FREE_PAGE_BITMAP_SIZE];
 
+static int frames_alloced = 0;
+static int frames_freed = 0;
+static int frames_leaked = 0;
+
+static int order_allocs[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
+static int order_frees[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
+static int order_leaks[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
+
 // sanity check that something could be a frame address
 static bool physmem_is_frame_address(unsigned phys_addr) {
   if (phys_addr < FRAMES_ADDR_START || phys_addr >= FRAMES_ADDR_END) {
@@ -164,6 +172,8 @@ void* physmem_alloc_order(int order){
 
   blocking_lock_acquire(&physmem_lock);
 
+  __atomic_fetch_add(&order_allocs[order], 1);
+
   // find smallest order large enough to satisfy the request
   int current_order = order;
   while (free_page_list[current_order] == NULL) {
@@ -197,6 +207,12 @@ void* physmem_alloc_order(int order){
   return node;
 }
 
+void* physmem_leak_order(int order){
+  void* page = physmem_alloc_order(order);
+  __atomic_fetch_add(&order_leaks[order], 1);
+  return page;
+}
+
 // free a physical page of given order
 void physmem_free_order(void* page, int order){
   unsigned phys_addr = (unsigned)page;
@@ -211,6 +227,8 @@ void physmem_free_order(void* page, int order){
     "physmem free: page address is not aligned to its size.\n");
 
   blocking_lock_acquire(&physmem_lock);
+
+  __atomic_fetch_add(&order_frees[order], 1);
 
   // coalesce with buddy blocks if possible
   unsigned block_index = frame_index_from_address(phys_addr);
@@ -257,6 +275,8 @@ void* physmem_alloc(void){
   // protect against re-entrance, needed because physmem_alloc_order can block
   blocking_lock_acquire(&per_core->physmem_cache.lock);
 
+  __atomic_fetch_add(&frames_alloced, 1);
+
   // refill cache if necessary, then pop and return a page
   if (per_core->physmem_cache.count == 0) {
     // refill cache
@@ -277,6 +297,11 @@ void* physmem_alloc(void){
   return page;
 }
 
+void* physmem_leak(void* page){
+  __atomic_fetch_add(&frames_leaked, 1);
+  return physmem_alloc();
+}
+
 // free a physical page
 void physmem_free(void* page){
   enum CoreAffinity prev = core_pin();
@@ -284,6 +309,8 @@ void physmem_free(void* page){
 
   // protect against re-entrance
   blocking_lock_acquire(&per_core->physmem_cache.lock);
+
+  __atomic_fetch_add(&frames_freed, 1);
   
   // push to local cache if there is room, otherwise free to global pool
   if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
@@ -297,5 +324,28 @@ void physmem_free(void* page){
     core_unpin(prev);
 
     physmem_free_order(page, 0);
+  }
+}
+
+void physmem_check_leaks(void){
+  bool all_good = true;
+
+  if (frames_alloced != frames_freed + frames_leaked) {
+    int args[3] = {frames_freed, frames_leaked, frames_alloced};
+    say("| Warning: physmem leak detected: (freed:%d + leaked:%d) != alloced:%d\n", args);
+    all_good = false;
+  }
+
+  // skip order 0 because some frames may still be in caches
+  for (int order = 1; order <= PHYS_FRAME_MAX_ORDER; order++) {
+    if (order_allocs[order] != order_frees[order] + order_leaks[order]) {
+      int args[4] = {order, order_frees[order], order_leaks[order], order_allocs[order]};
+      say("| Warning: physmem leak detected for order %d: (freed:%d + leaked:%d) != alloced:%d\n", args);
+      all_good = false;
+    }
+  }
+  
+  if (all_good) {
+    say("| No physmem leaks detected\n", NULL);
   }
 }

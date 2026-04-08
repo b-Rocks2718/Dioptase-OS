@@ -4,27 +4,20 @@
 #include "../kernel/constants.h"
 #include "../kernel/atomic.h"
 #include "../kernel/heap.h"
+#include "../kernel/physmem.h"
 
 int kernel_main(void) {
   say("***Hello from vmem_simple test!\n", NULL);
 
-  unsigned* fault_addr = (unsigned*)0xF0000000;
+  int* p = mmap(FRAME_SIZE, false, NULL, 0);
+  say("***mmap'd a page at virtual address %X\n", &p);
 
-  unsigned x = *fault_addr;
+  p[0] = 42;
+  say("***wrote %d to first int of mmap'd page\n", &p[0]);
 
-  say("*** read %d from unmapped addr\n", &x);
+  int x = p[0];
+  say("***read %d from first int of mmap'd page\n", &x);
 
-  *fault_addr = 1234;
-
-  say("*** wrote 1234 to unmapped addr\n", NULL);
-
-  unsigned y = *fault_addr;
-
-  say("*** read %d from previously unmapped addr\n", &y);
-
-  unsigned z = *test_page;
-
-  say("*** read %d from test_page\n", &z);
 
   return 0;
 }

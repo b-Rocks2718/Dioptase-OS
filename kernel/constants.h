@@ -11,5 +11,7 @@
 #define false 0
 
 #define UINT_MAX 0xFFFFFFFF
+#define INT_MAX 0x7FFFFFFF
+#define INT_MIN 0x80000000
 
 #endif // CONSTANTS_H

@@ -48,4 +48,7 @@ void* physmem_alloc(void);
 // free a physical page
 void physmem_free(void* page);
 
+// check for physical memory leaks
+void physmem_check_leaks(void);
+
 #endif // PHYSMEM_H

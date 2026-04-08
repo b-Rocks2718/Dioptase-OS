@@ -31,10 +31,16 @@ get_cr0:
   mov r1, cr0
   ret
 
+  # get the core's current process id (cr1)
+  .global get_pid
+get_pid:
+  mov r1, pid
+  ret
+
   # set the core's current process id (cr1) to the value in r1
   .global set_pid
 set_pid:
-  mov cr1, r1
+  mov pid, r1
   ret
   
   # Return the core's interrupt status register (cr2) value

@@ -4,15 +4,13 @@
 #include "debug.h"
 #include "interrupts.h"
 #include "physmem.h"
-
-unsigned* test_page = NULL;
+#include "TCB.h"
+#include "heap.h"
+#include "per_core.h"
 
 void vmem_global_init(void){
   register_handler(tlb_kmiss_handler_, (void*)0x20C);
   register_handler(tlb_umiss_handler_, (void*)0x208);
-
-  test_page = (unsigned*)physmem_alloc();
-  *test_page = 42;
 }
 
 void vmem_core_init(void){
@@ -21,32 +19,227 @@ void vmem_core_init(void){
   set_pid(0);
 }
 
-// Map a file into memory, returning a pointer to the mapped region
-// If the file is NULL, do an anonymous mapping
-void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset){
+// allocate a new page directory for a thread
+unsigned create_page_directory(void){
+  unsigned* pd = (unsigned*)physmem_alloc();
+  for (int i = 0; i < 1024; i++){
+    pd[i] = 0; // mark all entries invalid
+  }
+  return (unsigned)pd;
+}
 
+unsigned create_page_table(void){
+  unsigned* pt = (unsigned*)physmem_alloc();
+  for (int i = 0; i < 1024; i++){
+    pt[i] = 0; // mark all entries invalid
+  }
+  return (unsigned)pt;
+}
+
+unsigned create_zeroed_page(void){
+  unsigned* page = (unsigned*)physmem_alloc();
+  for (int i = 0; i < FRAME_SIZE / sizeof(unsigned); i++){
+    page[i] = 0;
+  }
+  return (unsigned)page;
+}
+
+struct VME* vme_create(unsigned start, unsigned end,
+    bool shared, struct Node* file, unsigned file_offset){
+  struct VME* vme = (struct VME*)malloc(sizeof(struct VME));
+
+  assert(start % FRAME_SIZE == 0, "vme create: start address must be page aligned.\n");
+  assert(end % FRAME_SIZE == 0, "vme create: end address must be page aligned.\n");
+  assert(end > start, "vme create: end address must be greater than start address.\n");
+  
+  vme->start = start;
+  vme->end = end;
+  vme->shared = shared;
+  vme->file = file;
+  vme->file_offset = file_offset;
+
+  return vme;
+}
+
+void vme_insert(struct TCB* tcb, struct VME* prev, struct VME* vme){
+  if (prev){
+    vme->next = prev->next;
+    prev->next = vme;
+  } else {
+    vme->next = tcb->vme_list;
+    tcb->vme_list = vme;
+  }
+}
+
+// free all VMEs in the given list
+void free_vme_list(struct VME* vme){
+  while (vme){
+    struct VME* next = vme->next;
+    free(vme);
+    vme = next;
+  }
+}
+
+// free all physical pages mapped by the given address space, 
+// and free the page directory and page tables
+void vmem_destroy_address_space(struct TCB* tcb) {
+  unsigned* pd = (unsigned*)tcb->pid;
+
+  for (struct VME* vme = tcb->vme_list; vme != NULL; vme = vme->next) {
+    assert(vme->file == NULL && !vme->shared,
+      "vmem destroy: shared/file-backed VME reclaim is not implemented.\n");
+
+    // free the physical pages backing this VME and invalidate PTE entries
+    for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE) {
+      unsigned page_dir_index = (va >> 22) & 0x3FF;
+      unsigned page_table_index = (va >> 12) & 0x3FF;
+
+      unsigned pde = pd[page_dir_index];
+      if (!(pde & VMEM_VALID)) continue;
+
+      unsigned* pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+      unsigned pte = pt[page_table_index];
+      if (!(pte & VMEM_VALID)) continue;
+
+      physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
+      pt[page_table_index] = 0;
+    }
+  }
+
+  // free any page tables and invalidate PDE entries
+  for (unsigned page_dir_index = 0; page_dir_index < 1024; page_dir_index++) {
+    if (pd[page_dir_index] & VMEM_VALID) {
+      physmem_free((void*)(pd[page_dir_index] & ~(FRAME_SIZE - 1)));
+      pd[page_dir_index] = 0;
+    }
+  }
+
+  // free the page directory itself
+  physmem_free(pd);
+}
+
+// Make a VME with the given parameters and add it to the current thread's list of VMEs
+void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset){
+  // round up size to the nearest page boundary
+  size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  // traverse vme list to find a free virtual memory region
+  struct VME* curr = tcb->vme_list;
+  unsigned last_end = VMEM_START;
+  while (curr){
+    if (curr->start - last_end >= size){
+      break;
+    }
+    last_end = curr->end;
+    curr = curr->next;
+  }
+
+  if (curr == NULL && (UINT_MAX - last_end) < size){
+    // no more virtual memory
+    panic("Out of virtual memory!");
+    return NULL;
+  }
+
+  unsigned start = last_end;
+  unsigned end = start + size;
+
+  struct VME* vme = vme_create(start, end, shared, file, file_offset);
+
+  vme_insert(tcb, curr, vme);
+
+  return (void*)start;
 }
 
 void munmap(void* p){
+  panic("todo\n");
 
+  /*
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  struct VME* prev = NULL;
+  struct VME* curr = tcb->vme_list;
+
+  while (curr){
+    // find VME corresponding to p
+    if ((void*)curr->start == p){
+      if (prev){
+        prev->next = curr->next;
+      } else {
+        tcb->vme_list = curr->next;
+      }
+
+      // TODO: free any physical pages backing this VME
+      // invalidate any TLB entries mapping this VME
+
+      free(curr);
+      break;
+    }
+    prev = curr;
+    curr = curr->next;
+  }
+  */
 }
 
 void tlb_kmiss_handler(void* vpn){
-  printf("Kernel TLB miss vpn %X!\n", &vpn);
+  printf("| Kernel TLB miss vpn %X!\n", &vpn);
 
-  unsigned fault_addr = (unsigned)vpn << 12;
+  unsigned fault_addr = (unsigned)(vpn) << 12;
+
+  // look up the VME corresponding to this faulting address
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  struct VME* curr = tcb->vme_list;
+  while (curr){
+    if (fault_addr >= curr->start && fault_addr < curr->end){
+      break;
+    }
+    curr = curr->next;
+  }
+
+  if (curr == NULL){
+    panic("Kernel TLB miss with no corresponding VME!\n");
+    return;
+  }
+
+  if (curr->file != NULL || curr->shared){
+    panic("Kernel TLB miss on shared or file-backed VME not supported yet!\n");
+    return;
+  }
+
+  unsigned page_dir_index = ((unsigned)vpn >> 10) & 0x3FF;
   
-  static unsigned count = 0;
-  count++;
+  unsigned* pd = get_pid();
+  unsigned pde = pd[page_dir_index];
 
-  unsigned entry = (unsigned)test_page;
-  entry |= TLB_READ;
+  if (!(pde & VMEM_VALID)) {
+    // need to create a new page table for this PDE
+    unsigned pt_addr = create_page_table();
+    unsigned entry = pt_addr | VMEM_VALID | VMEM_READ | VMEM_WRITE | VMEM_GLOBAL;
+    pd[page_dir_index] = entry;
+    pde = entry;
+  }
 
-  if (count > 1){
-    entry |= TLB_WRITE;
+  unsigned* pt = (unsigned*)(pde & ~0xFFF);
+  unsigned page_table_index = (unsigned)vpn & 0x3FF;
+  unsigned pte = pt[page_table_index];
+
+  if (!(pte & VMEM_VALID)) {
+    // need to allocate a physical page and update the PTE
+    unsigned phys_page = create_zeroed_page();
+    unsigned entry = phys_page | VMEM_VALID | VMEM_READ | VMEM_WRITE;
+    pt[page_table_index] = entry;
+    pte = entry;
   }
   
-  tlb_write(fault_addr, entry);
+  tlb_write(fault_addr, pte);
 }
 
 void tlb_umiss_handler(void* vpn){

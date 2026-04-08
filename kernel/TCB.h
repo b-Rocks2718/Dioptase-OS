@@ -2,7 +2,6 @@
 #define TCB_H
 
 #include "constants.h"
-//#include "vmem.h"
 
 // function and argument for a thread to run
 struct Fun {
@@ -34,6 +33,9 @@ enum MLFQ_LEVEL {
   LEVEL_ONE = 1,
   LEVEL_TWO = 2
 };
+
+// forward declaration of VME struct to avoid circular dependency between TCB and VME
+struct VME;
 
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
@@ -68,7 +70,7 @@ struct TCB {
   int remaining_quantum;
   unsigned wakeup_jiffies;
 
-  //struct VME* vme_list;
+  struct VME* vme_list;
 
   struct TCB* next;
 };

@@ -25,6 +25,7 @@
 #include "config.h"
 #include "ps2.h"
 #include "scheduler.h"
+#include "vmem.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -51,8 +52,12 @@ static void free_fun(struct Fun* fun) {
 static void free_tcb(struct TCB* tcb) {
   assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
   assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
+  
   free(tcb->stack);
   free_fun(tcb->thread_fun);
+  free_vme_list(tcb->vme_list);
+  vmem_destroy_address_space(tcb);
+
   free(tcb);
 
   __atomic_fetch_add(&n_active, -1);
@@ -127,6 +132,7 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->priority = priority;
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
+  tcb->pid = create_page_directory();
 
   scheduler_wake_thread(tcb);
 }
@@ -245,6 +251,7 @@ void kernel_shutdown(void){
     say("| Checking leaks\n", NULL);
     
     check_leaks();
+    physmem_check_leaks();
 
     if (CONFIG.use_vga){
       say("| Press Q to exit...\n", NULL);
