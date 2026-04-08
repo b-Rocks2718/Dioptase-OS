@@ -70,7 +70,7 @@ get_efg:
   # Return the TLB miss address register (cr7) value
   .global get_tlb_addr
 get_tlb_addr:
-  mov r1, tlb
+  mov r1, tlba
   ret
 
   # Read the TLB entry for the virtual address in r1, and put the result in r1

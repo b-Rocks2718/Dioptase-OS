@@ -40,7 +40,8 @@ tlb_kmiss_handler_:
   or   r2, r1, r2
   mov  imr, r2
 
-  mov r1, tlb
+  mov  r1, tlba
+  mov  r2, tlbf
   call tlb_kmiss_handler
 
   # disable interrupts
@@ -118,7 +119,8 @@ tlb_umiss_handler_:
   or   r2, r1, r2
   mov  imr, r2
 
-  mov r1, tlb
+  mov  r1, tlba
+  mov  r2, tlbf
   call tlb_umiss_handler
 
   # disable interrupts

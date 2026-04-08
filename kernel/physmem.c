@@ -28,12 +28,12 @@ static bool physmem_is_frame_address(unsigned phys_addr) {
   return (phys_addr & (FRAME_SIZE - 1)) == 0;
 }
 
-static unsigned frame_index_from_address(unsigned phys_addr) {
+unsigned frame_index_from_address(unsigned phys_addr) {
   assert(physmem_is_frame_address(phys_addr), "physmem: invalid frame address.\n");
   return (phys_addr - FRAMES_ADDR_START) / FRAME_SIZE;
 }
 
-static unsigned address_from_frame_index(unsigned frame_index) {
+unsigned address_from_frame_index(unsigned frame_index) {
   assert(frame_index < PHYS_FRAME_COUNT, "physmem: invalid frame index.\n");
   return FRAMES_ADDR_START + frame_index * FRAME_SIZE;
 }

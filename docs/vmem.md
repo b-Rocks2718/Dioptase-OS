@@ -37,3 +37,10 @@ the TLB internally keeps a valid bit for each entry
 
 `tlbr rA, rB` will use the PID and `(rB & 0xFFFFF000)` as a key and put the value in `rA`
 `tlbw rA, rB` will use the PID and `(rB & 0xFFFFF000)` as a key and store `(rA & 0x7FFFFFF)` as the value in the TLB
+
+
+### mmap stuff
+private anonymous - easy
+private file-backed - does not update backing file
+shared file-backed - all instances of mmapping that file are shared
+shared anonymous - all children of thread share

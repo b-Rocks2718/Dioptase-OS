@@ -15,7 +15,6 @@ void vmem_global_init(void){
 
 void vmem_core_init(void){
   tlb_flush();
-
   set_pid(0);
 }
 
@@ -52,7 +51,7 @@ unsigned create_zeroed_page(void){
 }
 
 struct VME* vme_create(unsigned start, unsigned end,
-    bool shared, struct Node* file, unsigned file_offset){
+    struct Node* file, unsigned file_offset, unsigned flags){
   struct VME* vme = (struct VME*)malloc(sizeof(struct VME));
 
   assert(start % FRAME_SIZE == 0, "vme create: start address must be page aligned.\n");
@@ -61,7 +60,7 @@ struct VME* vme_create(unsigned start, unsigned end,
   
   vme->start = start;
   vme->end = end;
-  vme->shared = shared;
+  vme->flags = flags;
   vme->file = file;
   vme->file_offset = file_offset;
 
@@ -151,8 +150,8 @@ void vmem_destroy_address_space(struct TCB* tcb) {
   unsigned* pd = (unsigned*)tcb->pid;
 
   for (struct VME* vme = tcb->vme_list; vme != NULL; vme = vme->next) {
-    assert(vme->file == NULL && !vme->shared,
-      "vmem destroy: shared/file-backed VME reclaim is not implemented.\n");
+    assert(vme->file == NULL, 
+      "vmem destroy: shared VME reclaim is not implemented.\n");
 
     unmap_vme(pd, vme);
   }
@@ -170,7 +169,7 @@ void vmem_destroy_address_space(struct TCB* tcb) {
 }
 
 // Make a VME with the given parameters and add it to the current thread's list of VMEs
-void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset){
+void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags){
   // round up size to the nearest page boundary
   size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
 
@@ -203,7 +202,7 @@ void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset){
   unsigned start = last_end;
   unsigned end = start + size;
 
-  struct VME* vme = vme_create(start, end, shared, file, file_offset);
+  struct VME* vme = vme_create(start, end, file, file_offset, flags);
 
   vme_insert(tcb, prev, vme);
 
@@ -227,7 +226,8 @@ void munmap(void* p){
         tcb->vme_list = curr->next;
       }
 
-      assert(!curr->shared, "munmap: cannot yet unmap shared VME\n");
+      assert(!((curr->flags & MMAP_SHARED) && (curr->file == NULL)), 
+        "munmap: cannot yet unmap shared anonymous VME\n");
 
       // free any physical pages backing this VME
       unmap_vme((unsigned*)tcb->pid, curr);
@@ -242,7 +242,7 @@ void munmap(void* p){
   panic("munmap called with invalid address\n");
 }
 
-void tlb_kmiss_handler(void* vpn){
+void tlb_kmiss_handler(void* vpn, unsigned flags){
   unsigned fault_addr = (unsigned)(vpn) << 12;
 
   // look up the VME corresponding to this faulting address
@@ -263,8 +263,8 @@ void tlb_kmiss_handler(void* vpn){
     return;
   }
 
-  if (curr->shared){
-    panic("Kernel TLB miss on shared VME not supported yet!\n");
+  if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)){
+    panic("Kernel TLB miss on shared anonymousVME not supported yet!\n");
     return;
   }
 
@@ -290,12 +290,24 @@ void tlb_kmiss_handler(void* vpn){
     unsigned phys_page = 0;
     if (curr->file){
       phys_page = (unsigned)physmem_alloc();
-      node_read_all(curr->file, curr->file_offset, FRAME_SIZE, (char*)phys_page);
+
+      unsigned bytes_read = node_read_all(curr->file, curr->file_offset + (fault_addr - curr->start), 
+        FRAME_SIZE, (char*)phys_page);
+
+      // zero remaining bytes
+      for (int i = bytes_read; i < FRAME_SIZE; i++){
+        ((char*)phys_page)[i] = 0;
+      }
     } else {
       phys_page = create_zeroed_page();
     }
     
-    unsigned entry = phys_page | VMEM_VALID | VMEM_READ | VMEM_WRITE;
+    unsigned entry = phys_page | VMEM_VALID;
+
+    if (curr->flags & MMAP_READ) entry |= VMEM_READ;
+    if (curr->flags & MMAP_WRITE) entry |= VMEM_WRITE;
+    if (curr->flags & MMAP_EXEC) entry |= VMEM_EXEC;
+
     pt[page_table_index] = entry;
     pte = entry;
   }
@@ -303,7 +315,7 @@ void tlb_kmiss_handler(void* vpn){
   tlb_write(fault_addr, pte);
 }
 
-void tlb_umiss_handler(void* vpn){
+void tlb_umiss_handler(void* vpn, unsigned flags){
   panic("User TLB miss!\n");
 }
 

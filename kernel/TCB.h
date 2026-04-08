@@ -58,7 +58,8 @@ struct TCB {
   unsigned psr;      // offset 52
   unsigned imr;      // offset 56
   unsigned pid;      // offset 60
-  unsigned fault_addr;      // offset 64
+  unsigned fault_addr;  // offset 64
+  unsigned fault_flags; // offset 68
 
   unsigned* stack;
   struct Fun* thread_fun;

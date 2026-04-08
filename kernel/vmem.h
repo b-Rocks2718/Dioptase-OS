@@ -4,12 +4,21 @@
 #include "constants.h"
 #include "ext.h"
 
-#define VMEM_VALID  0x20
-#define VMEM_GLOBAL 0x10
-#define VMEM_USER   0x08
-#define VMEM_EXEC   0x04
-#define VMEM_WRITE  0x02
+// flags to pass into mmap
+#define MMAP_NONE   0x00
+#define MMAP_SHARED 0x01
+#define MMAP_READ   0x04
+#define MMAP_WRITE  0x08
+#define MMAP_EXEC   0x10
+
+// tlb/pde/pte flags
 #define VMEM_READ   0x01
+#define VMEM_WRITE  0x02
+#define VMEM_EXEC   0x04
+#define VMEM_USER   0x08
+#define VMEM_GLOBAL 0x10
+#define VMEM_VALID  0x20
+#define VMEM_DIRTY  0x40
 
 // begin vmem allocations from 0x80000000
 #define VMEM_START 0x80000000
@@ -20,7 +29,8 @@ struct VME {
   unsigned start;
   unsigned end;
 
-  bool shared;
+  unsigned flags;
+
   struct Node* file;
   unsigned file_offset;
 };
@@ -39,7 +49,7 @@ unsigned create_page_directory(void);
 unsigned create_page_table(void);
 
 // Map a file into memory, returning a pointer to the mapped region
-void* mmap(unsigned size, bool shared, struct Node* file, unsigned file_offset);
+void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags);
 
 // Unmap a previously mapped memory region
 void munmap(void* p);
