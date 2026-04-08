@@ -593,7 +593,7 @@ static void spawn_worker(int worker_id, int desired_core) {
   fun->func = load_balance_worker;
   fun->arg = arg;
 
-  thread_priority(fun, priority);
+  thread_(fun, priority, desired_core);
 }
 
 // Draw the full-width sleep/global boxes and the four local queue boxes.

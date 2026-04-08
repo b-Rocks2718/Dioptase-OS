@@ -20,7 +20,7 @@ mark_sd1_handled:
   .global sd0_handler_
 sd0_handler_:
   # ISR wrapper for SD0 interrupts that preserves interrupted CPU state.
-  # Interrupts have been disabled by hardware, will be re-enabled by rfi
+  # Interrupts have been disabled by hardware, will be re-enabled by rfe
   # ISR status bit must be cleared by sd0_handler
 
   # Save caller-saved registers.
@@ -85,12 +85,12 @@ sd0_handler_:
   pop  r2
   pop  r1
 
-  rfi
+  rfe
 
 .global sd1_handler_
 sd1_handler_:
   # ISR wrapper for SD1 interrupts that preserves interrupted CPU state.
-  # Interrupts have been disabled by hardware, will be re-enabled by rfi
+  # Interrupts have been disabled by hardware, will be re-enabled by rfe
   # ISR status bit must be cleared by sd1_handler
 
   # Save caller-saved registers.
@@ -155,4 +155,4 @@ sd1_handler_:
   pop  r2
   pop  r1
 
-  rfi
+  rfe

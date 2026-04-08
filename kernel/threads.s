@@ -73,6 +73,8 @@ context_switch:
   lwa  r10, [r2, 60]
   mov  pid, r10
 
+  tlbc # clear tlb
+
   lwa  r10, [r2, 64]
   mov  tlb, r10
 

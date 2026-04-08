@@ -71,11 +71,11 @@ void thread(struct Fun* thread_fun);
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority);
+void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
 
 // create a thread to run the given function, and add it to the global ready queue
-// allows specifying the thread's priority
-void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority);
+// allows specifying the thread's priority and the core affinity
+void thread_(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
 
 // set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void);

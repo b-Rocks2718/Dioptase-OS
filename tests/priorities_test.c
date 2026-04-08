@@ -258,7 +258,7 @@ static void spawn_tile_visual_worker(int panel_x, int panel_y,
   fun->func = tile_visual_worker;
   fun->arg = arg;
 
-  thread_priority(fun, priority);
+  thread_(fun, priority, ANY_CORE);
 }
 
 int kernel_main(void) {

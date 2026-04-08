@@ -18,6 +18,8 @@ int kernel_main(void) {
   int x = p[0];
   say("***read %d from first int of mmap'd page\n", &x);
 
+  munmap(p);
+  say("***munmap'd the page\n", NULL);
 
   return 0;
 }

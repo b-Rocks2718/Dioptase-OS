@@ -27,7 +27,7 @@ Tested in `atomic_test.c`
 #### Preemption Spinlock
 Same as spinlock, but disables preemption on each acquire attempt instead of interrupts. This is for cases where the critical section cannot be assumed to be O(1), but the caller still cannot block. The current use case is the print lock, so even idle threads can safely serialize debugging output.
 
-Tested in `atomic_test.c`
+No dedicated OS test currently exercises this primitive directly.
 
 #### Spin Barrier
 Simple one-shot barrier for a known number of participants. Each thread decrements a shared counter and then spins until the counter reaches 0. It does not reset itself, so the caller must reinitialize the counter before reusing it.

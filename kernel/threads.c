@@ -40,7 +40,8 @@ unsigned DEFAULT_INTERRUPT_MASK =
   GLOBAL_INT_ENABLE | 
   SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
   PIT_INT_ENABLE |
-  PS2_INT_ENABLE;
+  PS2_INT_ENABLE |
+  IPI_INT_ENABLE;
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -55,8 +56,9 @@ static void free_tcb(struct TCB* tcb) {
   
   free(tcb->stack);
   free_fun(tcb->thread_fun);
-  free_vme_list(tcb->vme_list);
+  
   vmem_destroy_address_space(tcb);
+  free_vme_list(tcb->vme_list);
 
   free(tcb);
 
@@ -95,10 +97,13 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->r28 = 0;
 
   tcb->imr = DEFAULT_INTERRUPT_MASK;
+  tcb->pid = 0;
+  tcb->fault_addr = 0;
 
   tcb->can_preempt = true;
   tcb->core_affinity = ANY_CORE;
   tcb->priority = NORMAL_PRIORITY;
+  tcb->vme_list = NULL;
 
   tcb->next = NULL;
 
@@ -107,13 +112,14 @@ static struct TCB* make_tcb(bool leak_mem){
 
 // create a thread to run the given function, and add it to the global ready queue
 void thread(struct Fun* thread_fun){
-  thread_priority(thread_fun, NORMAL_PRIORITY);
+  thread_(thread_fun, NORMAL_PRIORITY, ANY_CORE);
 }
 
 
 // create a thread to run the given function, and add it to the global ready queue
-// allows specifying the thread's priority
-void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
+// allows specifying the thread's priority and the core affinity
+void thread_(struct Fun* thread_fun, 
+    enum ThreadPriority priority, enum CoreAffinity core_affinity){
   struct TCB* tcb = make_tcb(false);
   __atomic_fetch_add(&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
@@ -130,6 +136,7 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
   tcb->priority = priority;
+  tcb->core_affinity = core_affinity;
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
   tcb->pid = create_page_directory();
@@ -141,7 +148,7 @@ void thread_priority(struct Fun* thread_fun, enum ThreadPriority priority){
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority){
+void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity){
   struct TCB* tcb = make_tcb(true);
 
   __atomic_fetch_add(&n_active_others, 1);
@@ -157,6 +164,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority){
   tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->priority = priority;
+  tcb->core_affinity = core_affinity;
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
 
@@ -173,7 +181,7 @@ void threads_init(void){
   reaper_fun->func = (void (*)(void *))reaper;
   reaper_fun->arg = NULL;
 
-  setup_thread(reaper_fun, LOW_PRIORITY);
+  setup_thread(reaper_fun, LOW_PRIORITY, ANY_CORE);
 }
 
 // switch away from the current thread and run a completion callback
@@ -247,8 +255,6 @@ void kernel_shutdown(void){
     }
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
-
-    say("| Checking leaks\n", NULL);
     
     check_leaks();
     physmem_check_leaks();

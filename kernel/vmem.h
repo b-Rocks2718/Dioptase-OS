@@ -54,4 +54,10 @@ void vmem_destroy_address_space(struct TCB* tcb);
 extern void tlb_kmiss_handler_(void);
 extern void tlb_umiss_handler_(void);
 
+extern void ipi_handler_(void);
+
+extern void mark_ipi_handled(void);
+
+extern unsigned send_ipi(unsigned data);
+
 #endif // VMEM_H

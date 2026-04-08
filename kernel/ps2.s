@@ -12,7 +12,7 @@ mark_ps2_handled:
   .global ps2_handler_
 ps2_handler_:
   # ISR wrapper for PS/2 interrupts that preserves interrupted CPU state.
-  # Interrupts have been disabled by hardware, will be re-enabled by rfi
+  # Interrupts have been disabled by hardware, will be re-enabled by rfe
   # ISR status bit must be cleared by ps2_handler
 
   # Save caller-saved registers.
@@ -76,4 +76,4 @@ ps2_handler_:
   pop  r2
   pop  r1
 
-  rfi
+  rfe

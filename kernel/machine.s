@@ -91,6 +91,15 @@ tlb_invalidate:
   tlbi r1
   ret
 
+  .global tlb_invalidate_other
+tlb_invalidate_other:
+  # invalidate the TLB entry for the virtual address in r2 on the core with the pid in r1
+  mov  r3, pid
+  mov  pid, r1
+  tlbi r2
+  mov  pid, r3
+  ret
+
   # invalidate all tlb entries on this core
   .global tlb_flush
 tlb_flush:

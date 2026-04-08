@@ -12,7 +12,7 @@ mark_pit_handled:
   .global pit_handler_
 pit_handler_:
   # ISR wrapper for PIT that preserves interrupted CPU state.
-  # Interrupts have been disabled by hardware, will be re-enabled by rfi
+  # Interrupts have been disabled by hardware, will be re-enabled by rfe
   # ISR status bit must be cleared by pit_handler
 
   # Save caller-saved registers.
@@ -76,4 +76,4 @@ pit_handler_:
   pop  r2
   pop  r1
 
-  rfi
+  rfe

@@ -316,7 +316,7 @@ static void spawn_workload_visual_worker(int panel_x, int panel_y,
   fun->func = workload_visual_worker;
   fun->arg = arg;
 
-  thread_priority(fun, NORMAL_PRIORITY);
+  thread_(fun, NORMAL_PRIORITY, ANY_CORE);
 }
 
 int kernel_main(void) {

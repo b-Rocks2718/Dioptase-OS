@@ -56,6 +56,9 @@ extern void tlb_write(unsigned entry, unsigned paddr);
 // Invalidate the TLB entry for the given virtual address
 extern void tlb_invalidate(void* vaddr);
 
+// Invalidate the TLB entry for the given virtual address
+extern void tlb_invalidate_other(unsigned pid, void* vaddr);
+
 // invalidate all tlb entries on this core
 extern void tlb_flush(void);
 
