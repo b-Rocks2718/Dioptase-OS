@@ -90,6 +90,8 @@ void free_vme_list(struct VME* vme){
 
 void unmap_vme(unsigned* pd, struct VME* vme){
   // free any physical pages backing this VME and invalidate PTE entries
+  unsigned prev_page_dir_index = UINT_MAX;
+  unsigned* prev_pt = NULL;
   for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE) {
     unsigned page_dir_index = (va >> 22) & 0x3FF;
     unsigned page_table_index = (va >> 12) & 0x3FF;
@@ -103,6 +105,40 @@ void unmap_vme(unsigned* pd, struct VME* vme){
 
     physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
     pt[page_table_index] = 0;
+
+    // only check if the page table is empty when we move to a new page directory entry
+    if (page_dir_index != prev_page_dir_index && prev_pt != NULL){
+      // if page table is now empty, free it and invalidate the PDE
+      bool empty = true;
+      for (int i = 0; i < 1024; i++){
+        if (prev_pt[i] & VMEM_VALID){
+          empty = false;
+          break;
+        }
+      }
+      if (empty){
+        physmem_free(prev_pt);
+        pd[prev_page_dir_index] = 0;
+      }
+    }
+
+    prev_page_dir_index = page_dir_index;
+    prev_pt = pt;
+  }
+
+  // if page table is now empty, free it and invalidate the PDE
+  if (prev_pt != NULL){
+    bool empty = true;
+    for (int i = 0; i < 1024; i++){
+      if (prev_pt[i] & VMEM_VALID){
+        empty = false;
+        break;
+      }
+    }
+    if (empty){
+      physmem_free(prev_pt);
+      pd[prev_page_dir_index] = 0;
+    }
   }
 
   // invalidate any TLB entries mapping this VME
@@ -191,8 +227,7 @@ void munmap(void* p){
         tcb->vme_list = curr->next;
       }
 
-      assert(!curr->shared && curr->file == NULL, 
-        "munmap: cannot yet unmap shared or file-backed VME\n");
+      assert(!curr->shared, "munmap: cannot yet unmap shared VME\n");
 
       // free any physical pages backing this VME
       unmap_vme((unsigned*)tcb->pid, curr);
@@ -228,8 +263,8 @@ void tlb_kmiss_handler(void* vpn){
     return;
   }
 
-  if (curr->file != NULL || curr->shared){
-    panic("Kernel TLB miss on shared or file-backed VME not supported yet!\n");
+  if (curr->shared){
+    panic("Kernel TLB miss on shared VME not supported yet!\n");
     return;
   }
 
@@ -252,7 +287,14 @@ void tlb_kmiss_handler(void* vpn){
 
   if (!(pte & VMEM_VALID)) {
     // need to allocate a physical page and update the PTE
-    unsigned phys_page = create_zeroed_page();
+    unsigned phys_page = 0;
+    if (curr->file){
+      phys_page = (unsigned)physmem_alloc();
+      node_read_all(curr->file, curr->file_offset, FRAME_SIZE, (char*)phys_page);
+    } else {
+      phys_page = create_zeroed_page();
+    }
+    
     unsigned entry = phys_page | VMEM_VALID | VMEM_READ | VMEM_WRITE;
     pt[page_table_index] = entry;
     pte = entry;
