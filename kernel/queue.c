@@ -187,14 +187,23 @@ void sleep_queue_add(void* args){
 }
 
 // The list is sorted, so only the head can be ready to wake.
-struct TCB* sleep_queue_remove(struct SleepQueue* queue){
+//
+// CPU/synchronization assumption: SleepQueue has no internal lock. The caller
+// must be the only mutator of this SleepQueue during the call. The production
+// scheduler satisfies this through per-core sleep queue ownership; tests use
+// this explicit-time helper without touching the live PIT timekeeper.
+//
+// Postconditions: returning a TCB means it was removed from the head, had
+// next=NULL forced, and the queue size was decremented. Returning NULL leaves
+// the queue unchanged.
+struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies){
 
   if (queue->head == NULL){
     return NULL;
   }
 
   struct TCB* node = queue->head;
-  if (node->wakeup_jiffies <= current_jiffies) {
+  if (node->wakeup_jiffies <= now_jiffies) {
     // remove from sleep queue
     queue->head = node->next;
     node->next = NULL;
@@ -206,6 +215,10 @@ struct TCB* sleep_queue_remove(struct SleepQueue* queue){
     // not ready to wake up
     return NULL;
   }
+}
+
+struct TCB* sleep_queue_remove(struct SleepQueue* queue){
+  return sleep_queue_remove_at(queue, current_jiffies);
 }
 
 unsigned sleep_queue_size(struct SleepQueue* queue){
