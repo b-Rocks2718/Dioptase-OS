@@ -29,6 +29,8 @@ struct VME {
   unsigned start;
   unsigned end;
 
+  unsigned size;
+
   unsigned flags;
 
   struct Node* file;

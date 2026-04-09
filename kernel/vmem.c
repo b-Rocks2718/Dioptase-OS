@@ -7,10 +7,16 @@
 #include "TCB.h"
 #include "heap.h"
 #include "per_core.h"
+#include "page_cache.h"
+#include "string.h"
+
+struct PageCache page_cache;
 
 void vmem_global_init(void){
   register_handler(tlb_kmiss_handler_, (void*)0x20C);
   register_handler(tlb_umiss_handler_, (void*)0x208);
+
+  page_cache_init(&page_cache, 4096);
 }
 
 void vmem_core_init(void){
@@ -50,20 +56,23 @@ unsigned create_zeroed_page(void){
   return (unsigned)page;
 }
 
-struct VME* vme_create(unsigned start, unsigned end,
+struct VME* vme_create(unsigned start, unsigned end, unsigned size,
     struct Node* file, unsigned file_offset, unsigned flags){
   struct VME* vme = (struct VME*)malloc(sizeof(struct VME));
 
   assert(start % FRAME_SIZE == 0, "vme create: start address must be page aligned.\n");
   assert(end % FRAME_SIZE == 0, "vme create: end address must be page aligned.\n");
   assert(end > start, "vme create: end address must be greater than start address.\n");
+  assert(file == NULL || (file_offset % FRAME_SIZE) == 0,
+    "vme create: file-backed mmap offset must be page aligned.\n");
   
   vme->start = start;
   vme->end = end;
   vme->flags = flags;
-  vme->file = file;
+  vme->file = node_clone(file);
   vme->file_offset = file_offset;
-
+  vme->size = size;
+      
   return vme;
 }
 
@@ -82,6 +91,9 @@ void vme_insert(struct TCB* tcb, struct VME* prev, struct VME* vme){
 void free_vme_list(struct VME* vme){
   while (vme){
     struct VME* next = vme->next;
+    if (vme->file != NULL){
+      node_free(vme->file);
+    }
     free(vme);
     vme = next;
   }
@@ -102,7 +114,16 @@ void unmap_vme(unsigned* pd, struct VME* vme){
     unsigned pte = pt[page_table_index];
     if (!(pte & VMEM_VALID)) continue;
 
-    physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
+    
+    if (vme->flags & MMAP_SHARED){
+      assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
+      // shared mapping, release from page cache
+      page_cache_release(&page_cache, vme->file, (vme->file_offset + (va - vme->start)));
+    } else {
+      // private mapping, just free the physical page
+      physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
+    }
+    
     pt[page_table_index] = 0;
 
     // only check if the page table is empty when we move to a new page directory entry
@@ -150,9 +171,6 @@ void vmem_destroy_address_space(struct TCB* tcb) {
   unsigned* pd = (unsigned*)tcb->pid;
 
   for (struct VME* vme = tcb->vme_list; vme != NULL; vme = vme->next) {
-    assert(vme->file == NULL, 
-      "vmem destroy: shared VME reclaim is not implemented.\n");
-
     unmap_vme(pd, vme);
   }
 
@@ -171,7 +189,7 @@ void vmem_destroy_address_space(struct TCB* tcb) {
 // Make a VME with the given parameters and add it to the current thread's list of VMEs
 void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags){
   // round up size to the nearest page boundary
-  size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
 
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -185,7 +203,7 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
     assert(curr->start >= last_end,
       "mmap: VME list must stay sorted and non-overlapping.\n");
 
-    if (curr->start - last_end >= size){
+    if (curr->start - last_end >= rounded_size){
       break;
     }
     last_end = curr->end;
@@ -193,16 +211,16 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
     curr = curr->next;
   }
 
-  if (curr == NULL && (UINT_MAX - last_end) < size){
+  if (curr == NULL && (UINT_MAX - last_end) < rounded_size){
     // no more virtual memory
     panic("Out of virtual memory!");
     return NULL;
   }
 
   unsigned start = last_end;
-  unsigned end = start + size;
+  unsigned end = start + rounded_size;
 
-  struct VME* vme = vme_create(start, end, file, file_offset, flags);
+  struct VME* vme = vme_create(start, end, size, file, file_offset, flags);
 
   vme_insert(tcb, prev, vme);
 
@@ -232,6 +250,9 @@ void munmap(void* p){
       // free any physical pages backing this VME
       unmap_vme((unsigned*)tcb->pid, curr);
 
+      if (curr->file != NULL){
+        node_free(curr->file);
+      }
       free(curr);
       return;
     }
@@ -289,16 +310,39 @@ void tlb_kmiss_handler(void* vpn, unsigned flags){
     // need to allocate a physical page and update the PTE
     unsigned phys_page = 0;
     if (curr->file){
-      phys_page = (unsigned)physmem_alloc();
+      if (curr->flags & MMAP_SHARED){
+         unsigned bytes_in_page =  (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? 
+          FRAME_SIZE : (curr->size - (fault_addr - curr->start));
 
-      unsigned bytes_read = node_read_all(curr->file, curr->file_offset + (fault_addr - curr->start), 
-        FRAME_SIZE, (char*)phys_page);
+        // shared mapping points directly into page cache
+        struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file, 
+          (curr->file_offset + (fault_addr - curr->start)), bytes_in_page);
+        phys_page = (unsigned)page->page_data;
+      } else {
+        unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
+        unsigned current_size = node_size_in_bytes(curr->file);
+        unsigned bytes_remaining = 0;
+        if (current_size > file_page_offset){
+          bytes_remaining = current_size - file_page_offset;
+        }
 
-      // zero remaining bytes
-      for (int i = bytes_read; i < FRAME_SIZE; i++){
-        ((char*)phys_page)[i] = 0;
+        unsigned bytes_in_vme = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ?
+          FRAME_SIZE : (curr->size - (fault_addr - curr->start));
+        unsigned bytes_in_page = bytes_remaining < bytes_in_vme ?
+          bytes_remaining : bytes_in_vme;
+
+        // private mapping copies from page cache (TODO: COW)
+        struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file, 
+          (curr->file_offset + (fault_addr - curr->start)), bytes_in_page);
+        
+        phys_page = (unsigned)physmem_alloc();
+        memcpy((void*)phys_page, page->page_data, FRAME_SIZE);
+
+        page_cache_release(&page_cache, curr->file, 
+          (curr->file_offset + (fault_addr - curr->start)));
       }
     } else {
+      assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
       phys_page = create_zeroed_page();
     }
     

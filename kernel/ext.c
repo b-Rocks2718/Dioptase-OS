@@ -343,6 +343,7 @@ void ext2_destroy(struct Ext2* fs){
   icache_destroy(&fs->icache);
   blocking_lock_destroy(&fs->metadata_lock);
   blocking_lock_destroy(&fs->inode_lock);
+  bcache_destroy(&fs->bcache);
 }
 
 void ext2_free(struct Ext2* fs){
@@ -1467,7 +1468,6 @@ struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber){
     return cached;
   } 
   
-  // have to read in inode, so temporarily release lock while doing IO
   blocking_lock_release(&cache->lock);
 
   // insert entry into cache before reading, so we avoid reading twice
@@ -1607,6 +1607,7 @@ void icache_free(struct InodeCache* cache){
 void bcache_init(struct BlockCache* cache, unsigned block_size){
   blocking_lock_init(&cache->lock);
   cache->block_size = block_size;
+  cache->block_cache = malloc(BCACHE_SIZE * block_size);
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
     // Clear tags so a freshly initialized cache cannot report a stale hit.
     cache->tags[i] = -1;
@@ -1751,6 +1752,10 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   free(block_buf);
 }
 
+void bcache_destroy(struct BlockCache* cache){
+  free(cache->block_cache);
+}
+
 void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_inumber, struct Ext2* fs){
   node->cached = cached;
   // Default to "self" so root nodes and reconstructed directory nodes remain
@@ -1760,6 +1765,22 @@ void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_in
   // Seed the cache once when the wrapper is created. Later block-growth paths
   // update it incrementally so steady-state writes avoid pointer-tree scans.
   node->cached->data_block_count = node_scan_data_block_count(node);
+}
+
+struct Node* node_clone(struct Node* node){
+  if (node == NULL){
+    return NULL;
+  }
+
+  struct Node* clone = malloc(sizeof(struct Node));
+
+  *clone = *node;
+
+  // dont need to acquire lock, we know that refcount will stay > 1 
+  // for the duration of this call, as the caller holds a reference to the node
+  __atomic_fetch_add((int*)&node->cached->refcount, 1);
+
+  return clone;
 }
 
 void node_destroy(struct Node* node){
@@ -2256,7 +2277,7 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 
   assert(node_is_file(node) || node_is_symlink(node), "node_write_all: can only write to regular files or symlinks.\n");
 
-  // Update the file size if we wrote past the previous end of the file
+  // Update the file size if we are going to write past the previous end of the file
   if (offset + size > node->cached->inode.size){
     // Grow the block tree to cover the final byte before issuing any data
     // writes, so each later block write has a reachable logical block slot.

@@ -10,11 +10,7 @@
 #include "blocking_lock.h"
 #include "gate.h"
 
-#define ICACHE_SIZE 32
-#define BCACHE_SIZE 12
-// The block cache must reserve enough storage for the largest ext2 block size
-// supported by the test harness. Smaller block sizes simply leave unused space.
-#define BCACHE_SIZE_BYTES 49152 // 12 cache lines * 4096 byte max ext2 block
+#define BCACHE_SIZE 32
 
 #define SD_SECTOR_SIZE_BYTES 512
 
@@ -49,7 +45,7 @@ struct BlockCache {
   struct Ext2* fs;
   unsigned tags[BCACHE_SIZE]; // cached logical block numbers, or UINT_MAX when empty
   unsigned char ages[BCACHE_SIZE]; // pseudo-LRU ages; 0 is most recently used
-  char block_cache[BCACHE_SIZE_BYTES];
+  char* block_cache;
   struct BlockingLock lock;
   unsigned block_size;
 };
@@ -156,11 +152,17 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest);
 // write one logical block range through the cache and out to disk
 void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigned offset, unsigned size);
 
+void bcache_destroy(struct BlockCache* cache);
 
 // Initializes one wrapper around a shared cached inode. Callers may create
 // multiple wrappers for one inode; ownership of the cached inode remains shared
 // through the inode cache reference count.
 void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_inumber, struct Ext2* fs);
+
+// Creates a new heap-allocated wrapper around the same cached inode as `node`
+// and increments the cached inode's reference count so that the inode remains
+// valid for the lifetime of the new wrapper. Returns NULL if `node` is NULL
+struct Node* node_clone(struct Node* node);
 
 // Releases the inode owned by a heap-allocated node wrapper. The embedded root
 // node in `struct Ext2` is owned by `ext2_destroy`, not by this helper.

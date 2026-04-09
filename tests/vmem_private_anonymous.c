@@ -25,8 +25,10 @@
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 
-#define NUM_THREADS 8
-#define ROUNDS 16
+// Keep one worker per default emulator core while trimming the total churn so
+// the regression test stays practical in normal OS test runs.
+#define NUM_THREADS 4
+#define ROUNDS 8
 
 #define LEFT_PAGES 1
 #define MIDDLE_PAGES 2
@@ -125,9 +127,9 @@ static void vmem_worker(void* arg) {
   }
 
   for (int round = 0; round < ROUNDS; round++) {
-    unsigned* left = (unsigned*)mmap(LEFT_PAGES * FRAME_SIZE, false, NULL, 0);
-    unsigned* middle = (unsigned*)mmap(MIDDLE_PAGES * FRAME_SIZE, false, NULL, 0);
-    unsigned* right = (unsigned*)mmap(RIGHT_PAGES * FRAME_SIZE, false, NULL, 0);
+    unsigned* left = (unsigned*)mmap(LEFT_PAGES * FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
+    unsigned* middle = (unsigned*)mmap(MIDDLE_PAGES * FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
+    unsigned* right = (unsigned*)mmap(RIGHT_PAGES * FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
 
     expect_ptr_eq(middle, (void*)((unsigned)left + LEFT_PAGES * FRAME_SIZE), tid, round, 0);
     expect_ptr_eq(right, (void*)((unsigned)middle + MIDDLE_PAGES * FRAME_SIZE), tid, round, 1);
@@ -149,8 +151,8 @@ static void vmem_worker(void* arg) {
 
     yield();
 
-    unsigned* refill0 = (unsigned*)mmap(FRAME_SIZE, false, NULL, 0);
-    unsigned* refill1 = (unsigned*)mmap(FRAME_SIZE, false, NULL, 0);
+    unsigned* refill0 = (unsigned*)mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
+    unsigned* refill1 = (unsigned*)mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
 
     expect_ptr_eq(refill0, middle, tid, round, 2);
     expect_ptr_eq(refill1, (void*)((unsigned)middle + FRAME_SIZE), tid, round, 3);

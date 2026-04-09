@@ -28,6 +28,8 @@ void private_file_backed_test(void){
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
   char* p = mmap(FRAME_SIZE, file, 0, MMAP_READ | MMAP_WRITE);
+  node_free(file);
+
   say("***    mmap'd a file-backed page at virtual address 0x%X\n", &p);
 
   say("***    contents of hello.txt: %s\n", &p);
@@ -37,8 +39,6 @@ void private_file_backed_test(void){
 
   munmap(p);
   say("***    munmap'd the file-backed page\n", NULL);
-
-  node_free(file);
 }
 
 void shared_anonymous_test(void){
@@ -50,7 +50,7 @@ void shared_file_backed_test(void){
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
-  char* p = mmap(FRAME_SIZE, file, 0, MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  char* p = mmap(7, file, 0, MMAP_READ | MMAP_WRITE | MMAP_SHARED);
   say("***    mmap'd a file-backed page at virtual address 0x%X\n", &p);
 
   say("***    contents of hello.txt: %s\n", &p);
