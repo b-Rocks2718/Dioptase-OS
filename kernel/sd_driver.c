@@ -114,11 +114,16 @@ void sd_init(void){
 int sd_send_command(enum SdDrive drive, int cmd){
   int was = interrupts_disable();
 
+
   if (drive == SD_DRIVE_0) {
-    sd_wait_thread_0_pending = true;
+    // if bootstrapping, we will spin instead of blocking
+    // we dont want to send an interrupt request
+    if (!__atomic_load_n(&bootstrapping)) sd_wait_thread_0_pending = true;
+    else cmd &= ~SD_DMA_IRQ_ENABLE;
     *(DMA_CTRL_REG_0) = cmd;
   } else {
-    sd_wait_thread_1_pending = true;
+    if (!__atomic_load_n(&bootstrapping)) sd_wait_thread_1_pending = true;
+    else cmd &= ~SD_DMA_IRQ_ENABLE;
     *(DMA_CTRL_REG_1) = cmd;
   }
   int rc = sd_wait_done(drive, was);

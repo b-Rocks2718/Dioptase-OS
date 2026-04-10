@@ -5,6 +5,8 @@
 #include "heap.h"
 #include "string.h"
 
+struct Ext2 fs;
+
 #define EXT2_SUPERBLOCK_SECTOR 2
 #define EXT2_SUPERBLOCK_SECTORS 2
 #define EXT2_DIR_ENTRY_HEADER_SIZE 8
@@ -266,8 +268,11 @@ void ext2_init(struct Ext2* fs){
   assert(rc == 0, "ext2_init: failed to read ext2 superblock.\n");
 
   // check this is an ext2 file system
-  assert(fs->superblock.magic == 0xEF53,
-    "ext2_init: filesystem superblock magic does not identify an ext2 image.\n");
+  if (fs->superblock.magic != 0xEF53){
+    say("| Filesystem superblock magic does not identify an ext2 image.\n", NULL);
+    fs->initialized = false;
+    return;
+  }
   
   // read in the block group descriptor table
   unsigned block_size = ext2_get_block_size(fs);
@@ -327,9 +332,16 @@ void ext2_init(struct Ext2* fs){
     "ext2_init: root inode is not a directory.\n");
 
   node_init(&fs->root, root_inode, EXT2_BAD_INO, fs);
+
+  fs->initialized = true;
 }
 
 void ext2_destroy(struct Ext2* fs){
+  // called on an Ext2 that didnt successfully initialize
+  if (!fs->initialized) return;
+
+  fs->initialized = false;
+
   free(fs->bgd_table);
   node_destroy(&fs->root);
 

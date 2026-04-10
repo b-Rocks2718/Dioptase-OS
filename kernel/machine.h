@@ -27,8 +27,8 @@ extern unsigned get_cr0(void);
 // get the core's current process id (cr1)
 extern unsigned* get_pid(void);
 
-// set the core's current process id (cr1)
-extern void set_pid(unsigned val);
+// set the core's current process id (cr1), return the old pid
+extern unsigned set_pid(unsigned val);
 
 // Return the core's interrupt status register (cr2) value
 extern unsigned get_isr(void);

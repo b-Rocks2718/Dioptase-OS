@@ -10,6 +10,7 @@
 #define MMAP_READ   0x04
 #define MMAP_WRITE  0x08
 #define MMAP_EXEC   0x10
+#define MMAP_USER   0x20
 
 // tlb/pde/pte flags
 #define VMEM_READ   0x01
@@ -20,8 +21,12 @@
 #define VMEM_VALID  0x20
 #define VMEM_DIRTY  0x40
 
-// begin vmem allocations from 0x80000000
-#define VMEM_START 0x80000000
+// begin vmem allocations from 0x10000000
+#define KERNEL_VMEM_START 0x10000000
+#define KERNEL_VMEM_END   0x7FFFFFFF
+
+#define USER_VMEM_START 0x80000000
+#define USER_VMEM_END   0xFFFFFFFF
 
 struct VME {
   struct VME* next;
@@ -53,6 +58,9 @@ unsigned create_page_table(void);
 // Map a file into memory, returning a pointer to the mapped region
 void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags);
 
+// Map a file into memory at a specific virtual address, returning a pointer to the vme
+struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr);
+
 // Unmap a previously mapped memory region
 void munmap(void* p);
 
@@ -62,6 +70,8 @@ void free_vme_list(struct VME* vme);
 // free all physical pages mapped by the given address space, 
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
+
+void vme_change_perms(struct VME* vme, unsigned new_flags);
 
 extern void tlb_kmiss_handler_(void);
 extern void tlb_umiss_handler_(void);

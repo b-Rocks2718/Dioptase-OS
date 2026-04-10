@@ -254,6 +254,8 @@ void kernel_shutdown(void){
       keys = next;
     }
 
+    ext2_destroy(&fs);
+
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
     
     check_leaks();
@@ -324,11 +326,13 @@ void event_loop(void) {
 
 // set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void){
-  // interrupts should be disabled when calling this function
-  // but we'll be safe
-  int was = interrupts_disable();
+  int imr = get_imr();
+  assert((imr & GLOBAL_INT_ENABLE) == 0, 
+    "interrupts should be disabled when bootstrapping thread context.\n");
+
   int me = get_core_id();
-  struct TCB* tcb = &get_per_core()->idle_thread;
+  struct PerCore* core = get_per_core();
+  struct TCB* tcb = &core->idle_thread;
 
   tcb->flags = 0;
 
@@ -356,11 +360,7 @@ void bootstrap(void){
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 
-  struct PerCore* core = get_per_core();
-  assert((was & GLOBAL_INT_ENABLE) == 0, 
-    "interrupts should be disabled when bootstrapping thread context.\n");
   core->current_thread = tcb;
-  interrupts_restore(was);
 }
 
 // voluntarily yield the CPU and re-queue the current thread

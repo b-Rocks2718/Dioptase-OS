@@ -54,7 +54,7 @@ unsigned puts(char* str);
 // print a string to uart, ignoring CONFIG.use_vga
 unsigned puts_uart(char* str);
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // does not acquire print_lock, 
@@ -62,7 +62,7 @@ unsigned puts_uart(char* str);
 // to avoid this, call say() instead of printf()
 unsigned printf(char* fmt, void* arr);
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // does not acquire print_lock, 
@@ -71,20 +71,20 @@ unsigned printf(char* fmt, void* arr);
 // ignores CONFIG.use_vga
 unsigned printf_uart(char* fmt, void* arr);
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output
 unsigned say(char* fmt, void* arr);
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output
 // ignores CONFIG.use_vga
 unsigned say_uart(char* fmt, void* arr);
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output and allows specifying text color

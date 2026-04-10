@@ -82,7 +82,11 @@ struct Ext2 {
 
   struct BlockingLock metadata_lock; // protects writes to BGD table, superblock, and bitmaps
   struct BlockingLock inode_lock; // protects inode table
+
+  bool initialized;
 };
+
+extern struct Ext2 fs;
 
 // Initializes `fs` from the ext2 rev-0 image on SD drive 1. `fs` must point to
 // writable storage that remains valid until `ext2_destroy(...)` or

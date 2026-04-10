@@ -93,7 +93,7 @@ unsigned puts_uart(char* str){
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output
@@ -104,7 +104,7 @@ unsigned say(char* fmt, void* arr){
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output
@@ -116,7 +116,7 @@ unsigned say_uart(char* fmt, void* arr){
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // acquires print_lock for serialized output and allows specifying text color
@@ -130,7 +130,7 @@ unsigned say_color(char* fmt, void* arr, int color){
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // does not acquire print_lock, 
@@ -156,6 +156,10 @@ unsigned printf(char* fmt, void* arr){
       } else if (*(fmt + 1) == 's') {
         ++fmt;
         count += puts((char*)((void**)arr)[i++]);
+      } else if (*(fmt + 1) == 'c') {
+        ++fmt;
+        putchar(((unsigned*)arr)[i++]);
+        ++count;
       } else if (*(fmt + 1) == '%') {
         ++fmt;
         putchar('%');
@@ -174,7 +178,7 @@ unsigned printf(char* fmt, void* arr){
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %%
+// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
 // accepts an array because the compiler does not yet support variadic functions
 // array can contain integers and string pointers
 // does not acquire print_lock, 
@@ -201,6 +205,10 @@ unsigned printf_uart(char* fmt, void* arr){
       } else if (*(fmt + 1) == 's') {
         ++fmt;
         count += puts_uart((char*)((void**)arr)[i++]);
+      } else if (*(fmt + 1) == 'c') {
+        ++fmt;
+        putchar_uart(((unsigned*)arr)[i++]);
+        ++count;
       } else if (*(fmt + 1) == '%') {
         ++fmt;
         putchar_uart('%');

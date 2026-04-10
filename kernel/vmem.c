@@ -99,6 +99,7 @@ void free_vme_list(struct VME* vme){
   }
 }
 
+// unmap all physical pages backing this VME and invalidate PTE entries
 void unmap_vme(unsigned* pd, struct VME* vme){
   // free any physical pages backing this VME and invalidate PTE entries
   unsigned prev_page_dir_index = UINT_MAX;
@@ -113,7 +114,6 @@ void unmap_vme(unsigned* pd, struct VME* vme){
     unsigned* pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
     unsigned pte = pt[page_table_index];
     if (!(pte & VMEM_VALID)) continue;
-
     
     if (vme->flags & MMAP_SHARED){
       assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
@@ -188,6 +188,8 @@ void vmem_destroy_address_space(struct TCB* tcb) {
 
 // Make a VME with the given parameters and add it to the current thread's list of VMEs
 void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags){
+  if (size == 0) return NULL;
+
   // round up size to the nearest page boundary
   unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
 
@@ -198,17 +200,30 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   // traverse vme list to find a free virtual memory region
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
-  unsigned last_end = VMEM_START;
-  while (curr){
-    assert(curr->start >= last_end,
-      "mmap: VME list must stay sorted and non-overlapping.\n");
+  unsigned last_end = KERNEL_VMEM_START;
 
-    if (curr->start - last_end >= rounded_size){
-      break;
+  // check if space is open before the first VME in the list
+  if (curr && (curr->start - KERNEL_VMEM_START) >= rounded_size){
+    last_end = KERNEL_VMEM_START;
+  } else {
+    while (curr){
+      assert(curr->start >= last_end,
+        "mmap: VME list must stay sorted and non-overlapping.\n");
+
+      if (curr->start + rounded_size > (unsigned)KERNEL_VMEM_END){
+        // TODO: fix this!!!!
+        //panic("mmap: requested mapping would exceed kernel virtual memory range!\n");
+        //return NULL;
+      }
+
+      if (curr->start - last_end >= rounded_size){
+        break;
+      }
+
+      last_end = curr->end;
+      prev = curr;
+      curr = curr->next;
     }
-    last_end = curr->end;
-    prev = curr;
-    curr = curr->next;
   }
 
   if (curr == NULL && (UINT_MAX - last_end) < rounded_size){
@@ -225,6 +240,48 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   vme_insert(tcb, prev, vme);
 
   return (void*)start;
+}
+
+// Make a VME with the given parameters and add it to the current thread's list of VMEs
+struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr){
+  if (size == 0) return NULL;
+
+  // round up size to the nearest page boundary
+  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  // traverse vme list to find desired virtual memory region
+  struct VME* prev = NULL;
+  struct VME* curr = tcb->vme_list;
+  unsigned last_end = KERNEL_VMEM_START;
+  while (curr){
+    assert(curr->start >= last_end,
+      "mmap_at: VME list must stay sorted and non-overlapping.\n");
+
+    if (vaddr >= last_end && (vaddr + rounded_size) <= curr->start){
+      break;
+    }
+    last_end = curr->end;
+    prev = curr;
+    curr = curr->next;
+  }
+
+  if (curr == NULL && (UINT_MAX - last_end) < rounded_size){
+    panic("Unable to map requested virtual memory at specified address!");
+    return NULL;
+  }
+
+  unsigned start = vaddr;
+  unsigned end = start + rounded_size;
+
+  struct VME* vme = vme_create(start, end, size, file, file_offset, flags);
+
+  vme_insert(tcb, prev, vme);
+
+  return vme;
 }
 
 void munmap(void* p){
@@ -261,6 +318,33 @@ void munmap(void* p){
   }
 
   panic("munmap called with invalid address\n");
+}
+
+void vme_change_perms(struct VME* vme, unsigned new_flags){
+  vme->flags = new_flags;
+
+  // traverse the page tables corresponding to this VME and update the permissions
+  for (unsigned addr = vme->start; addr < vme->end; addr += FRAME_SIZE){
+    unsigned page_dir_index = (addr >> 22) & 0x3FF;
+    unsigned page_table_index = (addr >> 12) & 0x3FF;
+
+    unsigned* pd = get_pid();
+    unsigned pde = pd[page_dir_index];
+    if (!(pde & VMEM_VALID)) continue;
+
+    unsigned* pt = (unsigned*)(pde & ~0xFFF);
+    unsigned pte = pt[page_table_index];
+    if (!(pte & VMEM_VALID)) continue;
+
+    pte &= ~(VMEM_READ | VMEM_WRITE | VMEM_EXEC);
+    if (vme->flags & MMAP_READ) pte |= VMEM_READ;
+    if (vme->flags & MMAP_WRITE) pte |= VMEM_WRITE;
+    if (vme->flags & MMAP_EXEC) pte |= VMEM_EXEC;
+    if (vme->flags & MMAP_USER) pte |= VMEM_USER;
+    pt[page_table_index] = pte;
+  }
+
+  tlb_invalidate_range(vme->start, vme->end);
 }
 
 void tlb_kmiss_handler(void* vpn, unsigned flags){
@@ -351,7 +435,7 @@ void tlb_kmiss_handler(void* vpn, unsigned flags){
     if (curr->flags & MMAP_READ) entry |= VMEM_READ;
     if (curr->flags & MMAP_WRITE) entry |= VMEM_WRITE;
     if (curr->flags & MMAP_EXEC) entry |= VMEM_EXEC;
-
+    if (curr->flags & MMAP_USER) entry |= VMEM_USER;
     pt[page_table_index] = entry;
     pte = entry;
   }
@@ -360,7 +444,9 @@ void tlb_kmiss_handler(void* vpn, unsigned flags){
 }
 
 void tlb_umiss_handler(void* vpn, unsigned flags){
-  panic("User TLB miss!\n");
+  //int args[2] = {(int)vpn<<12, (int)flags};
+  //printf("user tlb miss: %X %X\n", args);
+  tlb_kmiss_handler(vpn, flags);
 }
 
 void ipi_handler(unsigned data){

@@ -12,6 +12,8 @@
 #include "ps2.h"
 #include "physmem.h"
 #include "vmem.h"
+#include "ext.h"
+#include "sys.h"
 
 unsigned HEAP_START = 0x100000;
 unsigned HEAP_SIZE =  0x700000;
@@ -69,6 +71,12 @@ void kernel_entry(void){
 
     say("| Initializing PS/2 driver...\n", NULL);
     ps2_init();
+
+    say("| Initializing ext2 filesystem...\n", NULL);
+    ext2_init(&fs);
+
+    say("| Initializing syscalls...\n", NULL);
+    sys_init();
 
     // do this before waking other cores so that the heap doesnt block
     say("| Creating kernel_main thread...\n", NULL);

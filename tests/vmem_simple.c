@@ -7,8 +7,6 @@
 #include "../kernel/physmem.h"
 #include "../kernel/ext.h"
 
-struct Ext2 fs;
-
 void private_anonymous_test(void){
   int* p = mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
   say("***    mmap'd a page at virtual address 0x%X\n", &p);
@@ -67,8 +65,6 @@ void shared_file_backed_test(void){
 int kernel_main(void) {
   say("***Hello from vmem_simple test!\n", NULL);
 
-  ext2_init(&fs);
-
   say("***Running private anonymous mmap test...\n", NULL);
   private_anonymous_test();
 
@@ -82,8 +78,6 @@ int kernel_main(void) {
   shared_file_backed_test();
 
   say("***vmem_simple test complete!\n", NULL);
-
-  ext2_destroy(&fs);
 
   return 0;
 }
