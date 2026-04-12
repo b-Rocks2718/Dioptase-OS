@@ -26,8 +26,6 @@
 #define RENAME_WORKERS 2
 #define RENAME_ROUNDS 4
 
-struct Ext2 fs;
-
 struct RenameWorkerArgs {
   struct Barrier* start;
   struct Barrier* done;
@@ -165,8 +163,6 @@ static unsigned load_worker_fixture(unsigned id) {
 int kernel_main(void) {
   say("***ext_rename test start\n", NULL);
 
-  ext2_init(&fs);
-
   barrier_init(&rename_start_barrier, RENAME_WORKERS + 1);
   barrier_init(&rename_done_barrier, RENAME_WORKERS + 1);
 
@@ -204,8 +200,6 @@ int kernel_main(void) {
   }
 
   say("***Concurrent same-dir renames: ok\n", NULL);
-
-  ext2_destroy(&fs);
 
   say("***ext_rename test complete\n", NULL);
   return 0;

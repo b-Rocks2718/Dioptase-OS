@@ -73,8 +73,7 @@ void vmem_destroy_address_space(struct TCB* tcb);
 
 void vme_change_perms(struct VME* vme, unsigned new_flags);
 
-extern void tlb_kmiss_handler_(void);
-extern void tlb_umiss_handler_(void);
+extern void tlb_miss_handler_(void);
 
 extern void ipi_handler_(void);
 

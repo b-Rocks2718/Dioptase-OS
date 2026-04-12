@@ -26,7 +26,21 @@ extern char* PIXEL_SCALE;
 
 extern short* PIXEL_FB;
 
+// initialize the VGA hardware and framebuffer
+void vga_init(void);
+
+// set the current tileset to the text mode tileset and clear the screen
+void load_text_tiles(void);
+
+// set the current tileset to the text mode tileset with the given text and background colors, 
+// then clear the screen
+void load_text_tiles_colored(short text_color, short bg_color);
+
 // write a transparent tile to every tile in the framebuffer
 void make_tiles_transparent(void);
+
+// interrupt entry point, defined in vga.s
+extern void vga_vblank_handler_(void);
+extern void mark_vblank_handled(void);
 
 #endif // VGA_H

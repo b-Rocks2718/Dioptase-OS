@@ -7,6 +7,7 @@
 #include "heap.h"
 #include "per_core.h"
 #include "scheduler.h"
+#include "ivt.h"
 
 struct KeyElement {
   struct GenericQueueElement link;
@@ -74,7 +75,7 @@ void ps2_init(void){
 
   setup_thread(ps2_worker_fun, HIGH_PRIORITY, ANY_CORE);
 
-  register_handler((void*)ps2_handler_, (void*)0x3C4);
+  register_handler((void*)ps2_handler_, (void*)PS2_IVT_ENTRY);
 }
 
 // read a key from the PS/2 keyboard

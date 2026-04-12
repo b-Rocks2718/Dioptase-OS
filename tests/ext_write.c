@@ -29,8 +29,6 @@
 #define CONCURRENT_FILE_NAME "shared-concurrent.bin"
 #define PARTIAL_CONCURRENT_FILE_NAME "shared-partial-concurrent.bin"
 
-struct Ext2 fs;
-
 struct ConcurrentWriteArgs {
   unsigned block_size;
   unsigned slot;
@@ -424,8 +422,6 @@ int kernel_main(void) {
   // block-0 I/O warnings in the emulator.
   say("***Hello from ext2 write test!\n", NULL);
 
-  ext2_init(&fs);
-
   struct Node* root = &fs.root;
   unsigned block_size = ext2_get_block_size(&fs);
 
@@ -438,6 +434,5 @@ int kernel_main(void) {
   check_cross_block_growth(root, block_size);
   check_single_indirect_growth(root, block_size);
 
-  ext2_destroy(&fs);
   return 0;
 }

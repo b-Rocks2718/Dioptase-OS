@@ -35,8 +35,6 @@
 #include "../kernel/threads.h"
 #include "../kernel/barrier.h"
 
-struct Ext2 fs;
-
 #define DELETE_TEST_SHORT_TARGET "tiny-target"
 #define DELETE_TEST_LONG_TARGET_LEN 80
 #define DELETE_TEST_LONG_TARGET_BYTES 81
@@ -567,12 +565,9 @@ static void check_concurrent_delete_coverage(struct Node* root) {
 int kernel_main(void) {
   say("***Hello from ext2 delete test!\n", NULL);
 
-  ext2_init(&fs);
   check_concurrent_delete_coverage(&fs.root);
   check_fixture_delete(&fs.root);
   check_dynamic_delete_coverage(&fs.root);
-
-  ext2_destroy(&fs);
 
   return 0;
 }

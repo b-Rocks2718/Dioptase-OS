@@ -50,10 +50,30 @@ Not yet supported:
 See `filesystem.md` for more details.
 
 ## Virtual Memory
-TLB is software managed
+Uses a 2-level table, similar to x86
 
-TODO: all of VM and page cache
+TLB is software managed, so any miss invoked the tlb handler
+
+VMEM currently supports:
+- private anonymous
+- private file-backed
+- shared file-backed
+
+Shared anonymous is not yet supported
+
+See `vmem.md` for more details
 
 ## Syscalls
 
-TODO
+User programs enter the kernel with the single `trap` instruction.
+
+- `r1`: trap code
+- `r2-r8`: trap-specific arguments
+- IVT entry `0x004`: shared trap vector
+
+Currently supported trap codes:
+
+- `0` (`exit`): `r2` carries the 32-bit exit status value
+
+
+See `syscalls.md` for more details

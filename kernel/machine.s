@@ -25,7 +25,7 @@ get_core_id:
 
   # return the core's cr0 value, which determines whether we're in user mode or kernel mode
   # 0 = user mode, nonzero = kernel mode
-  # cr0 is a counter that is incremented on syscalls/exceptions/interrupts, and decremented when they exit
+  # cr0 is a counter that is incremented on traps/exceptions/interrupts, and decremented when they exit
   .global get_cr0
 get_cr0:
   mov r1, cr0

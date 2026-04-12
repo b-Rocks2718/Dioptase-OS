@@ -24,7 +24,6 @@
 #include "../kernel/threads.h"
 #include "../kernel/barrier.h"
 
-struct Ext2 fs;
 #define FAST_SYMLINK_TARGET_BYTES 60
 #define FAST_SYMLINK_TARGET_BUFFER_BYTES 61
 #define LONG_SYMLINK_TARGET_BYTES 64
@@ -122,8 +121,6 @@ static void check_concurrent_duplicate_create(struct Node* root, unsigned expect
 // Run the create suite across regular files, directories, symlinks, and the duplicate race.
 int kernel_main(void) {
   say("***Hello from ext2 new file test!\n", NULL);
-
-  ext2_init(&fs);
 
   struct Node* root = &fs.root;
   unsigned original_entry_count = node_entry_count(root);
@@ -253,8 +250,6 @@ int kernel_main(void) {
   node_print_dir(new_dir);
 
   node_free(new_dir);
-
-  ext2_destroy(&fs);
 
   return 0;
 }

@@ -21,7 +21,7 @@ extern unsigned get_core_id(void);
 
 // return the core's cr0 value, which determines whether we're in user mode or kernel mode
 // 0 = user mode, nonzero = kernel mode
-// cr0 is a counter that is incremented on syscalls/exceptions/interrupts, and decremented when they exit
+// cr0 is a counter that is incremented on traps/exceptions/interrupts, and decremented when they exit
 extern unsigned get_cr0(void);
 
 // get the core's current process id (cr1)

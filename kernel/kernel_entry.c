@@ -14,6 +14,10 @@
 #include "vmem.h"
 #include "ext.h"
 #include "sys.h"
+#include "ivt.h"
+#include "vga.h"
+#include "uart.h"
+#include "exc.h"
 
 unsigned HEAP_START = 0x100000;
 unsigned HEAP_SIZE =  0x700000;
@@ -37,7 +41,10 @@ void kernel_entry(void){
   __atomic_fetch_add(&awake_cores, 1);
 
   if (me == 0){
-    vga_text_init();
+    register_spurious_handlers();
+    vga_init();
+    uart_init();
+    exc_init();
 
     say("| Core %d starting up...\n", &me);
 
@@ -46,9 +53,6 @@ void kernel_entry(void){
     say("| Num cores: %d\n", &num_cores);
 
     say("| Mem size: 128MiB\n", NULL);
-
-    say("| Registering spurious interrupt handlers...\n", NULL);
-    register_spurious_handlers();
 
     say("| Initializing physmem allocator...\n", NULL);
     physmem_init();
@@ -75,8 +79,8 @@ void kernel_entry(void){
     say("| Initializing ext2 filesystem...\n", NULL);
     ext2_init(&fs);
 
-    say("| Initializing syscalls...\n", NULL);
-    sys_init();
+    say("| Initializing traps...\n", NULL);
+    trap_init();
 
     // do this before waking other cores so that the heap doesnt block
     say("| Creating kernel_main thread...\n", NULL);
@@ -89,7 +93,7 @@ void kernel_entry(void){
     start_barrier = num_cores;
 
     // register IPI handler for other cores to wake up this core
-    register_handler((void*)boot_ipi_handler_, (void*)0x3D4);
+    register_handler((void*)boot_ipi_handler_, (void*)IPI_IVT_ENTRY);
 
     // initialize other cores
     say("| Waking up other cores...\n", NULL);
@@ -102,7 +106,7 @@ void kernel_entry(void){
     }
 
     // Once all cores are awake, replace the boot IPI handler with the real one
-    register_handler((void*)ipi_handler_, (void*)0x3D4);
+    register_handler((void*)ipi_handler_, (void*)IPI_IVT_ENTRY);
   } else {
     say("| Core %d starting up...\n", &me);
   }

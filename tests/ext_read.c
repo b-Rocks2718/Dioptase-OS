@@ -25,8 +25,6 @@
 #include "../kernel/threads.h"
 #include "../kernel/barrier.h"
 
-struct Ext2 fs;
-
 #define EXT2_BLOCK_SIZE_1K 1024
 #define EXT2_BLOCK_SIZE_2K 2048
 #define EXT2_BLOCK_SIZE_4K 4096
@@ -512,8 +510,6 @@ int kernel_main(void) {
   // concurrent readers to stress the same code paths under contention.
   say("***Hello from ext2 test!\n", NULL);
 
-  ext2_init(&fs);
-
   int block_size = ext2_get_block_size(&fs);
   int inode_size = ext2_get_inode_size(&fs);
   assert(block_size == EXT2_BLOCK_SIZE_1K || block_size == EXT2_BLOCK_SIZE_2K ||
@@ -540,6 +536,5 @@ int kernel_main(void) {
   // Finish with the concurrent cache-read phase.
   check_concurrent_reads(block_size);
 
-  ext2_destroy(&fs);
   return 0;
 }

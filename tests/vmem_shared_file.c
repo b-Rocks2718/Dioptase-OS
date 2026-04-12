@@ -41,7 +41,6 @@
 #define SHARED_FILE_BYTES 10
 #define SHARED_BASE_TEXT "SHAREDmap\n"
 
-struct Ext2 fs;
 static struct Barrier phase_barrier;
 static int finished = 0;
 
@@ -147,7 +146,6 @@ static void shared_file_worker(void* arg) {
 void kernel_main(void) {
   say("***vmem shared file thread test start\n", NULL);
 
-  ext2_init(&fs);
   barrier_init(&phase_barrier, WORKER_COUNT + 1);
 
   for (int i = 0; i < WORKER_COUNT; ++i) {
@@ -182,7 +180,6 @@ void kernel_main(void) {
   }
 
   barrier_destroy(&phase_barrier);
-  ext2_destroy(&fs);
 
   int args[2] = {WORKER_COUNT, ROUNDS};
   say("***vmem shared file thread ok workers=%d rounds=%d\n", args);

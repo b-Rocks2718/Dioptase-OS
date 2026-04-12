@@ -1,4 +1,5 @@
-#include "interrupts.h"
+#include "ivt.h"
+
 #include "print.h"
 #include "machine.h"
 

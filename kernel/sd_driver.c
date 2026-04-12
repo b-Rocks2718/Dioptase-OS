@@ -8,6 +8,7 @@
 #include "per_core.h"
 #include "machine.h"
 #include "scheduler.h"
+#include "ivt.h"
 
 // SD MMIO addresses 
 
@@ -24,9 +25,6 @@ int* DMA_LEN_REG_1 =   (int*)0x7FE5830;
 int* DMA_CTRL_REG_1 =  (int*)0x7FE5834;
 int* DMA_STATUS_REG_1 = (int*)0x7FE5838;
 int* DMA_ERR_REG_1 = (int*)0x7FE583C;
-
-static void* SD_0_IVT_ENTRY = (void*)0x3CC;
-static void* SD_1_IVT_ENTRY = (void*)0x3D8;
 
 bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
 struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
@@ -98,8 +96,8 @@ void sd_init(void){
   }
 
   // register SD interrupt handlers
-  register_handler(sd0_handler_, SD_0_IVT_ENTRY);
-  register_handler(sd1_handler_, SD_1_IVT_ENTRY);
+  register_handler(sd0_handler_, (void*)SD_0_IVT_ENTRY);
+  register_handler(sd1_handler_, (void*)SD_1_IVT_ENTRY);
 
   // initialize threads
   sd_wait_thread_0_pending = false;

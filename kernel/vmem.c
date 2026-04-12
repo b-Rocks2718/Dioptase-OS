@@ -9,12 +9,12 @@
 #include "per_core.h"
 #include "page_cache.h"
 #include "string.h"
+#include "ivt.h"
 
 struct PageCache page_cache;
 
 void vmem_global_init(void){
-  register_handler(tlb_kmiss_handler_, (void*)0x20C);
-  register_handler(tlb_umiss_handler_, (void*)0x208);
+  register_handler(tlb_miss_handler_, (void*)TLB_MISS_IVT_ENTRY);
 
   page_cache_init(&page_cache, 4096);
 }
@@ -347,7 +347,7 @@ void vme_change_perms(struct VME* vme, unsigned new_flags){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
-void tlb_kmiss_handler(void* vpn, unsigned flags){
+void tlb_miss_handler(void* vpn, unsigned flags){
   unsigned fault_addr = (unsigned)(vpn) << 12;
 
   // look up the VME corresponding to this faulting address
@@ -364,12 +364,16 @@ void tlb_kmiss_handler(void* vpn, unsigned flags){
   }
 
   if (curr == NULL){
-    panic("Kernel TLB miss with no corresponding VME!\n");
+    int args[2] = {fault_addr, flags};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
+    panic("vmem: TLB miss with no corresponding VME.\n");
     return;
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)){
-    panic("Kernel TLB miss on shared anonymousVME not supported yet!\n");
+    int args[2] = {fault_addr, flags};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
+    panic("vmem: shared anonymous TLB miss not supported yet.\n");
     return;
   }
 
@@ -441,12 +445,6 @@ void tlb_kmiss_handler(void* vpn, unsigned flags){
   }
   
   tlb_write(fault_addr, pte);
-}
-
-void tlb_umiss_handler(void* vpn, unsigned flags){
-  //int args[2] = {(int)vpn<<12, (int)flags};
-  //printf("user tlb miss: %X %X\n", args);
-  tlb_kmiss_handler(vpn, flags);
 }
 
 void ipi_handler(unsigned data){

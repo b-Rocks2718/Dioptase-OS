@@ -9,10 +9,10 @@
 #include "debug.h"
 #include "scheduler.h"
 #include "ps2.h"
+#include "ivt.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
 static unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
-static void* PIT_IVT_ENTRY = (void*)0x3C0;
 
 // number of jiffies since boot; incremented by PIT handler on each timer interrupt
 unsigned current_jiffies = 0;
@@ -95,7 +95,7 @@ void pit_handler(void){
 // Initialize the PIT to generate interrupts at the specified frequency in hertz
 void pit_init(unsigned hertz){
   // register pit handler
-  register_handler(pit_handler_, PIT_IVT_ENTRY);
+  register_handler(pit_handler_, (void*)PIT_IVT_ENTRY);
 
   // configure pit device
   unsigned cycles_per_tick = PIT_CLOCK_FREQ / hertz;

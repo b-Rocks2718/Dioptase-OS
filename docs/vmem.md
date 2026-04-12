@@ -15,7 +15,10 @@ The current implementation uses:
 - `FRAME_SIZE = 4096` byte pages
 - one 1024-entry page directory per thread
 - one 1024-entry page table for each populated directory slot
-- `VMEM_START = 0x80000000` as the base of dynamically allocated virtual memory
+
+The address space is roughly split in half:
+- `KERNEL_VMEM_START = 0x10000000` - `KERNEL_VMEM_END = 0x7FFFFFFF` is used by the kernel
+- `USER_VMEM_START = 0x80000000` - `USER_VMEM_END = 0xFFFFFFFF` is reserved for user programs
 
 Virtual address translation uses the standard 10 / 10 / 12 split:
 
@@ -90,7 +93,7 @@ at boot.
 
 `vmem_global_init()` must run once during boot before normal VM use. It:
 
-- registers the kernel and user TLB miss handlers
+- registers the TLB miss handler
 - initializes the global file-page cache used by file-backed mappings
 
 #### Page Directory / Page Table Allocation
@@ -208,14 +211,15 @@ cache.
 
 Current behavior:
 
-- faulting such a VME panics in `tlb_kmiss_handler()`
+- faulting such a VME panics in `tlb_miss_handler()`
 - unmapping such a VME asserts in `munmap()` / `unmap_vme()`
 
 ### Fault Handling
 
-`tlb_kmiss_handler()` is the active VM fault handler today.
+The ISA provides TLB-miss vector at `0x82` / `0x208`, and the kernel
+registers it to `tlb_miss_handler()`.
 
-For a kernel miss, it:
+For a tlb miss, it:
 
 - finds the containing VME in the current thread's `vme_list`
 - allocates a page table if the enclosing PDE is still invalid
@@ -224,8 +228,6 @@ For a kernel miss, it:
 - writes the resolved translation into the TLB
 
 If no containing VME exists, the kernel panics.
-
-`tlb_umiss_handler()` is not implemented and currently panics unconditionally.
 
 ### Address-Space Teardown
 
@@ -259,10 +261,11 @@ has its own lock and reference counts.
 
 ### Current Limitations
 
-#### No User Address-Space Fault Handling
+#### Light User Address-Space Coverage
 
-User-mode TLB misses panic. Current tests and current `mmap()` usage are kernel-
-side only.
+User-mode TLB misses currently reuse the same VM fault path as kernel-mode
+misses. Current tests and current `mmap()` usage are still mostly kernel-side,
+so user VM remains lightly exercised.
 
 #### No Shared Anonymous Support
 
@@ -304,9 +307,8 @@ The VM subsystem currently asserts or panics on:
 
 - malformed VME list ordering or overlap
 - invalid `munmap()` addresses
-- kernel TLB misses that do not fall inside any VME
+- TLB misses that do not fall inside any VME
 - attempts to fault or unmap shared anonymous mappings
-- any user-mode TLB miss
 
 These failures are treated as kernel bugs, not recoverable runtime conditions.
 

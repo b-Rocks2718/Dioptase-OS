@@ -138,11 +138,9 @@ struct SnakeGame {
 };
 
 static struct SnakeGame game;
-static struct Ext2 snake_fs;
 static unsigned snake_high_score = 0;
 static unsigned snake_saved_high_score = 0;
 static bool snake_high_score_dirty = false;
-static bool snake_fs_ready = false;
 static unsigned* vga_frame_counter = (unsigned*)0x7FE5B48;
 // docs/mem_map.md defines VGA status at the single byte address 0x7FE5B46.
 // Use a byte-wide MMIO read here; widening to 16 bits touches 0x7FE5B47,
@@ -463,22 +461,12 @@ static void save_high_score(struct Ext2* fs, unsigned high_score) {
   node_free(file);
 }
 
-// Mount the SD1 ext2 image for the interactive test and cache the saved score
-// until the game exits back to the harness.
-static void mount_high_score_fs(void) {
-  ext2_init(&snake_fs);
-  snake_saved_high_score = load_high_score(&snake_fs);
+// Read the persisted score from the boot-mounted ext2 image before the
+// interactive loop starts so each round begins with the saved record.
+static void init_high_score_state(void) {
+  snake_saved_high_score = load_high_score(&fs);
   snake_high_score = snake_saved_high_score;
   snake_high_score_dirty = false;
-  snake_fs_ready = true;
-}
-
-// Release every ext2 allocation after the interactive game finishes so the
-// test returns with no live filesystem wrappers or caches.
-static void unmount_high_score_fs(void) {
-  if (!snake_fs_ready) return;
-  ext2_destroy(&snake_fs);
-  snake_fs_ready = false;
 }
 
 // Track one in-memory record candidate for the current round without writing it
@@ -496,10 +484,7 @@ static void maybe_record_high_score(int score) {
 static void commit_high_score(void) {
   if (!snake_high_score_dirty) return;
 
-  if (snake_fs_ready) {
-    save_high_score(&snake_fs, snake_high_score);
-  }
-
+  save_high_score(&fs, snake_high_score);
   snake_saved_high_score = snake_high_score;
   snake_high_score_dirty = false;
 }
@@ -1151,7 +1136,7 @@ static void run_interactive_game(void) {
   unsigned seed = INITIAL_RNG_STATE ^ current_jiffies;
   bool keep_running = true;
 
-  mount_high_score_fs();
+  init_high_score_state();
   load_text_tiles();
   install_game_tiles();
   clear_screen();
@@ -1164,8 +1149,6 @@ static void run_interactive_game(void) {
   while (keep_running) {
     keep_running = play_round(seed, &seed);
   }
-
-  unmount_high_score_fs();
 }
 
 int kernel_main(void) {
