@@ -49,6 +49,7 @@ endif
 
 SHELL := /bin/sh
 MAKEFLAGS += --no-print-directory
+.DEFAULT_GOAL := all
 
 # Toolchain paths are relative to the Dioptase-OS directory.
 BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
@@ -72,11 +73,15 @@ BIOS_ASM_SRCS_ORDERED := $(BIOS_ASM_INIT) $(filter-out $(BIOS_ASM_INIT),$(BIOS_A
 # Kernel sources to link into every test image.
 KERNEL_C_SRCS := $(wildcard kernel/*.c)
 KERNEL_C_ASMS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s,$(KERNEL_C_SRCS))
+KERNEL_MAIN_C := kernel/kernel_main.c
+KERNEL_MAIN_ASM := $(KERNEL_ASM_DIR)/kernel_main.s
+KERNEL_C_ASMS_NO_MAIN := $(filter-out $(KERNEL_MAIN_ASM),$(KERNEL_C_ASMS))
 KERNEL_ASM_SRCS := $(wildcard kernel/*.s)
 KERNEL_ASM_MBR := $(wildcard kernel/mbr.s)
 KERNEL_ASM_INIT := $(wildcard kernel/init.s)
 KERNEL_ASM_SRCS_ORDERED := $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) \
   $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS))
+KERNEL_ASM_SRCS_AFTER_BOOT := $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED))
 
 # Kernel disk images are raw 512-byte sectors, independent of ext2 block size.
 KERNEL_BLOCK_SIZE := 512
@@ -87,11 +92,14 @@ SD_IMAGE_EXTRA_BLOCKS := 256
 
 # Test sources live under tests/.
 TEST_C_SRCS := $(wildcard tests/*.c)
-TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
+TEST_DATA_DIRS := $(filter-out tests/%.out.dir,$(wildcard tests/*.dir))
+LEGACY_TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
+FIXED_KERNEL_TEST_NAMES := $(filter-out $(LEGACY_TEST_NAMES),$(basename $(notdir $(TEST_DATA_DIRS))))
+TEST_NAMES := $(sort $(LEGACY_TEST_NAMES) $(FIXED_KERNEL_TEST_NAMES))
 TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
 # Only tests with checked-in .ok baselines are valid for aggregate output checks.
 TEST_OK_FILES := $(wildcard tests/*.ok)
-TEST_OK_NAMES := $(basename $(notdir $(TEST_OK_FILES)))
+TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
 TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
 PERSISTENT_TEST_NAMES := $(filter snake,$(TEST_NAMES))
 EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
@@ -106,6 +114,11 @@ BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
 LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
+LEGACY_BIN_FILES := $(addprefix $(BUILD_DIR)/,$(addsuffix .bin,$(LEGACY_TEST_NAMES)))
+FIXED_KERNEL_TEST_BIN_FILES := $(addprefix $(BUILD_DIR)/,$(addsuffix .bin,$(FIXED_KERNEL_TEST_NAMES)))
+KERNEL_BIN := $(BUILD_DIR)/kernel.bin
+KERNEL_HEX := $(BUILD_DIR)/kernel.hex
+KERNEL_LABELS := $(BUILD_DIR)/kernel.labels
 BIOS_C_DEPS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s.d,$(BIOS_C_SRCS))
 KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
 DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
@@ -149,7 +162,7 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
-  $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
+  kernel.bin kernel.hex kernel.labels $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
@@ -158,9 +171,9 @@ endef
 # Header dependency tracking for the generated C->assembly outputs.
 -include $(DEPFILES)
 
-# Default target prints usage to avoid surprising emulator runs.
-all:
-	@echo "Specify a target like: make test, make bios.hex, make <test>.bin, or make <test>"
+# Default target builds the fixed-kernel image that uses kernel/kernel_main.c.
+all: kernel.bin
+	@:
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
 test: $(if $(TEST_OK_SUMMARY_TARGETS),$(TEST_OK_SUMMARY_TARGETS),test-no-ok)
@@ -206,8 +219,32 @@ bios.hex: $(BIOS_HEX)
 bios.labels: $(BUILD_DIR)/bios.labels
 	@:
 
+# Build aliases for the fixed-kernel image that uses kernel/kernel_main.c.
+kernel.bin: $(KERNEL_BIN)
+	@:
+
+kernel.hex: $(KERNEL_HEX)
+	@:
+
+kernel.labels: $(KERNEL_LABELS)
+	@:
+
 # Build alias so `make test.bin` produces build/test.bin.
 $(BIN_TARGETS): %.bin: $(BUILD_DIR)/%.bin
+	@:
+
+# Hex and label files are emitted as side effects of the corresponding .bin
+# build, so route direct requests through the .bin target first.
+$(addprefix $(BUILD_DIR)/,$(addsuffix .hex,$(TEST_NAMES))): $(BUILD_DIR)/%.hex: $(BUILD_DIR)/%.bin
+	@:
+
+$(addprefix $(BUILD_DIR)/,$(addsuffix .labels,$(TEST_NAMES))): $(BUILD_DIR)/%.labels: $(BUILD_DIR)/%.bin
+	@:
+
+$(KERNEL_HEX): $(KERNEL_BIN)
+	@:
+
+$(KERNEL_LABELS): $(KERNEL_BIN)
 	@:
 
 # Build alias so `make test.hex` produces build/test.hex.
@@ -358,15 +395,16 @@ $(BIOS_HEX): $(BIOS_C_ASMS) $(BIOS_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 	cat $(BIOS_ASM_INIT) $(BIOS_C_ASMS) $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) > "$(BUILD_DIR)/bios.all.s"; \
 	exit $$status
 
-# Assemble a kernel binary from the test asm, kernel C asm, and kernel asm.
-# mbr.s must be first so it lands at address 0; init.s must come next for .origin 0x400.
-# This is a two-pass build: pass 1 emits a temp hex file to compute section offsets,
-# then pass 2 reassembles with correct MBR macros.
-$(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
+# Assemble a kernel binary from a chosen kernel_main provider, the shared kernel
+# C asm, and the remaining kernel asm. mbr.s must be first so it lands at
+# address 0; init.s must come next for .origin 0x400. This is a two-pass build:
+# pass 1 emits a temp hex file to compute section offsets, then pass 2
+# reassembles with correct MBR macros.
+define assemble_kernel_image
 	@status=0; \
-	tmp_hex="$(BUILD_DIR)/$*.tmp.hex"; \
-	"$(BASM)" -kernel -g -o "$$tmp_hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
-	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
+	tmp_hex="$(patsubst %.bin,%.tmp.hex,$@)"; \
+	"$(BASM)" -kernel -g -o "$$tmp_hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) \
+	  $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_AFTER_BOOT) \
 	  -DTEXT_START_BLOCK=0 -DTEXT_NUM_BLOCKS=0 -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
 	  -DDATA_START_BLOCK=0 -DDATA_NUM_BLOCKS=0 -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=0 -DRODATA_NUM_BLOCKS=0 -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
@@ -404,8 +442,8 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	rodata_num_blocks=$$(((data_base - rodata_base) / $(KERNEL_BLOCK_SIZE))); \
 	data_num_blocks=$$(((bss_base - data_base) / $(KERNEL_BLOCK_SIZE))); \
 	bss_num_blocks=$$(((end_base - bss_base) / $(KERNEL_BLOCK_SIZE))); \
-	"$(BASM)" -kernel -bin -o "$@" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
-	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
+	"$(BASM)" -kernel -bin -o "$@" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) \
+	  $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_AFTER_BOOT) \
 	  -DTEXT_START_BLOCK=$$text_start_block -DTEXT_NUM_BLOCKS=$$text_num_blocks -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
@@ -413,8 +451,8 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	  -DUSE_VGA=$(USE_VGA_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	"$(BASM)" -kernel -g -o "$(BUILD_DIR)/$*.hex" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s \
-	  $(KERNEL_C_ASMS) $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) \
+	"$(BASM)" -kernel -g -o "$(patsubst %.bin,%.hex,$@)" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) \
+	  $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_AFTER_BOOT) \
 	  -DTEXT_START_BLOCK=$$text_start_block -DTEXT_NUM_BLOCKS=$$text_num_blocks -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
@@ -422,11 +460,23 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS) $(KERNEL_ASM_SRCS_ORDERED)
 	  -DUSE_VGA=$(USE_VGA_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	grep '^#' "$(BUILD_DIR)/$*.hex" > "$(BUILD_DIR)/$*.labels" || true; \
-	cat $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(BUILD_DIR)/$*.s $(KERNEL_C_ASMS) \
-	  $(filter-out $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT),$(KERNEL_ASM_SRCS_ORDERED)) > "$(BUILD_DIR)/$*.all.s"; \
+	grep '^#' "$(patsubst %.bin,%.hex,$@)" > "$(patsubst %.bin,%.labels,$@)" || true; \
+	cat $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) $(KERNEL_C_ASMS_NO_MAIN) \
+	  $(KERNEL_ASM_SRCS_AFTER_BOOT) > "$(patsubst %.bin,%.all.s,$@)"; \
 	rm -f "$$tmp_hex"; \
 	exit $$status
+endef
+
+# Legacy tests provide their own kernel_main via tests/<name>.c.
+$(LEGACY_BIN_FILES): $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.s $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
+	$(call assemble_kernel_image,$(BUILD_DIR)/$*.s)
+
+# Fixed-kernel tests and the default build use kernel/kernel_main.c instead.
+$(FIXED_KERNEL_TEST_BIN_FILES): $(BUILD_DIR)/%.bin: $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
+	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
+
+$(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
+	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
 
 # Compile the root test C file to assembly.
 $(BUILD_DIR)/%.s: tests/%.c $(BCC) | $(BUILD_DIR)

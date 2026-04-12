@@ -58,6 +58,10 @@ unsigned create_page_table(void);
 // Map a file into memory, returning a pointer to the mapped region
 void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags);
 
+// Reserve an anonymous user stack mapping from the top of the user address
+// space downward, returning the stack's lowest virtual address.
+void* mmap_stack(unsigned size, unsigned flags);
+
 // Map a file into memory at a specific virtual address, returning a pointer to the vme
 struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr);
 

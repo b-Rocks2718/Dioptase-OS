@@ -13,6 +13,40 @@
 
 struct PageCache page_cache;
 
+static unsigned vmem_range_start(unsigned flags){
+  return (flags & MMAP_USER) ? USER_VMEM_START : KERNEL_VMEM_START;
+}
+
+static unsigned vmem_range_end(unsigned flags){
+  return (flags & MMAP_USER) ? USER_VMEM_END : KERNEL_VMEM_END;
+}
+
+// VMEs store an exclusive 32-bit end address. For the user half, the logical
+// exclusive end would be 0x100000000, which is not representable, so the
+// highest page-aligned exclusive end we can encode today is 0xFFFFF000.
+static unsigned vmem_range_topdown_limit(unsigned flags){
+  unsigned range_end = vmem_range_end(flags);
+  if (range_end == UINT_MAX){
+    return UINT_MAX - (FRAME_SIZE - 1);
+  }
+  return range_end + 1;
+}
+
+// VMEs use an exclusive end address, so the selected range must both contain
+// the requested bytes and allow `start + rounded_size` to remain representable.
+static bool vmem_range_can_hold(unsigned start, unsigned rounded_size,
+    unsigned range_start, unsigned range_end){
+  if (start < range_start || start > range_end){
+    return false;
+  }
+
+  if (start > UINT_MAX - rounded_size){
+    return false;
+  }
+
+  return (start + rounded_size - 1) <= range_end;
+}
+
 void vmem_global_init(void){
   register_handler(tlb_miss_handler_, (void*)TLB_MISS_IVT_ENTRY);
 
@@ -192,43 +226,46 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
 
   // round up size to the nearest page boundary
   unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned range_start = vmem_range_start(flags);
+  unsigned range_end = vmem_range_end(flags);
 
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
 
-  // traverse vme list to find a free virtual memory region
+  // Skip any mappings that end before the selected kernel/user half, 
+  // then do first-fit within that half
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
-  unsigned last_end = KERNEL_VMEM_START;
-
-  // check if space is open before the first VME in the list
-  if (curr && (curr->start - KERNEL_VMEM_START) >= rounded_size){
-    last_end = KERNEL_VMEM_START;
-  } else {
-    while (curr){
-      assert(curr->start >= last_end,
-        "mmap: VME list must stay sorted and non-overlapping.\n");
-
-      if (curr->start + rounded_size > (unsigned)KERNEL_VMEM_END){
-        // TODO: fix this!!!!
-        //panic("mmap: requested mapping would exceed kernel virtual memory range!\n");
-        //return NULL;
-      }
-
-      if (curr->start - last_end >= rounded_size){
-        break;
-      }
-
-      last_end = curr->end;
-      prev = curr;
-      curr = curr->next;
-    }
+  while (curr && curr->end <= range_start){
+    prev = curr;
+    curr = curr->next;
   }
 
-  if (curr == NULL && (UINT_MAX - last_end) < rounded_size){
-    // no more virtual memory
-    panic("Out of virtual memory!");
+  unsigned last_end = range_start;
+  while (curr){
+    assert(curr->start >= last_end,
+      "mmap: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
+
+    if (curr->start > range_end){
+      break;
+    }
+
+    if (curr->start - last_end >= rounded_size){
+      break;
+    }
+
+    last_end = curr->end;
+    prev = curr;
+    curr = curr->next;
+  }
+
+  if (!vmem_range_can_hold(last_end, rounded_size, range_start, range_end)){
+    if (flags & MMAP_USER){
+      panic("mmap: requested mapping would exceed user virtual memory range!\n");
+    } else {
+      panic("mmap: requested mapping would exceed kernel virtual memory range!\n");
+    }
     return NULL;
   }
 
@@ -242,40 +279,125 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   return (void*)start;
 }
 
+// Reserve an anonymous user stack using a top-down first-fit search inside the
+// user half. The returned pointer is the stack base; callers still compute the
+// initial SP from the top word in the reserved range.
+void* mmap_stack(unsigned size, unsigned flags){
+  if (size == 0) return NULL;
+
+  if (!(flags & MMAP_USER)){
+    panic("mmap_stack: user stacks must be allocated in the user virtual memory range!\n");
+    return NULL;
+  }
+
+  if (flags & MMAP_SHARED){
+    panic("mmap_stack: shared anonymous stacks are not supported.\n");
+    return NULL;
+  }
+
+  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned range_start = vmem_range_start(flags);
+  unsigned range_end = vmem_range_end(flags);
+  unsigned range_limit = vmem_range_topdown_limit(flags);
+
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  // Walk the ascending VME list once and remember the highest gap that can fit
+  // the stack. The list stays globally sorted; we only consider the user half.
+  struct VME* prev = NULL;
+  struct VME* curr = tcb->vme_list;
+  while (curr && curr->end <= range_start){
+    prev = curr;
+    curr = curr->next;
+  }
+
+  unsigned gap_start = range_start;
+  unsigned stack_start = 0;
+  struct VME* stack_prev = NULL;
+  bool found = false;
+
+  while (curr){
+    assert(curr->start >= gap_start,
+      "mmap_stack: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
+
+    unsigned gap_end = curr->start;
+    if (gap_end > range_limit){
+      gap_end = range_limit;
+    }
+
+    if (gap_end >= gap_start && (gap_end - gap_start) >= rounded_size){
+      stack_start = gap_end - rounded_size;
+      stack_prev = prev;
+      found = true;
+    }
+
+    if (curr->start >= range_limit){
+      break;
+    }
+
+    gap_start = curr->end;
+    prev = curr;
+    curr = curr->next;
+  }
+
+  if (gap_start <= range_limit && (range_limit - gap_start) >= rounded_size){
+    stack_start = range_limit - rounded_size;
+    stack_prev = prev;
+    found = true;
+  }
+
+  if (!found || !vmem_range_can_hold(stack_start, rounded_size, range_start, range_end)){
+    panic("mmap_stack: requested stack would exceed the representable user virtual memory range!\n");
+    return NULL;
+  }
+
+  unsigned stack_end = stack_start + rounded_size;
+  struct VME* vme = vme_create(stack_start, stack_end, size, NULL, 0, flags);
+  vme_insert(tcb, stack_prev, vme);
+
+  return (void*)stack_start;
+}
+
 // Make a VME with the given parameters and add it to the current thread's list of VMEs
 struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr){
   if (size == 0) return NULL;
 
   // round up size to the nearest page boundary
   unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned range_start = vmem_range_start(flags);
+  unsigned range_end = vmem_range_end(flags);
+
+  if (!vmem_range_can_hold(vaddr, rounded_size, range_start, range_end)){
+    if (flags & MMAP_USER){
+      panic("mmap_at: requested mapping falls outside the user virtual memory range!\n");
+    } else {
+      panic("mmap_at: requested mapping falls outside the kernel virtual memory range!\n");
+    }
+    return NULL;
+  }
 
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
 
-  // traverse vme list to find desired virtual memory region
+  unsigned start = vaddr;
+  unsigned end = start + rounded_size;
+
+  // Find the first VME whose range extends past the requested start address.
+  // If that VME begins before `end`, the fixed-address mapping overlaps it.
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
-  unsigned last_end = KERNEL_VMEM_START;
-  while (curr){
-    assert(curr->start >= last_end,
-      "mmap_at: VME list must stay sorted and non-overlapping.\n");
-
-    if (vaddr >= last_end && (vaddr + rounded_size) <= curr->start){
-      break;
-    }
-    last_end = curr->end;
+  while (curr && curr->end <= start){
     prev = curr;
     curr = curr->next;
   }
 
-  if (curr == NULL && (UINT_MAX - last_end) < rounded_size){
-    panic("Unable to map requested virtual memory at specified address!");
+  if (curr != NULL && curr->start < end){
+    panic("mmap_at: requested mapping overlaps an existing VME.\n");
     return NULL;
   }
-
-  unsigned start = vaddr;
-  unsigned end = start + rounded_size;
 
   struct VME* vme = vme_create(start, end, size, file, file_offset, flags);
 

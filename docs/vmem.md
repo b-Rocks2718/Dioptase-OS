@@ -5,9 +5,6 @@ sorted list of virtual memory entries (VMEs). VMEs describe reserved virtual
 address ranges; physical pages and page tables are allocated lazily on TLB
 miss.
 
-Current usage is kernel-side `mmap()` for kernel threads. The user-mode miss
-path is not implemented yet.
-
 ### Address Space Structure
 
 The current implementation uses:
@@ -119,7 +116,8 @@ Each VME records:
 - rounds `size` up to a whole number of pages for address-space reservation
 - keeps the original `size` in the VME for last-page file-backed accounting
 - finds the first gap large enough to hold the rounded mapping, starting at
-  `VMEM_START`
+  `KERNEL_VMEM_START` for kernel mappings or `USER_VMEM_START` when
+  `MMAP_USER` is set
 - inserts the new VME into the calling thread's sorted list
 - clones the passed `Node` wrapper for file-backed mappings, so the caller may
   later free its own wrapper independently
@@ -129,10 +127,27 @@ Current caller requirements:
 - `size` must be nonzero
 - file-backed mappings must use a `file_offset` that is a multiple of
   `FRAME_SIZE`
+- `MMAP_USER` selects the user half of the address space; otherwise the
+  allocation is searched in the kernel half
 - mappings are placed only by the kernel's first-fit policy; there is no
   fixed-address hint API
 - the calling context must tolerate heap / VM allocator work; this is not an
   interrupt-context API
+
+`mmap_at(size, file, file_offset, flags, vaddr)`:
+
+- reserves the exact page-aligned range beginning at `vaddr`
+- requires `vaddr` and `flags` to name the same address-space half
+- panics if the requested range overlaps an existing VME
+
+`mmap_stack(size, flags)`:
+
+- reserves an anonymous stack in the user half using a top-down search
+- requires `MMAP_USER`
+- returns the stack's lowest virtual address; callers derive the initial stack
+  pointer from the top of the reserved range
+- currently uses the highest representable page-aligned exclusive end below
+  `USER_VMEM_END` because `struct VME` stores an exclusive 32-bit end address
 
 `munmap(p)`:
 

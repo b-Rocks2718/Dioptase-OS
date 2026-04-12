@@ -1,0 +1,7 @@
+***Running /sbin/init
+***test_syscall arg = 7
+***test_syscall arg = 1
+***test_syscall arg = 8
+***test_syscall arg = 6
+***test_syscall arg = 7
+***/sbin/init returned 42

@@ -25,7 +25,14 @@ trap_handler_:
   or   r10, r9, r10
   mov  imr, r10
 
+  push r0 # allocate stack space for the return_to_user boolean
+  push sp # pass the address of the return_to_user boolean to trap_handler
+
   call trap_handler
+
+  # get return_to_user boolean from the stack
+  pop  sp
+  pop  r2
 
   # Disable the global interrupts again before restoring EPC/EFG and
   # returning through rfe
@@ -42,7 +49,15 @@ trap_handler_:
   pop  r9
   mov  epc, r9
 
-  rfe
+  cmp  r2, r0
+  bz   return_to_kernel
+  rfe  # return to user
+
+return_to_kernel:
+  pop ra
+  pop bp
+
+  ret
 
   .global jump_to_user
 jump_to_user:
@@ -52,6 +67,10 @@ jump_to_user:
   and  r10, r9, r10
   mov  imr, r10
   # interrupts will be restored on rfe
+
+  # save bp and ra for when the user program exits
+  push bp
+  push ra
 
   # set up user stack
   crmv sp, r2

@@ -132,7 +132,7 @@ void thread_(struct Fun* thread_fun,
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   
   tcb->priority = priority;
@@ -161,7 +161,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->sp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   tcb->priority = priority;
   tcb->core_affinity = core_affinity;

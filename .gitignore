@@ -1,4 +1,5 @@
 build/*
+**/build/
 a.s
 *.hex
 *.bin

@@ -27,8 +27,10 @@ context_switch:
   swa  r27, [r1, 28]
   swa  r28, [r1, 32]
 
-  swa  sp,  [r1, 36]
   swa  bp,  [r1, 40]
+
+  crmv r9, sp
+  swa  r9,  [r1, 36]
 
   # use r9 as scratch
   mov  r9, flg
@@ -48,6 +50,9 @@ context_switch:
   mov  r9, tlbf
   swa  r9,  [r1, 68]
 
+  crmv r9, ksp
+  swa  r9,  [r1, 72]
+
   # TCB offset 56 stores per-thread IMR state
   # The caller passes the outgoing thread's pre-switch IMR in r6 ("was")
   swa  r6,  [r1, 56]
@@ -66,8 +71,9 @@ context_switch:
   lwa  r27, [r2, 28]
   lwa  r28, [r2, 32]
 
-  lwa  sp,  [r2, 36]
   lwa  bp,  [r2, 40]
+  lwa  r9, [r2, 36]
+  crmv sp, r9
 
   # use r10 as scratch
   lwa  r10, [r2, 44]
@@ -75,6 +81,9 @@ context_switch:
 
   lwa  r10, [r2, 60]
   mov  pid, r10
+
+  lwa  r10, [r2, 72]
+  crmv ksp, r10
 
   tlbc # clear tlb
 

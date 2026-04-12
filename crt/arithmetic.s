@@ -1,5 +1,6 @@
 
 	.text
+  .align 4
 # add, div, and mod can probably be more efficient using shifts
 # shl and shr should check if second parameter is >16 and return 0 if so
 # but im lazy and this works for now
