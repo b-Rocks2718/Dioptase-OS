@@ -6,6 +6,10 @@
 #include "constants.h"
 #include "vmem.h"
 #include "elf.h"
+#include "pit.h"
+#include "vga.h"
+#include "ps2.h"
+#include "threads.h"
 
 #define INITIAL_USER_STACK_SIZE 0x4000
 
@@ -30,13 +34,55 @@ int trap_handler(unsigned code,
   *return_to_user = true;
 
   switch (code){
-    case TRAP_CODE_EXIT: {
+    case TRAP_EXIT: {
       // return instead to the kernel thread that called switch_to_user
       *return_to_user = false;
       return arg1;
     }
-    case TRAP_CODE_TEST_SYSCALL: {
+    case TRAP_TEST_SYSCALL: {
       return trap_test_syscall_handler(arg1);
+    }
+    case TRAP_GET_CURRENT_JIFFIES: {
+      return current_jiffies;
+    }
+    case TRAP_GET_KEY: {
+      return getkey();
+    }
+    case TRAP_SET_TILE_SCALE: {
+      *TILE_SCALE = arg1;
+      return 0;
+    }
+    case TRAP_SET_VSCROLL: {
+      *TILE_VSCROLL = arg1;
+      return 0;
+    }
+    case TRAP_SET_HSCROLL: {
+      *TILE_HSCROLL = arg1;
+      return 0;
+    }
+    case TRAP_LOAD_TEXT_TILES: {
+      load_text_tiles();
+      return 0;
+    }
+    case TRAP_CLEAR_SCREEN: {
+      clear_screen();
+      return 0;
+    }
+    case TRAP_GET_TILEMAP: {
+      return (int)mmap_physmem(TILEMAP_SIZE, (unsigned)TILEMAP, MMAP_READ | MMAP_WRITE | MMAP_USER);
+    }
+    case TRAP_GET_TILE_FB: {
+      return (int)mmap_physmem(TILE_FB_SIZE, (unsigned)TILE_FB, MMAP_READ | MMAP_WRITE | MMAP_USER);
+    }
+    case TRAP_GET_VGA_STATUS: {
+      return (unsigned char)(*VGA_STATUS);
+    }
+    case TRAP_GET_VGA_FRAME_COUNTER: {
+      return *VGA_FRAME_COUNTER;
+    }
+    case TRAP_SLEEP: {
+      sleep(arg1);
+      return 0;
     }
     default: {
       unrecognized_trap_handler(code);

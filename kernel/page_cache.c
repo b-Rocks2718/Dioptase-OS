@@ -76,6 +76,24 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
   return entry;
 }
 
+void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned offset){
+  unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
+
+  blocking_lock_acquire(&cache->lock);
+  struct PageCacheEntry* entry = cache->hash_map[hash];
+  while (entry){
+    if (entry->key.inode == node->cached && entry->key.offset == offset){
+      entry->flags |= PAGE_DIRTY;
+      blocking_lock_release(&cache->lock);
+      return;
+    }
+    entry = entry->next;
+  }
+  blocking_lock_release(&cache->lock);
+
+  panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
+}
+
 // release a page from the page cache
 // decrementing its reference count and freeing it if the count reaches zero
 void page_cache_release(struct PageCache* cache, struct Node* node, unsigned offset){
@@ -96,8 +114,10 @@ void page_cache_release(struct PageCache* cache, struct Node* node, unsigned off
           cache->hash_map[hash] = entry->next;
         }
 
-        // write back page data to the file for the number of bytes actually read from the file
-        node_write_all(node, offset, entry->file_bytes, entry->page_data);
+        // no need to write back clean pages
+        if (entry->flags & PAGE_DIRTY){
+          node_write_all(node, offset, entry->file_bytes, entry->page_data);
+        }
 
         physmem_free(entry->page_data);
         free(entry);
@@ -109,4 +129,3 @@ void page_cache_release(struct PageCache* cache, struct Node* node, unsigned off
   }
   blocking_lock_release(&cache->lock);
 }
-

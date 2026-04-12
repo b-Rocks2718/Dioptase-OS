@@ -41,6 +41,11 @@ void page_cache_init(struct PageCache* cache, unsigned hash_map_size);
 struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* node, 
     unsigned offset, unsigned file_bytes);
 
+// Conservatively mark one cached page dirty. Shared writable mappings call this
+// when they expose a cache page directly to userspace because the ISA does not
+// currently provide a hardware dirty bit for later writeback decisions.
+void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned offset);
+
 // release a page from the page cache
 // decrementing its reference count and freeing it if the count reaches zero
 void page_cache_release(struct PageCache* cache, struct Node* node, unsigned offset);

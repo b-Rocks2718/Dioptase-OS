@@ -2020,6 +2020,20 @@ void read_sectors(struct Ext2* fs, unsigned index, char* buffer){
   bcache_get(&fs->bcache, index, buffer);
 }
 
+// ext2 regular files may leave zero block pointers to represent sparse holes.
+// Reading through those holes must return zero-filled bytes rather than
+// falling through to filesystem block 0.
+static void read_sectors_or_zero(struct Node* node, unsigned block_num, char* buffer){
+  unsigned block_size = ext2_get_block_size(node->filesystem);
+
+  if (block_num == 0){
+    memset(buffer, 0, block_size);
+    return;
+  }
+
+  read_sectors(node->filesystem, block_num, buffer);
+}
+
 void node_print_dir(struct Node* node){
   unsigned index = 0;
   struct DirEntry entry;
@@ -2044,7 +2058,7 @@ void node_print_dir(struct Node* node){
 void read_direct_block(struct Node* node, unsigned index, char* buffer){
   assert(index < 12, "read_direct_block: index out of bounds for direct block.\n");
 
-  read_sectors(node->filesystem, node->cached->inode.block[index], buffer);
+  read_sectors_or_zero(node, node->cached->inode.block[index], buffer);
 }
 
 void read_indirect_block(struct Node* node, unsigned index, char* buffer){
@@ -2058,8 +2072,14 @@ void read_indirect_block(struct Node* node, unsigned index, char* buffer){
   unsigned real_index = index - 12;
 
   unsigned* direct_pointers = malloc(block_size);
+  if (node->cached->inode.block[12] == 0){
+    memset(buffer, 0, block_size);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, node->cached->inode.block[12], (char*)direct_pointers);
-  read_sectors(node->filesystem, direct_pointers[real_index], buffer);
+  read_sectors_or_zero(node, direct_pointers[real_index], buffer);
   free(direct_pointers);
 }
 
@@ -2075,9 +2095,23 @@ void read_double_indirect_block(struct Node* node, unsigned index, char* buffer)
 
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
+  if (node->cached->inode.block[13] == 0){
+    memset(buffer, 0, block_size);
+    free(indirect_pointers);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, node->cached->inode.block[13], (char*)indirect_pointers);
+  if (indirect_pointers[real_index / entries_per_block] == 0){
+    memset(buffer, 0, block_size);
+    free(indirect_pointers);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, indirect_pointers[real_index / entries_per_block], (char*)direct_pointers);
-  read_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer);
+  read_sectors_or_zero(node, direct_pointers[real_index % entries_per_block], buffer);
   free(indirect_pointers);
   free(direct_pointers);
 }
@@ -2095,11 +2129,34 @@ void read_triple_indirect_block(struct Node* node, unsigned index, char* buffer)
   unsigned* double_indirect_pointers = malloc(block_size);
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
-    
+  if (node->cached->inode.block[14] == 0){
+    memset(buffer, 0, block_size);
+    free(double_indirect_pointers);
+    free(indirect_pointers);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, node->cached->inode.block[14], (char*)double_indirect_pointers);
+  if (double_indirect_pointers[real_index / (entries_per_block * entries_per_block)] == 0){
+    memset(buffer, 0, block_size);
+    free(double_indirect_pointers);
+    free(indirect_pointers);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, double_indirect_pointers[real_index / (entries_per_block * entries_per_block)], (char*)indirect_pointers);
+  if (indirect_pointers[(real_index / entries_per_block) % entries_per_block] == 0){
+    memset(buffer, 0, block_size);
+    free(double_indirect_pointers);
+    free(indirect_pointers);
+    free(direct_pointers);
+    return;
+  }
+
   read_sectors(node->filesystem, indirect_pointers[(real_index / entries_per_block) % entries_per_block], (char*)direct_pointers);
-  read_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer);
+  read_sectors_or_zero(node, direct_pointers[real_index % entries_per_block], buffer);
   
   free(double_indirect_pointers);
   free(indirect_pointers);
@@ -2138,6 +2195,8 @@ void write_sectors(struct Ext2* fs, unsigned index, char* buffer, unsigned offse
 
 void write_direct_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   assert(index < 12, "write_direct_block: index out of bounds for direct block.\n");
+  assert(node->cached->inode.block[index] != 0,
+    "write_direct_block: caller must materialize sparse holes before writing.\n");
 
   write_sectors(node->filesystem, node->cached->inode.block[index], buffer, offset, size);
 }
@@ -2153,7 +2212,11 @@ void write_indirect_block(struct Node* node, unsigned index, char* buffer, unsig
   unsigned real_index = index - 12;
 
   unsigned* direct_pointers = malloc(block_size);
+  assert(node->cached->inode.block[12] != 0,
+    "write_indirect_block: caller must materialize the indirect block before writing.\n");
   read_sectors(node->filesystem, node->cached->inode.block[12], (char*)direct_pointers);
+  assert(direct_pointers[real_index] != 0,
+    "write_indirect_block: caller must materialize sparse holes before writing.\n");
   write_sectors(node->filesystem, direct_pointers[real_index], buffer, offset, size);
   free(direct_pointers);
 }
@@ -2170,8 +2233,14 @@ void write_double_indirect_block(struct Node* node, unsigned index, char* buffer
 
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
+  assert(node->cached->inode.block[13] != 0,
+    "write_double_indirect_block: caller must materialize the double-indirect root before writing.\n");
   read_sectors(node->filesystem, node->cached->inode.block[13], (char*)indirect_pointers);
+  assert(indirect_pointers[real_index / entries_per_block] != 0,
+    "write_double_indirect_block: caller must materialize the indirect leaf before writing.\n");
   read_sectors(node->filesystem, indirect_pointers[real_index / entries_per_block], (char*)direct_pointers);
+  assert(direct_pointers[real_index % entries_per_block] != 0,
+    "write_double_indirect_block: caller must materialize sparse holes before writing.\n");
   write_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer, offset, size);
   free(indirect_pointers);
   free(direct_pointers);
@@ -2190,10 +2259,17 @@ void write_triple_indirect_block(struct Node* node, unsigned index, char* buffer
   unsigned* double_indirect_pointers = malloc(block_size);
   unsigned* indirect_pointers = malloc(block_size);
   unsigned* direct_pointers = malloc(block_size);
-    
+  assert(node->cached->inode.block[14] != 0,
+    "write_triple_indirect_block: caller must materialize the triple-indirect root before writing.\n");
   read_sectors(node->filesystem, node->cached->inode.block[14], (char*)double_indirect_pointers);
+  assert(double_indirect_pointers[real_index / (entries_per_block * entries_per_block)] != 0,
+    "write_triple_indirect_block: caller must materialize the double-indirect leaf before writing.\n");
   read_sectors(node->filesystem, double_indirect_pointers[real_index / (entries_per_block * entries_per_block)], (char*)indirect_pointers);
+  assert(indirect_pointers[(real_index / entries_per_block) % entries_per_block] != 0,
+    "write_triple_indirect_block: caller must materialize the indirect leaf before writing.\n");
   read_sectors(node->filesystem, indirect_pointers[(real_index / entries_per_block) % entries_per_block], (char*)direct_pointers);
+  assert(direct_pointers[real_index % entries_per_block] != 0,
+    "write_triple_indirect_block: caller must materialize sparse holes before writing.\n");
   write_sectors(node->filesystem, direct_pointers[real_index % entries_per_block], buffer, offset, size);
   
   free(double_indirect_pointers);
@@ -2289,15 +2365,16 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 
   assert(node_is_file(node) || node_is_symlink(node), "node_write_all: can only write to regular files or symlinks.\n");
 
-  // Update the file size if we are going to write past the previous end of the file
-  if (offset + size > node->cached->inode.size){
-    // Grow the block tree to cover the final byte before issuing any data
-    // writes, so each later block write has a reachable logical block slot.
-    while (end_block >= node->cached->data_block_count){
-      bool added = node_add_block(node, alloc_block(node->filesystem));
-      assert(added, "node_write_all: failed to allocate a new block for the file data.\n");
-    }
+  // Host-built ext2 images may encode a trailing run of all-zero file blocks as
+  // sparse holes with zero block pointers. Materialize that missing tail before
+  // any write so the lower-level block writers never fall through to block 0.
+  while (end_block >= node->cached->data_block_count){
+    bool added = node_add_block(node, alloc_block(node->filesystem));
+    assert(added, "node_write_all: failed to allocate a new block for the file data.\n");
+  }
 
+  // Update the file size if we are going to write past the previous end of the file.
+  if (offset + size > node->cached->inode.size){
     node->cached->inode.size = offset + size;
   }
 

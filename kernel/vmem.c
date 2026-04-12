@@ -91,7 +91,7 @@ unsigned create_zeroed_page(void){
 }
 
 struct VME* vme_create(unsigned start, unsigned end, unsigned size,
-    struct Node* file, unsigned file_offset, unsigned flags){
+    struct Node* file, unsigned file_offset, unsigned flags, unsigned paddr){
   struct VME* vme = (struct VME*)malloc(sizeof(struct VME));
 
   assert(start % FRAME_SIZE == 0, "vme create: start address must be page aligned.\n");
@@ -99,6 +99,10 @@ struct VME* vme_create(unsigned start, unsigned end, unsigned size,
   assert(end > start, "vme create: end address must be greater than start address.\n");
   assert(file == NULL || (file_offset % FRAME_SIZE) == 0,
     "vme create: file-backed mmap offset must be page aligned.\n");
+
+  if (paddr != 0){
+    assert(file == NULL, "vme create: cannot specify both a physical address and a backing file.\n"); 
+  }
   
   vme->start = start;
   vme->end = end;
@@ -106,6 +110,7 @@ struct VME* vme_create(unsigned start, unsigned end, unsigned size,
   vme->file = node_clone(file);
   vme->file_offset = file_offset;
   vme->size = size;
+  vme->paddr = paddr;
       
   return vme;
 }
@@ -153,6 +158,10 @@ void unmap_vme(unsigned* pd, struct VME* vme){
       assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
       // shared mapping, release from page cache
       page_cache_release(&page_cache, vme->file, (vme->file_offset + (va - vme->start)));
+    } else if (vme->paddr != 0){
+      // Direct physmem mappings borrow an existing MMIO/physical window. The
+      // unmap path must only drop the translation, not return that backing page
+      // to the physmem allocator.
     } else {
       // private mapping, just free the physical page
       physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
@@ -272,7 +281,7 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   unsigned start = last_end;
   unsigned end = start + rounded_size;
 
-  struct VME* vme = vme_create(start, end, size, file, file_offset, flags);
+  struct VME* vme = vme_create(start, end, size, file, file_offset, flags, 0);
 
   vme_insert(tcb, prev, vme);
 
@@ -354,7 +363,7 @@ void* mmap_stack(unsigned size, unsigned flags){
   }
 
   unsigned stack_end = stack_start + rounded_size;
-  struct VME* vme = vme_create(stack_start, stack_end, size, NULL, 0, flags);
+  struct VME* vme = vme_create(stack_start, stack_end, size, NULL, 0, flags, 0);
   vme_insert(tcb, stack_prev, vme);
 
   return (void*)stack_start;
@@ -399,11 +408,70 @@ struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsi
     return NULL;
   }
 
-  struct VME* vme = vme_create(start, end, size, file, file_offset, flags);
+  struct VME* vme = vme_create(start, end, size, file, file_offset, flags, 0);
 
   vme_insert(tcb, prev, vme);
 
   return vme;
+}
+
+// Make a VME with the given parameters and add it to the current thread's list of VMEs
+void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags){
+  if (size == 0) return NULL;
+
+  // round up size to the nearest page boundary
+  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned range_start = vmem_range_start(flags);
+  unsigned range_end = vmem_range_end(flags);
+
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  // Skip any mappings that end before the selected kernel/user half, 
+  // then do first-fit within that half
+  struct VME* prev = NULL;
+  struct VME* curr = tcb->vme_list;
+  while (curr && curr->end <= range_start){
+    prev = curr;
+    curr = curr->next;
+  }
+
+  unsigned last_end = range_start;
+  while (curr){
+    assert(curr->start >= last_end,
+      "mmap: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
+
+    if (curr->start > range_end){
+      break;
+    }
+
+    if (curr->start - last_end >= rounded_size){
+      break;
+    }
+
+    last_end = curr->end;
+    prev = curr;
+    curr = curr->next;
+  }
+
+  if (!vmem_range_can_hold(last_end, rounded_size, range_start, range_end)){
+    if (flags & MMAP_USER){
+      panic("mmap: requested mapping would exceed user virtual memory range!\n");
+    } else {
+      panic("mmap: requested mapping would exceed kernel virtual memory range!\n");
+    }
+    return NULL;
+  }
+
+  unsigned start = last_end;
+  unsigned end = start + rounded_size;
+
+  struct VME* vme = vme_create(start, end, size, NULL, 0, flags, paddr);
+
+  vme_insert(tcb, prev, vme);
+
+  return (void*)start;
 }
 
 void munmap(void* p){
@@ -527,6 +595,10 @@ void tlb_miss_handler(void* vpn, unsigned flags){
         // shared mapping points directly into page cache
         struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file, 
           (curr->file_offset + (fault_addr - curr->start)), bytes_in_page);
+        if (curr->flags & MMAP_WRITE){
+          page_cache_mark_dirty(&page_cache, curr->file,
+            (curr->file_offset + (fault_addr - curr->start)));
+        }
         phys_page = (unsigned)page->page_data;
       } else {
         unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
@@ -553,7 +625,15 @@ void tlb_miss_handler(void* vpn, unsigned flags){
       }
     } else {
       assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
-      phys_page = create_zeroed_page();
+      
+      if (curr->paddr != 0){
+        // Physmem mappings reserve one contiguous physical window. Each faulting
+        // virtual page must therefore advance through that window page-for-page
+        // instead of aliasing every VME page back onto the first physical page.
+        phys_page = curr->paddr + (fault_addr - curr->start);
+      } else {
+        phys_page = create_zeroed_page();
+      }
     }
     
     unsigned entry = phys_page | VMEM_VALID;

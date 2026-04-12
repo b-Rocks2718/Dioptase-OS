@@ -40,6 +40,8 @@ struct VME {
 
   struct Node* file;
   unsigned file_offset;
+
+  unsigned paddr; // 0 if this VME does not map physical memory directly
 };
 
 // Initialize virtual memory structures
@@ -64,6 +66,10 @@ void* mmap_stack(unsigned size, unsigned flags);
 
 // Map a file into memory at a specific virtual address, returning a pointer to the vme
 struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr);
+
+// Map a physical memory region into the virtual address space
+// returning a pointer to the vaddr corresponding to the mapped physical memory
+void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags);
 
 // Unmap a previously mapped memory region
 void munmap(void* p);

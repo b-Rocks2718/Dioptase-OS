@@ -3,11 +3,15 @@
 
 // MMIO addresses for VGA text mode
 
-// 256 * 64
+// 256 tiles * 64 pixels per 8x8 tile
 #define TILEMAP_PIXELS 16384
 
 #define TILE_ROW_WIDTH 80
 #define TILE_COL_HEIGHT 60
+
+// docs/mem_map.md defines both tile MMIO regions as 16-bit little-endian data.
+#define TILEMAP_SIZE 32768
+#define TILE_FB_SIZE 9600
 
 #define FB_NUM_TILES 4800
 #define FB_NUM_PIXELS 76800
@@ -19,7 +23,10 @@
 
 extern short* TILEMAP;
 extern short* TILE_FB;
+extern short* TILE_HSCROLL;
 extern short* TILE_VSCROLL;
+extern char* VGA_STATUS;
+extern unsigned* VGA_FRAME_COUNTER;
 
 extern char* TILE_SCALE;
 extern char* PIXEL_SCALE;

@@ -9,7 +9,10 @@
 
 short* TILEMAP = (short*)0x7FE8000;
 short* TILE_FB = (short*)0x7FBD000;
+short* TILE_HSCROLL = (short*)0x7FE5B40;
 short* TILE_VSCROLL = (short*)0x7FE5B42;
+char* VGA_STATUS = (char*)0x7FE5B46;
+unsigned* VGA_FRAME_COUNTER = (unsigned*)0x7FE5B48;
 char* TILE_SCALE = (char*)0x7FE5B44;
 char* PIXEL_SCALE = (char*)0x7FE5B54;
 

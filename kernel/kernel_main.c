@@ -10,10 +10,10 @@ int kernel_main(void) {
     panic("Could not find /sbin/init\n");
   }
 
-  say("***Running /sbin/init\n", NULL);
+  say("| Running /sbin/init\n", NULL);
   int rc = run_user_program(init);
 
-  say("***/sbin/init returned %d\n", &rc);
+  say("| /sbin/init returned %d\n", &rc);
 
   return 42;
 }
