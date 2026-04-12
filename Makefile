@@ -114,6 +114,7 @@ BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
 HEX_TARGETS := $(addsuffix .hex,$(TEST_NAMES))
 LABEL_TARGETS := $(addsuffix .labels,$(TEST_NAMES))
+TEST_SBIN_TARGETS := $(addprefix test-sbin-,$(TEST_NAMES))
 LEGACY_BIN_FILES := $(addprefix $(BUILD_DIR)/,$(addsuffix .bin,$(LEGACY_TEST_NAMES)))
 FIXED_KERNEL_TEST_BIN_FILES := $(addprefix $(BUILD_DIR)/,$(addsuffix .bin,$(FIXED_KERNEL_TEST_NAMES)))
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
@@ -161,7 +162,7 @@ fi;
 endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
-.PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) \
+.PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
   kernel.bin kernel.hex kernel.labels $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s
@@ -230,7 +231,7 @@ kernel.labels: $(KERNEL_LABELS)
 	@:
 
 # Build alias so `make test.bin` produces build/test.bin.
-$(BIN_TARGETS): %.bin: $(BUILD_DIR)/%.bin
+$(BIN_TARGETS): %.bin: test-sbin-% $(BUILD_DIR)/%.bin
 	@:
 
 # Hex and label files are emitted as side effects of the corresponding .bin
@@ -255,8 +256,14 @@ $(HEX_TARGETS): %.hex: $(BUILD_DIR)/%.hex
 $(LABEL_TARGETS): %.labels: $(BUILD_DIR)/%.labels
 	@:
 
+# Refresh guest /sbin payloads for tests that provide tests/<name>.dir/sbin.
+$(TEST_SBIN_TARGETS): test-sbin-%:
+	@if [ -f "tests/$*.dir/sbin/Makefile" ]; then \
+	  "$(MAKE)" -C "tests/$*.dir/sbin" || exit $$?; \
+	fi
+
 # Run alias so `make test` builds BIOS + kernel and runs the emulator.
-$(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
+$(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
 	status=0; \
 	"$$@" || status=$$?; \
@@ -265,7 +272,7 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 
 # Test alias so `make testname.test` runs the emulator multiple times and compares output.
 # Keep per-run logging here for interactive debugging of a single test.
-%.test: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
+%.test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
@@ -304,7 +311,7 @@ $(TEST_NAMES): %: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 physmem_test.test physmem_test.fail physmem_test.summary-test: TIMEOUT_SECONDS=180
 physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 
-%.summary-test: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
+%.summary-test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
@@ -349,7 +356,7 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 	$(extract_sd1_output_dir)
 
 # Test alias so `make testname.fail` stops on the first failure.
-%.fail: $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
+%.fail: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
