@@ -1,5 +1,9 @@
-CC = bcc
-BASM = basm
+# Default to the repo-local toolchain so direct `make` in this directory does
+# not depend on env.sh or a runner-global PATH setup.
+VERSION ?= release
+TOOLCHAIN_ROOT ?= ../../../../
+CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
+BASM = $(TOOLCHAIN_ROOT)Dioptase-Assembler/build/$(VERSION)/basm
 BUILD_DIR = build
 
 CRT_DIR = ../../../crt

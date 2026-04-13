@@ -257,9 +257,13 @@ $(LABEL_TARGETS): %.labels: $(BUILD_DIR)/%.labels
 	@:
 
 # Refresh guest /sbin payloads for tests that provide tests/<name>.dir/sbin.
+# Pass the selected OS toolchain explicitly so nested guest-user builds do not
+# depend on ambient PATH contents.
 $(TEST_SBIN_TARGETS): test-sbin-%:
 	@if [ -f "tests/$*.dir/sbin/Makefile" ]; then \
-	  "$(MAKE)" -C "tests/$*.dir/sbin" || exit $$?; \
+	  "$(MAKE)" -C "tests/$*.dir/sbin" \
+	    CC="$(abspath $(BCC))" \
+	    BASM="$(abspath $(BASM))" || exit $$?; \
 	fi
 
 # Run alias so `make test` builds BIOS + kernel and runs the emulator.
