@@ -5,8 +5,16 @@
 #include "print.h"
 #include "threads.h"
 #include "vmem.h"
+#include "ivt.h"
+#include "blocking_lock.h"
+#include "scheduler.h"
+#include "interrupts.h"
+#include "per_core.h"
 
+struct BlockingLock audio_lock;
 
+struct TCB* audio_wait_thread = NULL;
+struct SpinLock audio_wait_thread_lock;
 
 static char* AUDIO_RING = (char*)AUDIO_RING_BASE;
 static unsigned* AUDIO_CTRL = (unsigned*)AUDIO_CTRL_ADDR;
@@ -24,6 +32,14 @@ static unsigned* AUDIO_WATERMARK = (unsigned*)AUDIO_WATERMARK_ADDR;
 #define WAV_EXPECTED_BITS_PER_SAMPLE 16
 #define WAV_EXPECTED_BLOCK_ALIGN 2
 #define WAV_EXPECTED_BYTE_RATE 50000
+
+// register audio isr and initialize control regs
+void audio_init(void){
+  register_handler(audio_handler_, (void*)AUDIO_IVT_ENTRY);
+  audio_output_reset(AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES);
+  blocking_lock_init(&audio_lock);
+  spin_lock_init(&audio_wait_thread_lock);
+}
 
 // Copy an even number of aligned PCM bytes into the fixed ring with ld/sd.
 extern unsigned audio_copy_even_bytes_to_ring_asm(char* src, unsigned write_idx,
@@ -49,47 +65,33 @@ static bool chunk_id_is(char* bytes, char a, char b, char c, char d){
   return bytes[0] == a && bytes[1] == b && bytes[2] == c && bytes[3] == d;
 }
 
-static int read_s16_le(char* bytes){
-  return (short)read_u16_le(bytes);
-}
-
-static void panic_wav_value_mismatch(char* path, char* field,
+static void panic_wav_value_mismatch(char* field,
     unsigned got, unsigned expected){
-  void* args[4];
+  void* args[3];
 
-  args[0] = path;
-  args[1] = field;
-  args[2] = (void*)got;
-  args[3] = (void*)expected;
-  say("audio wav parse: file=%s field=%s got=0x%X expected=0x%X\n", args);
+  args[0] = field;
+  args[1] = (void*)got;
+  args[2] = (void*)expected;
+  say("audio wav parse: field=%s got=0x%X expected=0x%X\n", args);
   panic("audio wav parse: unsupported wav format\n");
 }
 
-static void panic_wav_message(char* path, char* msg){
-  void* args[2];
-
-  args[0] = path;
-  args[1] = msg;
-  say("audio wav parse: file=%s %s\n", args);
-  panic("audio wav parse: wav validation failed\n");
-}
-
-static void audio_wav_parse_or_panic(char* path, char* wav,
+static void audio_wav_parse(char* wav,
     unsigned wav_size, struct AudioWav* wav_out){
   bool saw_fmt = false;
   unsigned offset = WAV_RIFF_HEADER_BYTES;
 
   if (wav_size < WAV_RIFF_HEADER_BYTES){
-    panic_wav_message(path, "is too small for the RIFF header");
+    panic("wav is too small for the RIFF header");
   }
   if (!chunk_id_is(wav, 'R', 'I', 'F', 'F')){
-    panic_wav_message(path, "is missing the RIFF signature");
+    panic("wav is missing the RIFF signature");
   }
   if (!chunk_id_is(wav + 8, 'W', 'A', 'V', 'E')){
-    panic_wav_message(path, "is missing the WAVE signature");
+    panic("wav is missing the WAVE signature");
   }
   if (read_u32_le(wav + 4) > wav_size - 8){
-    panic_wav_message(path, "has a RIFF size that exceeds the mapped file");
+    panic("wav has a RIFF size that exceeds the mapped file");
   }
 
   wav_out->bytes = wav;
@@ -104,10 +106,10 @@ static void audio_wav_parse_or_panic(char* path, char* wav,
     unsigned padded_chunk_size = chunk_size + (chunk_size & 1);
 
     if (chunk_size > wav_size - chunk_data_offset){
-      panic_wav_message(path, "contains a chunk that extends past end of file");
+      panic("wav contains a chunk that extends past end of file");
     }
     if (padded_chunk_size > wav_size - chunk_data_offset){
-      panic_wav_message(path, "contains chunk padding that extends past end of file");
+      panic("wav contains chunk padding that extends past end of file");
     }
 
     if (chunk_id_is(chunk, 'f', 'm', 't', ' ')){
@@ -119,7 +121,7 @@ static void audio_wav_parse_or_panic(char* path, char* wav,
       unsigned bits_per_sample;
 
       if (chunk_size < WAV_FMT_MIN_BYTES){
-        panic_wav_message(path, "has a fmt chunk that is too short");
+        panic("wav has a fmt chunk that is too short");
       }
 
       audio_format = read_u16_le(chunk + 8);
@@ -130,34 +132,34 @@ static void audio_wav_parse_or_panic(char* path, char* wav,
       bits_per_sample = read_u16_le(chunk + 22);
 
       if (audio_format != WAV_PCM_FORMAT){
-        panic_wav_value_mismatch(path, "audio_format", audio_format,
+        panic_wav_value_mismatch("audio_format", audio_format,
           WAV_PCM_FORMAT);
       }
       if (num_channels != WAV_EXPECTED_CHANNELS){
-        panic_wav_value_mismatch(path, "num_channels", num_channels,
+        panic_wav_value_mismatch("num_channels", num_channels,
           WAV_EXPECTED_CHANNELS);
       }
       if (sample_rate != WAV_EXPECTED_SAMPLE_RATE){
-        panic_wav_value_mismatch(path, "sample_rate", sample_rate,
+        panic_wav_value_mismatch("sample_rate", sample_rate,
           WAV_EXPECTED_SAMPLE_RATE);
       }
       if (bits_per_sample != WAV_EXPECTED_BITS_PER_SAMPLE){
-        panic_wav_value_mismatch(path, "bits_per_sample", bits_per_sample,
+        panic_wav_value_mismatch("bits_per_sample", bits_per_sample,
           WAV_EXPECTED_BITS_PER_SAMPLE);
       }
       if (block_align != WAV_EXPECTED_BLOCK_ALIGN){
-        panic_wav_value_mismatch(path, "block_align", block_align,
+        panic_wav_value_mismatch("block_align", block_align,
           WAV_EXPECTED_BLOCK_ALIGN);
       }
       if (byte_rate != WAV_EXPECTED_BYTE_RATE){
-        panic_wav_value_mismatch(path, "byte_rate", byte_rate,
+        panic_wav_value_mismatch("byte_rate", byte_rate,
           WAV_EXPECTED_BYTE_RATE);
       }
 
       saw_fmt = true;
     } else if (chunk_id_is(chunk, 'd', 'a', 't', 'a')){
       if (!saw_fmt){
-        panic_wav_message(path, "contains a data chunk before fmt");
+        panic("wav contains a data chunk before fmt");
       }
       wav_out->data_offset = chunk_data_offset;
       wav_out->data_size = chunk_size;
@@ -167,7 +169,7 @@ static void audio_wav_parse_or_panic(char* path, char* wav,
     offset = chunk_data_offset + padded_chunk_size;
   }
 
-  panic_wav_message(path, "is missing a data chunk");
+  panic("wav is missing a data chunk");
 }
 
 unsigned audio_output_buffered_bytes(unsigned write_idx, unsigned read_idx){
@@ -219,11 +221,10 @@ void audio_output_reset(unsigned watermark_bytes){
   *AUDIO_CTRL = 0;
   *AUDIO_WATERMARK = watermark_bytes;
   *AUDIO_WRITE_IDX = read_idx;
-  *AUDIO_CTRL = AUDIO_CTRL_CLEAR_UNDERRUN;
 }
 
 void audio_output_enable(void){
-  *AUDIO_CTRL = AUDIO_CTRL_ENABLE;
+  *AUDIO_CTRL = AUDIO_CTRL_ENABLE | AUDIO_CTRL_IRQ;
 }
 
 void audio_output_disable(void){
@@ -323,34 +324,32 @@ unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes){
   return consumed_bytes;
 }
 
-void audio_wav_load_from_root_or_panic(char* path, struct AudioWav* wav_out){
-  struct Node* wav_node = node_find(&fs.root, path);
+void audio_wav_load(struct Node* wav_node, struct AudioWav* wav_out){
   unsigned wav_size;
   char* wav_bytes;
   void* args[1];
 
-  if (!wav_node){
-    args[0] = path;
-    say("audio wav load: could not find file=%s\n", args);
-    panic("audio wav load: lookup failed\n");
-  }
-
   wav_size = node_size_in_bytes(wav_node);
   wav_bytes = mmap(wav_size, wav_node, 0, MMAP_READ);
-  node_free(wav_node);
 
-  audio_wav_parse_or_panic(path, wav_bytes, wav_size, wav_out);
+  audio_wav_parse(wav_bytes, wav_size, wav_out);
 }
 
 unsigned audio_wav_num_samples(struct AudioWav* wav){
   return wav->data_size / AUDIO_SAMPLE_BYTES;
 }
 
-int audio_wav_read_sample_s16le(struct AudioWav* wav, unsigned sample_idx){
-  return read_s16_le(wav->bytes + wav->data_offset + sample_idx * AUDIO_SAMPLE_BYTES);
+void audio_block_thread(void* arg){
+  int* args = (int*)arg;
+  struct TCB* tcb = (struct TCB*)args[0];
+  audio_wait_thread = tcb;
+
+  spin_lock_release(&audio_wait_thread_lock);
 }
 
-void audio_wav_play_blocking(struct AudioWav* wav){
+void audio_wav_play(struct AudioWav* wav){
+  blocking_lock_acquire(&audio_lock);
+
   unsigned next_data_bytes = 0;
   unsigned filled_bytes;
 
@@ -361,8 +360,19 @@ void audio_wav_play_blocking(struct AudioWav* wav){
   audio_output_enable();
 
   while (next_data_bytes < wav->data_size){
+
+    // TODO: ensure O(1) critical sections
+    // for now im okay with this because there shouldnt be much contention
+    // on this lock
+    int was = interrupts_disable();
+    spin_lock_acquire(&audio_wait_thread_lock);
     if (!audio_output_low_water()){
-      continue;
+      struct TCB* current_tcb = get_current_tcb();
+      int args[1] = { (int)current_tcb };
+      block(was, audio_block_thread, (void*)(args), false);
+    } else {
+      spin_lock_release(&audio_wait_thread_lock);
+      interrupts_restore(was);
     }
 
     filled_bytes = audio_output_fill_pcm_s16le(
@@ -377,4 +387,21 @@ void audio_wav_play_blocking(struct AudioWav* wav){
   }
 
   audio_output_disable();
+
+  blocking_lock_release(&audio_lock);
+}
+
+void audio_handler(void){
+  mark_audio_handled();
+
+  spin_lock_acquire(&audio_wait_thread_lock);
+
+  struct TCB* tcb = audio_wait_thread;
+  audio_wait_thread = NULL;
+
+  spin_lock_release(&audio_wait_thread_lock);
+
+  if (tcb != NULL){
+    scheduler_wake_thread_from_interrupt(tcb);
+  }
 }

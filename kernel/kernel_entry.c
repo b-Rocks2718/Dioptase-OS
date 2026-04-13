@@ -18,6 +18,7 @@
 #include "vga.h"
 #include "uart.h"
 #include "exc.h"
+#include "audio.h"
 
 unsigned HEAP_START = 0x100000;
 unsigned HEAP_SIZE =  0x700000;
@@ -44,6 +45,7 @@ void kernel_entry(void){
     register_spurious_handlers();
     vga_init();
     uart_init();
+    audio_init();
     exc_init();
 
     say("| Core %d starting up...\n", &me);

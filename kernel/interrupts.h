@@ -11,6 +11,7 @@
 #define VGA_VBLANK_INT_ENABLE 0x10
 #define IPI_INT_ENABLE 0x20
 #define SD_1_INT_ENABLE 0x40
+#define AUDIO_INT_ENABLE 0x80
 
 // disables interrupts and returns previous imr value
 extern unsigned interrupts_disable(void);

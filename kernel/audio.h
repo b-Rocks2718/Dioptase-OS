@@ -2,6 +2,7 @@
 #define AUDIO_H
 
 #include "constants.h"
+#include "ext.h"
 
 #define AUDIO_RING_BASE 0x7FB8000
 #define AUDIO_RING_SIZE_BYTES 0x4000
@@ -12,21 +13,20 @@
 #define AUDIO_WATERMARK_ADDR 0x7FE5850
 
 #define AUDIO_CTRL_ENABLE 0x1
-#define AUDIO_CTRL_CLEAR_UNDERRUN 0x4
+#define AUDIO_CTRL_IRQ 0x2
 
 #define AUDIO_STATUS_LOW_WATER 0x2
+#define AUDIO_STATUS_UNDERRUN 0x4
 
 #define AUDIO_SAMPLE_BYTES 2
 #define AUDIO_WORD_BYTES 4
 #define AUDIO_USABLE_BYTES 16382
 
-/*
- * Refill once at least 1 KiB is free. That leaves roughly 0.3 seconds of
- * queued 25 kHz mono s16le audio while still giving the refill path a useful
- * chunk size to publish each time `LOW_WATER` asserts.
- */
-#define AUDIO_REFILL_TRIGGER_FREE_BYTES 1024
+#define AUDIO_REFILL_TRIGGER_FREE_BYTES 4096
 #define AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES 15358
+
+// set up audio ISR and initialize control regs
+void audio_init(void);
 
 /*
  * Parsed PCM WAV mapped into kernel virtual memory.
@@ -76,7 +76,8 @@ void audio_output_set_write_idx(unsigned write_idx);
  * - Playback is disabled.
  * - `AUDIO_WRITE_IDX` is moved to the current `AUDIO_READ_IDX`, so the ring is
  *   logically empty.
- * - `AUDIO_STATUS.UNDERRUN` is cleared.
+ * - Any latched `AUDIO_STATUS.UNDERRUN` state is cleared because playback is
+ *   disabled.
  * - The low-water watermark is updated to `watermark_bytes`.
  */
 void audio_output_reset(unsigned watermark_bytes);
@@ -120,7 +121,7 @@ unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes);
  * - On any lookup, mapping, or format error this helper prints a detailed
  *   audio-specific message and panics
  */
-void audio_wav_load_from_root_or_panic(char* path, struct AudioWav* wav_out);
+void audio_wav_load(struct Node* node, struct AudioWav* wav_out);
 
 // Return the number of 16-bit PCM samples contained in the validated WAV data.
 unsigned audio_wav_num_samples(struct AudioWav* wav);
@@ -128,19 +129,11 @@ unsigned audio_wav_num_samples(struct AudioWav* wav);
 // Read one signed 16-bit sample from the validated WAV data payload.
 int audio_wav_read_sample_s16le(struct AudioWav* wav, unsigned sample_idx);
 
-/*
- * Stream the WAV payload into the MMIO audio ring and block until playback has
- * drained the ring.
- *
- * Preconditions:
- * - `wav` was populated by `audio_wav_load_from_root_or_panic(...)` or another
- *   source that guarantees the same PCM format and alignment invariants
- *
- * Postconditions:
- * - Resets the device, publishes PCM bytes until the full payload is queued,
- *   waits for the ring to drain, then disables playback
- * - Panics if `LOW_WATER` asserted but a refill batch could not publish bytes
- */
-void audio_wav_play_blocking(struct AudioWav* wav);
+// Stream the WAV payload into the MMIO audio ring and block until playback has
+// drained the ring
+void audio_wav_play(struct AudioWav* wav);
+
+extern void audio_handler_(void);
+extern void mark_audio_handled(void);
 
 #endif // AUDIO_H

@@ -15,7 +15,9 @@ void audio_worker(void* unused){
 
   set_priority(HIGH_PRIORITY);
 
-  audio_wav_load_from_root_or_panic("still_alive.wav", &wav);
+  struct Node* wav_node = node_find(&fs.root, "still_alive.wav");
+  audio_wav_load(wav_node, &wav);
+  node_free(wav_node);
 
   if (!CONFIG.use_audio){
     say("Host audio disabled; run EMU_AUDIO_FAST=yes make still_alive to hear playback\n",
@@ -23,7 +25,7 @@ void audio_worker(void* unused){
     return;
   }
 
-  audio_wav_play_blocking(&wav);
+  audio_wav_play(&wav);
 }
 
 void say_dramatically(char* str, unsigned color, unsigned delay){
@@ -37,7 +39,7 @@ void say_dramatically(char* str, unsigned color, unsigned delay){
   }
 }
 
-#define WAV_SAMPLE_PREVIEW_COUNT 16
+#define DELAY 6
 
 int kernel_main(void){
 
@@ -52,7 +54,7 @@ int kernel_main(void){
   audio_worker_fun->arg = NULL;
   thread_(audio_worker_fun, HIGH_PRIORITY, ANY_CORE);
 
-  say_dramatically("Initializing GLaDOS", 0xF9, 2);
+  say_dramatically("Initializing GLaDOS", 0xF9, DELAY);
   sleep(80);
   putchar_color('.', 0xF9);
   sleep(80);
@@ -63,7 +65,7 @@ int kernel_main(void){
   putchar_color('\n', 0xF9);
   sleep(50);
 
-  say_dramatically(lyrics, 0xF9, 3);
+  say_dramatically(lyrics, 0xF9, DELAY);
 
   munmap(lyrics);
 

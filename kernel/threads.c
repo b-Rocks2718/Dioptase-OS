@@ -41,7 +41,8 @@ unsigned DEFAULT_INTERRUPT_MASK =
   SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
   PIT_INT_ENABLE |
   PS2_INT_ENABLE |
-  IPI_INT_ENABLE;
+  IPI_INT_ENABLE |
+  AUDIO_INT_ENABLE;
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
