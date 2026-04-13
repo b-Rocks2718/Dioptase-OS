@@ -22,6 +22,16 @@ char* strncpy(char* dest, char* src, unsigned n);
 // overlap because this helper performs a simple forward byte copy.
 void* memcpy(void* dest, void* src, unsigned n);
 
+// Copies `n` raw bytes from `src` into `dest` two bytes at a time. Source and
+// destination must both be 2-byte aligned, `n` must be even, and the regions
+// must not overlap
+void* memcpy2(void* dest, void* src, unsigned n);
+
+// Copies `n` raw bytes from `src` into `dest` four bytes at a time. Source and
+// destination must both be 4-byte aligned, `n` must be a multiple of 4, and
+// the regions must not overlap
+void* memcpy4(void* dest, void* src, unsigned n);
+
 // Fills `n` bytes at `dest` with the low byte of `c`.
 void* memset(void* dest, int c, unsigned n);
 

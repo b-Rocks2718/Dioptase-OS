@@ -54,9 +54,20 @@ These tools are expected to be built already (default `VERSION=release`):
 - `BLOCK_SIZE` controls the ext2 block size used for tests with `tests/<test>.dir`.
 - The aggregate targets `make test`, `make ext`, `make threads`, `make datastructs`,
   and `make heap` all honor `TEST_RUNS`, `TIMEOUT_SECONDS`, `BLOCK_SIZE`,
-  `NUM_CORES`, `SCHEDULER`, `EMU_VGA`, and `TRACE_INTS`.
+  `NUM_CORES`, `SCHEDULER`, `EMU_VGA`, `EMU_AUDIO`, `EMU_AUDIO_FAST`, and
+  `TRACE_INTS`.
 - `EMU_FLAGS` can include `--trace-ints` if you want information printed about each interrupt.
-- `EMU_VGA` (when defined) appends `--vga` to the emulator flags and assembles `kernel/config.s` and `bios/config.s` with `-DUSE_VGA=1`. When not defined, those files are assembled with `-DUSE_VGA=0`.
+- `EMU_VGA=yes` appends `--vga` to the emulator flags and assembles `kernel/config.s`
+  and `bios/config.s` with `-DUSE_VGA=1`. Otherwise those files are assembled
+  with `-DUSE_VGA=0`.
+- `EMU_AUDIO=yes` appends `--audio` to the emulator flags and assembles
+  `kernel/config.s` and `bios/config.s` with `-DUSE_AUDIO=1`. Otherwise those
+  files are assembled with `-DUSE_AUDIO=0`. If the cached emulator binary
+  predates audio CLI support, the harness rebuilds it before running.
+- `EMU_AUDIO_FAST=yes` appends `--audio-fast` instead of `--audio` and also
+  assembles `kernel/config.s` and `bios/config.s` with `-DUSE_AUDIO=1`. This
+  mode is for host listening only; it intentionally changes guest-visible audio
+  timing so playback stays close to wall clock even when emulation is slow.
 
 ### Notes
 

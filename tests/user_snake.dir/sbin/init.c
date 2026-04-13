@@ -19,7 +19,7 @@
 #define HELP_ROW 4
 #define STATUS_ROW 6
 
-#define LOOP_SLEEP_JIFFIES 100
+#define LOOP_SLEEP_JIFFIES 2
 
 #define RNG_MULTIPLIER 1664525u
 #define RNG_INCREMENT 1013904223u
@@ -802,7 +802,6 @@ static bool play_round(unsigned seed, unsigned* next_seed) {
     }
 
     sleep(LOOP_SLEEP_JIFFIES);
-    for (int i = 0; i < 2000; ++i);
 
     if (poll_input(&game, &paused, &restart_requested, &quit_requested)) {
       dirty = true;

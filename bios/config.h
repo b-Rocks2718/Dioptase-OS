@@ -8,6 +8,8 @@ struct Config {
   unsigned num_cores;
   // Non-zero when EMU_VGA is enabled in the Makefile.
   unsigned use_vga;
+  // Non-zero when EMU_AUDIO is enabled in the Makefile.
+  unsigned use_audio;
 };
 
 // Global BIOS configuration instance emitted by bios/config.s.

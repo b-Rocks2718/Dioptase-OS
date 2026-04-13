@@ -1,0 +1,1 @@
+ffmpeg -i still_alive.mp3 -vn -ac 1 -ar 25000 -c:a pcm_s16le still_alive.wav

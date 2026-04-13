@@ -7,8 +7,8 @@ layer yet.
 
 ### Arena / Geometry
 
-`physmem` manages the physical address range `0x800000 - 0x7FBCFFF`, which is
-`PHYS_FRAME_COUNT = 30653` frames of size `FRAME_SIZE = 4096` bytes.
+`physmem` manages the physical address range `0x800000 - 0x7FB7FFF`, which is
+`PHYS_FRAME_COUNT = 30648` frames of size `FRAME_SIZE = 4096` bytes.
 
 Buddy numbering is defined in **frame-index space relative to
 `FRAMES_ADDR_START`**, not in absolute physical address space.

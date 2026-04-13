@@ -3,5 +3,7 @@
 ***strneq: ok
 ***strncpy: ok
 ***memcpy: ok
+***memcpy2: ok
+***memcpy4: ok
 ***memset: ok
 ***string helpers: ok

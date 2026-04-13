@@ -28,8 +28,8 @@ Kernel Stacks (16KiB each)
 ### 0x100000 - 0x800000
 Kernel Heap (7MiB)  
 
-### 0x800000 - 0x7FBCFFF
-Physical frames to allocate (~120MiB of frames, 0x77BD = 30653 frames total)
+### 0x800000 - 0x7FB7FFF
+Physical frames to allocate (~120MiB of frames, 0x77B8 = 30648 frames total)
 
-### 0x7FBD000 - 0x7FFFFFF
+### 0x7FB8000 - 0x7FFFFFF
 I/O devices - see [memory map](https://github.com/b-Rocks2718/Dioptase/blob/main/docs/mem_map.md)

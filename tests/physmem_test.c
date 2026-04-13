@@ -43,7 +43,7 @@
 #define TEST_FRAME_SIZE 4096 // Must match kernel FRAME_SIZE.
 #define TEST_FRAME_WORDS 1024 // TEST_FRAME_SIZE / sizeof(unsigned)
 // 8,192 pages is still a 32 MiB backend sample, which crosses many buddy
-// regions without exhausting all 30,653 frames on every 4-core run.
+// regions without exhausting all 30,648 frames on every 4-core run.
 #define GLOBAL_WALK_PAGE_COUNT 8192
 
 struct ThreadArg {

@@ -6,14 +6,15 @@
  *   prefix semantics
  * - strncpy() matches the current kernel-specific contract for truncation and
  *   trailing NUL handling
- * - memcpy() and memset() operate on raw bytes without touching bytes outside
- *   the requested range
+ * - memcpy(), memcpy2(), memcpy4(), and memset() operate on raw bytes without
+ *   touching bytes outside the requested range
  *
  * How:
  * - build small fixed byte arrays that cover empty strings, embedded NUL bytes,
  *   prefix comparisons, and truncated copies
- * - compare whole byte regions after strncpy(), memcpy(), and memset() so the
- *   test checks untouched bytes as well as the written range
+ * - compare whole byte regions after strncpy(), memcpy(), memcpy2(),
+ *   memcpy4(), and memset() so the test checks untouched bytes as well as the
+ *   written range
  * - run each helper in a dedicated function so failures identify the exact API
  */
 #include "../kernel/string.h"
@@ -180,6 +181,92 @@ static void check_memcpy(void) {
   say("***memcpy: ok\n", NULL);
 }
 
+// Check memcpy2() aligned/even-length copies and zero-length behavior.
+static void check_memcpy2(void) {
+  unsigned short source[3];
+  unsigned short dest[5];
+  unsigned short expected[5];
+  unsigned short untouched[2];
+  unsigned short untouched_expected[2];
+
+  source[0] = 0x1234;
+  source[1] = 0xABCD;
+  source[2] = 0x00FF;
+
+  dest[0] = 0x7777;
+  dest[1] = 0x7777;
+  dest[2] = 0x7777;
+  dest[3] = 0x7777;
+  dest[4] = 0x7777;
+
+  expected[0] = 0x7777;
+  expected[1] = 0x1234;
+  expected[2] = 0xABCD;
+  expected[3] = 0x00FF;
+  expected[4] = 0x7777;
+
+  untouched[0] = 0x1357;
+  untouched[1] = 0x2468;
+
+  untouched_expected[0] = 0x1357;
+  untouched_expected[1] = 0x2468;
+
+  assert((unsigned short*)memcpy2(dest + 1, source, 6) == dest + 1,
+    "string: memcpy2 should return the destination pointer.\n");
+  assert_byte_region((unsigned char*)dest, (unsigned char*)expected, sizeof(dest),
+    "string: memcpy2 should copy aligned 2-byte elements exactly and leave surrounding data untouched.\n");
+
+  assert((unsigned short*)memcpy2(untouched, source, 0) == untouched,
+    "string: memcpy2 should return the destination pointer for zero-length copies.\n");
+  assert_byte_region((unsigned char*)untouched, (unsigned char*)untouched_expected, sizeof(untouched),
+    "string: memcpy2 should leave the destination unchanged when n is zero.\n");
+
+  say("***memcpy2: ok\n", NULL);
+}
+
+// Check memcpy4() aligned/multiple-of-4 copies and zero-length behavior.
+static void check_memcpy4(void) {
+  unsigned source[3];
+  unsigned dest[5];
+  unsigned expected[5];
+  unsigned untouched[2];
+  unsigned untouched_expected[2];
+
+  source[0] = 0x12345678;
+  source[1] = 0xABCDEF01;
+  source[2] = 0x00FF00FF;
+
+  dest[0] = 0x77777777;
+  dest[1] = 0x77777777;
+  dest[2] = 0x77777777;
+  dest[3] = 0x77777777;
+  dest[4] = 0x77777777;
+
+  expected[0] = 0x77777777;
+  expected[1] = 0x12345678;
+  expected[2] = 0xABCDEF01;
+  expected[3] = 0x00FF00FF;
+  expected[4] = 0x77777777;
+
+  untouched[0] = 0x13572468;
+  untouched[1] = 0x24681357;
+
+  untouched_expected[0] = 0x13572468;
+  untouched_expected[1] = 0x24681357;
+
+  assert((unsigned*)memcpy4(dest + 1, source, 12) == dest + 1,
+    "string: memcpy4 should return the destination pointer.\n");
+  assert_byte_region((unsigned char*)dest, (unsigned char*)expected, sizeof(dest),
+    "string: memcpy4 should copy aligned 4-byte elements exactly and leave surrounding data untouched.\n");
+
+  assert((unsigned*)memcpy4(untouched, source, 0) == untouched,
+    "string: memcpy4 should return the destination pointer for zero-length copies.\n");
+  assert_byte_region((unsigned char*)untouched, (unsigned char*)untouched_expected, sizeof(untouched),
+    "string: memcpy4 should leave the destination unchanged when n is zero.\n");
+
+  say("***memcpy4: ok\n", NULL);
+}
+
 // Check memset() raw byte writes and zero-length behavior.
 static void check_memset(void) {
   unsigned char buf[6];
@@ -229,6 +316,8 @@ int kernel_main(void) {
   check_strneq();
   check_strncpy();
   check_memcpy();
+  check_memcpy2();
+  check_memcpy4();
   check_memset();
 
   say("***string helpers: ok\n", NULL);

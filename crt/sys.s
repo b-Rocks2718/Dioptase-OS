@@ -3,6 +3,8 @@
 
   .global test_syscall
 test_syscall:
+  # Trap ABI uses r2-r8 for trap arguments, so preserve the C arg before
+  # loading the trap code into r1.
   mov  r2, r1
   movi r1, 1
   trap
@@ -22,18 +24,24 @@ getkey:
 
   .global set_tile_scale
 set_tile_scale:
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r2, r1
   movi r1, 4
   trap
   ret
 
   .global set_vscroll
 set_vscroll:
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r2, r1
   movi r1, 5
   trap
   ret
 
   .global set_hscroll
 set_hscroll:
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r2, r1
   movi r1, 6
   trap
   ret
@@ -76,6 +84,8 @@ get_vga_frame_counter:
 
   .global sleep
 sleep:
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r2, r1
   movi r1, 13
   trap
   ret

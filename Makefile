@@ -8,6 +8,8 @@
 NUM_CORES ?= 4
 SCHEDULER ?= free # emulator scheduler, determines when cores run. free, rr, or random
 EMU_VGA ?= no # whether to build with VGA support and emulate a VGA device
+EMU_AUDIO ?= no # whether to emulate host audio playback for the MMIO audio device
+EMU_AUDIO_FAST ?= no # whether to consume MMIO audio from wall-clock time for host playback
 TRACE_INTS ?= no # print a line for every interrupt delivery
 SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
@@ -31,6 +33,8 @@ PYTHON3 ?= python3
 DEPGEN ?= gcc
 
 EMU_VGA_STRIPPED := $(strip $(EMU_VGA))
+EMU_AUDIO_STRIPPED := $(strip $(EMU_AUDIO))
+EMU_AUDIO_FAST_STRIPPED := $(strip $(EMU_AUDIO_FAST))
 SCHEDULER_STRIPPED := $(strip $(SCHEDULER))
 TRACE_INTS_STRIPPED := $(strip $(TRACE_INTS))
 
@@ -41,6 +45,16 @@ EMU_FLAGS += --vga
 USE_VGA_DEFINE := 1
 else
 USE_VGA_DEFINE := 0
+endif
+
+ifeq ($(EMU_AUDIO_FAST_STRIPPED),yes)
+EMU_FLAGS += --audio-fast
+USE_AUDIO_DEFINE := 1
+else ifeq ($(EMU_AUDIO_STRIPPED),yes)
+EMU_FLAGS += --audio
+USE_AUDIO_DEFINE := 1
+else
+USE_AUDIO_DEFINE := 0
 endif
 
 ifeq ($(TRACE_INTS_STRIPPED),yes)
@@ -56,6 +70,7 @@ BCC := ../Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM := ../Dioptase-Assembler/build/$(VERSION)/basm
 EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Dioptase-Emulator-Full
 EMULATOR_DIR := ../Dioptase-Emulators/Dioptase-Emulator-Full
+EMULATOR_SRCS := $(shell find "$(EMULATOR_DIR)/src" -type f -name '*.rs' 2>/dev/null)
 EXT2_DIR_EXTRACTOR := ./scripts/extract_ext2_dir.py
 
 # Build output locations.
@@ -400,7 +415,8 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 $(BIOS_HEX): $(BIOS_C_ASMS) $(BIOS_ASM_SRCS_ORDERED) | $(BUILD_DIR) $(BASM)
 	@status=0; \
 	"$(BASM)" -kernel -o "$@" $(BIOS_ASM_INIT) $(BIOS_C_ASMS) \
-	  $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) -DNUM_CORES=$(NUM_CORES) -DUSE_VGA=$(USE_VGA_DEFINE) -g || status=$$?; \
+	  $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) -DNUM_CORES=$(NUM_CORES) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) -DUSE_AUDIO=$(USE_AUDIO_DEFINE) -g || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	grep '^#' "$@" > "$(BUILD_DIR)/bios.labels" || true; \
 	cat $(BIOS_ASM_INIT) $(BIOS_C_ASMS) $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS_ORDERED)) > "$(BUILD_DIR)/bios.all.s"; \
@@ -420,7 +436,7 @@ define assemble_kernel_image
 	  -DDATA_START_BLOCK=0 -DDATA_NUM_BLOCKS=0 -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=0 -DRODATA_NUM_BLOCKS=0 -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=0 -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
-	  -DUSE_VGA=$(USE_VGA_DEFINE) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) -DUSE_AUDIO=$(USE_AUDIO_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	set -- $$(grep '^@' "$$tmp_hex" | head -n 6 | sed 's/^@//'); \
@@ -459,7 +475,7 @@ define assemble_kernel_image
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
-	  -DUSE_VGA=$(USE_VGA_DEFINE) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) -DUSE_AUDIO=$(USE_AUDIO_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	"$(BASM)" -kernel -g -o "$(patsubst %.bin,%.hex,$@)" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) \
@@ -468,7 +484,7 @@ define assemble_kernel_image
 	  -DDATA_START_BLOCK=$$data_start_block -DDATA_NUM_BLOCKS=$$data_num_blocks -DDATA_LOAD_ADDR=$(DATA_LOAD_ADDR) \
 	  -DRODATA_START_BLOCK=$$rodata_start_block -DRODATA_NUM_BLOCKS=$$rodata_num_blocks -DRODATA_LOAD_ADDR=$(RODATA_LOAD_ADDR) \
 	  -DBSS_NUM_BLOCKS=$$bss_num_blocks -DBSS_LOAD_ADDR=$(BSS_LOAD_ADDR) -DNUM_CORES=$(NUM_CORES) \
-	  -DUSE_VGA=$(USE_VGA_DEFINE) \
+	  -DUSE_VGA=$(USE_VGA_DEFINE) -DUSE_AUDIO=$(USE_AUDIO_DEFINE) \
 	  || status=$$?; \
 	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	grep '^#' "$(patsubst %.bin,%.hex,$@)" > "$(patsubst %.bin,%.labels,$@)" || true; \
@@ -520,7 +536,7 @@ $(BCC):
 $(BASM):
 	$(MAKE) -C ../Dioptase-Assembler $(VERSION)
 
-$(EMULATOR):
+$(EMULATOR): $(EMULATOR_DIR)/Cargo.toml $(EMULATOR_SRCS)
 	@build_cmd="cargo build"; \
 	if [ "$(VERSION)" = "release" ]; then build_cmd="cargo build --release"; fi; \
 	$$build_cmd --manifest-path "$(EMULATOR_DIR)/Cargo.toml"
