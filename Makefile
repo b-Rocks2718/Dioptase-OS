@@ -116,7 +116,9 @@ TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
 TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
-PERSISTENT_TEST_NAMES := $(filter snake,$(TEST_NAMES))
+
+PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
+
 EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
 EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
 THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))

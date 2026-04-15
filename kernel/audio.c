@@ -10,6 +10,7 @@
 #include "scheduler.h"
 #include "interrupts.h"
 #include "per_core.h"
+#include "heap.h"
 
 struct BlockingLock audio_lock;
 
@@ -391,6 +392,8 @@ void audio_wav_play(struct AudioWav* wav){
   blocking_lock_release(&audio_lock);
 }
 
+// audio interrupt handler
+// wake the thread currently playing audio
 void audio_handler(void){
   mark_audio_handled();
 
@@ -404,4 +407,16 @@ void audio_handler(void){
   if (tcb != NULL){
     scheduler_wake_thread_from_interrupt(tcb);
   }
+}
+
+void audio_worker(void* audio_node){
+  // `audio_node` is a heap-owned wrapper argument containing a cloned Node*.
+  // The worker releases the node; thread cleanup releases the wrapper itself.
+  struct Node* node = *(struct Node**)audio_node;
+  struct AudioWav* wav = malloc(sizeof(struct AudioWav));
+  audio_wav_load(node, wav);
+
+  audio_wav_play(wav);
+  node_free(node);
+  free(wav);
 }

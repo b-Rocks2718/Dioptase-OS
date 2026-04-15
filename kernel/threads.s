@@ -32,11 +32,11 @@ context_switch:
   crmv r9, sp
   swa  r9,  [r1, 36]
 
+  swa  ra,  [r1, 44]
+
   # use r9 as scratch
   mov  r9, flg
-  swa  r9,  [r1, 44]
-
-  swa  ra,  [r1, 48]
+  swa  r9,  [r1, 48]
 
   mov  r9, psr
   swa  r9,  [r1, 52]
@@ -76,7 +76,7 @@ context_switch:
   crmv sp, r9
 
   # use r10 as scratch
-  lwa  r10, [r2, 44]
+  lwa  r10, [r2, 48]
   mov  flg, r10
 
   lwa  r10, [r2, 60]
@@ -93,7 +93,7 @@ context_switch:
   lwa  r10, [r2, 68]
   mov  tlbf, r10
 
-  lwa  r10, [r2, 48] # r10 holds our return address
+  lwa  r10, [r2, 44] # r10 holds our return address
   push r10
 
   # update current thread

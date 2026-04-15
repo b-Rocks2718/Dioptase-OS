@@ -26,6 +26,7 @@
 #include "ps2.h"
 #include "scheduler.h"
 #include "vmem.h"
+#include "sys.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -61,6 +62,24 @@ static void free_tcb(struct TCB* tcb) {
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
 
+  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
+    if (tcb->file_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_FILE, i);
+    }
+  }
+  for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
+    if (tcb->sem_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_SEM, i);
+    }
+  }
+  for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
+    if (tcb->child_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_CHILD, i);
+    }
+  }
+
+  node_free(tcb->cwd);
+
   free(tcb);
 
   __atomic_fetch_add(&n_active, -1);
@@ -82,8 +101,10 @@ static void reaper(void){
 
 // return a TCB struct
 // defaults to: preemption enabled, not pinned, normal priority
-static struct TCB* make_tcb(bool leak_mem){
-  struct TCB* tcb = leak_mem ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
+// If init_stdio is false, leave the descriptor tables empty so kernel-only
+// daemon threads do not allocate stdio descriptors they can never consume.
+static struct TCB* make_tcb(bool is_daemon){
+  struct TCB* tcb = is_daemon ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
 
   tcb->flags = 0;
 
@@ -100,11 +121,18 @@ static struct TCB* make_tcb(bool leak_mem){
   tcb->imr = DEFAULT_INTERRUPT_MASK;
   tcb->pid = 0;
   tcb->fault_addr = 0;
+  tcb->fault_flags = 0;
+  tcb->uaccess_active = 0;
+  tcb->uaccess_err_addr = 0;
 
   tcb->can_preempt = true;
   tcb->core_affinity = ANY_CORE;
   tcb->priority = NORMAL_PRIORITY;
   tcb->vme_list = NULL;
+
+  tcb->cwd = &fs.root;
+
+  init_descriptors(tcb, !is_daemon);
 
   tcb->next = NULL;
 
@@ -128,7 +156,7 @@ void thread_(struct Fun* thread_fun,
   unsigned* the_stack = malloc(TCB_STACK_SIZE);
   assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
   assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->ra = (unsigned)thread_entry;
   tcb->thread_fun = thread_fun;
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
@@ -157,7 +185,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   unsigned* the_stack = leak(TCB_STACK_SIZE);
   assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
   assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->ra = (unsigned)thread_entry;
   tcb->thread_fun = thread_fun;
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
@@ -355,9 +383,13 @@ void bootstrap(void){
   tcb->thread_fun = NULL;
   tcb->bp = 0;
   tcb->sp = 0;
-  tcb->ret_addr = 0;
+  tcb->ra = 0;
   tcb->psr = 1;
   tcb->imr = 0;
+  tcb->fault_addr = 0;
+  tcb->fault_flags = 0;
+  tcb->uaccess_active = 0;
+  tcb->uaccess_err_addr = 0;
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 

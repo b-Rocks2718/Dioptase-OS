@@ -875,12 +875,50 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
   return changed;
 }
 
+void load_high_score(void) {
+  int fd = open("high_score.txt");
+  snake_high_score = 0;
+  if (fd >= 0) {
+    char buf[15];
+    int n = read(fd, buf, sizeof(buf));
+    
+    for (int i = 0; i < n; i++) {
+      snake_high_score *= 10;
+      snake_high_score += buf[i] - '0';
+    }
+
+    close(fd);
+  }
+}
+
+void save_high_score(void) {
+  int fd = open("high_score.txt");
+  if (fd >= 0) {
+    char buf[15];
+
+    for (int i = 0; i < 15; ++i){
+      buf[i] = '0';
+    }
+
+    int n = 14;
+    int score = snake_high_score;
+    while (score > 0 && n >= 0) {
+      buf[n--] = '0' + (score % 10);
+      score /= 10;
+    }
+    write(fd, buf, sizeof(buf));
+    close(fd);
+  }
+}
+
 int main(void) {
   unsigned seed = INITIAL_RNG_STATE ^ get_current_jiffies();
   bool keep_running = true;
 
   TILE_FB = get_tile_fb();
   TILEMAP = get_tilemap();
+
+  load_high_score();
 
   load_text_tiles();
   install_game_tiles();
@@ -894,5 +932,6 @@ int main(void) {
 
   while (keep_running) {
     keep_running = play_round(seed, &seed);
+    save_high_score();
   }
 }

@@ -2,6 +2,7 @@
 #define TCB_H
 
 #include "constants.h"
+#include "sys.h"
 
 // function and argument for a thread to run
 struct Fun {
@@ -37,6 +38,8 @@ enum MLFQ_LEVEL {
 // forward declaration of VME struct to avoid circular dependency between TCB and VME
 struct VME;
 
+struct Node;
+
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
 struct TCB {
@@ -52,15 +55,18 @@ struct TCB {
 
   unsigned sp;  // offset 36
   unsigned bp;  // offset 40
+  unsigned ra; // offset 44
 
-  unsigned flags; // offset 44
-  unsigned ret_addr; // offset 48
+  unsigned flags; // offset 48
   unsigned psr;      // offset 52
   unsigned imr;      // offset 56
   unsigned pid;      // offset 60
   unsigned fault_addr;  // offset 64
   unsigned fault_flags; // offset 68
   unsigned ksp; // offset 72
+
+  unsigned uaccess_active; // offset 76
+  unsigned uaccess_err_addr; // offset 80
 
   unsigned* stack;
   struct Fun* thread_fun;
@@ -71,6 +77,12 @@ struct TCB {
   enum MLFQ_LEVEL mlfq_level;
   int remaining_quantum;
   unsigned wakeup_jiffies;
+
+  struct FileDescriptor* file_descriptors[MAX_FILE_DESCRIPTORS];
+  struct SemDescriptor* sem_descriptors[MAX_SEM_DESCRIPTORS];
+  struct ChildDescriptor* child_descriptors[MAX_CHILD_DESCRIPTORS];
+
+  struct Node* cwd;
 
   struct VME* vme_list;
 

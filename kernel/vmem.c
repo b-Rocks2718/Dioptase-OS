@@ -537,13 +537,37 @@ void vme_change_perms(struct VME* vme, unsigned new_flags){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
-void tlb_miss_handler(void* vpn, unsigned flags){
-  unsigned fault_addr = (unsigned)(vpn) << 12;
-
+int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_to_user){
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
+
+  // ISA `cr0` is the trap/exception nesting depth after entry. A value of 1
+  // means this miss interrupted user mode; values above 1 mean the core was
+  // already in kernel mode and took a nested miss while handling that context.
+  bool was_user = get_cr0() == 1;
+  *return_to_user = true; // default to resuming the faulting context via rfe
+
+  if (flags != 0){
+    if (was_user){
+      // User code touched a mapped page without sufficient permissions. Abort
+      // back to the kernel caller of `jump_to_user(...)`.
+      say("User program killed due to access of mapped page without sufficient permissions\n", NULL);
+      *return_to_user = false;
+      return -1;
+    } else if (tcb->uaccess_active){
+      // Kernel uaccess helpers recover by redirecting the faulting instruction
+      // stream to their local error path, then resuming kernel mode via rfe.
+      assert(tcb->uaccess_err_addr != NULL, "uaccess err addr not set");
+      *epc_ptr = (unsigned)tcb->uaccess_err_addr;
+      return 0;
+    } else {
+      panic("vmem: kernel TLB miss due to invalid privileges\n");
+    }
+  }
+
+  unsigned fault_addr = (unsigned)(vpn) << 12;
 
   struct VME* curr = tcb->vme_list;
   while (curr){
@@ -554,17 +578,31 @@ void tlb_miss_handler(void* vpn, unsigned flags){
   }
 
   if (curr == NULL){
-    int args[2] = {fault_addr, flags};
-    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
-    panic("vmem: TLB miss with no corresponding VME.\n");
-    return;
+    if (was_user) {
+      // User code touched an unmapped address. Abort back to the kernel caller
+      // of `jump_to_user(...)`.
+      say("User program killed due to access of unmapped address\n", NULL);
+      *return_to_user = false;
+      return -1;
+    } else if (tcb->uaccess_active){
+      // Kernel uaccess helpers recover by redirecting the faulting instruction
+      // stream to their local error path, then resuming kernel mode via rfe.
+      assert(tcb->uaccess_err_addr != NULL, "uaccess err addr not set");
+      *epc_ptr = (unsigned)tcb->uaccess_err_addr;
+      return 0;
+    } else {
+      int args[2] = {fault_addr, flags};
+      say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
+      panic("vmem: TLB miss with no corresponding VME.\n");
+      return -1;
+    }
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)){
     int args[2] = {fault_addr, flags};
     say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
-    return;
+    return -1;
   }
 
   unsigned page_dir_index = ((unsigned)vpn >> 10) & 0x3FF;
@@ -589,7 +627,8 @@ void tlb_miss_handler(void* vpn, unsigned flags){
     unsigned phys_page = 0;
     if (curr->file){
       if (curr->flags & MMAP_SHARED){
-         unsigned bytes_in_page =  (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? 
+        // this is intentional, so mmap can be used to extend files
+        unsigned bytes_in_page =  (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? 
           FRAME_SIZE : (curr->size - (fault_addr - curr->start));
 
         // shared mapping points directly into page cache
@@ -647,6 +686,7 @@ void tlb_miss_handler(void* vpn, unsigned flags){
   }
   
   tlb_write(fault_addr, pte);
+  return 0;
 }
 
 void ipi_handler(unsigned data){

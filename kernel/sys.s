@@ -34,6 +34,9 @@ trap_handler_:
   pop  sp
   pop  r2
 
+  cmp  r2, r0
+  bz   return_to_kernel
+
   # Disable the global interrupts again before restoring EPC/EFG and
   # returning through rfe
   movi r9, 0x7FFFFFFF
@@ -49,11 +52,11 @@ trap_handler_:
   pop  r9
   mov  epc, r9
 
-  cmp  r2, r0
-  bz   return_to_kernel
-  rfe  # return to user
+  rfe
 
 return_to_kernel:
+  add sp, sp, 16 # 4 regs
+
   pop ra
   pop bp
 
@@ -82,3 +85,50 @@ jump_to_user:
   mov efg, r0
 
   rfe
+
+  .global copy_user
+  # int copy_user(void* dest, void* src, unsigned n, struct TCB* cur_tcb);
+copy_user:
+  # set up fail addr
+  adpc r5, copy_user_fail
+  swa  r5, [r4, 80]
+
+  # mark a user access in progress
+  movi r5, 1
+  swa  r5, [r4, 76]
+
+copy_user_loop:
+  cmp  r3, r0
+  bz   copy_user_done
+  lba  r5, [r2], 1
+  sba  r5, [r1], 1
+  add  r3, r3, -1
+  jmp  copy_user_loop
+
+copy_user_done:
+  # clear user access in progress
+  movi r5, 0
+  swa  r5, [r4, 76]
+
+  # clear the fail address
+  movi r5, 0
+  swa  r5, [r4, 80]
+
+  # return 0
+  mov  r1, r0
+
+  ret
+
+copy_user_fail:
+  # clear user access in progress
+  movi r5, 0
+  swa  r5, [r4, 76]
+
+  # clear the fail address
+  movi r5, 0
+  swa  r5, [r4, 80]
+
+  # return -1
+  movi r1, -1
+
+  ret

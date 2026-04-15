@@ -1,7 +1,7 @@
 #ifndef SYS_H
 #define SYS_H
 
-#include "ext.h"
+#include "constants.h"
 
 enum TrapCode {
   TRAP_EXIT = 0,
@@ -18,6 +18,66 @@ enum TrapCode {
   TRAP_GET_VGA_STATUS = 11,
   TRAP_GET_VGA_FRAME_COUNTER = 12,
   TRAP_SLEEP = 13,
+  TRAP_OPEN = 14,
+  TRAP_READ = 15,
+  TRAP_WRITE = 16,
+  TRAP_CLOSE = 17,
+  TRAP_SEM_OPEN = 18,
+  TRAP_SEM_UP = 19,
+  TRAP_SEM_DOWN = 20,
+  TRAP_SEM_CLOSE = 21,
+  TRAP_MMAP = 22,
+  TRAP_FORK = 23,
+  TRAP_EXEC = 24,
+  TRAP_PLAY_AUDIO = 25,
+  TRAP_SET_TEXT_COLOR = 26,
+  TRAP_WAIT_CHILD = 27,
+  TRAP_CHDIR = 28,
+  TRAP_PIPE = 29,
+  TRAP_DUP = 30,
+};
+
+#define MAX_FILE_DESCRIPTORS 100
+#define MAX_SEM_DESCRIPTORS 100
+#define MAX_CHILD_DESCRIPTORS 100
+
+#define FILE_DESCRIPTORS_START 0
+#define SEM_DESCRIPTORS_START 100
+#define CHILD_DESCRIPTORS_START 200
+
+struct TCB;
+struct Node;
+struct Semaphore;
+struct Promise;
+
+enum DescriptorType {
+  DESCRIPTOR_FILE,
+  DESCRIPTOR_SEM,
+  DESCRIPTOR_CHILD,
+};
+
+enum FileDescriptorType {
+  FILE_DESCRIPTOR_STDIN = 0,
+  FILE_DESCRIPTOR_STDOUT = 1,
+  FILE_DESCRIPTOR_STDERR = 2,
+  FILE_DESCRIPTOR_NORMAL = 3,
+};
+
+struct FileDescriptor {
+  struct Node* file;
+  int offset;
+  enum FileDescriptorType type;
+  int refcount;
+};
+
+struct SemDescriptor {
+  struct Semaphore* sem;
+  int refcount;
+};
+
+struct ChildDescriptor {
+  struct Promise* child;
+  int refcount;
 };
 
 // set up IVT with trap handler entry point
@@ -30,6 +90,22 @@ unsigned jump_to_user(unsigned entry, unsigned stack);
 // consumes the node, so the caller cannot use it after calling this function
 int run_user_program(struct Node* prog_node);
 
+// initialize descriptor tables for one TCB.
+// If init_stdio is true, install stdin/stdout/stderr in slots 0..2.
+// Kernel-only daemon threads that never enter the trap ABI can pass false so
+// their descriptor tables stay empty and do not allocate unused stdio state.
+void init_descriptors(struct TCB* tcb, bool init_stdio);
+
+// find an unused descriptor of the given type in the TCB and return its index,
+// or -1 if none are available
+int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill);
+
+// deallocate descriptor and free its resources
+void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index);
+
 extern void trap_handler_(void);
+
+// copy n bytes from either user -> kernel or kernel -> user
+extern int copy_user(void* dest, void* src, unsigned n, struct TCB* cur_tcb);
 
 #endif // SYS_H

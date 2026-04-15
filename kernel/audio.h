@@ -133,6 +133,8 @@ int audio_wav_read_sample_s16le(struct AudioWav* wav, unsigned sample_idx);
 // drained the ring
 void audio_wav_play(struct AudioWav* wav);
 
+void audio_worker(void* audio_node);
+
 extern void audio_handler_(void);
 extern void mark_audio_handled(void);
 

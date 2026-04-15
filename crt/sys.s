@@ -84,8 +84,81 @@ get_vga_frame_counter:
 
   .global sleep
 sleep:
-  # Trap ABI uses r2-r8 for trap arguments.
   mov  r2, r1
   movi r1, 13
+  trap
+  ret
+
+  .global open
+open:
+  mov  r2, r1
+  movi r1, 14
+  trap
+  ret
+
+  .global read
+read:
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 15
+  trap
+  ret
+
+  .global write
+write:
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 16
+  trap
+  ret
+
+  .global close
+close:
+  mov  r2, r1
+  movi r1, 17
+  trap
+  ret
+
+  .global play_audio_file
+play_audio_file:
+  mov  r2, r1
+  movi r1, 25
+  trap
+  ret
+
+  .global set_text_color
+set_text_color:
+  mov  r2, r1
+  movi r1, 26
+  trap
+  ret
+
+  .global wait_child
+wait_child:
+  mov  r2, r1
+  movi r1, 27
+  trap
+  ret
+
+  .global chdir
+chdir:
+  mov  r2, r1
+  movi r1, 28
+  trap
+  ret
+
+  .global pipe
+pipe:
+  mov  r2, r1
+  movi r1, 29
+  trap
+  ret
+
+  .global dup
+dup:
+  mov  r2, r1
+  movi r1, 30
   trap
   ret

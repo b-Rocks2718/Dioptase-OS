@@ -1800,6 +1800,7 @@ void node_destroy(struct Node* node){
 }
 
 void node_free(struct Node* node){
+  if (node == NULL || node == &fs.root) return;
   node_destroy(node);
   free(node);
 }
