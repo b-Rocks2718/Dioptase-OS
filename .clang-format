@@ -1,0 +1,8 @@
+BasedOnStyle: LLVM
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+PointerAlignment: Left
+DerivePointerAlignment: false
+SortIncludes: false
+ReflowComments: false
