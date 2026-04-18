@@ -208,6 +208,24 @@ void unmap_vme(unsigned* pd, struct VME* vme){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
+// copy a thread's page dir and page tables from src to dst
+void vmem_copy_address_space(struct TCB* src, struct TCB* dst){
+  struct VME* src_vme = src->vme_list;
+
+  while (src_vme){
+    // copy vme to new thread
+    struct VME* new_vme = vme_create(src_vme->start, src_vme->end, src_vme->size,
+                                     src_vme->file, src_vme->file_offset,
+                                     src_vme->flags, src_vme->paddr);
+    vme_insert(dst, NULL, new_vme);
+    
+    // copy vme data
+    
+
+    src_vme = src_vme->next;
+  }
+}
+
 // free all physical pages mapped by the given address space, 
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb) {

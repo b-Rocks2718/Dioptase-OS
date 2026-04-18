@@ -31,6 +31,7 @@ int main(void){
   close(fd);
 
   test_syscall(open((char*)BAD_LOW_PTR));
+  test_syscall(pipe((int*)BAD_LOW_PTR));
 
   return 0;
 }

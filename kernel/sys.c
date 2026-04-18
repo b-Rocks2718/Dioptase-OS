@@ -16,20 +16,17 @@
 #include "heap.h"
 #include "ext.h"
 #include "string.h"
+#include "scheduler.h"
 
 #define INITIAL_USER_STACK_SIZE 0x4000
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
 
+#define PIPE_BUFFER_CAPACITY 1024
+
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
   return arg + 7;
-}
-
-static unsigned unrecognized_trap_handler(unsigned code){
-  say("| trap: unrecognized trap code = %d\n", &code);
-  panic("trap: halting due to unrecognized trap.\n");
-  return 0;
 }
 
 // Validate the user-visible side of a syscall copy before touching memory.
@@ -144,6 +141,510 @@ static int copy_cstr_from_user(char* dest, char* src, unsigned max,
   return -1;
 }
 
+int handle_pipe(int* fds){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+ 
+  int read_end = allocate_descriptor(tcb, DESCRIPTOR_FILE, true);
+  if (read_end < 0){
+    return -1;
+  }
+
+  int write_end = allocate_descriptor(tcb, DESCRIPTOR_FILE, true);
+  if (write_end < 0){
+    deallocate_descriptor(tcb, DESCRIPTOR_FILE, read_end);
+    return -1;
+  }
+
+  struct Pipe* pipe = malloc(sizeof(struct Pipe));
+
+  pipe->refcount = 2;
+  blocking_ringbuf_init(&pipe->buf, PIPE_BUFFER_CAPACITY);
+
+  tcb->file_descriptors[read_end]->file = (struct Node*)pipe;
+  tcb->file_descriptors[read_end]->offset = 0;
+  tcb->file_descriptors[read_end]->type = FILE_DESCRIPTOR_PIPE_READ;
+  tcb->file_descriptors[read_end]->refcount = 1;
+
+  tcb->file_descriptors[write_end]->file = (struct Node*)pipe;
+  tcb->file_descriptors[write_end]->offset = 0;
+  tcb->file_descriptors[write_end]->type = FILE_DESCRIPTOR_PIPE_WRITE;
+  tcb->file_descriptors[write_end]->refcount = 1;
+      
+  int fd_arr[2] = {read_end, write_end};
+
+  int rc = copy_to_user(fds, fd_arr, sizeof(int) * 2, tcb);
+  if (rc != 0){
+    deallocate_descriptor(tcb, DESCRIPTOR_FILE, read_end);
+    deallocate_descriptor(tcb, DESCRIPTOR_FILE, write_end);
+
+    return -1;
+  }
+  
+  return 0;
+}
+
+int handle_open(char* path){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+
+  struct Node* file_node = node_find(tcb->cwd, buf);
+  free(buf);
+  if (file_node == NULL){
+    // could not find file
+    return -1;
+  }
+
+  int fd = allocate_descriptor(tcb, DESCRIPTOR_FILE, true);
+  if (fd < 0){
+    // could not allocate file descriptor
+    node_free(file_node);
+    return -1;
+  }
+
+  tcb->file_descriptors[fd]->file = file_node;
+  tcb->file_descriptors[fd]->offset = 0;
+  return fd;
+}
+
+int handle_read(int fd, char* buf, unsigned count){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (count > SYSCALL_MAX_IO_BYTES){
+    // max read size
+    count = SYSCALL_MAX_IO_BYTES;
+  }
+
+  if (count == 0){
+    return 0;
+  }
+
+  enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
+  if (type == FILE_DESCRIPTOR_STDIN){
+    if (!user_range_ok(tcb, buf, count, MMAP_WRITE)){
+      return -1;
+    }
+    char* kbuf = malloc(count);
+    for (unsigned i = 0; i < count; i++){
+      kbuf[i] = waitkey();
+    }
+    int rc = copy_to_user(buf, kbuf, count, tcb);
+    free(kbuf);
+    if (rc != 0){
+      return -1;
+    }
+    return count;
+  } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR
+            || type == FILE_DESCRIPTOR_PIPE_WRITE){
+    return 0;
+  } else if (type == FILE_DESCRIPTOR_PIPE_READ){
+    struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+    char* kbuf = malloc(count);
+    for (int i = 0; i < count; i++){
+      kbuf[i] = blocking_ringbuf_remove(&pipe->buf);
+    }
+    copy_to_user(buf, kbuf, count, tcb);
+    free(kbuf);
+
+    return count;
+  }
+
+  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  if (file_node == NULL){
+    return -1;
+  }
+
+  int offset = tcb->file_descriptors[fd]->offset;
+  if (offset < 0){
+    return -1;
+  }
+
+  unsigned file_size = node_size_in_bytes(file_node);
+  if ((unsigned)offset >= file_size){
+    return 0;
+  }
+
+  unsigned bytes_to_read = count;
+  if (count > file_size - (unsigned)offset){
+    bytes_to_read = file_size - (unsigned)offset;
+  } 
+
+  char* kbuf = malloc(bytes_to_read);
+  unsigned rounded_offset = (unsigned)offset & ~(FRAME_SIZE - 1);
+  unsigned rounded_bytes = (bytes_to_read + ((unsigned)offset - rounded_offset) + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  char* mmapped_file = mmap(rounded_bytes, file_node, rounded_offset,
+    MMAP_READ | MMAP_SHARED);
+  memcpy(kbuf, mmapped_file + ((unsigned)offset - rounded_offset),
+    bytes_to_read);
+  munmap(mmapped_file);
+
+  int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
+  free(kbuf);
+  if (rc != 0){
+    return -1;
+  }
+
+  __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, bytes_to_read);
+  
+  return bytes_to_read;
+}
+
+int handle_write(int fd, char* buf, unsigned count){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (count > SYSCALL_MAX_IO_BYTES){
+    count = SYSCALL_MAX_IO_BYTES;
+  }
+
+  if (count == 0){
+    return 0;
+  }
+
+  char* kbuf = malloc(count);
+  int rc = copy_from_user(kbuf, buf, count, tcb);
+
+  if (rc != 0){
+    // failed to copy from user space
+    free(kbuf);
+    return -1;
+  }
+
+  enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
+  if (type == FILE_DESCRIPTOR_STDIN || type == FILE_DESCRIPTOR_PIPE_READ){
+    free(kbuf);
+    return 0;
+  } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR){
+    for (unsigned i = 0; i < count; i++){
+      putchar(kbuf[i]);
+    }
+    free(kbuf);
+    return count;
+  } else if (type == FILE_DESCRIPTOR_PIPE_WRITE){
+    struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+    for (unsigned i = 0; i < count; i++){
+      blocking_ringbuf_add(&pipe->buf, kbuf[i]);
+    }
+    free(kbuf);
+    return count;
+  }
+
+  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  if (file_node == NULL){
+    free(kbuf);
+    return -1;
+  }
+
+  int offset = tcb->file_descriptors[fd]->offset;
+  if (offset < 0){
+    free(kbuf);
+    return -1;
+  }
+
+  if ((unsigned)offset > INT_MAX - count){
+    free(kbuf);
+    return -1;
+  }
+
+  unsigned rounded_offset = (unsigned)offset & ~(FRAME_SIZE - 1);
+  unsigned rounded_bytes = count + ((unsigned)offset - rounded_offset);
+
+  char* mmapped_file = mmap(rounded_bytes, file_node, rounded_offset,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  memcpy(mmapped_file + ((unsigned)offset - rounded_offset), kbuf, count);
+  munmap(mmapped_file);
+  free(kbuf);
+  
+  __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, count);
+  
+  return count;
+}
+
+int handle_close(int fd){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+  
+  deallocate_descriptor(tcb, DESCRIPTOR_FILE, fd);
+  return 0;
+}
+
+int handle_sem_open(int sem_count){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (sem_count < 0){
+    return -1;
+  }
+
+  int sem_d = allocate_descriptor(tcb, DESCRIPTOR_SEM, true);
+  if (sem_d < 0){
+    return -1;
+  }
+
+  sem_init(tcb->sem_descriptors[sem_d]->sem, sem_count);
+
+  return sem_d + SEM_DESCRIPTORS_START;
+}
+
+int handle_sem_up(int sem_d){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  sem_d -= SEM_DESCRIPTORS_START;
+  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+    return -1;
+  }
+
+  sem_up(tcb->sem_descriptors[sem_d]->sem);
+  return 0;
+}
+
+int handle_sem_down(int sem_d){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  sem_d -= SEM_DESCRIPTORS_START;
+  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+    return -1;
+  }
+
+  sem_down(tcb->sem_descriptors[sem_d]->sem);
+  return 0;
+}
+
+int handle_sem_close(int sem_d){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  sem_d -= SEM_DESCRIPTORS_START;
+  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+    return -1;
+  }
+
+  deallocate_descriptor(tcb, DESCRIPTOR_SEM, sem_d);
+  return 0;
+}
+
+int handle_seek(int fd, int offset, int whence){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  // validate descriptor
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
+  if (descriptor->file == NULL){
+    return -1;
+  }
+  
+  int new_offset = 0;
+
+  switch (whence){
+    case SEEK_SET: {
+      if (offset < 0) return -1;
+
+      __atomic_store_n(&descriptor->offset, offset);
+      new_offset = offset;
+      break;
+    }
+    case SEEK_CUR: {
+      new_offset = offset + __atomic_fetch_add(&descriptor->offset, offset);
+      break;
+    }
+    case SEEK_END: {
+      unsigned file_size = node_size_in_bytes(descriptor->file);
+
+      if ((unsigned)offset + file_size > INT_MAX) return -1;
+
+      __atomic_store_n(&descriptor->offset, (int)file_size + offset);
+      new_offset = (int)file_size + offset;
+      break;
+    }
+    default:
+      return -1;
+  }
+  return new_offset;
+}
+
+int handle_dup(int fd){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  int new_fd = allocate_descriptor(tcb, DESCRIPTOR_FILE, false);
+  if (new_fd < 0){
+    return -1;
+  }
+
+  __atomic_fetch_add(&tcb->file_descriptors[fd]->refcount, 1);
+  tcb->file_descriptors[new_fd] = tcb->file_descriptors[fd];
+  
+  return new_fd;
+}
+
+int handle_play_audio(int fd){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  struct Node* audio_file = tcb->file_descriptors[fd]->file;
+  if (audio_file == NULL || !node_is_file(audio_file)){
+    return -1;
+  }
+
+  struct Node** audio_node_arg = malloc(sizeof(struct Node*));
+  *audio_node_arg = node_clone(audio_file);
+  if (*audio_node_arg == NULL){
+    free(audio_node_arg);
+    return -1;
+  }
+
+  struct Fun* audio_worker_fun = malloc(sizeof(struct Fun));
+  audio_worker_fun->func = audio_worker;
+  audio_worker_fun->arg = audio_node_arg;
+  thread_(audio_worker_fun, HIGH_PRIORITY, ANY_CORE);
+  
+  return 0;
+}
+
+int handle_chdir(char* path){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+
+  struct Node* file_node = node_find(tcb->cwd, buf);
+  free(buf);
+  if (file_node == NULL){
+    // could not find file
+    return -1;
+  }
+
+  // don't chdir into a non-directory
+  if (!node_is_dir(file_node)){
+    node_free(file_node);
+    return -1;
+  }
+  
+  node_free(tcb->cwd);
+
+  tcb->cwd = file_node;
+  return 0;
+}
+
+int handle_mmap(int size, int fd, int offset, int flags){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  struct Node* file_node = NULL;
+  if (fd >= 0){
+    // file backed mmap request
+    if (fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+      return -1;
+    }
+
+    file_node = tcb->file_descriptors[fd]->file;
+    if (file_node == NULL){
+      return -1;
+    }
+  } // else anonymous mmap request
+
+  if (offset < 0) return -1;
+
+  flags &= USER_MMAP_FLAGS_MASK;
+  flags |= MMAP_USER;
+
+  char* mmapped_file = mmap(size, file_node, offset, flags);
+
+  return (unsigned)mmapped_file;
+}
+
+struct TCB* fork_tcb(struct TCB* parent){
+
+}
+
+void child_thread(void* arg){
+  struct ChildDescriptor* child_desc = (struct ChildDescriptor*)arg;
+  //int rc = jump_to_user();
+
+  //promise_set(&child_desc->child, rc);
+
+  //if (__atomic_fetch_add(&child_desc->refcount, -1) == 1){
+  //  promise_free(&child_desc->child);
+  //  free(child_desc);
+  //}
+}
+
+int handle_fork(void){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  int child_desc = allocate_descriptor(tcb, DESCRIPTOR_CHILD, true);
+  if (child_desc < 0){
+    return -1;
+  }
+
+  struct TCB* child = fork_tcb(tcb);
+
+  struct Fun* child_fun = malloc(sizeof(struct Fun));
+  child_fun->func = child_thread;
+  child_fun->arg = tcb->child_descriptors[child_desc];
+  __atomic_fetch_add(&tcb->child_descriptors[child_desc]->refcount, 1);
+
+  scheduler_wake_thread(child);
+
+  return child_desc;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -205,232 +706,41 @@ int trap_handler(unsigned code,
       return 0;
     }
     case TRAP_OPEN: {
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      char* path = (char*)arg1;
-      char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-      int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-      if (rc != 0){
-        free(buf);
-        return -1;
-      }
-
-      struct Node* file_node = node_find(tcb->cwd, buf);
-      free(buf);
-      if (file_node == NULL){
-        // could not find file
-        return -1;
-      }
-
-      int fd = allocate_descriptor(tcb, DESCRIPTOR_FILE, true);
-      if (fd < 0){
-        // could not allocate file descriptor
-        node_free(file_node);
-        return -1;
-      }
-
-      tcb->file_descriptors[fd]->file = file_node;
-      tcb->file_descriptors[fd]->offset = 0;
-      return fd;
+      return handle_open((char*)arg1);
     }
     case TRAP_READ: {
-      int fd = arg1;
-      char* buf = (char*)arg2;
-      unsigned count = arg3;
-
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
-        return -1;
-      }
-
-      if (count > SYSCALL_MAX_IO_BYTES){
-        // max read size
-        count = SYSCALL_MAX_IO_BYTES;
-      }
-
-      if (count == 0){
-        return 0;
-      }
-
-      enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
-      if (type == FILE_DESCRIPTOR_STDIN){
-        if (!user_range_ok(tcb, buf, count, MMAP_WRITE)){
-          return -1;
-        }
-        char* kbuf = malloc(count);
-        for (unsigned i = 0; i < count; i++){
-          kbuf[i] = waitkey();
-        }
-        int rc = copy_to_user(buf, kbuf, count, tcb);
-        free(kbuf);
-        if (rc != 0){
-          return -1;
-        }
-        return count;
-      } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR){
-        return 0;
-      }
-
-      struct Node* file_node = tcb->file_descriptors[fd]->file;
-      if (file_node == NULL){
-        return -1;
-      }
-
-      unsigned offset = tcb->file_descriptors[fd]->offset;
-      unsigned file_size = node_size_in_bytes(file_node);
-      if (offset >= file_size){
-        return 0;
-      }
-
-      unsigned bytes_to_read = count;
-      if (count > file_size - offset){
-        bytes_to_read = file_size - offset;
-      } 
-
-      char* kbuf = malloc(bytes_to_read);
-      unsigned rounded_offset = offset & ~(FRAME_SIZE - 1);
-      unsigned rounded_bytes = (bytes_to_read + (offset - rounded_offset) + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
-      char* mmapped_file = mmap(rounded_bytes, file_node, rounded_offset, MMAP_READ | MMAP_SHARED);
-      memcpy(kbuf, mmapped_file + (offset - rounded_offset), bytes_to_read);
-      munmap(mmapped_file);
-
-      int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
-      free(kbuf);
-      if (rc != 0){
-        return -1;
-      }
-
-      tcb->file_descriptors[fd]->offset = offset + bytes_to_read;
-      return bytes_to_read;
+      return handle_read(arg1, (char*)arg2, (unsigned)arg3);
     }
     case TRAP_WRITE: {
-      int fd = arg1;
-      char* buf = (char*)arg2;
-      unsigned count = arg3;
-
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
-        return -1;
-      }
-
-      if (count > SYSCALL_MAX_IO_BYTES){
-        count = SYSCALL_MAX_IO_BYTES;
-      }
-
-      if (count == 0){
-        return 0;
-      }
-
-      char* kbuf = malloc(count);
-      int rc = copy_from_user(kbuf, buf, count, tcb);
-
-      if (rc != 0){
-        // failed to copy from user space
-        free(kbuf);
-        return -1;
-      }
-
-      enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
-      if (type == FILE_DESCRIPTOR_STDIN){
-        free(kbuf);
-        return 0;
-      } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR){
-        for (unsigned i = 0; i < count; i++){
-          putchar(kbuf[i]);
-        }
-        free(kbuf);
-        return count;
-      }
-
-      struct Node* file_node = tcb->file_descriptors[fd]->file;
-      if (file_node == NULL){
-        free(kbuf);
-        return -1;
-      }
-
-      unsigned offset = tcb->file_descriptors[fd]->offset;
-      if (count > UINT_MAX - offset){
-        free(kbuf);
-        return -1;
-      }
-
-      unsigned rounded_offset = offset & ~(FRAME_SIZE - 1);
-      unsigned rounded_bytes = count + (offset - rounded_offset);
-
-      char* mmapped_file = mmap(rounded_bytes, file_node, rounded_offset, MMAP_READ | MMAP_WRITE | MMAP_SHARED);
-      memcpy(mmapped_file + (offset - rounded_offset), kbuf, count);
-      munmap(mmapped_file);
-      free(kbuf);
-      
-      tcb->file_descriptors[fd]->offset = offset + count;
-      return count;
+      return handle_write(arg1, (char*)arg2, (unsigned)arg3);
     }
     case TRAP_CLOSE: {
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      if (arg1 < 0 || arg1 >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[arg1] == NULL){
-        return -1;
-      }
-      
-      deallocate_descriptor(tcb, DESCRIPTOR_FILE, arg1);
-      return 0;
+      return handle_close(arg1);
     }
     case TRAP_SEM_OPEN: {
-      panic("sem syscalls not implemented\n");
+      return handle_sem_open(arg1);
     }
     case TRAP_SEM_UP: {
-      panic("sem syscalls not implemented\n");
+      return handle_sem_up(arg1);
     }
     case TRAP_SEM_DOWN: {
-      panic("sem syscalls not implemented\n");
+      return handle_sem_down(arg1);
     }
     case TRAP_SEM_CLOSE: {
-      panic("sem syscalls not implemented\n");
+      return handle_sem_close(arg1);
     }
     case TRAP_MMAP: {
-      panic("mmap syscall not implemented\n");
+      return handle_mmap(arg1, arg2, arg3, arg4);
     }
     case TRAP_FORK: {
-      panic("fork syscall not implemented\n");
+      return handle_fork();
     }
     case TRAP_EXEC: {
-      panic("exec syscall not implemented\n");
+      puts("exec syscall not implemented\n");
+      return -1;
     }
     case TRAP_PLAY_AUDIO: {
-      int fd = arg1;
-
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
-        return -1;
-      }
-
-      struct Node** audio_node_arg = malloc(sizeof(struct Node*));
-      *audio_node_arg = node_clone(tcb->file_descriptors[fd]->file);
-      if (*audio_node_arg == NULL){
-        free(audio_node_arg);
-        return -1;
-      }
-
-      struct Fun* audio_worker_fun = malloc(sizeof(struct Fun));
-      audio_worker_fun->func = audio_worker;
-      audio_worker_fun->arg = audio_node_arg;
-      thread_(audio_worker_fun, HIGH_PRIORITY, ANY_CORE);
-      
-      return 0;
+      return handle_play_audio(arg1);
     }
     case TRAP_SET_TEXT_COLOR: {
       int color = arg1;
@@ -443,56 +753,24 @@ int trap_handler(unsigned code,
       panic("wait_child syscall not implemented\n");
     }
     case TRAP_CHDIR: {
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      char* path = (char*)arg1;
-      char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-      int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-      if (rc != 0){
-        free(buf);
-        return -1;
-      }
-
-      struct Node* file_node = node_find(tcb->cwd, buf);
-      free(buf);
-      if (file_node == NULL){
-        // could not find file
-        return -1;
-      }
-      
-      node_free(tcb->cwd);
-
-      tcb->cwd = file_node;
-      return 0;
+      return handle_chdir((char*)arg1);
     }
     case TRAP_PIPE: {
-      panic("pipe syscall not implemented\n");
+      return handle_pipe((int*)arg1);
     }
     case TRAP_DUP: {
-      int was = interrupts_disable();
-      struct TCB* tcb = get_current_tcb();
-      interrupts_restore(was);
-
-      if (arg1 < 0 || arg1 >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[arg1] == NULL){
-        return -1;
-      }
-
-      int fd = allocate_descriptor(tcb, DESCRIPTOR_FILE, false);
-      if (fd < 0){
-        return -1;
-      }
-
-      __atomic_fetch_add(&tcb->file_descriptors[arg1]->refcount, 1);
-      tcb->file_descriptors[fd] = tcb->file_descriptors[arg1];
-      
-      return fd;
+      return handle_dup(arg1);
+    }
+    case TRAP_SEEK: {
+      return handle_seek(arg1, arg2, arg3);
+    }
+    case TRAP_YIELD: {
+      yield();
+      return 0;
     }
     default: {
-      unrecognized_trap_handler(code);
-      break;
+      *return_to_user = false;
+      return -1;
     }
   }
 }
@@ -579,7 +857,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
           if (fill){
             tcb->sem_descriptors[i] = malloc(sizeof(struct SemDescriptor));
             tcb->sem_descriptors[i]->refcount = 1;
-            tcb->sem_descriptors[i]->sem = NULL;
+            tcb->sem_descriptors[i]->sem = malloc(sizeof(struct Semaphore));
           }
           return i;
         }
@@ -604,47 +882,100 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
   return -1;
 }
 
+void copy_descriptors(struct TCB* src, struct TCB* dst){
+  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
+    if (src->file_descriptors[i] != NULL){
+      dst->file_descriptors[i] = src->file_descriptors[i];
+      __atomic_fetch_add(&dst->file_descriptors[i]->refcount, 1);
+    } else {
+      dst->file_descriptors[i] = NULL;
+    }
+  }
+
+  for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
+    if (src->sem_descriptors[i] != NULL){
+      dst->sem_descriptors[i] = src->sem_descriptors[i];
+      __atomic_fetch_add(&dst->sem_descriptors[i]->refcount, 1);
+    } else {
+      dst->sem_descriptors[i] = NULL;
+    }
+  }
+
+  for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
+    if (src->child_descriptors[i] != NULL){
+      dst->child_descriptors[i] = src->child_descriptors[i];
+      __atomic_fetch_add(&dst->child_descriptors[i]->refcount, 1);
+    } else {
+      dst->child_descriptors[i] = NULL;
+    }
+  }
+}
+
 void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index){
   switch (type){
     case DESCRIPTOR_FILE: {
-      if (__atomic_fetch_add(&tcb->file_descriptors[index]->refcount, -1) > 1){
+      struct FileDescriptor* descriptor = tcb->file_descriptors[index];
+      tcb->file_descriptors[index] = NULL;
+
+      if (descriptor == NULL)
+        return;
+
+      if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
         return;
       }
 
-      if (tcb->file_descriptors[index]->file != NULL){
-        node_free(tcb->file_descriptors[index]->file);
+      if (descriptor->type == FILE_DESCRIPTOR_PIPE_READ || 
+          descriptor->type == FILE_DESCRIPTOR_PIPE_WRITE){
+        struct Pipe* pipe = (struct Pipe*)descriptor->file;
+        if (__atomic_fetch_add((int*)&pipe->refcount, -1) == 1){
+          // The pipe owns its ring buffer backing storage and semaphore state.
+          // Tear that down exactly once when the last pipe endpoint goes away.
+          blocking_ringbuf_destroy(&pipe->buf);
+          free(pipe);
+        }
+      } else if (descriptor->file != NULL){
+        node_free(descriptor->file);
       }
 
-      free(tcb->file_descriptors[index]);
-      tcb->file_descriptors[index] = NULL;
+      free(descriptor);
 
       break;
     }
     case DESCRIPTOR_SEM: {
-      if (__atomic_fetch_add(&tcb->sem_descriptors[index]->refcount, -1) > 1){
+      struct SemDescriptor* descriptor = tcb->sem_descriptors[index];
+      tcb->sem_descriptors[index] = NULL;
+
+      if (descriptor == NULL)
+        return;
+
+      if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
         return;
       }
 
-      if (tcb->sem_descriptors[index]->sem != NULL){
-        sem_free(tcb->sem_descriptors[index]->sem);
+      if (descriptor->sem != NULL){
+        sem_free(descriptor->sem);
       }
 
-      free(tcb->sem_descriptors[index]);
-      tcb->sem_descriptors[index] = NULL;
+      free(descriptor);
 
       break;
     }
     case DESCRIPTOR_CHILD: {
-      if (__atomic_fetch_add(&tcb->child_descriptors[index]->refcount, -1) > 1){
+      struct ChildDescriptor* descriptor = tcb->child_descriptors[index];
+      tcb->child_descriptors[index] = NULL;
+
+      if (descriptor == NULL)
+        return;
+
+      if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
         return;
       }
       
-      if (tcb->child_descriptors[index]->child != NULL){
-        promise_free(tcb->child_descriptors[index]->child);
+      if (descriptor->child != NULL){
+        promise_free(descriptor->child);
       }
 
-      free(tcb->child_descriptors[index]);
-      tcb->child_descriptors[index] = NULL;
+      free(descriptor);
       break;
     }
   }

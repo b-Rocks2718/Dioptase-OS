@@ -2,6 +2,8 @@
 #define SYS_H
 
 #include "constants.h"
+#include "atomic.h"
+#include "blocking_ringbuf.h"
 
 enum TrapCode {
   TRAP_EXIT = 0,
@@ -35,7 +37,15 @@ enum TrapCode {
   TRAP_CHDIR = 28,
   TRAP_PIPE = 29,
   TRAP_DUP = 30,
+  TRAP_SEEK = 31,
+  TRAP_YIELD = 32,
 };
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#define USER_MMAP_FLAGS_MASK 0x1F
 
 #define MAX_FILE_DESCRIPTORS 100
 #define MAX_SEM_DESCRIPTORS 100
@@ -60,11 +70,13 @@ enum FileDescriptorType {
   FILE_DESCRIPTOR_STDIN = 0,
   FILE_DESCRIPTOR_STDOUT = 1,
   FILE_DESCRIPTOR_STDERR = 2,
-  FILE_DESCRIPTOR_NORMAL = 3,
+  FILE_DESCRIPTOR_PIPE_READ = 3,
+  FILE_DESCRIPTOR_PIPE_WRITE = 4,
+  FILE_DESCRIPTOR_NORMAL = 5,
 };
 
 struct FileDescriptor {
-  struct Node* file;
+  struct Node* file; // pipe descriptors cast this to a (struct Pipe*)
   int offset;
   enum FileDescriptorType type;
   int refcount;
@@ -78,6 +90,11 @@ struct SemDescriptor {
 struct ChildDescriptor {
   struct Promise* child;
   int refcount;
+};
+
+struct Pipe {
+  struct BlockingRingBuf buf;
+  unsigned refcount;
 };
 
 // set up IVT with trap handler entry point
@@ -99,6 +116,9 @@ void init_descriptors(struct TCB* tcb, bool init_stdio);
 // find an unused descriptor of the given type in the TCB and return its index,
 // or -1 if none are available
 int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill);
+
+// copy all descriptors from one TCB to another, incrementing refcounts
+void copy_descriptors(struct TCB* src, struct TCB* dst);
 
 // deallocate descriptor and free its resources
 void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index);

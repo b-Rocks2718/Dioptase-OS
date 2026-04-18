@@ -20,6 +20,7 @@ Supported Sync Primatives:
 - semaphore
 - promise
 - bounded buffer
+- blocking ringbuf
 - blocking queue
 - rwlock
 - barrier

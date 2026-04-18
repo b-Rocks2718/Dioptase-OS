@@ -1,6 +1,13 @@
   .text
   .align 4
 
+  .global exit
+exit:
+  mov  r2, r1
+  movi r1, 0
+  trap
+  ret
+
   .global test_syscall
 test_syscall:
   # Trap ABI uses r2-r8 for trap arguments, so preserve the C arg before
@@ -121,6 +128,59 @@ close:
   trap
   ret
 
+  .global sem_open
+sem_open:
+  mov  r2, r1
+  movi r1, 18
+  trap
+  ret
+
+  .global sem_up
+sem_up:
+  mov  r2, r1
+  movi r1, 19
+  trap
+  ret
+
+  .global sem_down
+sem_down:
+  mov  r2, r1
+  movi r1, 20
+  trap
+  ret
+
+  .global sem_close
+sem_close:
+  mov  r2, r1
+  movi r1, 21
+  trap
+  ret
+
+  .global mmap
+mmap:
+  mov  r5, r4
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 22
+  trap
+  ret
+
+  .global fork
+fork:
+  movi r1, 23
+  trap
+  ret
+
+  .global execv
+execv:
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 24
+  trap
+  ret
+
   .global play_audio_file
 play_audio_file:
   mov  r2, r1
@@ -160,5 +220,20 @@ pipe:
 dup:
   mov  r2, r1
   movi r1, 30
+  trap
+  ret
+
+  .global seek
+seek:
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 31
+  trap
+  ret
+
+  .global yield
+yield:
+  movi r1, 32
   trap
   ret

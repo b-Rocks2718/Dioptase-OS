@@ -77,6 +77,9 @@ void munmap(void* p);
 // free all VMEs in the given list
 void free_vme_list(struct VME* vme);
 
+// copy a thread's page dir and page tables from src to dst
+void vmem_copy_address_space(struct TCB* src, struct TCB* dst);
+
 // free all physical pages mapped by the given address space, 
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
