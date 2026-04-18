@@ -84,6 +84,10 @@ jump_to_user:
   # clear flags
   mov efg, r0
 
+  # set up user registers r1 and r2 with the values passed in
+  mov r1, r3
+  mov r2, r4
+
   rfe
 
   .global copy_user

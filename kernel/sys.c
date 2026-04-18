@@ -607,10 +607,6 @@ int handle_mmap(int size, int fd, int offset, int flags){
   return (unsigned)mmapped_file;
 }
 
-struct TCB* fork_tcb(struct TCB* parent){
-
-}
-
 void child_thread(void* arg){
   struct ChildDescriptor* child_desc = (struct ChildDescriptor*)arg;
   //int rc = jump_to_user();
@@ -623,6 +619,56 @@ void child_thread(void* arg){
   //}
 }
 
+struct TCB* fork_tcb(struct TCB* parent, int child_desc){
+  struct TCB* child = malloc(sizeof(struct TCB));
+
+  // copy context
+  child->r20 = parent->r20;
+  child->r21 = parent->r21;
+  child->r22 = parent->r22;
+  child->r23 = parent->r23;
+  child->r24 = parent->r24;
+  child->r25 = parent->r25;
+  child->r26 = parent->r26;
+  child->r27 = parent->r27;
+  child->r28 = parent->r28;
+  
+  child->sp = parent->sp;
+  child->bp = parent->bp;
+  child->ra = parent->ra;
+
+  child->flags = parent->flags;
+  child->psr = parent->psr;
+  child->imr = parent->imr;
+  child->fault_addr = parent->fault_addr;
+  child->fault_flags = parent->fault_flags;
+
+  child->can_preempt = parent->can_preempt;
+  child->core_affinity = parent->core_affinity;
+  child->priority = parent->priority;
+  child->mlfq_level = parent->mlfq_level;
+  child->remaining_quantum = parent->remaining_quantum;
+  child->wakeup_jiffies = parent->wakeup_jiffies;
+
+  child->uaccess_active = parent->uaccess_active;
+  child->uaccess_err_addr = parent->uaccess_err_addr;
+
+  // create new page dir
+  child->pid = parent->pid;
+
+  // alloc new kernel stack
+  unsigned* the_stack = malloc(TCB_STACK_SIZE);
+  child->stack = the_stack;
+  child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);;
+
+  struct Fun* thread_fun;
+
+  //struct Fun* child_fun = malloc(sizeof(struct Fun));
+  //child_fun->func = child_thread;
+  //child_fun->arg = parent->child_descriptors[child_desc];
+  //__atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
+}
+
 int handle_fork(void){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -633,13 +679,7 @@ int handle_fork(void){
     return -1;
   }
 
-  struct TCB* child = fork_tcb(tcb);
-
-  struct Fun* child_fun = malloc(sizeof(struct Fun));
-  child_fun->func = child_thread;
-  child_fun->arg = tcb->child_descriptors[child_desc];
-  __atomic_fetch_add(&tcb->child_descriptors[child_desc]->refcount, 1);
-
+  struct TCB* child = fork_tcb(tcb, child_desc);
   scheduler_wake_thread(child);
 
   return child_desc;
@@ -794,7 +834,7 @@ int run_user_program(struct Node* prog_node){
     MMAP_READ | MMAP_WRITE | MMAP_USER);
 
   return jump_to_user(entry,
-    (unsigned)stack + INITIAL_USER_STACK_SIZE - sizeof(unsigned));
+    (unsigned)stack + INITIAL_USER_STACK_SIZE - sizeof(unsigned), 0, 0);
 }
 
 void init_descriptors(struct TCB* tcb, bool init_stdio){

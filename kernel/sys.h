@@ -101,7 +101,8 @@ struct Pipe {
 void trap_init(void);
 
 // Enter user mode through rfe
-unsigned jump_to_user(unsigned entry, unsigned stack);
+// can pass in r1, r2 for use as either a return value or argc and argv
+unsigned jump_to_user(unsigned entry, unsigned stack, unsigned r1, unsigned r2);
 
 // run a user program given a node representing its ELF file
 // consumes the node, so the caller cannot use it after calling this function
