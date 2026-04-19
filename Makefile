@@ -1,6 +1,7 @@
-# Build/test harness for Dioptase-OS test programs.
-# builds a standalone BIOS hex image, then builds a kernel binary image
-# from a root test C file plus kernel sources, and optionally runs the emulator.
+# Build/test harness for Dioptase-OS test programs and the repo-local rootfs.
+# Builds a standalone BIOS hex image, then builds either a per-test kernel image
+# or the default kernel image from kernel/kernel_main.c, and optionally runs the
+# emulator with an ext2 SD1 image sourced from tests/<name>.dir or root/.
 
 # ----------------------------------- configuration ---------------------------------------- #
 
@@ -118,6 +119,7 @@ TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
 TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
+ROOTFS_DIR := root
 
 EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
 EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
@@ -141,19 +143,25 @@ BIOS_C_DEPS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s.d,$(BIOS_C_SRCS))
 KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
 DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
-# Build the emulator argv in shell positional parameters. When tests/<name>.dir
-# exists, package it as an ext2 filesystem image and attach it as SD1. Most
-# tests extract the final SD1 image into tests/<name>.out.dir; persistent tests
-# instead replace their source tests/<name>.dir with the extracted result.
-define prepare_emulator_cmd
-sd1_dir="tests/$*.dir"; \
+# Build the emulator argv in shell positional parameters. When the supplied
+# guest root directory exists, package it as an ext2 filesystem image and
+# attach it as SD1. The extracted SD1 output directory is caller-selected so
+# tests can write into tests/<name>.out.dir while persistent targets replace
+# their source tree in place.
+#
+# $(1): stable stem for temporary build/<stem>.sd1*.ext2 files
+# $(2): SD0 kernel image passed to the emulator
+# $(3): host directory to package as the initial SD1 ext2 root
+# $(4): host directory to replace with the extracted SD1 output image
+define prepare_emulator_cmd_for_dir
+sd1_dir="$(3)"; \
 sd1_output_image=""; \
 sd1_output_dir=""; \
-set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(BUILD_DIR)/$*.bin" --sd-dma-ticks $(SD_DMA_TICKS); \
+set -- "$(EMULATOR)" "$(BIOS_HEX)" --sd0 "$(2)" --sd-dma-ticks $(SD_DMA_TICKS); \
 if [ -d "$$sd1_dir" ]; then \
-  sd1_image="$(BUILD_DIR)/$*.sd1.ext2"; \
-  sd1_output_image="$(BUILD_DIR)/$*.sd1.out.ext2"; \
-  sd1_output_dir="$(if $(filter $*,$(PERSISTENT_TEST_NAMES)),tests/$*.dir,tests/$*.out.dir)"; \
+  sd1_image="$(BUILD_DIR)/$(1).sd1.ext2"; \
+  sd1_output_image="$(BUILD_DIR)/$(1).sd1.out.ext2"; \
+  sd1_output_dir="$(4)"; \
   dir_kib=$$(du -sk "$$sd1_dir" | cut -f1); \
   dir_blocks=$$(((dir_kib * 1024 + $(BLOCK_SIZE) - 1) / $(BLOCK_SIZE))); \
   fs_blocks=$$((dir_blocks + $(SD_IMAGE_EXTRA_BLOCKS))); \
@@ -167,10 +175,19 @@ fi; \
 set -- "$$@" $(EMU_FLAGS);
 endef
 
-# Extract an SD1 ext2 output image back into a host directory when the test used
-# tests/<name>.dir. Persistent tests target the original source directory while
-# normal tests target tests/<name>.out.dir. Extraction warnings are non-fatal
-# so guest filesystem bugs do not hide the program's own exit status.
+define prepare_test_emulator_cmd
+$(call prepare_emulator_cmd_for_dir,$*,$(BUILD_DIR)/$*.bin,tests/$*.dir,$(if $(filter $*,$(PERSISTENT_TEST_NAMES)),tests/$*.dir,tests/$*.out.dir))
+endef
+
+define prepare_root_emulator_cmd
+$(call prepare_emulator_cmd_for_dir,run,$(KERNEL_BIN),$(ROOTFS_DIR),$(ROOTFS_DIR))
+endef
+
+# Extract an SD1 ext2 output image back into the caller-selected host directory.
+# Tests usually target tests/<name>.out.dir, persistent targets replace their
+# source tree in place, and `make run` writes back into root/. Extraction
+# warnings are non-fatal so guest filesystem bugs do not hide the program's own
+# exit status.
 define extract_sd1_output_dir
 if [ -n "$$sd1_output_image" ] && [ -f "$$sd1_output_image" ]; then \
   "$(PYTHON3)" "$(EXT2_DIR_EXTRACTOR)" "$$sd1_output_image" "$$sd1_output_dir" || \
@@ -180,7 +197,7 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
-  kernel.bin kernel.hex kernel.labels $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
+  kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s
 # Keep generated assembly outputs for inspection.
@@ -283,9 +300,26 @@ $(TEST_SBIN_TARGETS): test-sbin-%:
 	    BASM="$(abspath $(BASM))" || exit $$?; \
 	fi
 
+# Refresh the repo-local /sbin payload used by `make run`.
+root-sbin:
+	@if [ -f "$(ROOTFS_DIR)/sbin/Makefile" ]; then \
+	  "$(MAKE)" -C "$(ROOTFS_DIR)/sbin" \
+	    CC="$(abspath $(BCC))" \
+	    BASM="$(abspath $(BASM))" || exit $$?; \
+	fi
+
+# Run the default kernel image with root/ packaged as SD1. Like persistent
+# tests, any SD1 output image is extracted back into root/ after the run.
+run: root-sbin $(BIOS_HEX) $(KERNEL_BIN) $(EMULATOR)
+	@$(prepare_root_emulator_cmd) \
+	status=0; \
+	"$$@" || status=$$?; \
+	$(extract_sd1_output_dir) \
+	exit $$status
+
 # Run alias so `make test` builds BIOS + kernel and runs the emulator.
 $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
-	@$(prepare_emulator_cmd) \
+	@$(prepare_test_emulator_cmd) \
 	status=0; \
 	"$$@" || status=$$?; \
 	$(extract_sd1_output_dir) \
@@ -294,7 +328,7 @@ $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 # Test alias so `make testname.test` runs the emulator multiple times and compares output.
 # Keep per-run logging here for interactive debugging of a single test.
 %.test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
-	@$(prepare_emulator_cmd) \
+	@$(prepare_test_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
 	test_name="$*"; \
@@ -333,7 +367,7 @@ physmem_test.test physmem_test.fail physmem_test.summary-test: TIMEOUT_SECONDS=1
 physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 
 %.summary-test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
-	@$(prepare_emulator_cmd) \
+	@$(prepare_test_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
 	timeout_failures=0; \
@@ -378,7 +412,7 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 
 # Test alias so `make testname.fail` stops on the first failure.
 %.fail: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
-	@$(prepare_emulator_cmd) \
+	@$(prepare_test_emulator_cmd) \
 	runs=$(TEST_RUNS); \
 	success=0; \
 	test_name="$*"; \
