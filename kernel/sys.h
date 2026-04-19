@@ -39,6 +39,9 @@ enum TrapCode {
   TRAP_DUP = 30,
   TRAP_SEEK = 31,
   TRAP_YIELD = 32,
+  TRAP_GETDENTS = 33,
+  TRAP_GETCWD = 34,
+  TRAP_READLINK = 35,
 };
 
 #define SEEK_SET 0

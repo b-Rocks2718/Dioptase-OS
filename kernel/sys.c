@@ -763,6 +763,72 @@ int handle_play_audio(int fd){
   return 0;
 }
 
+char *clean_path(char *path) {
+    // Split by '/' to resolve "." and "..".
+    unsigned maximum_parts = SYSCALL_MAX_PATH_BYTES / 64;
+    char **parts = malloc(sizeof(char*) * maximum_parts);
+    for (unsigned i = 0; i < maximum_parts; i++) {
+        parts[i] = NULL;
+    }
+    unsigned part_count = 0;
+    char *current = path;
+
+    unsigned total_length = 2; // For '/' and null terminator.
+
+    while (*current != 0) {
+        // Skip leading '/'.
+        while (*current == '/') {
+            current++;
+        }
+        if (*current == 0) {
+            break;
+        }
+        char *start = current;
+        while (*current != '/' && *current != 0) {
+            current++;
+        }
+        unsigned length = (unsigned) current - (unsigned) start;
+        if (length == 1 && start[0] == '.') {
+            // Do nothing.
+            continue;
+        } else if (length == 2 && start[0] == '.' && start[1] == '.') {
+            if (part_count == 0) {
+                // At root. Do nothing.
+                continue;
+            }
+            total_length -= (strlen((char*) parts[part_count - 1]) + 1);
+            free((char*) parts[--part_count]);
+            continue;
+        }
+
+        char *part = malloc(length + 1);
+        memcpy(part, start, length);
+        part[length] = 0;
+        parts[part_count++] = part;
+        total_length += length + 1;
+    }
+
+    if (part_count > 0) {
+        total_length--; // No trailing '/'.
+    }
+
+    // Reconstruct.
+    char *cleaned = malloc(total_length);
+    cleaned[0] = '/';
+    unsigned cleaned_index = 1;
+    for (unsigned i = 0; i < part_count; i++) {
+        unsigned part_offset = 0;
+        while (parts[i][part_offset] != 0) {
+            cleaned[cleaned_index++] = parts[i][part_offset++];
+        }
+        cleaned[cleaned_index++] = '/';
+        free((char*) parts[i]);
+    }
+    cleaned[total_length - 1] = 0; // Overwrite last '/' with null terminator.
+    free(parts);
+    return cleaned;
+}
+
 int handle_chdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -777,14 +843,15 @@ int handle_chdir(char* path){
   }
 
   struct Node* file_node = node_find(tcb->cwd, buf);
-  free(buf);
   if (file_node == NULL){
     // could not find file
+    free(buf);
     return -1;
   }
 
   // don't chdir into a non-directory
   if (!node_is_dir(file_node)){
+    free(buf);
     node_free(file_node);
     return -1;
   }
@@ -792,6 +859,35 @@ int handle_chdir(char* path){
   node_free(tcb->cwd);
 
   tcb->cwd = file_node;
+
+  // Combine path.
+  char *old_path = tcb->cwd_path;
+  unsigned old_length = strlen(old_path);
+  unsigned new_length = strlen(buf);
+
+  unsigned new_offset = 0;
+  char *final_path;
+
+  if (buf[0] == '/') {
+      // Absolute path.
+      final_path = malloc(new_length + 1);
+  } else {
+      // Relative path.
+      new_offset = old_length + 1; // Include '/'.
+      final_path = malloc(new_offset + new_length + 1);
+      // Copy old path.
+      memcpy(final_path, old_path, old_length);
+      final_path[old_length] = '/';
+  }
+  // Copy cwd path.
+  memcpy(final_path + new_offset, buf, new_length);
+  final_path[new_offset + new_length] = 0;
+
+  tcb->cwd_path = clean_path(final_path);
+
+  free(final_path);
+  free(old_path);
+  free(buf);
   return 0;
 }
 
@@ -968,6 +1064,32 @@ int handle_exec(char* path, int argc, char** argv){
   return -1;
 }
 
+int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
+  puts("getdents.\n");
+  return -1;
+}
+
+int handle_getcwd(char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+  
+  int cwd_len = strlen(tcb->cwd_path);
+  if (buffer_size < (unsigned)cwd_len + 1) {
+    return -1;
+  }
+  int rc = copy_to_user(buffer, tcb->cwd_path, cwd_len + 1, tcb);
+  if (rc != 0) {
+    return -1;
+  }
+  return (unsigned) buffer;
+}
+
+int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
+  puts("readlink.\n");
+  return -1;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -1089,6 +1211,15 @@ int trap_handler(unsigned code,
     case TRAP_YIELD: {
       yield();
       return 0;
+    }
+    case TRAP_GETDENTS: {
+      return handle_getdents(arg1, (char*)arg2, (unsigned)arg3);
+    }
+    case TRAP_GETCWD: {
+      return handle_getcwd((char*)arg1, (unsigned)arg2);
+    }
+    case TRAP_READLINK: {
+      return handle_readlink((char*)arg1, (char*)arg2, (unsigned)arg3);
     }
     default: {
       *return_to_user = false;

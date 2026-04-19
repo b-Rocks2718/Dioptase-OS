@@ -77,6 +77,12 @@ int dup(int fd);
 
 void yield(void);
 
+int getdents(int fd, char* buffer, unsigned buffer_size);
+
+int getcwd(char* buffer, unsigned buffer_size);
+
+int readlink(char* path, char* buffer, unsigned buffer_size);
+
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
