@@ -120,6 +120,8 @@ TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
 ROOTFS_DIR := root
+ROOT_PROGRAM_MAKEFILES := $(sort $(wildcard $(ROOTFS_DIR)/*/Makefile))
+ROOT_PROGRAM_DIRS := $(patsubst %/Makefile,%,$(ROOT_PROGRAM_MAKEFILES))
 
 EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
 EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
@@ -300,13 +302,15 @@ $(TEST_SBIN_TARGETS): test-sbin-%:
 	    BASM="$(abspath $(BASM))" || exit $$?; \
 	fi
 
-# Refresh the repo-local /sbin payload used by `make run`.
+# Refresh every repo-local root program under root/*/Makefile so each one drops
+# its executable into root/sbin/ before `make run` packages the filesystem.
 root-sbin:
-	@if [ -f "$(ROOTFS_DIR)/sbin/Makefile" ]; then \
-	  "$(MAKE)" -C "$(ROOTFS_DIR)/sbin" \
+	@mkdir -p "$(ROOTFS_DIR)/sbin"
+	@for program_dir in $(ROOT_PROGRAM_DIRS); do \
+	  "$(MAKE)" -C "$$program_dir" \
 	    CC="$(abspath $(BCC))" \
 	    BASM="$(abspath $(BASM))" || exit $$?; \
-	fi
+	done
 
 # Run the default kernel image with root/ packaged as SD1. Like persistent
 # tests, any SD1 output image is extracted back into root/ after the run.
