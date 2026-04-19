@@ -16,7 +16,7 @@ SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
 # memory map
 TEXT_LOAD_ADDR := 0x10000
-DATA_LOAD_ADDR := 0x90000
+DATA_LOAD_ADDR := 0x80000
 RODATA_LOAD_ADDR := 0xD0000
 BSS_LOAD_ADDR := 0xE0000
 

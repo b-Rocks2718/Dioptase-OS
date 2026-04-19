@@ -435,11 +435,11 @@ void stop(unsigned rc) {
 
   if (current->parent_promise != NULL){
     promise_set(current->parent_promise->child, (void*)rc);
-  }
 
-  if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
-    promise_free(current->parent_promise->child);
-    free(current->parent_promise);
+    if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
+      promise_free(current->parent_promise->child);
+      free(current->parent_promise);
+    }
   }
 
   was = interrupts_disable();

@@ -39,6 +39,12 @@ enum TrapCode {
   TRAP_DUP = 30,
   TRAP_SEEK = 31,
   TRAP_YIELD = 32,
+
+
+
+  TRAP_MOVE_VSCROLL = 36,
+  TRAP_MOVE_HSCROLL = 37,
+  TRAP_FD_BYTES_AVAILABLE = 38,
 };
 
 #define SEEK_SET 0

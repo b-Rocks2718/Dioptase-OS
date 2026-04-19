@@ -672,16 +672,16 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
       *epc_ptr = (unsigned)tcb->uaccess_err_addr;
       return 0;
     } else {
-      int args[2] = {fault_addr, flags};
-      say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
+      int args[3] = {fault_addr, flags, (int)*epc_ptr};
+      say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X has no corresponding VME\n", args);
       panic("vmem: TLB miss with no corresponding VME.\n");
       return -1;
     }
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)){
-    int args[2] = {fault_addr, flags};
-    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
+    int args[3] = {fault_addr, flags, (int)*epc_ptr};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
     return -1;
   }
