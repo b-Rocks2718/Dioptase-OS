@@ -72,9 +72,4 @@ User programs enter the kernel with the single `trap` instruction.
 - `r2-r8`: trap-specific arguments
 - IVT entry `0x004`: shared trap vector
 
-Currently supported trap codes:
-
-- `0` (`exit`): `r2` carries the 32-bit exit status value
-
-
-See `syscalls.md` for more details
+Current trap code assignments are documented in `syscalls.md`.

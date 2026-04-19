@@ -67,7 +67,7 @@ int play_audio_file(int fd);
 
 void set_text_color(int color);
 
-void wait_child(int pid);
+int wait_child(int pid);
 
 int chdir(char* path);
 

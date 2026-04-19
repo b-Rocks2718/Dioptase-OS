@@ -78,6 +78,7 @@ enum FileDescriptorType {
 struct FileDescriptor {
   struct Node* file; // pipe descriptors cast this to a (struct Pipe*)
   int offset;
+  struct SpinLock offset_lock;
   enum FileDescriptorType type;
   int refcount;
 };
@@ -106,7 +107,7 @@ unsigned jump_to_user(unsigned entry, unsigned stack, unsigned r1, unsigned r2);
 
 // run a user program given a node representing its ELF file
 // consumes the node, so the caller cannot use it after calling this function
-int run_user_program(struct Node* prog_node);
+int run_user_program(struct Node* prog_node, int argc, char** argv);
 
 // initialize descriptor tables for one TCB.
 // If init_stdio is true, install stdin/stdout/stderr in slots 0..2.

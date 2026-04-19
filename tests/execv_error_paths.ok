@@ -1,0 +1,14 @@
+***missing path
+***test_syscall arg = -1
+***bad path pointer
+***test_syscall arg = -1
+***negative argc
+***test_syscall arg = -1
+***null argv
+***test_syscall arg = -1
+***bad argv pointer
+***test_syscall arg = -1
+***too many args
+***test_syscall arg = -1
+***long arg
+***test_syscall arg = -1

@@ -82,6 +82,8 @@ struct TCB {
   struct SemDescriptor* sem_descriptors[MAX_SEM_DESCRIPTORS];
   struct ChildDescriptor* child_descriptors[MAX_CHILD_DESCRIPTORS];
 
+  struct ChildDescriptor* parent_promise;
+  
   struct Node* cwd;
 
   struct VME* vme_list;

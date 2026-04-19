@@ -16,7 +16,7 @@ int invalid_instr_handler(bool* return_to_user){
   if (was_user){
     // User code executed an invalid instruction. Abort back to the kernel caller
     // of `jump_to_user(...)`.
-    say("User program killed due to invalid instruction\n", NULL);
+    say("| User program killed due to invalid instruction\n", NULL);
     *return_to_user = false;
     return -1;
   }
@@ -30,7 +30,7 @@ int priv_instr_handler(bool* return_to_user){
   if (was_user){
     // User code executed a privileged instruction. Abort back to the kernel caller
     // of `jump_to_user(...)`.
-    say("User program killed due to privileged instruction\n", NULL);
+    say("| User program killed due to privileged instruction\n", NULL);
     *return_to_user = false;
     return -1;
   }
@@ -44,7 +44,7 @@ int misaligned_pc_handler(bool* return_to_user){
   if (was_user){
     // User code executed a misaligned PC. Abort back to the kernel caller
     // of `jump_to_user(...)`.
-    say("User program killed due to misaligned PC\n", NULL);
+    say("| User program killed due to misaligned PC\n", NULL);
     *return_to_user = false;
     return -1;
   }

@@ -1,0 +1,6 @@
+***hello from exec test
+***hello from execed program
+***argc = 2
+***argv[0] = /test/init
+***argv[1] = hello!
+***wait_child returned 42
