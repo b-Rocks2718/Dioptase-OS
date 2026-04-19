@@ -208,21 +208,43 @@ void unmap_vme(unsigned* pd, struct VME* vme){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
-// copy a thread's page dir and page tables from src to dst
-void vmem_copy_address_space(struct TCB* src, struct TCB* dst){
-  struct VME* src_vme = src->vme_list;
+// copy a thread's page dir/page tables and vme_list from src to dst
+void vmem_fork(struct TCB* src, struct TCB* dst){
+  dst->vme_list = NULL;
 
-  while (src_vme){
-    // copy vme to new thread
-    struct VME* new_vme = vme_create(src_vme->start, src_vme->end, src_vme->size,
-                                     src_vme->file, src_vme->file_offset,
-                                     src_vme->flags, src_vme->paddr);
-    vme_insert(dst, NULL, new_vme);
-    
-    // copy vme data
-    
+  // copy vme list to dst tcb
+  struct VME* prev_vme = NULL;
+  for (struct VME* vme = src->vme_list; vme != NULL; vme = vme->next){
+    struct VME* new_vme = vme_create(vme->start, vme->end, vme->size,
+                                     vme->file, vme->file_offset,
+                                     vme->flags, vme->paddr);
+    vme_insert(dst, prev_vme, new_vme);
+    prev_vme = new_vme;
+  }
 
-    src_vme = src_vme->next;
+  // copy page directory and page tables from src to dst
+  dst->pid = (unsigned)physmem_alloc();
+  unsigned* src_pd = (unsigned*)src->pid;
+  unsigned* dst_pd = (unsigned*)dst->pid;
+
+  for (unsigned i = 0; i < 1024; i++){
+    if (src_pd[i] & VMEM_VALID){
+      unsigned* src_pt = (unsigned*)(src_pd[i] & ~(FRAME_SIZE - 1));
+      unsigned* dst_pt = physmem_alloc();
+      dst_pd[i] = (unsigned)dst_pt | (src_pd[i] & 0xFFF);
+      for (unsigned j = 0; j < 1024; j++){
+        if (src_pt[j] & VMEM_VALID){
+          unsigned paddr = src_pt[j] & ~(FRAME_SIZE - 1);
+          unsigned* dst_page = physmem_alloc();
+          dst_pt[j] = (unsigned)dst_page | (src_pt[j] & 0xFFF);
+          memcpy(dst_page, (void*)paddr, FRAME_SIZE);
+        } else {
+          dst_pt[j] = 0;
+        }
+      }
+    } else {
+      dst_pd[i] = 0;
+    }
   }
 }
 

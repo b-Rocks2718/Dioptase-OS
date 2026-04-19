@@ -607,34 +607,30 @@ int handle_mmap(int size, int fd, int offset, int flags){
   return (unsigned)mmapped_file;
 }
 
-void child_thread(void* arg){
-  struct ChildDescriptor* child_desc = (struct ChildDescriptor*)arg;
-  //int rc = jump_to_user();
+void child_thread(unsigned* arg){
+  struct ChildDescriptor* child_desc = (struct ChildDescriptor*)arg[0];
+  unsigned pc = arg[1];
+  unsigned sp = arg[2];
 
-  //promise_set(&child_desc->child, rc);
+  say("In child thread, jumping to user\n", NULL);
+  
+  int rc = jump_to_user(pc, sp, 0, 0);
 
-  //if (__atomic_fetch_add(&child_desc->refcount, -1) == 1){
-  //  promise_free(&child_desc->child);
-  //  free(child_desc);
-  //}
+  say("Child thread returned from user, rc %d\n", &rc);
+
+  promise_set(child_desc->child, (void*)rc);
+
+  if (__atomic_fetch_add(&child_desc->refcount, -1) == 1){
+    promise_free(child_desc->child);
+    free(child_desc);
+  }
 }
 
-struct TCB* fork_tcb(struct TCB* parent, int child_desc){
+struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned sp){
   struct TCB* child = malloc(sizeof(struct TCB));
 
-  // copy context
-  child->r20 = parent->r20;
-  child->r21 = parent->r21;
-  child->r22 = parent->r22;
-  child->r23 = parent->r23;
-  child->r24 = parent->r24;
-  child->r25 = parent->r25;
-  child->r26 = parent->r26;
-  child->r27 = parent->r27;
-  child->r28 = parent->r28;
-  
+  // copy parent state
   child->sp = parent->sp;
-  child->bp = parent->bp;
   child->ra = parent->ra;
 
   child->flags = parent->flags;
@@ -653,23 +649,44 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc){
   child->uaccess_active = parent->uaccess_active;
   child->uaccess_err_addr = parent->uaccess_err_addr;
 
-  // create new page dir
-  child->pid = parent->pid;
-
   // alloc new kernel stack
   unsigned* the_stack = malloc(TCB_STACK_SIZE);
   child->stack = the_stack;
-  child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);;
+  child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
-  struct Fun* thread_fun;
+  // set up descriptors
+  copy_descriptors(parent, child);
 
-  //struct Fun* child_fun = malloc(sizeof(struct Fun));
-  //child_fun->func = child_thread;
-  //child_fun->arg = parent->child_descriptors[child_desc];
-  //__atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
+  // copy cwd
+  child->cwd = node_clone(parent->cwd);
+
+  // set up vme_list and pid
+  vmem_fork(parent, child);
+
+  // set up thread fun
+  struct Fun* child_fun = malloc(sizeof(struct Fun));
+  child_fun->func = (void(*)(void*))child_thread;
+  
+  unsigned* arg = malloc(3 * sizeof(unsigned));
+  arg[0] = (unsigned)parent->child_descriptors[child_desc];
+  arg[1] = pc;
+  arg[2] = sp;
+  child_fun->arg = arg;
+
+  child->thread_fun = child_fun;
+  child->ra = (unsigned)thread_entry;
+
+  __atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
+
+  child->next = NULL;
+
+  __atomic_fetch_add(&n_active, 1);
+
+  return child;
 }
 
-int handle_fork(void){
+int handle_fork(unsigned pc, unsigned sp){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
@@ -679,17 +696,40 @@ int handle_fork(void){
     return -1;
   }
 
-  struct TCB* child = fork_tcb(tcb, child_desc);
+  say("forking tcb\n", NULL);
+  struct TCB* child = fork_tcb(tcb, child_desc, pc, sp);
+  
+  say("waking up child tcb\n", NULL);
   scheduler_wake_thread(child);
 
-  return child_desc;
+  say("returning from fork\n", NULL);
+
+  return child_desc + CHILD_DESCRIPTORS_START;
+}
+
+int handle_wait_child(int child_desc){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  child_desc -= CHILD_DESCRIPTORS_START;
+  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+    return -1;
+  }
+
+  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
+  if (child == NULL){
+    return -1;
+  }
+
+  return (unsigned)promise_get(child->child);
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7,
-    bool* return_to_user){
+    bool* return_to_user, unsigned pc, unsigned sp){
 
   // most sycalls return to the user program
   *return_to_user = true;
@@ -773,7 +813,9 @@ int trap_handler(unsigned code,
       return handle_mmap(arg1, arg2, arg3, arg4);
     }
     case TRAP_FORK: {
-      return handle_fork();
+      int args[2] = {pc, sp};
+      say("got fork with pc = %X, sp = %X\n", args);
+      return handle_fork(pc, sp);
     }
     case TRAP_EXEC: {
       puts("exec syscall not implemented\n");
@@ -790,7 +832,7 @@ int trap_handler(unsigned code,
       return 0;
     }
     case TRAP_WAIT_CHILD: {
-      panic("wait_child syscall not implemented\n");
+      return handle_wait_child(arg1);
     }
     case TRAP_CHDIR: {
       return handle_chdir((char*)arg1);
@@ -910,7 +952,8 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
           if (fill){
             tcb->child_descriptors[i] = malloc(sizeof(struct ChildDescriptor));
             tcb->child_descriptors[i]->refcount = 1;
-            tcb->child_descriptors[i]->child = NULL;
+            tcb->child_descriptors[i]->child = malloc(sizeof(struct Promise));
+            promise_init(tcb->child_descriptors[i]->child);
           }
           return i;
         }

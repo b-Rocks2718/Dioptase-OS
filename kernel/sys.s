@@ -10,14 +10,10 @@ trap_handler_:
   # Trap entry already cleared IMR[31]. Snapshot the interrupted PC/flags
   # before re-enabling nested interrupts so rfe later restores the exact trap
   # entry state.
-  mov  r9, epc # r9, r10 are caller saved and do not contain any arguments
-  push r9
+  mov  r11, epc # r9, r10, r11 are caller saved and do not contain any arguments
+  push r11
   mov  r9, efg
   push r9
-
-  # Save C frame linkage before calling into kernel C code
-  push bp
-  push ra
 
   # Re-enable interrupts after the trap frame is fully saved
   movi r9, 0x80000000
@@ -26,13 +22,19 @@ trap_handler_:
   mov  imr, r10
 
   push r0 # allocate stack space for the return_to_user boolean
-  push sp # pass the address of the return_to_user boolean to trap_handler
+  mov  r12, sp # preserve the boolean slot address before pushing stack args
+
+  crmv r9, sp
+  push r9  # pass user sp to trap_handler
+  push r11 # pass user pc to trap_handler
+
+  push r12 # pass the address of the return_to_user boolean to trap_handler
 
   call trap_handler
 
   # get return_to_user boolean from the stack
-  pop  sp
-  pop  r2
+  add  sp, sp, 12 # remove the arguments pushed for trap_handler
+  pop  r2 # load return_to_user boolean into r2
 
   cmp  r2, r0
   bz   return_to_kernel
@@ -44,9 +46,6 @@ trap_handler_:
   and  r10, r9, r10
   mov  imr, r10
 
-  pop  ra
-  pop  bp
-
   pop  r9
   mov  efg, r9
   pop  r9
@@ -55,7 +54,7 @@ trap_handler_:
   rfe
 
 return_to_kernel:
-  add sp, sp, 16 # 4 regs
+  add sp, sp, 8 # 2 regs
 
   pop ra
   pop bp

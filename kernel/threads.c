@@ -249,6 +249,8 @@ void thread_entry(void) {
       say("| thread_entry null func core=%d tcb=0x%X fun=0x%X arg=0x%X\n", args);
       panic("thread_entry: thread_fun->func is NULL.\n");
     }
+    say("In thread_entry, calling thread fun\n", NULL);
+
     (*thread_fun->func)(thread_fun->arg);
   }
 
