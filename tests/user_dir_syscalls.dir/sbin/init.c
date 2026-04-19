@@ -48,6 +48,7 @@ void print_buffer(char* buffer, unsigned size) {
 }
 
 int main(void){
+  // getcwd.
   char buffer[100];
   int n = getcwd(buffer, 100);
   print_buffer(buffer, strlen(buffer));
@@ -66,6 +67,13 @@ int main(void){
 
   chdir("../././");
   n = getcwd(buffer, 100);
+  print_buffer(buffer, strlen(buffer));
+
+  // readlink.
+  n = readlink("folder/symlink_file", buffer, 100);
+  print_buffer(buffer, strlen(buffer));
+
+  n = readlink("folder/symlink_folder", buffer, 100);
   print_buffer(buffer, strlen(buffer));
 
   return 0;

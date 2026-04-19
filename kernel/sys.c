@@ -1086,8 +1086,56 @@ int handle_getcwd(char* buffer, unsigned buffer_size) {
 }
 
 int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
-  puts("readlink.\n");
-  return -1;
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0) {
+    free(buf);
+    return -1;
+  }
+
+  struct Node* file_node = node_find(tcb->cwd, buf);
+  free(buf);
+
+  if (file_node == NULL){
+    // Symlink not found.
+    return -1;
+  }
+
+  if (!node_is_symlink(file_node)) {
+    // Not a symlink.
+    node_free(file_node);
+    return -1;
+  }
+
+  unsigned total_bytes = node_size_in_bytes(file_node);
+
+  // node_get_symlink_target adds null terminator.
+  char *target = malloc(total_bytes + 1);
+  node_get_symlink_target(file_node, target);
+  unsigned read_bytes = 0;
+
+  if (buffer_size < total_bytes + 1) {
+    // Partial read.
+    read_bytes = buffer_size;
+  } else {
+    // Full read.
+    read_bytes = total_bytes + 1;
+  }
+  
+  rc = copy_to_user(buffer, target, read_bytes, tcb);
+  node_free(file_node);
+  free(target);
+
+  if (rc != 0) {
+    return -1;
+  }
+  
+  return read_bytes;
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
