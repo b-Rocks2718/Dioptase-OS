@@ -9,3 +9,4 @@ a.s
 *.labels
 *.debug
 *.out.dir
+root/sbin/*

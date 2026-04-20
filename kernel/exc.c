@@ -49,6 +49,7 @@ int misaligned_pc_handler(bool* return_to_user){
     return -1;
   }
 
+  int epc = get_epc();
+  say("| misaligned pc epc=0x%X\n", &epc);
   panic("Misaligned PC exception\n");
 }
-
