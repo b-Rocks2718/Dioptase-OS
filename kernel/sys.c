@@ -448,13 +448,16 @@ int handle_read(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned)offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return 0;
   }
 
@@ -475,11 +478,13 @@ int handle_read(int fd, char* buf, unsigned count){
   int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
   free(kbuf);
   if (rc != 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, bytes_to_read);
-  
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
   return bytes_to_read;
 }
 
@@ -534,13 +539,16 @@ int handle_write(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
 
   if ((unsigned)offset > INT_MAX - count){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
@@ -555,6 +563,7 @@ int handle_write(int fd, char* buf, unsigned count){
   free(kbuf);
   
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, count);
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
   
   return count;
 }
@@ -671,12 +680,12 @@ int handle_seek(int fd, int offset, int whence){
   
   int new_offset = 0;
 
-  spin_lock_acquire(&descriptor->offset_lock);
+  blocking_lock_acquire(&descriptor->offset_lock);
 
   switch (whence){
     case SEEK_SET: {
       if (offset < 0){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -686,7 +695,7 @@ int handle_seek(int fd, int offset, int whence){
     }
     case SEEK_CUR: {
       if (!seek_target_ok(descriptor->offset, offset, &new_offset)){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -698,7 +707,7 @@ int handle_seek(int fd, int offset, int whence){
 
       if (file_size > INT_MAX ||
           !seek_target_ok((int)file_size, offset, &new_offset)){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -706,12 +715,12 @@ int handle_seek(int fd, int offset, int whence){
       break;
     }
     default: {
-      spin_lock_release(&descriptor->offset_lock);
+      blocking_lock_release(&descriptor->offset_lock);
       return -1;
     }
   }
 
-  spin_lock_release(&descriptor->offset_lock);
+  blocking_lock_release(&descriptor->offset_lock);
   return new_offset;
 }
 
@@ -1083,13 +1092,16 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned) offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return 0;
   }
 
@@ -1104,11 +1116,13 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
   int rc = copy_to_user(buffer, kbuf, bytes_read, tcb);
   free(kbuf);
   if (rc != 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   __atomic_store_n(&tcb->file_descriptors[fd]->offset, new_offset);
-  
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
   return bytes_read;
 }
 
@@ -1361,21 +1375,21 @@ void init_descriptors(struct TCB* tcb, bool init_stdio){
     tcb->file_descriptors[0] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[0]->refcount = 1;
     tcb->file_descriptors[0]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[0]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[0]->offset_lock);
     tcb->file_descriptors[0]->type = FILE_DESCRIPTOR_STDIN;
     tcb->file_descriptors[0]->file = NULL;
     
     tcb->file_descriptors[1] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[1]->refcount = 1;
     tcb->file_descriptors[1]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[1]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[1]->offset_lock);
     tcb->file_descriptors[1]->type = FILE_DESCRIPTOR_STDOUT;
     tcb->file_descriptors[1]->file = NULL;
 
     tcb->file_descriptors[2] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[2]->refcount = 1;
     tcb->file_descriptors[2]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[2]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[2]->offset_lock);
     tcb->file_descriptors[2]->type = FILE_DESCRIPTOR_STDERR;
     tcb->file_descriptors[2]->file = NULL;
   } else {
@@ -1404,7 +1418,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
             tcb->file_descriptors[i] = malloc(sizeof(struct FileDescriptor));
             tcb->file_descriptors[i]->refcount = 1;
             tcb->file_descriptors[i]->offset = 0;
-            spin_lock_init(&tcb->file_descriptors[i]->offset_lock);
+            blocking_lock_init(&tcb->file_descriptors[i]->offset_lock);
             tcb->file_descriptors[i]->type = FILE_DESCRIPTOR_NORMAL;
             tcb->file_descriptors[i]->file = NULL;
           }
@@ -1498,6 +1512,7 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         }
       } else if (descriptor->file != NULL){
         node_free(descriptor->file);
+        blocking_lock_destroy(&descriptor->offset_lock);
       }
 
       free(descriptor);

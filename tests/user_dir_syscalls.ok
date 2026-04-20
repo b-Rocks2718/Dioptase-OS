@@ -25,4 +25,6 @@
 ***  Type: Symbolic link.
 ***  To: inner_folder0/
 ***getdents returned 0.
+***Starting getdents fork test with shared file descriptor.
+***Total getdents bytes: 192
 ***Done.

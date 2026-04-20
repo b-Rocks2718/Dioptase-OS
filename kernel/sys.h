@@ -4,6 +4,7 @@
 #include "constants.h"
 #include "atomic.h"
 #include "blocking_ringbuf.h"
+#include "blocking_lock.h"
 
 enum TrapCode {
   TRAP_EXIT = 0,
@@ -81,7 +82,7 @@ enum FileDescriptorType {
 struct FileDescriptor {
   struct Node* file; // pipe descriptors cast this to a (struct Pipe*)
   int offset;
-  struct SpinLock offset_lock;
+  struct BlockingLock offset_lock;
   enum FileDescriptorType type;
   int refcount;
 };

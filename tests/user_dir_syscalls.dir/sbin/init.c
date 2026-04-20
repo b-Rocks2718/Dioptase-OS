@@ -7,6 +7,7 @@
 
 #include "../../../crt/sys.h"
 #include "../../../crt/print.h"
+#include "../../../crt/heap.h"
 #include "dirs.h"
 
 // int getdents(int fd, char* buffer, unsigned buffer_size);
@@ -60,6 +61,26 @@ int main(void){
   // getdents.
   struct LinkedDirent* entries = read_directory("/folder");
   destroy_linked_dirents(entries);
+
+  int fd = open("/folder");
+  printf("***Starting getdents fork test with shared file descriptor.\n", NULL);
+
+  int pid = fork();
+  if (pid == 0) {
+    // Child.
+    char* child_buffer = (char*) malloc(1024);
+    int child_getdents_n = getdents(fd, child_buffer, 1024);
+    free(child_buffer);
+    return child_getdents_n;
+  } else {
+    // Parent.
+    char* parent_buffer = (char*) malloc(1024);
+    int parent_getdents_n = getdents(fd, parent_buffer, 1024);
+    free(parent_buffer);
+    int rc = wait_child(pid);
+    int getdents_print_args[1] = {rc + parent_getdents_n};
+    printf("***Total getdents bytes: %d\n", getdents_print_args);
+  }
   
   printf("***Done.\n", NULL);
 
