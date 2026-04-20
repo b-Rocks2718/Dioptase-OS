@@ -2,11 +2,12 @@
 #define PHYSMEM_H
 
 #include "blocking_lock.h"
+#include "semaphore.h"
 
 #define FRAME_SIZE 4096
 
 #define FRAMES_ADDR_START 0x800000
-#define FRAMES_ADDR_END 0x7FB8000
+#define FRAMES_ADDR_END   0x7FB8000
 
 #define PHYS_FRAME_COUNT 30648
 
@@ -26,8 +27,8 @@ struct PhysmemLocalCache {
 
 // free pages store metadata to form a linked list
 struct FreePageNode {
-  struct FreePageNode *prev;
-  struct FreePageNode *next;
+  struct FreePageNode* prev;
+  struct FreePageNode* next;
   unsigned free_order;
 };
 
@@ -56,5 +57,17 @@ void physmem_free(void* page);
 
 // check for physical memory leaks
 void physmem_check_leaks(void);
+
+enum PageFlags { PG_DIRTY = 0,
+                 PG_PINNED = 1 };
+struct PageRef;
+struct PageCacheEntry;
+
+struct Page {
+  unsigned flags;
+  struct Semaphore lock;
+  struct PageRef* refs;
+  struct PageCacheEntry* cache_entry;
+};
 
 #endif // PHYSMEM_H

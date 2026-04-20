@@ -6,6 +6,7 @@
 #include "blocking_lock.h"
 #include "per_core.h"
 #include "threads.h"
+#include "heap.h"
 
 static struct BlockingLock physmem_lock;
 
@@ -19,6 +20,8 @@ static int frames_leaked = 0;
 static int order_allocs[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_frees[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_leaks[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
+
+static struct Page* physmem_rmap;
 
 // sanity check that something could be a frame address
 static bool physmem_is_frame_address(unsigned phys_addr) {
@@ -56,8 +59,8 @@ static void free_list_push(struct FreePageNode* block_addr, int order) {
   assert(physmem_is_frame_address((unsigned)block_addr), "physmem: invalid block address.\n");
 
   unsigned block_index = frame_index_from_address((unsigned)block_addr);
-  assert((block_index & ((1u << order) - 1)) == 0, 
-    "physmem: block address is not aligned to its size.\n");
+  assert((block_index & ((1u << order) - 1)) == 0,
+         "physmem: block address is not aligned to its size.\n");
 
   struct FreePageNode* node = block_addr;
   node->prev = NULL;
@@ -121,11 +124,11 @@ static struct FreePageNode* free_list_remove(struct FreePageNode* node) {
 }
 
 // add all frames to free lists, coalescing into larger blocks as much as possible
-void physmem_init(void){
-  assert((FRAMES_ADDR_END - FRAMES_ADDR_START) / FRAME_SIZE == PHYS_FRAME_COUNT, 
-  "physmem init: frame count does not match address range.\n");
-  assert((PHYS_FRAME_COUNT + 7) / 8 == FREE_PAGE_BITMAP_SIZE, 
-    "physmem init: free page bitmap size is incorrect.\n");
+void physmem_init(void) {
+  assert((FRAMES_ADDR_END - FRAMES_ADDR_START) / FRAME_SIZE == PHYS_FRAME_COUNT,
+         "physmem init: frame count does not match address range.\n");
+  assert((PHYS_FRAME_COUNT + 7) / 8 == FREE_PAGE_BITMAP_SIZE,
+         "physmem init: free page bitmap size is incorrect.\n");
 
   blocking_lock_init(&physmem_lock);
   for (int i = 0; i < PHYS_FRAME_MAX_ORDER_PLUS_ONE; i++) {
@@ -163,11 +166,14 @@ void physmem_init(void){
       per_core_data[i].physmem_cache.pages[j] = NULL;
     }
   }
+
+  // init reverse map
+  physmem_rmap = leak(sizeof(struct Page) * PHYS_FRAME_COUNT);
 }
 
 // allocate a physical page of given order
 // Panics if no free frames remain
-void* physmem_alloc_order(int order){
+void* physmem_alloc_order(int order) {
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem alloc: invalid order.\n");
 
   blocking_lock_acquire(&physmem_lock);
@@ -191,7 +197,7 @@ void* physmem_alloc_order(int order){
   while (current_order > order) {
     current_order--;
     unsigned buddy_addr = address_from_frame_index(
-      frame_index_from_address((unsigned)node) + (1u << current_order));
+        frame_index_from_address((unsigned)node) + (1u << current_order));
     struct FreePageNode* buddy = (struct FreePageNode*)buddy_addr;
 
     free_list_push(buddy, current_order);
@@ -200,31 +206,29 @@ void* physmem_alloc_order(int order){
   blocking_lock_release(&physmem_lock);
 
   assert(
-    physmem_is_frame_address((unsigned)node),
-    "physmem alloc: free list returned an invalid frame address.\n"
-  );
+      physmem_is_frame_address((unsigned)node),
+      "physmem alloc: free list returned an invalid frame address.\n");
 
   return node;
 }
 
-void* physmem_leak_order(int order){
+void* physmem_leak_order(int order) {
   void* page = physmem_alloc_order(order);
   __atomic_fetch_add(&order_leaks[order], 1);
   return page;
 }
 
 // free a physical page of given order
-void physmem_free_order(void* page, int order){
+void physmem_free_order(void* page, int order) {
   unsigned phys_addr = (unsigned)page;
   assert(page != NULL, "physmem free: page is NULL.\n");
   assert(
-    physmem_is_frame_address(phys_addr),
-    "physmem free: page is not a valid allocatable frame.\n"
-  );
+      physmem_is_frame_address(phys_addr),
+      "physmem free: page is not a valid allocatable frame.\n");
 
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem free: invalid order.\n");
-  assert((frame_index_from_address(phys_addr) & ((1u << order) - 1)) == 0, 
-    "physmem free: page address is not aligned to its size.\n");
+  assert((frame_index_from_address(phys_addr) & ((1u << order) - 1)) == 0,
+         "physmem free: page address is not aligned to its size.\n");
 
   blocking_lock_acquire(&physmem_lock);
 
@@ -268,7 +272,7 @@ void physmem_free_order(void* page, int order){
 }
 
 // allocate a physical page from core-local cache
-void* physmem_alloc(void){
+void* physmem_alloc(void) {
   enum CoreAffinity prev = core_pin();
   struct PerCore* per_core = get_per_core();
 
@@ -297,13 +301,13 @@ void* physmem_alloc(void){
   return page;
 }
 
-void* physmem_leak(void* page){
+void* physmem_leak(void* page) {
   __atomic_fetch_add(&frames_leaked, 1);
   return physmem_alloc();
 }
 
 // free a physical page
-void physmem_free(void* page){
+void physmem_free(void* page) {
   enum CoreAffinity prev = core_pin();
   struct PerCore* per_core = get_per_core();
 
@@ -311,7 +315,7 @@ void physmem_free(void* page){
   blocking_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_freed, 1);
-  
+
   // push to local cache if there is room, otherwise free to global pool
   if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
     per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
@@ -327,7 +331,7 @@ void physmem_free(void* page){
   }
 }
 
-void physmem_check_leaks(void){
+void physmem_check_leaks(void) {
   bool all_good = true;
 
   if (frames_alloced != frames_freed + frames_leaked) {
@@ -344,7 +348,7 @@ void physmem_check_leaks(void){
       all_good = false;
     }
   }
-  
+
   if (all_good) {
     say("| No physmem leaks detected\n", NULL);
   }

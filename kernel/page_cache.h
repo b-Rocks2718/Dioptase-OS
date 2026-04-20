@@ -15,7 +15,7 @@ struct PageCacheKey {
 // metadata for the page cache entry
 struct PageCacheEntry {
   struct PageCacheKey key;
-  void* page_data;
+  void* page_data; // Pointer to frame 
 
   unsigned refcount;
   unsigned flags;

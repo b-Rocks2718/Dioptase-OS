@@ -21,7 +21,7 @@
 #include "audio.h"
 
 unsigned HEAP_START = 0x100000;
-unsigned HEAP_SIZE =  0x700000;
+unsigned HEAP_SIZE = 0x700000;
 
 extern void kernel_main(void);
 extern void boot_ipi_handler_(void);
@@ -32,7 +32,7 @@ int start_barrier = 0;
 // Core 0 performs global initialization, creates the first runnable kernel_main
 // thread while no other core can contend for heap locks, then all cores
 // bootstrap their idle-thread scheduler context and enter event_loop().
-void kernel_entry(void){
+void kernel_entry(void) {
 
   int me = get_core_id();
   int num_cores = CONFIG.num_cores;
@@ -41,7 +41,7 @@ void kernel_entry(void){
   static int awake_cores = 0;
   __atomic_fetch_add(&awake_cores, 1);
 
-  if (me == 0){
+  if (me == 0) {
     register_spurious_handlers();
     vga_init();
     uart_init();
@@ -56,17 +56,17 @@ void kernel_entry(void){
 
     say("| Mem size: 128MiB\n", NULL);
 
-    say("| Initializing physmem allocator...\n", NULL);
-    physmem_init();
-
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
+
+    say("| Initializing physmem allocator...\n", NULL);
+    physmem_init();
 
     say("| Initializing virtual memory...\n", NULL);
     vmem_global_init();
 
     say("| Initializing PIT...\n", NULL);
-    pit_init(3000); // trigger interrupts at 3,000Hz 
+    pit_init(3000); // trigger interrupts at 3,000Hz
     // when running on emulator, this will actually be a much lower frequency
 
     say("| Initializing threads...\n", NULL);
@@ -120,12 +120,12 @@ void kernel_entry(void){
 
   say("| Core %d enabling interrupts...\n", &me);
   interrupts_restore(DEFAULT_INTERRUPT_MASK);
-  
+
   // wait for all cores to be awake and set up
   say("| Core %d waiting at start barrier...\n", &me);
   spin_barrier_sync(&start_barrier);
 
   event_loop();
 
-  panic("event loop returned"); 
+  panic("event loop returned");
 }

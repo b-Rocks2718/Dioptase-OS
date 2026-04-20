@@ -6,3 +6,5 @@ PointerAlignment: Left
 DerivePointerAlignment: false
 SortIncludes: false
 ReflowComments: false
+AlignConsecutiveMacros: true
+ColumnLimit: 0

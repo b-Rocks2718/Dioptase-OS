@@ -77,7 +77,7 @@ void munmap(void* p);
 // free all VMEs in the given list
 void free_vme_list(struct VME* vme);
 
-// free all physical pages mapped by the given address space, 
+// free all physical pages mapped by the given address space,
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
 
@@ -90,5 +90,12 @@ extern void ipi_handler_(void);
 extern void mark_ipi_handled(void);
 
 extern unsigned send_ipi(unsigned data);
+
+// Describes how a page is being used
+struct PageRef {
+  struct TCB* thread;
+  unsigned virtual_address;
+  struct VME* vme;
+};
 
 #endif // VMEM_H
