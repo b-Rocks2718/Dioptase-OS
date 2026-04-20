@@ -85,6 +85,7 @@ struct TCB {
   struct ChildDescriptor* parent_promise;
   
   struct Node* cwd;
+  char *cwd_path;
 
   struct VME* vme_list;
 
