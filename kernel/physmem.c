@@ -21,7 +21,7 @@ static int order_allocs[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_frees[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_leaks[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 
-static struct Page* physmem_rmap;
+static struct Page* physmem_map; // Metadata for each physical page
 
 // sanity check that something could be a frame address
 static bool physmem_is_frame_address(unsigned phys_addr) {
@@ -167,8 +167,21 @@ void physmem_init(void) {
     }
   }
 
-  // init reverse map
-  physmem_rmap = leak(sizeof(struct Page) * PHYS_FRAME_COUNT);
+  // init physmem map
+  unsigned map_bytes = sizeof(struct Page) * PHYS_FRAME_COUNT;
+  unsigned map_pages = (map_bytes + FRAME_SIZE - 1) / FRAME_SIZE;
+  unsigned map_order = 0;
+  unsigned map_page_count = 1;
+  while (map_page_count < map_pages) {
+    map_page_count <<= 1;
+    map_order++;
+  }
+  physmem_map = physmem_leak_order(map_order);
+  // Mark all pages in the map as pinned
+  for (unsigned i = 0; i < map_pages; i++) {
+    void* frame = physmem_map + (i * FRAME_SIZE);
+    physmem_set_page_flag(get_page(frame), PG_PINNED);
+  }
 }
 
 // allocate a physical page of given order
@@ -352,4 +365,16 @@ void physmem_check_leaks(void) {
   if (all_good) {
     say("| No physmem leaks detected\n", NULL);
   }
+}
+
+struct Page* get_page(void* frame) {
+  return &physmem_map[frame_index_from_address((unsigned)frame)];
+}
+
+void physmem_set_page_flag(struct Page* page, unsigned flags) {
+  page->flags |= (1u << flags);
+}
+
+void physmem_clear_page_flag(struct Page* page, unsigned flags) {
+  page->flags &= ~(1u << flags);
 }

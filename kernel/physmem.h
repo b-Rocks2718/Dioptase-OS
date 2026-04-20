@@ -45,6 +45,9 @@ unsigned address_from_frame_index(unsigned frame_index);
 // Panics if no free frames remain
 void* physmem_alloc_order(int order);
 
+// allocate a physical page of given order and count it as intentionally leaked for leak reporting
+void* physmem_leak_order(int order);
+
 // free a physical page of given order
 void physmem_free_order(void* page, int order);
 
@@ -69,5 +72,12 @@ struct Page {
   struct PageRef* refs;
   struct PageCacheEntry* cache_entry;
 };
+
+// Get the metadata from a frame physical address
+struct Page* get_page(void* frame);
+
+// Set and clear flags
+void physmem_set_page_flag(struct Page*, unsigned flags);
+void physmem_clear_page_flag(struct Page*, unsigned flags);
 
 #endif // PHYSMEM_H
