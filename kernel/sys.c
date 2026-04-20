@@ -25,6 +25,7 @@
 #define EXEC_MAX_ARG_BYTES 256
 
 #define PIPE_BUFFER_CAPACITY 1024
+#define MAX_GETDENTS_BUFFER_SIZE 1024
 
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
@@ -447,13 +448,16 @@ int handle_read(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned)offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return 0;
   }
 
@@ -474,11 +478,13 @@ int handle_read(int fd, char* buf, unsigned count){
   int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
   free(kbuf);
   if (rc != 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, bytes_to_read);
-  
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
   return bytes_to_read;
 }
 
@@ -533,13 +539,16 @@ int handle_write(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
 
   if ((unsigned)offset > INT_MAX - count){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
@@ -554,6 +563,7 @@ int handle_write(int fd, char* buf, unsigned count){
   free(kbuf);
   
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, count);
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
   
   return count;
 }
@@ -670,12 +680,12 @@ int handle_seek(int fd, int offset, int whence){
   
   int new_offset = 0;
 
-  spin_lock_acquire(&descriptor->offset_lock);
+  blocking_lock_acquire(&descriptor->offset_lock);
 
   switch (whence){
     case SEEK_SET: {
       if (offset < 0){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -685,7 +695,7 @@ int handle_seek(int fd, int offset, int whence){
     }
     case SEEK_CUR: {
       if (!seek_target_ok(descriptor->offset, offset, &new_offset)){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -697,7 +707,7 @@ int handle_seek(int fd, int offset, int whence){
 
       if (file_size > INT_MAX ||
           !seek_target_ok((int)file_size, offset, &new_offset)){
-        spin_lock_release(&descriptor->offset_lock);
+        blocking_lock_release(&descriptor->offset_lock);
         return -1;
       }
 
@@ -705,12 +715,12 @@ int handle_seek(int fd, int offset, int whence){
       break;
     }
     default: {
-      spin_lock_release(&descriptor->offset_lock);
+      blocking_lock_release(&descriptor->offset_lock);
       return -1;
     }
   }
 
-  spin_lock_release(&descriptor->offset_lock);
+  blocking_lock_release(&descriptor->offset_lock);
   return new_offset;
 }
 
@@ -763,6 +773,72 @@ int handle_play_audio(int fd){
   return 0;
 }
 
+char *clean_path(char *path) {
+    // Split by '/' to resolve "." and "..".
+    unsigned maximum_parts = SYSCALL_MAX_PATH_BYTES / 64;
+    char **parts = malloc(sizeof(char*) * maximum_parts);
+    for (unsigned i = 0; i < maximum_parts; i++) {
+        parts[i] = NULL;
+    }
+    unsigned part_count = 0;
+    char *current = path;
+
+    unsigned total_length = 2; // For '/' and null terminator.
+
+    while (*current != 0) {
+        // Skip leading '/'.
+        while (*current == '/') {
+            current++;
+        }
+        if (*current == 0) {
+            break;
+        }
+        char *start = current;
+        while (*current != '/' && *current != 0) {
+            current++;
+        }
+        unsigned length = (unsigned) current - (unsigned) start;
+        if (length == 1 && start[0] == '.') {
+            // Do nothing.
+            continue;
+        } else if (length == 2 && start[0] == '.' && start[1] == '.') {
+            if (part_count == 0) {
+                // At root. Do nothing.
+                continue;
+            }
+            total_length -= (strlen((char*) parts[part_count - 1]) + 1);
+            free((char*) parts[--part_count]);
+            continue;
+        }
+
+        char *part = malloc(length + 1);
+        memcpy(part, start, length);
+        part[length] = 0;
+        parts[part_count++] = part;
+        total_length += length + 1;
+    }
+
+    if (part_count > 0) {
+        total_length--; // No trailing '/'.
+    }
+
+    // Reconstruct.
+    char *cleaned = malloc(total_length);
+    cleaned[0] = '/';
+    unsigned cleaned_index = 1;
+    for (unsigned i = 0; i < part_count; i++) {
+        unsigned part_offset = 0;
+        while (parts[i][part_offset] != 0) {
+            cleaned[cleaned_index++] = parts[i][part_offset++];
+        }
+        cleaned[cleaned_index++] = '/';
+        free((char*) parts[i]);
+    }
+    cleaned[total_length - 1] = 0; // Overwrite last '/' with null terminator.
+    free(parts);
+    return cleaned;
+}
+
 int handle_chdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -777,14 +853,15 @@ int handle_chdir(char* path){
   }
 
   struct Node* file_node = node_find(tcb->cwd, buf);
-  free(buf);
   if (file_node == NULL){
     // could not find file
+    free(buf);
     return -1;
   }
 
   // don't chdir into a non-directory
   if (!node_is_dir(file_node)){
+    free(buf);
     node_free(file_node);
     return -1;
   }
@@ -792,6 +869,35 @@ int handle_chdir(char* path){
   node_free(tcb->cwd);
 
   tcb->cwd = file_node;
+
+  // Combine path.
+  char *old_path = tcb->cwd_path;
+  unsigned old_length = strlen(old_path);
+  unsigned new_length = strlen(buf);
+
+  unsigned new_offset = 0;
+  char *final_path;
+
+  if (buf[0] == '/') {
+      // Absolute path.
+      final_path = malloc(new_length + 1);
+  } else {
+      // Relative path.
+      new_offset = old_length + 1; // Include '/'.
+      final_path = malloc(new_offset + new_length + 1);
+      // Copy old path.
+      memcpy(final_path, old_path, old_length);
+      final_path[old_length] = '/';
+  }
+  // Copy cwd path.
+  memcpy(final_path + new_offset, buf, new_length);
+  final_path[new_offset + new_length] = 0;
+
+  tcb->cwd_path = clean_path(final_path);
+
+  free(final_path);
+  free(old_path);
+  free(buf);
   return 0;
 }
 
@@ -973,6 +1079,127 @@ int handle_exec(char* path, int argc, char** argv){
   return -1;
 }
 
+int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_NORMAL) {
+    return -1;
+  }
+
+  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  if (file_node == NULL || !node_is_dir(file_node)) {
+    return -1;
+  }
+
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
+  int offset = tcb->file_descriptors[fd]->offset;
+  if (offset < 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return -1;
+  }
+
+  unsigned file_size = node_size_in_bytes(file_node);
+  if ((unsigned) offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return 0;
+  }
+
+  if (buffer_size > MAX_GETDENTS_BUFFER_SIZE) {
+    buffer_size = MAX_GETDENTS_BUFFER_SIZE;
+  }
+
+  char* kbuf = malloc(buffer_size);
+  int new_offset = offset;
+  unsigned bytes_read = node_getdents(file_node, offset, kbuf, buffer_size, &new_offset);
+
+  int rc = copy_to_user(buffer, kbuf, bytes_read, tcb);
+  free(kbuf);
+  if (rc != 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return -1;
+  }
+
+  __atomic_store_n(&tcb->file_descriptors[fd]->offset, new_offset);
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
+  return bytes_read;
+}
+
+int handle_getcwd(char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+  
+  int cwd_len = strlen(tcb->cwd_path);
+  if (buffer_size < (unsigned)cwd_len + 1) {
+    return -1;
+  }
+  int rc = copy_to_user(buffer, tcb->cwd_path, cwd_len + 1, tcb);
+  if (rc != 0) {
+    return -1;
+  }
+  return (unsigned) buffer;
+}
+
+int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0) {
+    free(buf);
+    return -1;
+  }
+
+  struct Node* file_node = node_find(tcb->cwd, buf);
+  free(buf);
+
+  if (file_node == NULL) {
+    // Symlink not found.
+    return -1;
+  }
+
+  if (!node_is_symlink(file_node)) {
+    // Not a symlink.
+    node_free(file_node);
+    return -1;
+  }
+
+  unsigned total_bytes = node_size_in_bytes(file_node);
+
+  // node_get_symlink_target adds null terminator.
+  char *target = malloc(total_bytes + 1);
+  node_get_symlink_target(file_node, target);
+  unsigned read_bytes = 0;
+
+  if (buffer_size < total_bytes + 1) {
+    // Partial read.
+    read_bytes = buffer_size;
+  } else {
+    // Full read.
+    read_bytes = total_bytes + 1;
+  }
+  
+  rc = copy_to_user(buffer, target, read_bytes, tcb);
+  node_free(file_node);
+  free(target);
+
+  if (rc != 0) {
+    return -1;
+  }
+  
+  return read_bytes;
+}
+
 int handle_fd_bytes_available(int fd){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1114,6 +1341,15 @@ int trap_handler(unsigned code,
       yield();
       return 0;
     }
+    case TRAP_GETDENTS: {
+      return handle_getdents(arg1, (char*)arg2, (unsigned)arg3);
+    }
+    case TRAP_GETCWD: {
+      return handle_getcwd((char*)arg1, (unsigned)arg2);
+    }
+    case TRAP_READLINK: {
+      return handle_readlink((char*)arg1, (char*)arg2, (unsigned)arg3);
+    }
     case TRAP_MOVE_VSCROLL: {
       *TILE_VSCROLL += arg1;
       return 0;
@@ -1174,21 +1410,21 @@ void init_descriptors(struct TCB* tcb, bool init_stdio){
     tcb->file_descriptors[0] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[0]->refcount = 1;
     tcb->file_descriptors[0]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[0]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[0]->offset_lock);
     tcb->file_descriptors[0]->type = FILE_DESCRIPTOR_STDIN;
     tcb->file_descriptors[0]->file = NULL;
     
     tcb->file_descriptors[1] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[1]->refcount = 1;
     tcb->file_descriptors[1]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[1]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[1]->offset_lock);
     tcb->file_descriptors[1]->type = FILE_DESCRIPTOR_STDOUT;
     tcb->file_descriptors[1]->file = NULL;
 
     tcb->file_descriptors[2] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[2]->refcount = 1;
     tcb->file_descriptors[2]->offset = 0;
-    spin_lock_init(&tcb->file_descriptors[2]->offset_lock);
+    blocking_lock_init(&tcb->file_descriptors[2]->offset_lock);
     tcb->file_descriptors[2]->type = FILE_DESCRIPTOR_STDERR;
     tcb->file_descriptors[2]->file = NULL;
   } else {
@@ -1217,7 +1453,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
             tcb->file_descriptors[i] = malloc(sizeof(struct FileDescriptor));
             tcb->file_descriptors[i]->refcount = 1;
             tcb->file_descriptors[i]->offset = 0;
-            spin_lock_init(&tcb->file_descriptors[i]->offset_lock);
+            blocking_lock_init(&tcb->file_descriptors[i]->offset_lock);
             tcb->file_descriptors[i]->type = FILE_DESCRIPTOR_NORMAL;
             tcb->file_descriptors[i]->file = NULL;
           }
@@ -1311,6 +1547,7 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         }
       } else if (descriptor->file != NULL){
         node_free(descriptor->file);
+        blocking_lock_destroy(&descriptor->offset_lock);
       }
 
       free(descriptor);
