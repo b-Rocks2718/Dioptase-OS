@@ -51,7 +51,7 @@
 
 - The cursor is drawn by temporarily replacing the tile under the cursor with
   tile `0x7F`.
-- When visible, the cursor blinks every `100` jiffies according to
+- When visible, the cursor blinks every `10` jiffies according to
   `get_current_jiffies()`.
 - `CSI ?25l` hides the cursor.
 - `CSI ?25h` shows the cursor.
