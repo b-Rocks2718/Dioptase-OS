@@ -3,7 +3,7 @@
 #include "../../crt/constants.h"
 #include "../../crt/debug.h"
 
-#define DEMO_PAUSE 600
+#define DEMO_PAUSE 60
 #define SCROLL_TEST_LINES 70
 
 static void pause_demo(void){
