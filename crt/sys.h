@@ -83,6 +83,13 @@ void yield(void);
 
 int seek(int fd, int offset, int whence);
 
+int move_vscroll(int delta);
+
+int move_hscroll(int delta);
+
+// used for pipes, return -1 if fd is not a pipe
+int fd_bytes_available(int fd);
+
 void test_syscall_list(int num, int* args);
 
 #endif

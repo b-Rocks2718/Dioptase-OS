@@ -959,13 +959,37 @@ int handle_exec(char* path, int argc, char** argv){
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
   tcb->vme_list = NULL;
-  tcb->pid = create_page_directory();
+
+  unsigned new_pid = create_page_directory();
+
+  tcb->pid = new_pid;
+  set_pid(new_pid);
+  tlb_flush();
 
   rc = run_user_program(prog, argc, kargv);
   free_exec_argv(argc, kargv);
   stop(rc);
 
   return -1;
+}
+
+int handle_fd_bytes_available(int fd){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_READ &&
+      tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_WRITE){
+    return -1;
+  }
+
+  struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+
+  return blocking_ringbuf_size(&pipe->buf);
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
@@ -1089,6 +1113,17 @@ int trap_handler(unsigned code,
     case TRAP_YIELD: {
       yield();
       return 0;
+    }
+    case TRAP_MOVE_VSCROLL: {
+      *TILE_VSCROLL += arg1;
+      return 0;
+    }
+    case TRAP_MOVE_HSCROLL: {
+      *TILE_HSCROLL += arg1;
+      return 0;
+    }
+    case TRAP_FD_BYTES_AVAILABLE: {
+      return handle_fd_bytes_available(arg1);
     }
     default: {
       *return_to_user = false;
