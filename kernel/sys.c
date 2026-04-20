@@ -25,6 +25,7 @@
 #define EXEC_MAX_ARG_BYTES 256
 
 #define PIPE_BUFFER_CAPACITY 1024
+#define MAX_GETDENTS_BUFFER_SIZE 1024
 
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
@@ -1073,19 +1074,27 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
     return -1;
   }
 
+  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_NORMAL) {
+    return -1;
+  }
+
   struct Node* file_node = tcb->file_descriptors[fd]->file;
   if (file_node == NULL || !node_is_dir(file_node)) {
     return -1;
   }
 
   int offset = tcb->file_descriptors[fd]->offset;
-  if (offset < 0){
+  if (offset < 0) {
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned) offset >= file_size){
     return 0;
+  }
+
+  if (buffer_size > MAX_GETDENTS_BUFFER_SIZE) {
+    buffer_size = MAX_GETDENTS_BUFFER_SIZE;
   }
 
   char* kbuf = malloc(buffer_size);
@@ -1135,7 +1144,7 @@ int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
   struct Node* file_node = node_find(tcb->cwd, buf);
   free(buf);
 
-  if (file_node == NULL){
+  if (file_node == NULL) {
     // Symlink not found.
     return -1;
   }
