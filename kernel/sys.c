@@ -1065,8 +1065,42 @@ int handle_exec(char* path, int argc, char** argv){
 }
 
 int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
-  puts("getdents.\n");
-  return -1;
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  if (file_node == NULL || !node_is_dir(file_node)) {
+    return -1;
+  }
+
+  int offset = tcb->file_descriptors[fd]->offset;
+  if (offset < 0){
+    return -1;
+  }
+
+  unsigned file_size = node_size_in_bytes(file_node);
+  if ((unsigned) offset >= file_size){
+    return 0;
+  }
+
+  char* kbuf = malloc(buffer_size);
+  int new_offset = offset;
+  unsigned bytes_read = node_getdents(file_node, offset, kbuf, buffer_size, &new_offset);
+
+  int rc = copy_to_user(buffer, kbuf, bytes_read, tcb);
+  free(kbuf);
+  if (rc != 0) {
+    return -1;
+  }
+
+  __atomic_store_n(&tcb->file_descriptors[fd]->offset, new_offset);
+  
+  return bytes_read;
 }
 
 int handle_getcwd(char* buffer, unsigned buffer_size) {

@@ -6,14 +6,8 @@
  */
 
 #include "../../../crt/sys.h"
-
-unsigned strlen(char* str) {
-  unsigned len = 0;
-  while (str[len] != '\0') {
-    len++;
-  }
-  return len;
-}
+#include "../../../crt/print.h"
+#include "dirs.h"
 
 // int getdents(int fd, char* buffer, unsigned buffer_size);
 
@@ -33,48 +27,41 @@ int write_all(char* buffer, unsigned size) {
   return 0;
 }
 
-void print_buffer(char* buffer, unsigned size) {
-  char* asterisks = "***";
-  if (write_all(asterisks, 3) != 0) {
-    return;
-  }
-  if (write_all(buffer, size) != 0) {
-    return;
-  }
-  char* newline = "\n";
-  if (write_all(newline, 1) != 0) {
-    return;
-  }
-}
-
 int main(void){
   // getcwd.
   char buffer[100];
   int n = getcwd(buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  int args[1] = {(int) buffer};
+  printf("***%s\n", args);
 
   chdir("./folder/inner_folder0");
   n = getcwd(buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
 
   chdir("../inner_folder1/../inner_folder1/./");
   n = getcwd(buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
 
   chdir("/folder"); // Absolute path.
   n = getcwd(buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
 
   chdir("../././");
   n = getcwd(buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
 
   // readlink.
   n = readlink("folder/symlink_file", buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
 
   n = readlink("folder/symlink_folder", buffer, 100);
-  print_buffer(buffer, strlen(buffer));
+  printf("***%s\n", args);
+
+  // getdents.
+  struct LinkedDirent* entries = read_directory("/folder");
+  destroy_linked_dirents(entries);
+  
+  printf("***Done.\n", NULL);
 
   return 0;
 }

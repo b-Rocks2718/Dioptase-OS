@@ -263,4 +263,10 @@ unsigned node_entry_count(struct Node* node);
 // `node_free(...)`.
 struct Node* node_find(struct Node* dir, char* name);
 
+// Reads the directory entries from `dir` (starting from `offset`, which is
+// assumed to be the start of a directory entry) into `buffer` as an array of
+// `struct linux_dirent`. Returns the number of bytes read.
+// `new_offset` will be updated to the offset of the next directory entry not read.
+int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset);
+
 #endif // EXT_H

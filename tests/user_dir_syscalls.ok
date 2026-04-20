@@ -5,3 +5,24 @@
 ***/
 ***inner_folder0/inner_inner_file0
 ***inner_folder0/
+***getdents returned 192.
+***Found entry: .
+***  Type: Directory.
+***Found entry: ..
+***  Type: Directory.
+***Found entry: inner_file0
+***  Type: Regular file.
+***Found entry: inner_file1
+***  Type: Regular file.
+***Found entry: inner_folder0
+***  Type: Directory.
+***Found entry: inner_folder1
+***  Type: Directory.
+***Found entry: symlink_file
+***  Type: Symbolic link.
+***  To: inner_folder0/inner_inner_file0
+***Found entry: symlink_folder
+***  Type: Symbolic link.
+***  To: inner_folder0/
+***getdents returned 0.
+***Done.

@@ -328,7 +328,7 @@ void ext2_init(struct Ext2* fs){
   struct CachedInode* root_inode = icache_get(&fs->icache, EXT2_ROOT_INO);
 
   // The ext2 root inode must always be a directory.
-  assert((root_inode->inode.mode & 0xF000) == EXT2_S_IFDIR,
+  assert((root_inode->inode.mode & EXT2_S_MASK) == EXT2_S_IFDIR,
     "ext2_init: root inode is not a directory.\n");
 
   node_init(&fs->root, root_inode, EXT2_BAD_INO, fs);
@@ -664,7 +664,7 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
         if (inumber != 0) break;
       }
 
-      if ((mode & 0xF000) == EXT2_S_IFDIR){
+      if ((mode & EXT2_S_MASK) == EXT2_S_IFDIR){
         fs->bgd_table[i].used_dirs_count += 1;
       }
 
@@ -705,7 +705,7 @@ void dealloc_inumber(struct Ext2* fs, unsigned inumber, short mode) {
   fs->bgd_table[group_index].free_inodes_count += 1;
   fs->superblock.free_inodes_count += 1;
 
-  if ((mode & 0xF000) == EXT2_S_IFDIR){
+  if ((mode & EXT2_S_MASK) == EXT2_S_IFDIR){
     fs->bgd_table[group_index].used_dirs_count -= 1;
   }
 
@@ -844,7 +844,7 @@ static void ext2_free_indirect_tree(struct Ext2* fs, unsigned pointer_block_num,
 // belongs to that inode. Fast symlinks are excluded because short targets are
 // stored inline in inode.block[] instead of in allocatable filesystem blocks.
 static void node_dealloc_blocks(struct Node* node){
-  bool fast_symlink = (node->cached->inode.mode & 0xF000) == EXT2_S_IFLNK &&
+  bool fast_symlink = (node->cached->inode.mode & EXT2_S_MASK) == EXT2_S_IFLNK &&
     node->cached->inode.size <= sizeof(node->cached->inode.block);
 
   if (!fast_symlink){
@@ -885,7 +885,7 @@ struct CachedInode* make_inode(short mode, unsigned inumber){
   cached->inode.mtime = 0; // not supported
   cached->inode.dtime = 0; // not supported
   cached->inode.gid = 0; // TODO: support non-root groups
-  cached->inode.links_count = (mode & 0xF000) == EXT2_S_IFDIR ? 2 : 1; // directory has extra link for ".", file has 1 link
+  cached->inode.links_count = (mode & EXT2_S_MASK) == EXT2_S_IFDIR ? 2 : 1; // directory has extra link for ".", file has 1 link
   cached->inode.blocks = 0; // no data blocks yet
   cached->inode.flags = 0; // not supported
   cached->inode.osd1 = 0; // not used
@@ -1401,7 +1401,7 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   bool added = dir_add_entry_locked(dir, name, inumber);
   assert(added, "alloc_inode: failed to add the new directory entry to the parent directory.\n");
 
-  if ((mode & 0xF000) == EXT2_S_IFDIR){
+  if ((mode & EXT2_S_MASK) == EXT2_S_IFDIR){
     // parent dir gets new link from child's .. entry
     dir->cached->inode.links_count += 1;
     node_sync_inode(dir);
@@ -2394,21 +2394,21 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 }
 
 unsigned short node_get_type(struct Node* node){
-  return node->cached->inode.mode & 0xF000;
+  return node->cached->inode.mode & EXT2_S_MASK;
 }
 
 bool node_is_dir(struct Node* node){
-  unsigned short type = node->cached->inode.mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFDIR);
 }
 
 bool node_is_file(struct Node* node){
-  unsigned short type = node->cached->inode.mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFREG);
 }
 
 bool node_is_symlink(struct Node* node){
-  unsigned short type = node->cached->inode.mode & 0xF000;
+  unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFLNK);
 }
 
@@ -2457,4 +2457,83 @@ unsigned node_entry_count(struct Node* node){
   blocking_lock_release(&node->cached->lock);
 
   return count;
+}
+
+// Writes a linux_dirent structure from a DirEntry into the given buffer.
+// Returns number of bytes written.
+int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, unsigned remaining_size) {
+  unsigned reclen = sizeof(struct linux_dirent) + entry.name_len + 1; // +1 for d_type.
+
+  // Align to 4 bytes.
+  reclen = (reclen + 3) & ~3;
+  if (reclen > remaining_size) {
+    return 0; // Not enough space.
+  }
+
+  struct linux_dirent* dirent = (struct linux_dirent*) buffer_start;
+  dirent->d_ino = entry.inode;
+  dirent->d_off = 0; // Unused.
+  dirent->d_reclen = reclen;
+  memcpy(&dirent->d_name, entry.name, entry.name_len);
+  *(&dirent->d_name + entry.name_len) = 0; // Null-terminate name.
+
+  // d_type.
+  struct CachedInode* cached_inode = icache_get(&fs->icache, entry.inode);
+  char type = EXT2_DT_UNKNOWN;
+  if (cached_inode != NULL) {
+    unsigned short mode = cached_inode->inode.mode;
+    switch (mode & EXT2_S_MASK) {
+      case EXT2_S_IFDIR:
+        type = EXT2_DT_DIR;
+        break;
+      case EXT2_S_IFREG:
+        type = EXT2_DT_REG;
+        break;
+      case EXT2_S_IFLNK:
+        type = EXT2_DT_LNK;
+        break;
+    }
+  }
+  *((char*)dirent + reclen - 1) = type;
+  return reclen;
+}
+
+int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset) {
+  assert(node_is_dir(dir), "node_getdents: node is not a directory.\n");
+
+  blocking_lock_acquire(&dir->cached->lock);
+
+  unsigned index = 0;
+  struct DirEntry entry;
+
+  unsigned current_offset = 0;
+  unsigned total_bytes_read = 0;
+  char* buffer_pointer = buffer;
+  
+  while (index < node_size_in_bytes(dir)) {
+    int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*) &entry);
+    assert(cnt >= 4, "node_getdents: failed to read directory entry.\n");
+    assert(entry.rec_len >= 8, "node_getdents: invalid directory record length.\n");
+  
+    index += entry.rec_len;
+    if (entry.inode == 0 || current_offset + entry.rec_len <= offset) {
+      // Empty entry or not at desired offset yet.
+      current_offset += entry.rec_len;
+      continue;
+    }
+
+    // Write dirent into buffer.
+    int bytes_written = write_dirent(dir->filesystem, entry, buffer_pointer, buffer_size - total_bytes_read);
+    total_bytes_read += bytes_written;
+    buffer_pointer += bytes_written;
+    current_offset += entry.rec_len;
+
+    if (bytes_written == 0) {
+      // Buffer full.
+      break;
+    }
+  }
+  blocking_lock_release(&dir->cached->lock);
+  *new_offset = current_offset;
+  return total_bytes_read;
 }
