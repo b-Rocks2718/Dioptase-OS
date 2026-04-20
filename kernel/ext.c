@@ -2494,6 +2494,7 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
         break;
     }
   }
+  icache_release(&fs->icache, cached_inode);
   *((char*)dirent + reclen - 1) = type;
   return reclen;
 }
