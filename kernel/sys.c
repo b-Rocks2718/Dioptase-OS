@@ -1203,6 +1203,35 @@ int handle_exec(char* path, int argc, char** argv){
     return -1;
   }
 
+  // don't exec non-files
+  if (!node_is_file(prog)){
+    node_free(prog);
+    return -1;
+  }
+
+  // don't exec non-elf files
+  {
+    unsigned prog_size = node_size_in_bytes(prog);
+    unsigned* prog_bytes = NULL;
+
+    if (prog_size == 0){
+      // don't exec empty file
+      node_free(prog);
+      return -1;
+    }
+
+    prog_bytes = mmap(prog_size, prog, 0, MMAP_READ);
+    if (prog_bytes == NULL || !elf_validate_image(prog_bytes, prog_size)){
+      if (prog_bytes != NULL){
+        munmap(prog_bytes);
+      }
+      node_free(prog);
+      return -1;
+    }
+
+    munmap(prog_bytes);
+  }
+
   char** kargv = NULL;
   if (copy_exec_argv_from_user(&kargv, argc, argv, tcb) != 0){
     node_free(prog);

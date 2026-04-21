@@ -5,7 +5,8 @@
  *
  * How:
  * - call execv() with a missing path, a bad path pointer, negative argc, NULL
- *   argv, a bad argv pointer, too many argv entries, and one overlong string
+ *   argv, a bad argv pointer, too many argv entries, one overlong string, one
+ *   directory target, and one non-ELF regular file
  * - each call must return `-1` to the original process so test_syscall() can
  *   record the failure-path result
  */
@@ -56,6 +57,12 @@ int main(void){
 
   puts("***long arg\n");
   test_syscall(execv("/test/init", 1, overlong_argv));
+
+  puts("***directory target\n");
+  test_syscall(execv("/test", 0, NULL));
+
+  puts("***non-elf file\n");
+  test_syscall(execv("/test/hello.c", 0, NULL));
 
   return 0;
 }

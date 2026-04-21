@@ -12,3 +12,7 @@
 ***test_syscall arg = -1
 ***long arg
 ***test_syscall arg = -1
+***directory target
+***test_syscall arg = -1
+***non-elf file
+***test_syscall arg = -1

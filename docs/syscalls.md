@@ -79,6 +79,10 @@ For `argc > 0`, `argv` must point to a readable user array of `argc` readable
 NUL-terminated strings. Invalid pointers, unterminated strings, or oversized
 argument vectors return `-1`.
 
+`execv()` currently accepts only regular files whose contents pass the kernel's
+ELF32 sanity checks. Directories, symlinks, empty files, and malformed or
+non-ELF regular files return `-1`.
+
 ### Filesystem, Pipes, and Audio
 
 | Code | Wrapper | Arguments | Result |
