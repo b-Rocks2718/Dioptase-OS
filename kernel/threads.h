@@ -88,7 +88,8 @@ void sleep(unsigned jiffies);
 
 // terminate the current thread and 
 // place it on the reaper queue to eventually free its resources
-void stop(void);
+// and set the return code that will be delivered to the parent via the child descriptor promise
+void stop(unsigned rc);
 
 // disable preemption and return whether it was previously enabled or not
 bool preemption_disable(void);

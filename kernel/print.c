@@ -457,6 +457,12 @@ void load_text_tiles(void){
     offset = text_tiles[i++];
   }
 
+  // solid tile at index 127
+  for (int i = 0; i < 64; ++i){
+    // 8128 = 127 * 64
+    TILEMAP[8128 + i] = 0xC000;
+  }
+
   // transparent tile at index 255
   for (int i = 0; i < 64; ++i){
     // 16320 = 255 * 64

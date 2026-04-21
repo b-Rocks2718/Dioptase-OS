@@ -17,7 +17,7 @@ int kernel_main(void){
   say("***Running /sbin/init\n", NULL);
 
   struct Node* init = node_find(&fs.root, "/sbin/init");
-  int rc = run_user_program(init);
+  int rc = run_user_program(init, 0, NULL);
 
   say("***/sbin/init returned %d\n", &rc);
 

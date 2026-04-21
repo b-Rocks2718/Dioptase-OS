@@ -208,21 +208,84 @@ void unmap_vme(unsigned* pd, struct VME* vme){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
-// copy a thread's page dir and page tables from src to dst
-void vmem_copy_address_space(struct TCB* src, struct TCB* dst){
-  struct VME* src_vme = src->vme_list;
+// Shared file-backed VMEs treat the rounded tail of the final page as part of
+// the mapped page cache entry so writes can extend the file through mmap().
+// This helper mirrors the shared-file fault path when it decides how many bytes
+// of file data one cached page represents.
+static unsigned shared_vme_page_bytes(struct VME* vme, unsigned va){
+  assert(vme != NULL, "shared_vme_page_bytes: VME must not be NULL.\n");
+  assert(vme->file != NULL,
+    "shared_vme_page_bytes: shared VME must be file-backed.\n");
+  assert(va >= vme->start && va < vme->end,
+    "shared_vme_page_bytes: virtual address must fall inside the VME.\n");
 
-  while (src_vme){
-    // copy vme to new thread
-    struct VME* new_vme = vme_create(src_vme->start, src_vme->end, src_vme->size,
-                                     src_vme->file, src_vme->file_offset,
-                                     src_vme->flags, src_vme->paddr);
-    vme_insert(dst, NULL, new_vme);
-    
-    // copy vme data
-    
+  unsigned vme_offset = va - vme->start;
+  if (vme->size > vme_offset){
+    unsigned bytes_remaining = vme->size - vme_offset;
+    if (bytes_remaining < FRAME_SIZE){
+      return bytes_remaining;
+    }
+  }
 
-    src_vme = src_vme->next;
+  return FRAME_SIZE;
+}
+
+// copy a thread's page dir/page tables and vme_list from src to dst
+void vmem_fork(struct TCB* src, struct TCB* dst){
+  dst->vme_list = NULL;
+
+  // copy vme list to dst tcb
+  struct VME* prev_vme = NULL;
+  for (struct VME* vme = src->vme_list; vme != NULL; vme = vme->next){
+    struct VME* new_vme = vme_create(vme->start, vme->end, vme->size,
+                                     vme->file, vme->file_offset,
+                                     vme->flags, vme->paddr);
+    vme_insert(dst, prev_vme, new_vme);
+    prev_vme = new_vme;
+  }
+
+  // copy page directory and page tables from src to dst
+  dst->pid = create_page_directory();
+  unsigned* src_pd = (unsigned*)src->pid;
+  unsigned* dst_pd = (unsigned*)dst->pid;
+
+  for (struct VME* vme = dst->vme_list; vme != NULL; vme = vme->next){
+    if (! (vme->flags & MMAP_USER)) continue;
+
+    for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE){
+      unsigned page_dir_index = (va >> 22) & 0x3FF;
+      unsigned page_table_index = (va >> 12) & 0x3FF;
+
+      unsigned pde = src_pd[page_dir_index];
+      if (!(pde & VMEM_VALID)) continue;
+
+      unsigned* src_pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+      unsigned pte = src_pt[page_table_index];
+      if (!(pte & VMEM_VALID)) continue;
+
+      unsigned* dst_pt;
+      if (dst_pd[page_dir_index] & VMEM_VALID){
+        dst_pt = (unsigned*)(dst_pd[page_dir_index] & ~(FRAME_SIZE - 1));
+      } else {
+        dst_pt = (unsigned*)create_page_table();
+        dst_pd[page_dir_index] = (unsigned)dst_pt | (pde & 0xFFF);
+      }
+
+      unsigned paddr = pte & ~(FRAME_SIZE - 1);
+      if (vme->flags & MMAP_SHARED){
+        unsigned page_offset = vme->file_offset + (va - vme->start);
+        unsigned page_bytes = shared_vme_page_bytes(vme, va);
+        struct PageCacheEntry* page = page_cache_acquire(&page_cache,
+          vme->file, page_offset, page_bytes);
+        assert((unsigned)page->page_data == paddr,
+          "vmem_fork: shared source PTE must point at the page cache page.\n");
+        dst_pt[page_table_index] = pte;
+      } else {
+        unsigned* dst_page = physmem_alloc();
+        memcpy(dst_page, (void*)paddr, FRAME_SIZE);
+        dst_pt[page_table_index] = (unsigned)dst_page | (pte & 0xFFF);
+      }
+    }
   }
 }
 
@@ -571,7 +634,7 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
     if (was_user){
       // User code touched a mapped page without sufficient permissions. Abort
       // back to the kernel caller of `jump_to_user(...)`.
-      say("User program killed due to access of mapped page without sufficient permissions\n", NULL);
+      say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
       *return_to_user = false;
       return -1;
     } else if (tcb->uaccess_active){
@@ -599,7 +662,7 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
     if (was_user) {
       // User code touched an unmapped address. Abort back to the kernel caller
       // of `jump_to_user(...)`.
-      say("User program killed due to access of unmapped address\n", NULL);
+      say("| User program killed due to access of unmapped address\n", NULL);
       *return_to_user = false;
       return -1;
     } else if (tcb->uaccess_active){
@@ -609,16 +672,16 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
       *epc_ptr = (unsigned)tcb->uaccess_err_addr;
       return 0;
     } else {
-      int args[2] = {fault_addr, flags};
-      say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
+      int args[3] = {fault_addr, flags, (int)*epc_ptr};
+      say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X has no corresponding VME\n", args);
       panic("vmem: TLB miss with no corresponding VME.\n");
       return -1;
     }
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)){
-    int args[2] = {fault_addr, flags};
-    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
+    int args[3] = {fault_addr, flags, (int)*epc_ptr};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
     return -1;
   }
@@ -646,8 +709,7 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
     if (curr->file){
       if (curr->flags & MMAP_SHARED){
         // this is intentional, so mmap can be used to extend files
-        unsigned bytes_in_page =  (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? 
-          FRAME_SIZE : (curr->size - (fault_addr - curr->start));
+        unsigned bytes_in_page = shared_vme_page_bytes(curr, fault_addr);
 
         // shared mapping points directly into page cache
         struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file, 

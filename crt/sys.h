@@ -67,7 +67,7 @@ int play_audio_file(int fd);
 
 void set_text_color(int color);
 
-void wait_child(int pid);
+int wait_child(int pid);
 
 int chdir(char* path);
 
@@ -77,11 +77,24 @@ int dup(int fd);
 
 void yield(void);
 
+int getdents(int fd, char* buffer, unsigned buffer_size);
+
+int getcwd(char* buffer, unsigned buffer_size);
+
+int readlink(char* path, char* buffer, unsigned buffer_size);
+
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
 
 int seek(int fd, int offset, int whence);
+
+int move_vscroll(int delta);
+
+int move_hscroll(int delta);
+
+// used for pipes, return -1 if fd is not a pipe
+int fd_bytes_available(int fd);
 
 void test_syscall_list(int num, int* args);
 

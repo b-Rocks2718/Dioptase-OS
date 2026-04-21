@@ -148,6 +148,7 @@ struct Inode {
 #define EXT2_UNDEL_DIR_INO   6
 
 // i_mode values
+#define EXT2_S_MASK   0xF000
 #define EXT2_S_IFSOCK 0xC000
 #define EXT2_S_IFLNK  0xA000
 #define EXT2_S_IFREG  0x8000
@@ -193,6 +194,21 @@ struct DirEntry {
   unsigned short rec_len;
   unsigned short name_len;
   unsigned char  name[256];
+};
+
+// d_type constants.
+#define EXT2_DT_UNKNOWN 0
+#define EXT2_DT_DIR     4
+#define EXT2_DT_REG     8
+#define EXT2_DT_LNK     10
+
+struct linux_dirent {
+    unsigned d_ino; // i-node number.
+    unsigned d_off;
+    unsigned short d_reclen; // Length of this record.
+    char d_name; // Filename (null-terminated array).
+    // char pad;
+    // char d_type; // Offset is (d_reclen - 1).
 };
 
 #endif // EXT2_STRUCTS_H

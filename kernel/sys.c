@@ -21,8 +21,11 @@
 #define INITIAL_USER_STACK_SIZE 0x4000
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
+#define EXEC_MAX_ARGC 16
+#define EXEC_MAX_ARG_BYTES 256
 
 #define PIPE_BUFFER_CAPACITY 1024
+#define MAX_GETDENTS_BUFFER_SIZE 1024
 
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
@@ -141,6 +144,181 @@ static int copy_cstr_from_user(char* dest, char* src, unsigned max,
   return -1;
 }
 
+// Free a kernel snapshot of exec argv strings
+static void free_exec_argv(int argc, char** kargv){
+  if (kargv == NULL){
+    return;
+  }
+
+  for (int i = 0; i < argc; i++){
+    free(kargv[i]);
+  }
+  free(kargv);
+}
+
+// Compute how much of the initial user stack exec argv will occupy.
+// returns -1 on failure
+static int exec_argv_stack_bytes(int argc, char** kargv,
+    unsigned* required_bytes){
+  if (argc < 0 || argc > EXEC_MAX_ARGC){
+    return -1;
+  }
+
+  unsigned total = sizeof(unsigned);
+  for (int i = 0; i < argc; i++){
+    unsigned len = strlen(kargv[i]);
+    if (len >= EXEC_MAX_ARG_BYTES){
+      return -1;
+    }
+
+    len++; // count the NUL terminator
+
+    unsigned aligned_len = (len + 3) & ~3;
+    total += aligned_len;
+  }
+
+  unsigned argv_bytes = argc * sizeof(char*);
+  unsigned aligned_argv_bytes = (argv_bytes + 3) & ~3;
+  total += aligned_argv_bytes;
+
+  if (total > INITIAL_USER_STACK_SIZE){
+    return -1;
+  }
+
+  *required_bytes = total;
+  return 0;
+}
+
+// Snapshot exec argv out of the caller's current user address space before the
+// current image is torn down.
+// - On success, `*out_kargv` owns a kernel heap snapshot of the argument vector
+//   that remains valid after the old address space is destroyed.
+// - Returns -1 for any invalid user pointer, oversized argument, or snapshot
+//   that would not fit back into the initial user stack of the new image.
+static int copy_exec_argv_from_user(char*** out_kargv, int argc, char** argv,
+    struct TCB* tcb){
+  *out_kargv = NULL;
+
+  if (argc < 0 || argc > EXEC_MAX_ARGC){
+    return -1;
+  }
+
+  if (argc == 0){
+    return 0;
+  }
+
+  if (argv == NULL){
+    return -1;
+  }
+
+  char** kargv = malloc(sizeof(char*) * argc);
+  memset(kargv, 0, sizeof(char*) * argc);
+
+  unsigned argv_addr = (unsigned)argv;
+  for (int i = 0; i < argc; i++){
+    unsigned entry_offset = (unsigned)i * sizeof(char*);
+    if (argv_addr > UINT_MAX - entry_offset){
+      // avoid overflow
+      free_exec_argv(argc, kargv);
+      return -1;
+    }
+
+    // get user pointer for this argv entry
+    char* user_arg = NULL;
+    if (copy_from_user(&user_arg, (void*)(argv_addr + entry_offset),
+        sizeof(char*), tcb) != 0){
+      free_exec_argv(argc, kargv);
+      return -1;
+    }
+
+    // get data at this pointer
+    kargv[i] = malloc(EXEC_MAX_ARG_BYTES);
+    if (copy_cstr_from_user(kargv[i], user_arg, EXEC_MAX_ARG_BYTES, tcb) != 0){
+      free_exec_argv(argc, kargv);
+      return -1;
+    }
+  }
+
+  unsigned required_bytes = 0;
+  if (exec_argv_stack_bytes(argc, kargv, &required_bytes) != 0){
+    free_exec_argv(argc, kargv);
+    return -1;
+  }
+
+  *out_kargv = kargv;
+  return 0;
+}
+
+// Rebuild the exec argument vector on the new user stack.
+// - On success, the top of the new user stack contains copies of every argv
+//   string followed by a rebuilt argv pointer array with a trailing NULL entry.
+// - `*initial_sp` is set to the stack pointer that jump_to_user() should use,
+//   below the copied argv block so the new program can grow its stack downward.
+// - `*user_argv` is the user-space address of the rebuilt argv array, or 0 when
+//   `argc == 0`.
+static int build_exec_argv_on_stack(unsigned stack_bottom, unsigned stack_top,
+    char** kargv, int argc, unsigned* initial_sp, unsigned* user_argv,
+    struct TCB* tcb){
+  *initial_sp = stack_top - sizeof(unsigned);
+  *user_argv = 0;
+
+  if (argc == 0){
+    return 0;
+  }
+
+  unsigned required_bytes = 0;
+  if (exec_argv_stack_bytes(argc, kargv, &required_bytes) != 0){
+    return -1;
+  }
+
+  if (stack_top < stack_bottom || (stack_top - stack_bottom) < required_bytes){
+    return -1;
+  }
+
+  char** user_argv_buf = malloc(sizeof(char*) * argc);
+  unsigned cursor = stack_top;
+  for (int i = argc - 1; i >= 0; i--){
+    // copy each string in argv
+    unsigned len = strlen(kargv[i]) + 1;
+    unsigned aligned_len = 0;
+    aligned_len = (len + 3) & ~3;
+    if (cursor - stack_bottom < aligned_len){
+      free(user_argv_buf);
+      return -1;
+    }
+
+    cursor -= len;
+    cursor &= ~(sizeof(unsigned) - 1);
+    if (copy_to_user((void*)cursor, kargv[i], len, tcb) != 0){
+      free(user_argv_buf);
+      return -1;
+    }
+
+    user_argv_buf[i] = (char*)cursor;
+  }
+
+  unsigned argv_bytes = argc * sizeof(char*);
+  unsigned aligned_argv_bytes = 0;
+  aligned_argv_bytes = (argv_bytes + 3) & ~3;
+  if (cursor - stack_bottom < aligned_argv_bytes){
+    free(user_argv_buf);
+    return -1;
+  }
+
+  cursor -= argv_bytes;
+  cursor &= ~(sizeof(unsigned) - 1);
+  // copy argv itself
+  if (copy_to_user((void*)cursor, user_argv_buf, argv_bytes, tcb) != 0){
+    free(user_argv_buf);
+    return -1;
+  }
+
+  *user_argv = cursor;
+  *initial_sp = cursor - sizeof(unsigned);
+  free(user_argv_buf);
+  return 0;
+}
+
 int handle_pipe(int* fds){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -252,7 +430,7 @@ int handle_read(int fd, char* buf, unsigned count){
     return count;
   } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR
             || type == FILE_DESCRIPTOR_PIPE_WRITE){
-    return 0;
+    return -1;
   } else if (type == FILE_DESCRIPTOR_PIPE_READ){
     struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
     char* kbuf = malloc(count);
@@ -270,13 +448,16 @@ int handle_read(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned)offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return 0;
   }
 
@@ -297,11 +478,13 @@ int handle_read(int fd, char* buf, unsigned count){
   int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
   free(kbuf);
   if (rc != 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     return -1;
   }
 
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, bytes_to_read);
-  
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
   return bytes_to_read;
 }
 
@@ -334,7 +517,7 @@ int handle_write(int fd, char* buf, unsigned count){
   enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
   if (type == FILE_DESCRIPTOR_STDIN || type == FILE_DESCRIPTOR_PIPE_READ){
     free(kbuf);
-    return 0;
+    return -1;
   } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR){
     for (unsigned i = 0; i < count; i++){
       putchar(kbuf[i]);
@@ -356,13 +539,16 @@ int handle_write(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
 
   if ((unsigned)offset > INT_MAX - count){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
     free(kbuf);
     return -1;
   }
@@ -377,6 +563,7 @@ int handle_write(int fd, char* buf, unsigned count){
   free(kbuf);
   
   __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, count);
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
   
   return count;
 }
@@ -454,6 +641,28 @@ int handle_sem_close(int sem_d){
   return 0;
 }
 
+// Compute one shared file-descriptor seek target while preserving the
+// user-visible invariant that descriptor offsets stay within the non-negative
+// signed 32-bit range.
+static bool seek_target_ok(int base, int delta, int* out){
+  if (delta >= 0){
+    if (base > INT_MAX - delta){
+      return false;
+    }
+
+    *out = base + delta;
+    return true;
+  }
+
+  unsigned magnitude = 0u - (unsigned)delta;
+  if ((unsigned)base < magnitude){
+    return false;
+  }
+
+  *out = base - (int)magnitude;
+  return true;
+}
+
 int handle_seek(int fd, int offset, int whence){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -471,30 +680,47 @@ int handle_seek(int fd, int offset, int whence){
   
   int new_offset = 0;
 
+  blocking_lock_acquire(&descriptor->offset_lock);
+
   switch (whence){
     case SEEK_SET: {
-      if (offset < 0) return -1;
+      if (offset < 0){
+        blocking_lock_release(&descriptor->offset_lock);
+        return -1;
+      }
 
-      __atomic_store_n(&descriptor->offset, offset);
+      descriptor->offset = offset;
       new_offset = offset;
       break;
     }
     case SEEK_CUR: {
-      new_offset = offset + __atomic_fetch_add(&descriptor->offset, offset);
+      if (!seek_target_ok(descriptor->offset, offset, &new_offset)){
+        blocking_lock_release(&descriptor->offset_lock);
+        return -1;
+      }
+
+      descriptor->offset = new_offset;
       break;
     }
     case SEEK_END: {
       unsigned file_size = node_size_in_bytes(descriptor->file);
 
-      if ((unsigned)offset + file_size > INT_MAX) return -1;
+      if (file_size > INT_MAX ||
+          !seek_target_ok((int)file_size, offset, &new_offset)){
+        blocking_lock_release(&descriptor->offset_lock);
+        return -1;
+      }
 
-      __atomic_store_n(&descriptor->offset, (int)file_size + offset);
-      new_offset = (int)file_size + offset;
+      descriptor->offset = new_offset;
       break;
     }
-    default:
+    default: {
+      blocking_lock_release(&descriptor->offset_lock);
       return -1;
+    }
   }
+
+  blocking_lock_release(&descriptor->offset_lock);
   return new_offset;
 }
 
@@ -547,6 +773,72 @@ int handle_play_audio(int fd){
   return 0;
 }
 
+char *clean_path(char *path) {
+    // Split by '/' to resolve "." and "..".
+    unsigned maximum_parts = SYSCALL_MAX_PATH_BYTES / 64;
+    char **parts = malloc(sizeof(char*) * maximum_parts);
+    for (unsigned i = 0; i < maximum_parts; i++) {
+        parts[i] = NULL;
+    }
+    unsigned part_count = 0;
+    char *current = path;
+
+    unsigned total_length = 2; // For '/' and null terminator.
+
+    while (*current != 0) {
+        // Skip leading '/'.
+        while (*current == '/') {
+            current++;
+        }
+        if (*current == 0) {
+            break;
+        }
+        char *start = current;
+        while (*current != '/' && *current != 0) {
+            current++;
+        }
+        unsigned length = (unsigned) current - (unsigned) start;
+        if (length == 1 && start[0] == '.') {
+            // Do nothing.
+            continue;
+        } else if (length == 2 && start[0] == '.' && start[1] == '.') {
+            if (part_count == 0) {
+                // At root. Do nothing.
+                continue;
+            }
+            total_length -= (strlen((char*) parts[part_count - 1]) + 1);
+            free((char*) parts[--part_count]);
+            continue;
+        }
+
+        char *part = malloc(length + 1);
+        memcpy(part, start, length);
+        part[length] = 0;
+        parts[part_count++] = part;
+        total_length += length + 1;
+    }
+
+    if (part_count > 0) {
+        total_length--; // No trailing '/'.
+    }
+
+    // Reconstruct.
+    char *cleaned = malloc(total_length);
+    cleaned[0] = '/';
+    unsigned cleaned_index = 1;
+    for (unsigned i = 0; i < part_count; i++) {
+        unsigned part_offset = 0;
+        while (parts[i][part_offset] != 0) {
+            cleaned[cleaned_index++] = parts[i][part_offset++];
+        }
+        cleaned[cleaned_index++] = '/';
+        free((char*) parts[i]);
+    }
+    cleaned[total_length - 1] = 0; // Overwrite last '/' with null terminator.
+    free(parts);
+    return cleaned;
+}
+
 int handle_chdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -561,14 +853,15 @@ int handle_chdir(char* path){
   }
 
   struct Node* file_node = node_find(tcb->cwd, buf);
-  free(buf);
   if (file_node == NULL){
     // could not find file
+    free(buf);
     return -1;
   }
 
   // don't chdir into a non-directory
   if (!node_is_dir(file_node)){
+    free(buf);
     node_free(file_node);
     return -1;
   }
@@ -576,6 +869,35 @@ int handle_chdir(char* path){
   node_free(tcb->cwd);
 
   tcb->cwd = file_node;
+
+  // Combine path.
+  char *old_path = tcb->cwd_path;
+  unsigned old_length = strlen(old_path);
+  unsigned new_length = strlen(buf);
+
+  unsigned new_offset = 0;
+  char *final_path;
+
+  if (buf[0] == '/') {
+      // Absolute path.
+      final_path = malloc(new_length + 1);
+  } else {
+      // Relative path.
+      new_offset = old_length + 1; // Include '/'.
+      final_path = malloc(new_offset + new_length + 1);
+      // Copy old path.
+      memcpy(final_path, old_path, old_length);
+      final_path[old_length] = '/';
+  }
+  // Copy cwd path.
+  memcpy(final_path + new_offset, buf, new_length);
+  final_path[new_offset + new_length] = 0;
+
+  tcb->cwd_path = clean_path(final_path);
+
+  free(final_path);
+  free(old_path);
+  free(buf);
   return 0;
 }
 
@@ -595,7 +917,13 @@ int handle_mmap(int size, int fd, int offset, int flags){
     if (file_node == NULL){
       return -1;
     }
-  } // else anonymous mmap request
+  } else {
+    // anonymous mmap request
+    if (flags & MMAP_SHARED){
+      // shared anonymous mappings are not supported
+      return -1;
+    }
+  }
 
   if (offset < 0) return -1;
 
@@ -607,41 +935,20 @@ int handle_mmap(int size, int fd, int offset, int flags){
   return (unsigned)mmapped_file;
 }
 
-void child_thread(void* arg){
-  struct ChildDescriptor* child_desc = (struct ChildDescriptor*)arg;
-  //int rc = jump_to_user();
-
-  //promise_set(&child_desc->child, rc);
-
-  //if (__atomic_fetch_add(&child_desc->refcount, -1) == 1){
-  //  promise_free(&child_desc->child);
-  //  free(child_desc);
-  //}
+int child_thread(unsigned* arg){
+  unsigned pc = arg[0];
+  unsigned sp = arg[1];
+  
+  return jump_to_user(pc, sp, 0, 0);
 }
 
-struct TCB* fork_tcb(struct TCB* parent, int child_desc){
+struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned sp){
   struct TCB* child = malloc(sizeof(struct TCB));
+  memset(child, 0, sizeof(struct TCB));
 
-  // copy context
-  child->r20 = parent->r20;
-  child->r21 = parent->r21;
-  child->r22 = parent->r22;
-  child->r23 = parent->r23;
-  child->r24 = parent->r24;
-  child->r25 = parent->r25;
-  child->r26 = parent->r26;
-  child->r27 = parent->r27;
-  child->r28 = parent->r28;
-  
-  child->sp = parent->sp;
-  child->bp = parent->bp;
-  child->ra = parent->ra;
-
-  child->flags = parent->flags;
-  child->psr = parent->psr;
-  child->imr = parent->imr;
-  child->fault_addr = parent->fault_addr;
-  child->fault_flags = parent->fault_flags;
+  child->flags = 0;
+  child->psr = 1;
+  child->imr = DEFAULT_INTERRUPT_MASK;
 
   child->can_preempt = parent->can_preempt;
   child->core_affinity = parent->core_affinity;
@@ -650,26 +957,45 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc){
   child->remaining_quantum = parent->remaining_quantum;
   child->wakeup_jiffies = parent->wakeup_jiffies;
 
-  child->uaccess_active = parent->uaccess_active;
-  child->uaccess_err_addr = parent->uaccess_err_addr;
-
-  // create new page dir
-  child->pid = parent->pid;
-
   // alloc new kernel stack
   unsigned* the_stack = malloc(TCB_STACK_SIZE);
   child->stack = the_stack;
-  child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);;
+  child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
-  struct Fun* thread_fun;
+  // set up descriptors
+  copy_descriptors(parent, child);
 
-  //struct Fun* child_fun = malloc(sizeof(struct Fun));
-  //child_fun->func = child_thread;
-  //child_fun->arg = parent->child_descriptors[child_desc];
-  //__atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
+  // copy cwd
+  child->cwd = node_clone(parent->cwd);
+
+  // set up vme_list and pid
+  vmem_fork(parent, child);
+
+  // set up thread fun
+  struct Fun* child_fun = malloc(sizeof(struct Fun));
+  child_fun->func = (void(*)(void*))child_thread;
+  
+  unsigned* arg = malloc(2 * sizeof(unsigned));
+  arg[0] = pc;
+  arg[1] = sp;
+  child_fun->arg = arg;
+
+  child->thread_fun = child_fun;
+  child->ra = (unsigned)thread_entry;
+
+  child->parent_promise = parent->child_descriptors[child_desc];
+
+  __atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
+
+  child->next = NULL;
+
+  __atomic_fetch_add(&n_active, 1);
+
+  return child;
 }
 
-int handle_fork(void){
+int handle_fork(unsigned pc, unsigned sp){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
@@ -679,17 +1005,225 @@ int handle_fork(void){
     return -1;
   }
 
-  struct TCB* child = fork_tcb(tcb, child_desc);
+  struct TCB* child = fork_tcb(tcb, child_desc, pc, sp);
+  
   scheduler_wake_thread(child);
 
-  return child_desc;
+  return child_desc + CHILD_DESCRIPTORS_START;
+}
+
+int handle_wait_child(int child_desc){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  child_desc -= CHILD_DESCRIPTORS_START;
+  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+    return -1;
+  }
+
+  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
+  if (child == NULL){
+    return -1;
+  }
+
+  unsigned rc = (unsigned)promise_get(child->child);
+
+  // can only wait on a given child descriptor once; after this call the
+  // descriptor is consumed and must not be used again
+  deallocate_descriptor(tcb, DESCRIPTOR_CHILD, child_desc);
+  
+  return rc;
+}
+
+int handle_exec(char* path, int argc, char** argv){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+    
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+    
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+  
+  struct Node* prog = node_find(tcb->cwd, buf);
+  free(buf);
+  if (prog == NULL){
+    // could not find file
+    return -1;
+  }
+
+  char** kargv = NULL;
+  if (copy_exec_argv_from_user(&kargv, argc, argv, tcb) != 0){
+    node_free(prog);
+    return -1;
+  }
+
+  vmem_destroy_address_space(tcb);
+  free_vme_list(tcb->vme_list);
+  tcb->vme_list = NULL;
+
+  unsigned new_pid = create_page_directory();
+
+  tcb->pid = new_pid;
+  set_pid(new_pid);
+  tlb_flush();
+
+  rc = run_user_program(prog, argc, kargv);
+  free_exec_argv(argc, kargv);
+  stop(rc);
+
+  return -1;
+}
+
+int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_NORMAL) {
+    return -1;
+  }
+
+  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  if (file_node == NULL || !node_is_dir(file_node)) {
+    return -1;
+  }
+
+  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
+  int offset = tcb->file_descriptors[fd]->offset;
+  if (offset < 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return -1;
+  }
+
+  unsigned file_size = node_size_in_bytes(file_node);
+  if ((unsigned) offset >= file_size){
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return 0;
+  }
+
+  if (buffer_size > MAX_GETDENTS_BUFFER_SIZE) {
+    buffer_size = MAX_GETDENTS_BUFFER_SIZE;
+  }
+
+  char* kbuf = malloc(buffer_size);
+  int new_offset = offset;
+  unsigned bytes_read = node_getdents(file_node, offset, kbuf, buffer_size, &new_offset);
+
+  int rc = copy_to_user(buffer, kbuf, bytes_read, tcb);
+  free(kbuf);
+  if (rc != 0) {
+    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    return -1;
+  }
+
+  __atomic_store_n(&tcb->file_descriptors[fd]->offset, new_offset);
+  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+
+  return bytes_read;
+}
+
+int handle_getcwd(char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+  
+  int cwd_len = strlen(tcb->cwd_path);
+  if (buffer_size < (unsigned)cwd_len + 1) {
+    return -1;
+  }
+  int rc = copy_to_user(buffer, tcb->cwd_path, cwd_len + 1, tcb);
+  if (rc != 0) {
+    return -1;
+  }
+  return (unsigned) buffer;
+}
+
+int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0) {
+    free(buf);
+    return -1;
+  }
+
+  struct Node* file_node = node_find(tcb->cwd, buf);
+  free(buf);
+
+  if (file_node == NULL) {
+    // Symlink not found.
+    return -1;
+  }
+
+  if (!node_is_symlink(file_node)) {
+    // Not a symlink.
+    node_free(file_node);
+    return -1;
+  }
+
+  unsigned total_bytes = node_size_in_bytes(file_node);
+
+  // node_get_symlink_target adds null terminator.
+  char *target = malloc(total_bytes + 1);
+  node_get_symlink_target(file_node, target);
+  unsigned read_bytes = 0;
+
+  if (buffer_size < total_bytes + 1) {
+    // Partial read.
+    read_bytes = buffer_size;
+  } else {
+    // Full read.
+    read_bytes = total_bytes + 1;
+  }
+  
+  rc = copy_to_user(buffer, target, read_bytes, tcb);
+  node_free(file_node);
+  free(target);
+
+  if (rc != 0) {
+    return -1;
+  }
+  
+  return read_bytes;
+}
+
+int handle_fd_bytes_available(int fd){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_READ &&
+      tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_WRITE){
+    return -1;
+  }
+
+  struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+
+  return blocking_ringbuf_size(&pipe->buf);
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7,
-    bool* return_to_user){
+    bool* return_to_user, unsigned pc, unsigned sp){
 
   // most sycalls return to the user program
   *return_to_user = true;
@@ -773,11 +1307,10 @@ int trap_handler(unsigned code,
       return handle_mmap(arg1, arg2, arg3, arg4);
     }
     case TRAP_FORK: {
-      return handle_fork();
+      return handle_fork(pc, sp);
     }
     case TRAP_EXEC: {
-      puts("exec syscall not implemented\n");
-      return -1;
+      return handle_exec((char*)arg1, arg2, (char**)arg3);
     }
     case TRAP_PLAY_AUDIO: {
       return handle_play_audio(arg1);
@@ -790,7 +1323,7 @@ int trap_handler(unsigned code,
       return 0;
     }
     case TRAP_WAIT_CHILD: {
-      panic("wait_child syscall not implemented\n");
+      return handle_wait_child(arg1);
     }
     case TRAP_CHDIR: {
       return handle_chdir((char*)arg1);
@@ -808,6 +1341,26 @@ int trap_handler(unsigned code,
       yield();
       return 0;
     }
+    case TRAP_GETDENTS: {
+      return handle_getdents(arg1, (char*)arg2, (unsigned)arg3);
+    }
+    case TRAP_GETCWD: {
+      return handle_getcwd((char*)arg1, (unsigned)arg2);
+    }
+    case TRAP_READLINK: {
+      return handle_readlink((char*)arg1, (char*)arg2, (unsigned)arg3);
+    }
+    case TRAP_MOVE_VSCROLL: {
+      *TILE_VSCROLL += arg1;
+      return 0;
+    }
+    case TRAP_MOVE_HSCROLL: {
+      *TILE_HSCROLL += arg1;
+      return 0;
+    }
+    case TRAP_FD_BYTES_AVAILABLE: {
+      return handle_fd_bytes_available(arg1);
+    }
     default: {
       *return_to_user = false;
       return -1;
@@ -821,7 +1374,12 @@ void trap_init(void) {
 
 // run a user program given a node representing its ELF file
 // consumes the node, so the caller cannot use it after calling this function
-int run_user_program(struct Node* prog_node){
+int run_user_program(struct Node* prog_node, int argc, char** argv){
+  if (argc < 0){
+    node_free(prog_node);
+    return -1;
+  }
+
   unsigned size = node_size_in_bytes(prog_node);
   unsigned* prog = mmap(size, prog_node, 0, MMAP_READ);
   node_free(prog_node);
@@ -832,9 +1390,18 @@ int run_user_program(struct Node* prog_node){
   // user half and enter at the last word in that reservation.
   unsigned* stack = mmap_stack(INITIAL_USER_STACK_SIZE,
     MMAP_READ | MMAP_WRITE | MMAP_USER);
+  unsigned stack_bottom = (unsigned)stack;
+  unsigned stack_top = (unsigned)stack + INITIAL_USER_STACK_SIZE;
+  unsigned initial_sp = 0;
+  unsigned user_argv = 0;
 
-  return jump_to_user(entry,
-    (unsigned)stack + INITIAL_USER_STACK_SIZE - sizeof(unsigned), 0, 0);
+  int rc = build_exec_argv_on_stack(stack_bottom, stack_top, argv, argc,
+    &initial_sp, &user_argv, get_current_tcb());
+  if (rc != 0){
+    return -1;
+  }
+
+  return jump_to_user(entry, initial_sp, argc, user_argv);
 }
 
 void init_descriptors(struct TCB* tcb, bool init_stdio){
@@ -843,18 +1410,21 @@ void init_descriptors(struct TCB* tcb, bool init_stdio){
     tcb->file_descriptors[0] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[0]->refcount = 1;
     tcb->file_descriptors[0]->offset = 0;
+    blocking_lock_init(&tcb->file_descriptors[0]->offset_lock);
     tcb->file_descriptors[0]->type = FILE_DESCRIPTOR_STDIN;
     tcb->file_descriptors[0]->file = NULL;
     
     tcb->file_descriptors[1] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[1]->refcount = 1;
     tcb->file_descriptors[1]->offset = 0;
+    blocking_lock_init(&tcb->file_descriptors[1]->offset_lock);
     tcb->file_descriptors[1]->type = FILE_DESCRIPTOR_STDOUT;
     tcb->file_descriptors[1]->file = NULL;
 
     tcb->file_descriptors[2] = malloc(sizeof(struct FileDescriptor));
     tcb->file_descriptors[2]->refcount = 1;
     tcb->file_descriptors[2]->offset = 0;
+    blocking_lock_init(&tcb->file_descriptors[2]->offset_lock);
     tcb->file_descriptors[2]->type = FILE_DESCRIPTOR_STDERR;
     tcb->file_descriptors[2]->file = NULL;
   } else {
@@ -883,6 +1453,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
             tcb->file_descriptors[i] = malloc(sizeof(struct FileDescriptor));
             tcb->file_descriptors[i]->refcount = 1;
             tcb->file_descriptors[i]->offset = 0;
+            blocking_lock_init(&tcb->file_descriptors[i]->offset_lock);
             tcb->file_descriptors[i]->type = FILE_DESCRIPTOR_NORMAL;
             tcb->file_descriptors[i]->file = NULL;
           }
@@ -910,7 +1481,8 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
           if (fill){
             tcb->child_descriptors[i] = malloc(sizeof(struct ChildDescriptor));
             tcb->child_descriptors[i]->refcount = 1;
-            tcb->child_descriptors[i]->child = NULL;
+            tcb->child_descriptors[i]->child = malloc(sizeof(struct Promise));
+            promise_init(tcb->child_descriptors[i]->child);
           }
           return i;
         }
@@ -975,6 +1547,7 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         }
       } else if (descriptor->file != NULL){
         node_free(descriptor->file);
+        blocking_lock_destroy(&descriptor->offset_lock);
       }
 
       free(descriptor);

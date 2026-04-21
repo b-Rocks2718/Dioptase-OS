@@ -27,6 +27,7 @@
 #include "scheduler.h"
 #include "vmem.h"
 #include "sys.h"
+#include "promise.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -79,6 +80,7 @@ static void free_tcb(struct TCB* tcb) {
   }
 
   node_free(tcb->cwd);
+  free(tcb->cwd_path);
 
   free(tcb);
 
@@ -131,8 +133,13 @@ static struct TCB* make_tcb(bool is_daemon){
   tcb->vme_list = NULL;
 
   tcb->cwd = &fs.root;
+  tcb->cwd_path = is_daemon ? leak(2) : malloc(2);
+  tcb->cwd_path[0] = '/';
+  tcb->cwd_path[1] = 0;
 
   init_descriptors(tcb, !is_daemon);
+
+  tcb->parent_promise = NULL;
 
   tcb->next = NULL;
 
@@ -237,6 +244,7 @@ void thread_entry(void) {
   struct TCB* current_tcb = get_current_tcb();
   interrupts_restore(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
+  unsigned rc = 0;
   if (thread_fun != NULL) {
     // Catch corrupted thread trampoline state before an indirect branch can jump to 0x0.
     if (thread_fun->func == NULL) {
@@ -249,14 +257,14 @@ void thread_entry(void) {
       say("| thread_entry null func core=%d tcb=0x%X fun=0x%X arg=0x%X\n", args);
       panic("thread_entry: thread_fun->func is NULL.\n");
     }
-    (*thread_fun->func)(thread_fun->arg);
+    rc = (*(unsigned (*)(void *))thread_fun->func)(thread_fun->arg);
   }
 
   // Thread cleanup:
   // stop() places thread in reaper queue
   // reaper thread eventually frees thread
 
-  stop();
+  stop(rc);
 }
 
 // empty function to pass into context_switch
@@ -422,11 +430,23 @@ void sleep(unsigned jiffies){
 
 // terminate the current thread and 
 // place it on the reaper queue to eventually free its resources
-void stop(void) {
+void stop(unsigned rc) {
   unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;
+  interrupts_restore(was);
   bool is_idle = (current == &core->idle_thread);
+
+  if (current->parent_promise != NULL){
+    promise_set(current->parent_promise->child, (void*)rc);
+
+    if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
+      promise_free(current->parent_promise->child);
+      free(current->parent_promise);
+    }
+  }
+
+  was = interrupts_disable();
 
   if (is_idle) {
     panic("idle thread cannot call stop().\n");
