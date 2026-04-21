@@ -92,6 +92,7 @@ argument vectors return `-1`.
 | `29` | `pipe(fds)` | `fds` | Allocates a pipe and writes `{read_fd, write_fd}` into the user array `fds[0..1]`. Returns `0` on success or `-1` on copy or descriptor-allocation failure. |
 | `30` | `dup(fd)` | `fd` | Returns a new file descriptor that references the same underlying descriptor object, including the shared current offset. Returns `-1` on failure. |
 | `31` | `seek(fd, offset, whence)` | `fd`, `offset`, `whence` | Updates the descriptor offset and returns the new offset, or returns `-1` for an invalid descriptor or invalid `whence`. |
+| `34` | `getcwd(buffer, buffer_size)` | `buffer`, `buffer_size` | Copies the current cwd path plus trailing NUL into `buffer`. Returns `buffer` on success or `(char*)-1` on invalid user memory, missing cwd state, or insufficient buffer size. |
 | `39` | `truncate(fd, size)` | `fd`, `size` | Shrinks a regular file descriptor to `size` bytes and returns `0`, or returns `-1` for an invalid descriptor, a non-regular-file descriptor, or any request that would grow the file. |
 
 Additional file-descriptor notes:

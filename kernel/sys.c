@@ -1109,6 +1109,13 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   // copy cwd
   child->cwd = node_clone(parent->cwd);
 
+  // copy cwd path
+  if (parent->cwd_path != NULL){
+    unsigned cwd_path_bytes = strlen(parent->cwd_path) + 1;
+    child->cwd_path = malloc(cwd_path_bytes);
+    memcpy(child->cwd_path, parent->cwd_path, cwd_path_bytes);
+  }
+
   // set up vme_list and pid
   vmem_fork(parent, child);
 
@@ -1275,11 +1282,17 @@ int handle_getcwd(char* buffer, unsigned buffer_size) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
-  
-  int cwd_len = strlen(tcb->cwd_path);
-  if (buffer_size < (unsigned)cwd_len + 1) {
+
+  // guard against invalid cwd_path
+  if (tcb->cwd_path == NULL){
     return -1;
   }
+
+  unsigned cwd_len = strlen(tcb->cwd_path);
+  if (buffer_size <= cwd_len) {
+    return -1;
+  }
+
   int rc = copy_to_user(buffer, tcb->cwd_path, cwd_len + 1, tcb);
   if (rc != 0) {
     return -1;

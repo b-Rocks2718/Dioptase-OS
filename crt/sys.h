@@ -1,6 +1,8 @@
 #ifndef SYS_H
 #define SYS_H
 
+#define MAX_PATH 1024
+
 unsigned exit(int status);
 
 unsigned test_syscall(int arg);
@@ -79,7 +81,7 @@ void yield(void);
 
 int getdents(int fd, char* buffer, unsigned buffer_size);
 
-int getcwd(char* buffer, unsigned buffer_size);
+char* getcwd(char* buffer, unsigned buffer_size);
 
 int readlink(char* path, char* buffer, unsigned buffer_size);
 

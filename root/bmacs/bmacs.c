@@ -822,5 +822,12 @@ int main(int argc, char** argv){
 
   show_terminal_cursor();
   free_editor_state(&editor);
+
+  // clear the screen
+  puts("\x1b[2J");
+
+  // home cursor
+  puts("\x1b[H");
+
   return 0;
 }
