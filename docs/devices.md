@@ -18,7 +18,7 @@ There is no line discipline or input driver for UART RX right now. Headless test
 
 ### PS/2 Keyboard
 
-The raw PS/2 device publishes one 16-bit word at a time from MMIO: `0` means no key is pending, bit 8 marks release events, and the low byte is the ASCII value. The kernel keeps that raw contract for `getkey_raw()` and `waitkey_raw()`, which are the polling helpers used during boot or shutdown before the threading stack is available.
+The raw PS/2 device publishes one 16-bit word at a time from MMIO: `0` means no key is pending, bit 8 marks release events, and the low byte is the guest keycode described in `docs/mem_map.md`. Printable keys use their unshifted base-key ASCII identity, left/right modifiers remain distinct, and common navigation/function keys live in a reserved non-ASCII range. The kernel keeps that raw contract for `getkey_raw()` and `waitkey_raw()`, which are the polling helpers used during boot or shutdown before the threading stack is available.
 
 After `ps2_init()`, the normal path is interrupt-driven. Each core's PS/2 interrupt handler copies the MMIO word into a per-core key buffer and tries to wake one dedicated high-priority PS/2 worker thread. That worker drains all per-core buffers and republishes events into a shared `BlockingQueue`, so `getkey()` is non-blocking and `waitkey()` blocks cleanly. There is a small lost-wakeup window between the worker deciding to sleep and a new interrupt arriving, so the PIT periodically wakes the worker as a backup.
 

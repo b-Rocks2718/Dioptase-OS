@@ -377,9 +377,124 @@ int handle_open(char* path){
   }
 
   struct Node* file_node = node_find(tcb->cwd, buf);
-  free(buf);
   if (file_node == NULL){
-    // could not find file
+    // create the file if it does not exist
+    
+    // `node_make_file()` only accepts one basename component, so normalize the
+    // missing path first, then walk each component from the requested root.
+    // Every non-final missing component becomes a directory, while the final
+    // missing component becomes the new regular file.
+    unsigned max_parts = SYSCALL_MAX_PATH_BYTES / 2 + 1;
+    char** parts = malloc(sizeof(char*) * max_parts);
+    unsigned part_count = 0;
+    bool absolute = buf[0] == '/';
+    char* cursor = buf;
+
+    // normalize path and split into components, e.g. "/a/b/../c" -> ["a", "c"]
+    while (*cursor != 0){
+      while (*cursor == '/'){
+        cursor++;
+      }
+      if (*cursor == 0){
+        break;
+      }
+
+      if (part_count >= max_parts){
+        free(parts);
+        free(buf);
+        return -1;
+      }
+
+      char* component = cursor;
+      while (*cursor != '/' && *cursor != 0){
+        cursor++;
+      }
+      char separator = *cursor;
+      *cursor = 0;
+
+      if (component[0] == '.' && component[1] == 0){
+        // Ignore no-op path components.
+      } else if (component[0] == '.' && component[1] == '.' && component[2] == 0){
+        if (part_count > 0 && !streq(parts[part_count - 1], "..")){
+          part_count--;
+        } else if (!absolute){
+          // Relative paths may still need to walk above the starting cwd.
+          parts[part_count++] = component;
+        }
+      } else {
+        parts[part_count++] = component;
+      }
+
+      if (separator == 0){
+        break;
+      }
+      cursor++;
+    }
+
+    if (part_count == 0){
+      free(parts);
+      free(buf);
+      return -1;
+    }
+
+    struct Node* current = absolute ? node_find(tcb->cwd, "/") : node_clone(tcb->cwd);
+    if (current == NULL){
+      free(parts);
+      free(buf);
+      return -1;
+    }
+
+    // Walk through the normalized path components, 
+    // creating missing directories or the final file as needed.
+    for (unsigned i = 0; i < part_count; i++){
+      bool is_final = i + 1 == part_count;
+      struct Node* next = node_find(current, parts[i]);
+
+      if (next == NULL){
+        // next not found, so we create it
+        if (is_final){
+          file_node = node_make_file(current, parts[i]);
+          node_free(current);
+          current = NULL;
+          break;
+        }
+
+        next = node_make_dir(current, parts[i]);
+      }
+
+      if (next == NULL){
+        // failed to create needed file or directory
+        node_free(current);
+        current = NULL;
+        break;
+      }
+
+      if (!is_final && !node_is_dir(next)){
+        // expected a directory but found a non-directory component, so fail
+        node_free(next);
+        node_free(current);
+        current = NULL;
+        break;
+      }
+
+      node_free(current);
+      current = next;
+      if (is_final){
+        file_node = current;
+        current = NULL;
+      }
+    }
+
+    if (current != NULL){
+      node_free(current);
+    }
+    free(parts);
+  }
+
+  free(buf);
+
+  if (file_node == NULL){
+    // failed to find or create file
     return -1;
   }
 
@@ -722,6 +837,31 @@ int handle_seek(int fd, int offset, int whence){
 
   blocking_lock_release(&descriptor->offset_lock);
   return new_offset;
+}
+
+int handle_truncate(int fd, unsigned size){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+    return -1;
+  }
+
+  struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
+  if (descriptor->type != FILE_DESCRIPTOR_NORMAL || descriptor->file == NULL){
+    return -1;
+  }
+
+  if (!node_is_file(descriptor->file)){
+    return -1;
+  }
+
+  if (!node_shrink(descriptor->file, size)){
+    return -1;
+  }
+
+  return 0;
 }
 
 int handle_dup(int fd){
@@ -1360,6 +1500,9 @@ int trap_handler(unsigned code,
     }
     case TRAP_FD_BYTES_AVAILABLE: {
       return handle_fd_bytes_available(arg1);
+    }
+    case TRAP_TRUNCATE: {
+      return handle_truncate(arg1, (unsigned)arg2);
     }
     default: {
       *return_to_user = false;

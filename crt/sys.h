@@ -96,6 +96,8 @@ int move_hscroll(int delta);
 // used for pipes, return -1 if fd is not a pipe
 int fd_bytes_available(int fd);
 
+int truncate(int fd, unsigned size);
+
 void test_syscall_list(int num, int* args);
 
 #endif

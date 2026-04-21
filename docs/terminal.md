@@ -104,8 +104,21 @@ The terminal currently supports these SGR parameters:
 | `35` | Magenta | `0xE3` |
 | `36` | Cyan | `0x1F` |
 | `37` | White | `0xFF` |
+| `38` | Light gray | `0x92` |
+| `39` | Dark gray | `0x49` |
+| `40` | Orange | `0xF0` |
+| `41` | Bright pink | `0xF3` |
+| `42` | Bright green | `0x3E` |
+| `43` | Bright yellow | `0xFD` |
+| `44` | Bright blue | `0x5F` |
+| `45` | Purple | `0xA3` |
+| `46` | Indigo | `0x83` |
 
-Unsupported SGR features such as background colors, bold, underline, and
+Codes `38` through `46` are Dioptase-specific foreground color extensions. They
+do not follow ANSI `38;...` extended-color syntax, and `40` through `46` are
+not treated as background colors.
+
+Unsupported SGR features such as ANSI background colors, bold, underline, and
 inverse video are ignored.
 
 ### Parser limits and unsupported behavior

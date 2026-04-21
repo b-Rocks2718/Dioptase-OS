@@ -5,4 +5,5 @@
 ***Concurrent same-block partial writes: ok
 ***Gap zero fill: ok
 ***Cross-block growth: ok
+***Shrink without reclaim: ok
 ***Single-indirect growth: ok

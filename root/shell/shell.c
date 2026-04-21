@@ -133,7 +133,13 @@ int main(void){
   pause_demo();
   puts("! delayed wrap consumed here");
   pause_demo();
-  puts("\nDemo complete. Shell is idle.");
+  puts("Clearing entire screen with \\x1b[2J");
+  pause_demo();
+  puts("\x1b[2J");
+  pause_demo();
+  puts("\x1b[1;1H");
+  pause_demo();
+  puts("Demo complete. Shell is idle.");
 
   while (true) { sleep(50); }
 

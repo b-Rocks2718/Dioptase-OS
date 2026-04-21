@@ -2393,6 +2393,25 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   return size;
 }
 
+bool node_shrink(struct Node* node, unsigned target_size){
+  assert(node != NULL, "node_shrink: node is NULL.\n");
+  assert(node_is_file(node), "node_shrink: can only shrink regular files.\n");
+
+  // shrink inode but does not free any blocks
+  blocking_lock_acquire(&node->cached->lock);
+
+  if (target_size > node->cached->inode.size){
+    blocking_lock_release(&node->cached->lock);
+    return false;
+  }
+
+  node->cached->inode.size = target_size;
+  node_sync_inode(node);
+
+  blocking_lock_release(&node->cached->lock);
+  return true;
+}
+
 unsigned short node_get_type(struct Node* node){
   return node->cached->inode.mode & EXT2_S_MASK;
 }

@@ -29,7 +29,7 @@ int main(void) {
     close(stdout_pipe[0]);
 
     // child process: exec terminal emulator
-    execv("/sbin/terminal", 0, NULL);
+    //execv("/sbin/terminal", 0, NULL);
 
     // this probably never prints bc we have no terminal yet
     puts("|failed to exec terminal emulator\n");
@@ -39,18 +39,19 @@ int main(void) {
   // close read end of stdout pipe in parent
   close(stdout_pipe[0]);
 
-  // start shell
-  int shell_pid = fork();
-  if (shell_pid < 0) {
-    puts("| failed to fork shell process\n");
+  // start bmacs
+  int bmacs_pid = fork();
+  if (bmacs_pid < 0) {
+    puts("| failed to fork bmacs process\n");
     return -1;
-  } else if (shell_pid == 0) {
-    execv("/sbin/shell", 0, NULL);
-    puts("| failed to exec shell\n");
+  } else if (bmacs_pid == 0) {
+    char* args[2] = {"/sbin/bmacs", "/stuff/test.c"};
+    execv("/sbin/bmacs", 2, args);
+    puts("| failed to exec bmacs\n");
     return -1;
   }
 
-  wait_child(shell_pid);
+  wait_child(bmacs_pid);
 
   return 67;
 }

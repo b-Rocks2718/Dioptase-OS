@@ -83,7 +83,7 @@ argument vectors return `-1`.
 
 | Code | Wrapper | Arguments | Result |
 | --- | --- | --- | --- |
-| `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Returns a file descriptor in `0..99`, or `-1` on copy, lookup, or descriptor-allocation failure. |
+| `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Creates the file if it does not exist. Returns a file descriptor in `0..99`, or `-1` on copy, creation, or descriptor-allocation failure. |
 | `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at EOF, or `-1` on failure. `STDIN` reads block waiting for keyboard input. |
 | `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. `STDOUT` and `STDERR` write characters to the console. |
 | `17` | `close(fd)` | `fd` | Closes a valid file descriptor and returns `0`, or returns `-1` for an invalid descriptor. |
@@ -92,6 +92,7 @@ argument vectors return `-1`.
 | `29` | `pipe(fds)` | `fds` | Allocates a pipe and writes `{read_fd, write_fd}` into the user array `fds[0..1]`. Returns `0` on success or `-1` on copy or descriptor-allocation failure. |
 | `30` | `dup(fd)` | `fd` | Returns a new file descriptor that references the same underlying descriptor object, including the shared current offset. Returns `-1` on failure. |
 | `31` | `seek(fd, offset, whence)` | `fd`, `offset`, `whence` | Updates the descriptor offset and returns the new offset, or returns `-1` for an invalid descriptor or invalid `whence`. |
+| `39` | `truncate(fd, size)` | `fd`, `size` | Shrinks a regular file descriptor to `size` bytes and returns `0`, or returns `-1` for an invalid descriptor, a non-regular-file descriptor, or any request that would grow the file. |
 
 Additional file-descriptor notes:
 - `dup()` shares the same underlying descriptor object, so offset changes are
@@ -102,6 +103,8 @@ Additional file-descriptor notes:
   32-bit range.
 - `SEEK_END` rejects results that would be negative or would exceed signed
   32-bit range.
+- `truncate()` is shrink-only. It leaves descriptor offsets unchanged and does
+  not reclaim blocks.
 - Current implementation detail: `play_audio_file()` spawns a playback worker
   and returns immediately. The worker currently expects a supported PCM WAV
   file; malformed WAV contents currently panic the kernel instead of returning

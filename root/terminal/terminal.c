@@ -2,17 +2,10 @@
 #include "../../crt/sys.h"
 #include "../../crt/constants.h"
 #include "../../crt/debug.h"
+#include "../../crt/vga.h"
 
-#define TILE_ROW_WIDTH 80
-#define TILE_COL_HEIGHT 60
-
-#define TILE_HEIGHT 8
-
-#define FB_NUM_TILES 4800
-#define SQUARE_TILE 0x7F
-
-#define CURSOR_BLINK_INTERVAL 10
-#define MAIN_LOOP_DELAY_INTERVAL 1
+#define CURSOR_BLINK_INTERVAL 100
+#define MAIN_LOOP_DELAY_INTERVAL 10
 
 #define TAB_WIDTH 8
 
@@ -272,33 +265,81 @@ static int parse_escape_arg(char* arg, int len){
 }
 
 static void apply_sgr_arg(int arg){
+  // color formal is 8 bit RRRGGGBB
   switch (arg){
+    // standard colors
     case 0:
+      // white
       current_color = 0xFF;
       break;
     case 30:
+      // black
       current_color = 0x00;
       break;
     case 31:
+      // red
       current_color = 0xE0;
       break;
     case 32:
+      // green
       current_color = 0x1C;
       break;
     case 33:
+      // yellow
       current_color = 0xFC;
       break;
     case 34:
+      // blue
       current_color = 0x03;
       break;
     case 35:
+      // magenta
       current_color = 0xE3;
       break;
     case 36:
+      // cyan
       current_color = 0x1F;
       break;
     case 37:
+      // white
       current_color = 0xFF;
+      break;
+    // stealing codes to add my own colors (not ANSI standard)
+    case 38:
+      // light gray
+      current_color = 0x92;
+      break;
+    case 39:
+      // darker gray
+      current_color = 0x49;
+      break;
+    case 40:
+      // orange
+      current_color = 0xF0;
+      break;
+    case 41:
+      // bright pink
+      current_color = 0xF3;
+      break;
+    case 42:
+      // bright green
+      current_color = 0x3E;
+      break;
+    case 43:
+      // bright yellow      
+      current_color = 0xFD;
+      break;
+    case 44:
+      // bright blue
+      current_color = 0x5F;
+      break;
+    case 45:
+      // purple
+      current_color = 0xA3;
+      break;
+    case 46:
+      // indigo
+      current_color = 0x83;
       break;
   }
 }
@@ -476,6 +517,9 @@ static bool handle_escape_sequence(char c){
         for (int row = 0; row < TILE_COL_HEIGHT; ++row){
           clear_visible_row(row);
         }
+        // reset scroll
+        scroll_top_row = 0;
+        set_vscroll(0);
       }
       break;
     }
