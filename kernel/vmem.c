@@ -11,8 +11,6 @@
 #include "string.h"
 #include "ivt.h"
 
-struct PageCache page_cache;
-
 static unsigned vmem_range_start(unsigned flags) {
   return (flags & MMAP_USER) ? USER_VMEM_START : KERNEL_VMEM_START;
 }
@@ -82,7 +80,7 @@ unsigned create_page_table(void) {
   return (unsigned)pt;
 }
 
-unsigned create_zeroed_page(void) {
+unsigned create_zeroed_page(void) { // TODO: does this need to lock?
   unsigned* page = (unsigned*)physmem_alloc();
   for (int i = 0; i < FRAME_SIZE / sizeof(unsigned); i++) {
     page[i] = 0;
@@ -158,8 +156,12 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
 
     if (vme->flags & MMAP_SHARED) {
       assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
-      // shared mapping, release from page cache
-      page_cache_release(&page_cache, vme->file, (vme->file_offset + (va - vme->start)));
+      // shared mapping, remove the ref
+      struct Page* page = get_page((void*)(pte & ~(FRAME_SIZE - 1)));
+      physmem_page_lock(page);
+      // TODO race condition what if it got evicted between us getting the page from the PTE and locking?
+      physmem_page_removeRef(page, va);
+      physmem_page_unlock(page);
     } else if (vme->paddr != 0) {
       // Direct physmem mappings borrow an existing MMIO/physical window. The
       // unmap path must only drop the translation, not return that backing page
@@ -516,6 +518,26 @@ void munmap(void* p) {
   panic("munmap called with invalid address\n");
 }
 
+unsigned* vmem_get_pte(unsigned* pd, unsigned virtual_address, bool create) {
+  unsigned page_dir_index = (virtual_address >> 22) & 0x3FF;
+  unsigned page_table_index = (virtual_address >> 12) & 0x3FF;
+  unsigned pde = pd[page_dir_index];
+
+  if (!(pde & VMEM_VALID)) {
+    if (!create) {
+      panic("vmem_get_pte: missing page table for virtual address.\n");
+      return NULL;
+    }
+
+    unsigned pt_addr = create_page_table();
+    pd[page_dir_index] = pt_addr | VMEM_VALID | VMEM_READ | VMEM_WRITE;
+    pde = pd[page_dir_index];
+  }
+
+  unsigned* pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+  return &pt[page_table_index];
+}
+
 void vme_change_perms(struct VME* vme, unsigned new_flags) {
   vme->flags = new_flags;
 
@@ -601,17 +623,22 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
     unsigned phys_page = 0;
     if (curr->file) {
       if (curr->flags & MMAP_SHARED) {
+        // FILE-BACKED SHARED MAPPING
         unsigned bytes_in_page = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
 
         // shared mapping points directly into page cache
-        struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file,
-                                                         (curr->file_offset + (fault_addr - curr->start)), bytes_in_page);
+        struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
+
+        struct Page* page = get_page(cache_entry->page_data);
+        physmem_page_addRef(page, fault_addr);
+        physmem_page_unlock(page); // TODO is it safe to unlock before the PTE is actually written?
+
         if (curr->flags & MMAP_WRITE) {
-          page_cache_mark_dirty(&page_cache, curr->file,
-                                (curr->file_offset + (fault_addr - curr->start)));
+          page_cache_mark_dirty(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start))); // TODO move this
         }
-        phys_page = (unsigned)page->page_data;
+        phys_page = (unsigned)cache_entry->page_data;
       } else {
+        // FILE-BACKED PRIVATE MAPPING
         unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
         unsigned current_size = node_size_in_bytes(curr->file);
         unsigned bytes_remaining = 0;
@@ -623,14 +650,15 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
         unsigned bytes_in_page = bytes_remaining < bytes_in_vme ? bytes_remaining : bytes_in_vme;
 
         // private mapping copies from page cache (TODO: COW)
-        struct PageCacheEntry* page = page_cache_acquire(&page_cache, curr->file,
-                                                         (curr->file_offset + (fault_addr - curr->start)), bytes_in_page);
+        struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file,
+                                                                (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
 
-        phys_page = (unsigned)physmem_alloc();
-        memcpy((void*)phys_page, page->page_data, FRAME_SIZE);
+        phys_page = (unsigned)physmem_alloc(); // TODO: make it unpinned once we're done copying if we can evict things to swap
+        memcpy((void*)phys_page, cache_entry->page_data, FRAME_SIZE);
 
-        page_cache_release(&page_cache, curr->file,
-                           (curr->file_offset + (fault_addr - curr->start)));
+        // Release the old page once we're done copying
+        struct Page* source_page_metadata = get_page(cache_entry->page_data);
+        physmem_page_unlock(source_page_metadata);
       }
     } else {
       assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
@@ -641,7 +669,8 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
         // instead of aliasing every VME page back onto the first physical page.
         phys_page = curr->paddr + (fault_addr - curr->start);
       } else {
-        phys_page = create_zeroed_page();
+        // ANONYMOUS PRIVATE MAPPING
+        phys_page = create_zeroed_page(); // TODO: unpin it once swap exists
       }
     }
 

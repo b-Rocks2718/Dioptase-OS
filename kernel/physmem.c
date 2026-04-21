@@ -7,6 +7,8 @@
 #include "per_core.h"
 #include "threads.h"
 #include "heap.h"
+#include "vmem.h"
+#include "interrupts.h"
 
 static struct BlockingLock physmem_lock;
 
@@ -177,10 +179,12 @@ void physmem_init(void) {
     map_order++;
   }
   physmem_map = physmem_leak_order(map_order);
-  // Mark all pages in the map as pinned
-  for (unsigned i = 0; i < map_pages; i++) {
-    void* frame = physmem_map + (i * FRAME_SIZE);
-    physmem_set_page_flag(get_page(frame), PG_PINNED);
+  // Initialize metadata for every physical frame.
+  for (unsigned i = 0; i < PHYS_FRAME_COUNT; i++) {
+    physmem_map[i].flags = PG_PINNED;
+    sem_init(&physmem_map[i].lock, 1);
+    physmem_map[i].refs = NULL;
+    physmem_map[i].cache_entry = NULL;
   }
 }
 
@@ -222,6 +226,15 @@ void* physmem_alloc_order(int order) {
       physmem_is_frame_address((unsigned)node),
       "physmem alloc: free list returned an invalid frame address.\n");
 
+  // // Lock pages and mark them as allocated
+  // unsigned num_pages = 1 << order;
+  // for (unsigned i = 0; i < num_pages; i++) {
+  //   void* frame = node + (i * FRAME_SIZE);
+  //   struct Page* page = get_page(frame);
+  //   physmem_page_lock(page);
+  //   physmem_set_page_flags(page, PG_ALLOCED);
+  // }
+
   return node;
 }
 
@@ -233,7 +246,16 @@ void* physmem_leak_order(int order) {
 
 // free a physical page of given order
 void physmem_free_order(void* page, int order) {
+
   unsigned phys_addr = (unsigned)page;
+
+  for (unsigned i = 0; i < 1 << order; i++) {
+    struct Page* metadata = get_page((void*)(phys_addr + (i * FRAME_SIZE)));
+    metadata->cache_entry = NULL;
+    assert(metadata->refs == NULL, "freeing a page that's still referenced");
+    physmem_set_page_flags(get_page(page), PG_PINNED); // TODO more flags? Locking?
+  }
+
   assert(page != NULL, "physmem free: page is NULL.\n");
   assert(
       physmem_is_frame_address(phys_addr),
@@ -298,7 +320,11 @@ void* physmem_alloc(void) {
   if (per_core->physmem_cache.count == 0) {
     // refill cache
     for (int i = 0; i < LOCAL_CACHE_SIZE; i++) {
-      per_core->physmem_cache.pages[i] = physmem_alloc_order(0);
+      void* frame = physmem_alloc_order(0);
+      // struct Page* page = get_page(frame);
+      // physmem_clear_page_flags(page, PG_ALLOCED); // We added it to the cache, so it hasn't *actually* been allocated out
+      // physmem_page_unlock(page);
+      per_core->physmem_cache.pages[i] = frame;
     }
     per_core->physmem_cache.count = LOCAL_CACHE_SIZE;
   }
@@ -331,6 +357,10 @@ void physmem_free(void* page) {
 
   // push to local cache if there is room, otherwise free to global pool
   if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
+    struct Page* metadata = get_page(page);
+    metadata->cache_entry = NULL;
+    assert(metadata->refs == NULL, "freeing a page that's still referenced");
+    physmem_set_page_flags(get_page(page), PG_PINNED); // TODO more flags? Locking?
     per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
     per_core->physmem_cache.count++;
 
@@ -371,10 +401,62 @@ struct Page* get_page(void* frame) {
   return &physmem_map[frame_index_from_address((unsigned)frame)];
 }
 
-void physmem_set_page_flag(struct Page* page, unsigned flags) {
-  page->flags |= (1u << flags);
+void physmem_set_page_flags(struct Page* page, unsigned flags) {
+  page->flags |= flags;
 }
 
-void physmem_clear_page_flag(struct Page* page, unsigned flags) {
-  page->flags &= ~(1u << flags);
+void physmem_clear_page_flags(struct Page* page, unsigned flags) {
+  page->flags &= ~flags;
+}
+
+void physmem_page_lock(struct Page* page) {
+  sem_down(&page->lock);
+}
+
+bool physmem_page_trylock(struct Page* page) {
+  sem_try_down(&page->lock);
+}
+
+void physmem_page_unlock(struct Page* page) {
+  sem_up(&page->lock);
+}
+
+void physmem_page_addRef(struct Page* page, unsigned virtual_addr) {
+  // Create new page ref
+  struct PageRef* ref = malloc(sizeof(struct PageRef));
+
+  int was = interrupts_disable();
+  ref->thread = get_current_tcb();
+  interrupts_restore(was);
+  ref->virtual_address = virtual_addr;
+
+  // Add to linked list
+  ref->next = page->refs;
+  page->refs = ref;
+}
+
+void physmem_page_removeRef(struct Page* page, unsigned virtual_addr) {
+  int was = interrupts_disable();
+  struct TCB* current = get_current_tcb();
+  interrupts_restore(was);
+  struct PageRef* prev = NULL;
+  struct PageRef* curr = page->refs;
+
+  while (curr != NULL) {
+    if (curr->thread == current && curr->virtual_address == virtual_addr) {
+      if (prev == NULL) {
+        page->refs = curr->next;
+      } else {
+        prev->next = curr->next;
+      }
+      curr->next = NULL;
+      free(curr);
+      return;
+    }
+
+    prev = curr;
+    curr = curr->next;
+  }
+
+  panic("tried to remove a ref that doesn't exist!");
 }

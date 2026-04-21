@@ -81,6 +81,8 @@ void free_vme_list(struct VME* vme);
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
 
+unsigned* vmem_get_pte(unsigned* pd, unsigned virtual_address, bool create);
+
 void vme_change_perms(struct VME* vme, unsigned new_flags);
 
 extern void tlb_miss_handler_(void);

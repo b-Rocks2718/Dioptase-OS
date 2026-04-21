@@ -4,6 +4,8 @@
 #include "print.h"
 #include "debug.h"
 
+struct PageCache page_cache;
+
 // initialize the page cache
 void page_cache_init(struct PageCache* cache, unsigned hash_map_size) {
   cache->hash_map = leak(sizeof(struct PageCacheEntry*) * hash_map_size);
@@ -14,7 +16,7 @@ void page_cache_init(struct PageCache* cache, unsigned hash_map_size) {
   }
 }
 
-// lookup a page in the page cache by inode and page index, incrementing its reference count if found
+// lookup a page in the page cache by inode and page index
 // does not lock the cache,
 static struct PageCacheEntry* page_cache_lookup(struct PageCache* cache, struct Node* node, unsigned offset) {
   unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
@@ -22,7 +24,6 @@ static struct PageCacheEntry* page_cache_lookup(struct PageCache* cache, struct 
   // iterate linked list until we find a match
   while (entry) {
     if (entry->key.inode == node->cached && entry->key.offset == offset) {
-      entry->refcount++;
       return entry;
     }
     entry = entry->next;
@@ -39,7 +40,6 @@ static struct PageCacheEntry* page_cache_insert(struct PageCache* cache, struct 
   new_entry->key.inode = node->cached;
   new_entry->key.offset = offset;
   new_entry->page_data = page_data;
-  new_entry->refcount = 1;
   new_entry->flags = 0;
   new_entry->file_bytes = file_bytes;
 
@@ -55,11 +55,13 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
 
   struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
   if (entry) {
+    struct Page* page = get_page(entry->page_data);
+    physmem_page_lock(page); // TODO lock ordering
     blocking_lock_release(&cache->lock);
     return entry;
   }
 
-  void* page_data = physmem_alloc(); // allocate a new page
+  void* page_data = physmem_alloc(); // allocate a new page (pinned)
 
   // load the page from disk into the newly allocated page_data
   unsigned bytes_read = node_read_all(node, offset, FRAME_SIZE, page_data);
@@ -71,6 +73,11 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
 
   entry = page_cache_insert(cache, node, offset, file_bytes, page_data);
 
+  struct Page* page = get_page(page_data);
+  page->cache_entry = entry;
+  physmem_page_lock(page); // TODO this should never block
+  physmem_clear_page_flags(page, PG_PINNED);
+
   blocking_lock_release(&cache->lock);
 
   return entry;
@@ -80,20 +87,17 @@ void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned 
   unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
 
   blocking_lock_acquire(&cache->lock);
-  struct PageCacheEntry* entry = cache->hash_map[hash];
-  while (entry) {
-    if (entry->key.inode == node->cached && entry->key.offset == offset) {
-      entry->flags |= PAGE_DIRTY;
-      blocking_lock_release(&cache->lock);
-      return;
-    }
-    entry = entry->next;
-  }
-  blocking_lock_release(&cache->lock);
 
-  panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
+  struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
+  if (entry != NULL) {
+    entry->flags |= PAGE_DIRTY;
+    blocking_lock_release(&cache->lock);
+  } else {
+    panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
+  }
 }
 
+/*
 // release a page from the page cache
 // decrementing its reference count and freeing it if the count reaches zero
 void page_cache_release(struct PageCache* cache, struct Node* node, unsigned offset) {
@@ -127,5 +131,22 @@ void page_cache_release(struct PageCache* cache, struct Node* node, unsigned off
     prev = entry;
     entry = entry->next;
   }
+  blocking_lock_release(&cache->lock);
+}
+*/
+
+void page_cache_destroy(struct PageCache* cache) {
+  blocking_lock_acquire(&cache->lock);
+  for (unsigned i = 0; i < cache->hash_map_size; i++) {
+    struct PageCacheEntry* entry = cache->hash_map[i];
+    while (entry != NULL) {
+      // TODO check dirty bits and write back
+      struct PageCacheEntry* to_delete = entry;
+      entry = entry->next;
+      physmem_free(to_delete->page_data);
+      free(to_delete);
+    }
+  }
+
   blocking_lock_release(&cache->lock);
 }

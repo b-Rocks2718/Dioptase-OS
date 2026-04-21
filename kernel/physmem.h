@@ -61,10 +61,15 @@ void physmem_free(void* page);
 // check for physical memory leaks
 void physmem_check_leaks(void);
 
-enum PageFlags { PG_DIRTY = 0,
-                 PG_PINNED = 1 };
+enum PageFlags {
+  PG_DIRTY = 0x0,    // Has been written to since last writeback
+  PG_PINNED = 0x1,   // Non-evictable: either is being managed by physmem, or not able to be evicted (but owned by exactly one thing)
+  PG_ACCESSED = 0x2, // Software-managed access bit
+};
+
 struct PageRef;
 struct PageCacheEntry;
+struct VME;
 
 struct Page {
   unsigned flags;
@@ -76,8 +81,17 @@ struct Page {
 // Get the metadata from a frame physical address
 struct Page* get_page(void* frame);
 
-// Set and clear flags
-void physmem_set_page_flag(struct Page*, unsigned flags);
-void physmem_clear_page_flag(struct Page*, unsigned flags);
+// Set and clear flags (does not acquire lock)
+void physmem_set_page_flags(struct Page* page, unsigned flags);
+void physmem_clear_page_flags(struct Page* page, unsigned flags);
+
+// Lock and unlock page
+void physmem_page_lock(struct Page* page);
+bool physmem_page_trylock(struct Page* page);
+void physmem_page_unlock(struct Page* page);
+
+// Add and remove PageRefs (defaults to current process; does not acquire lock)
+void physmem_page_addRef(struct Page* page, unsigned virtual_addr);
+void physmem_page_removeRef(struct Page* page, unsigned virtual_addr);
 
 #endif // PHYSMEM_H
