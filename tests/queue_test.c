@@ -24,6 +24,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
+#include "../kernel/TCB.h"
 
 struct TestElement {
   struct GenericQueueElement link;
