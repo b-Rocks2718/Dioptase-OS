@@ -95,7 +95,8 @@ extern unsigned send_ipi(unsigned data);
 struct PageRef {
   struct TCB* thread;
   unsigned virtual_address;
-  struct VME* vme;
+  // struct VME* vme;
+  struct PageRef* next;
 };
 
 #endif // VMEM_H
