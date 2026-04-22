@@ -48,4 +48,6 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
 void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned offset);
 
 void page_cache_destroy(struct PageCache* cache);
+
+void page_cache_flush_all(struct PageCache* cache);
 #endif // PAGE_CACHE_H

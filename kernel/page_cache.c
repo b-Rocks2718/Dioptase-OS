@@ -154,3 +154,24 @@ void page_cache_destroy(struct PageCache* cache) {
 
   blocking_lock_release(&cache->lock);
 }
+
+// NOT SYNCHRONIZED; testing purposes only
+void page_cache_flush_all(struct PageCache* cache) {
+  blocking_lock_acquire(&cache->lock);
+
+  for (unsigned i = 0; i < cache->hash_map_size; i++) {
+    struct PageCacheEntry* entry = cache->hash_map[i];
+    while (entry != NULL) {
+      if (entry->flags & PAGE_DIRTY) {
+        struct Node* node = malloc(sizeof(struct Node));
+        node_init(node, entry->key.inode, EXT2_BAD_INO, &fs); // hopefully we don't actually need the parent inumber...
+        node_write_all(node, entry->key.offset, entry->file_bytes, entry->page_data);
+        free(node);
+        // say("flushed 1 entry\n", NULL);
+      }
+      entry = entry->next;
+    }
+  }
+
+  blocking_lock_release(&cache->lock);
+}
