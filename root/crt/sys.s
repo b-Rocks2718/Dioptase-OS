@@ -1518,3 +1518,35 @@ get_spritemap:
   pop r20
 
   ret
+
+  .global kill
+kill:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 47
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret

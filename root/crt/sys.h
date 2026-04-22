@@ -79,6 +79,8 @@ int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 
 short* get_spritemap(void);
 
+int kill(int child);
+
 void test_syscall_list(int num, int* args);
 
 #endif // SYS_H

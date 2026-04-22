@@ -89,6 +89,8 @@ struct TCB {
 
   struct VME* vme_list;
 
+  int pending_signals;
+
   struct TCB* next;
 };
 

@@ -66,6 +66,7 @@ Current implementation-defined bounds:
 | `24` | `execv(path, argc, argv)` | `path`, `argc`, `argv` | Replaces the current user image. Success does not return. Failure returns `-1`. If `argc == 0`, `argv` is ignored and the new image starts with `argc = 0`, `argv = NULL`. |
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
+| `47` | `kill(child_desc)` | `child_desc` | Requests termination of the specified child and returns `0`, or returns `-1` for an invalid child descriptor. Current implementation detail: `wait_child()` currently returns `-1` for a killed child. |
 
 ### Exec
 
