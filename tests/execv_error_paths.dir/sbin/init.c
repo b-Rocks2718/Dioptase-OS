@@ -11,8 +11,8 @@
  *   record the failure-path result
  */
 
-#include "../../../crt/print.h"
-#include "../../../crt/sys.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/sys.h"
 
 #define BAD_LOW_PTR ((void*)0x1000)
 #define EXEC_LIMIT_PLUS_ONE 17

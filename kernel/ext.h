@@ -247,7 +247,7 @@ void node_rename(struct Node* dir, char* old_name, char* new_name);
 // empty except for "." and "..". If this removes the final directory link, the
 // pathname disappears immediately but block/inode reclamation is deferred until
 // every live wrapper for that inode has been released.
-void node_delete(struct Node* dir, char* name);
+int node_delete(struct Node* dir, char* name);
 
 // For symlink nodes only. `dest` must have space for the raw target plus one
 // trailing NUL byte because this helper always NUL-terminates the result.
@@ -272,5 +272,10 @@ struct Node* node_find(struct Node* dir, char* name);
 // `struct linux_dirent`. Returns the number of bytes read.
 // `new_offset` will be updated to the offset of the next directory entry not read.
 int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset);
+
+// ext2 directories are empty when every live entry is either "." or "..".
+// Removed entries with inode == 0 are free space and do not make the directory
+// non-empty.
+bool dir_is_empty(struct Node* dir);
 
 #endif // EXT_H

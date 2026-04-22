@@ -1,6 +1,9 @@
-#include "../../crt/sys.h"
-#include "../../crt/print.h"
-#include "../../crt/constants.h"  
+#include "../crt/sys.h"
+#include "../crt/print.h"
+#include "../crt/stdbool.h"
+#include "../crt/stdlib.h"
+#include "../crt/fcntl.h"
+#include "../crt/unistd.h"
 
 #define BOARD_WIDTH 30
 #define BOARD_HEIGHT 20

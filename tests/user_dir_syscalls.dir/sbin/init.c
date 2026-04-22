@@ -5,9 +5,9 @@
  * - readlink.
  */
 
-#include "../../../crt/sys.h"
-#include "../../../crt/print.h"
-#include "../../../crt/heap.h"
+#include "../../../root/crt/sys.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/stdlib.h"
 #include "dirs.h"
 
 // int getdents(int fd, char* buffer, unsigned buffer_size);
