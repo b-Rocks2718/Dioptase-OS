@@ -342,6 +342,10 @@ static void apply_sgr_arg(int arg){
       // indigo
       current_color = 0x83;
       break;
+    case 47:
+      // light orange
+      current_color = 0xF9;
+      break;
   }
 }
 
