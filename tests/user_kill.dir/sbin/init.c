@@ -39,13 +39,12 @@ int main(void){
   test_syscall(kill(INVALID_CHILD_DESCRIPTOR_HIGH));
 
   child = fork();
-  test_syscall(child >= MIN_CHILD_DESCRIPTOR &&
-    child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE);
-
   if (child == 0){
     return child_main();
   }
 
+  test_syscall(child >= MIN_CHILD_DESCRIPTOR &&
+    child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE);
   test_syscall(kill(child));
   test_syscall(wait_child(child));
   test_syscall(wait_child(child));

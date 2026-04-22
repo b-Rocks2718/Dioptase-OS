@@ -349,12 +349,8 @@ void event_loop(void) {
     struct TCB* me = core->current_thread;
     struct TCB* next = schedule_next_thread();
 
-    // `schedule_next_thread()` may return NULL when another core claimed the
-    // runnable work first. Keep the NULL case in its own branch instead of
-    // relying on `&&` short-circuiting: the current compiler has previously
-    // emitted a dereference of `next` before finishing that NULL check here.
     if (next == NULL) {
-      // put core to sleep to save power until the next interrupt if there's no work to do
+      // no work to do
       pause();
       continue;
     }
