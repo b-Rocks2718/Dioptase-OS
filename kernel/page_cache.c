@@ -37,6 +37,9 @@ static struct PageCacheEntry* page_cache_insert(struct PageCache* cache, struct 
                                                 unsigned offset, unsigned file_bytes, void* page_data) {
   unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
   struct PageCacheEntry* new_entry = malloc(sizeof(struct PageCacheEntry));
+
+  // Keep the inode cache entry alive while this page-cache entry exists.
+  node->cached->refcount += 1;
   new_entry->key.inode = node->cached;
   new_entry->key.offset = offset;
   new_entry->page_data = page_data;
@@ -143,6 +146,7 @@ void page_cache_destroy(struct PageCache* cache) {
       // TODO check dirty bits and write back
       struct PageCacheEntry* to_delete = entry;
       entry = entry->next;
+      icache_release(&fs.icache, to_delete->key.inode);
       physmem_free(to_delete->page_data);
       free(to_delete);
     }
