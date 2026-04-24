@@ -6,9 +6,10 @@
 #include "../crt/stdlib.h"
 #include "../crt/fcntl.h"
 #include "../crt/unistd.h"
-#include "../crt/dirent.h"
 #include "../crt/ps2.h"
 #include "../crt/sys/wait.h"
+
+#include "dirs.h"
 
 #define CMD_BUF_SIZE 2048
 #define MAX_ARGV 16
@@ -135,40 +136,37 @@ void free_argv(unsigned argc, char** argv){
   free(argv);
 }
 
-void handle_ls(int argc, char** argv){
-  // print entries in current directory
-  int fd = open(".");
-  if (fd < 0){
-    puts("ls: failed to open current directory\n");
+void list_dir(char* path, bool print_header, bool is_last_dir, char* command) {
+  struct LinkedDirent* entries = read_directory(path);
+  if (entries == (struct LinkedDirent*) -1) {
+    int args[2] = {(int) command, (int) path};
+    printf("%s: cannot access directory '%s'\n", args);
+    return;
+  }
+
+  if (print_header) {
+    int args[1] = {(int) path};
+    printf("%s:\n", args);
+  }
+
+  print_directory(entries, true);
+  destroy_linked_dirents(entries);
+
+  if (!is_last_dir) {
+    puts("\n");
+  }
+}
+
+void handle_ls(int argc, char** argv) {
+  if (argc == 1) {
+    // List current directory.
+    list_dir(".", false, true, "ls");
   } else {
-    char* buffer = malloc(1024);
-    int bytes_read = getdents(fd, buffer, 1024);
-    if (bytes_read < 0){
-      puts("ls: failed to read directory entries\n");
-    } else {
-      // print each entry name followed by newline
-      // files in white, dirs in blue
-      unsigned offset = 0;
-      while (offset < (unsigned)bytes_read){
-        struct linux_dirent* entry = (struct linux_dirent*)(buffer + offset);
-        if (entry->d_name == '.'){
-          // skip entries beginning with '.'
-          offset += entry->d_reclen;
-          continue;
-        }
-        // d_type offset is (d_reclen - 1)
-        if (*((char*)(entry) + entry->d_reclen - 1) == DT_DIR){
-          puts("\x1b[34m");
-        } else {
-          puts("\x1b[37m");
-        }
-        puts(&entry->d_name);
-        puts("\n");
-        offset += entry->d_reclen;
-      }
+    // Only show path if multiple directories.
+    bool print_header = argc > 2;
+    for (int i = 1; i < argc; i++) {
+      list_dir(argv[i], print_header, i == argc - 1, "ls");
     }
-    free(buffer);
-    close(fd);
   }
 }
 
