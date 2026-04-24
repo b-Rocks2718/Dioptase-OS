@@ -11,6 +11,8 @@ void free(void* p);
 #define ENTRIES_PER_LINE 4
 #define SPACES_PER_TAB 8
 
+#define PRINT_BUFFER_SIZE 256
+
 struct LinkedDirent* create_linked_dirent(struct linux_dirent* dirent) {
   struct LinkedDirent* entry = malloc(sizeof(struct LinkedDirent) + dirent->d_reclen - sizeof(struct linux_dirent));
   memcpy(&entry->dirent, dirent, dirent->d_reclen);
@@ -70,6 +72,33 @@ struct LinkedDirent* read_directory(char* path) {
   return head;
 }
 
+// Returns new index. If keep_together_length > 1, ensures first characters are printed together.
+unsigned add_to_print_buffer(char* print_buffer, unsigned index, char* to_add, unsigned keep_together_length) {
+  // Print earlier if needed.
+  if (keep_together_length > 1 && index + keep_together_length >= PRINT_BUFFER_SIZE) {
+    print_buffer[index] = 0;
+    puts(print_buffer);
+    index = 0;
+  }
+  while (*to_add != 0) {
+    if (index >= PRINT_BUFFER_SIZE - 1) {
+      // Buffer full. Print and reset.
+      print_buffer[index] = 0;
+      puts(print_buffer);
+      index = 0;
+    }
+    // Add character.
+    print_buffer[index++] = *to_add;
+    to_add++;
+  }
+  return index;
+}
+
+void print_print_buffer(char* print_buffer, unsigned index) {
+  print_buffer[index] = 0;
+  puts(print_buffer);
+}
+
 void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   if (head == 0) {
     return;
@@ -104,6 +133,8 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   }
 
   count = 0;
+  char print_buffer[PRINT_BUFFER_SIZE];
+  unsigned buffer_index = 0;
   for (struct LinkedDirent* current = head; current != 0; current = current->next) {
     char* name = &current->dirent.d_name;
 
@@ -117,55 +148,64 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
     }
 
     // Colors I stole from bash.
+    char* color;
     switch (current->d_type) {
       case DT_FIFO:
-        puts("\x1b[49m");
+        color = "\x1b[49m";
         break;
       case DT_CHR:
-        puts("\x1b[48m");
+        color = "\x1b[48m";
         break;
       case DT_DIR:
-        puts("\x1b[34m");
+        color = "\x1b[34m";
         break;
       case DT_BLK:
-        puts("\x1b[48m");
+        color = "\x1b[48m";
         break;
       case DT_REG:
-        puts("\x1b[37m");
+        color = "\x1b[37m";
         break;
       case DT_LNK:
-        puts("\x1b[36m");
+        color = "\x1b[36m";
         break;
       case DT_SOCK:
-        puts("\x1b[35m");
+        color = "\x1b[35m";
         break;
       case DT_WHT:
-        puts("\x1b[37m");
+        color = "\x1b[37m";
         break;
       default: // DT_UNKNOWN or other type.
-        puts("\x1b[31m"); // Bright red.
+        color = "\x1b[31m"; // Bright red.
         break;
     }
-    puts(name);
-    puts("\x1b[37m"); // Reset to white.
+    buffer_index = add_to_print_buffer(print_buffer, buffer_index, color, 5);
+    buffer_index = add_to_print_buffer(print_buffer, buffer_index, name, 0);
+    // Reset to white.
+    buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\x1b[37m", 5);
 
     unsigned name_length = strlen(name);
     unsigned padding = longest[count % ENTRIES_PER_LINE] - name_length;
     for (unsigned i = 0; i < padding; i++) {
-      puts(" ");
+      buffer_index = add_to_print_buffer(print_buffer, buffer_index, " ", 0);
     }
     count++;
     if (count % ENTRIES_PER_LINE == 0) {
-      puts("\n");
+      // Print at end of line.
+      buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\n", 0);
+      print_print_buffer(print_buffer, buffer_index);
+      buffer_index = 0;
     }
   }
   // Reset color.
-  puts("\x1b[37m");
+  buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\x1b[37m", 5);
 
   // Final newline if we didn't end on one.
   if (count % ENTRIES_PER_LINE != 0) {
-    puts("\n");
+    buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\n", 0);
   }
+
+  // Print rest of buffer.
+  print_print_buffer(print_buffer, buffer_index);
 }
 
 struct LinkedDirent* tab_complete_directory(char* prefix) {
