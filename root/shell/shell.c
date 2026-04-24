@@ -39,6 +39,11 @@ void print_line_prefix(void){
   puts("\x1b[37m$ ");
 }
 
+void print_cmd_buf(void){
+  cmd_buf[cmd_buf_len] = '\0';
+  puts(cmd_buf);
+}
+
 static char apply_shift_to_char(char c){
   if (isalpha(c)){
     if (c >= 'a' && c <= 'z'){
@@ -349,6 +354,124 @@ int main(void){
         handle_command();
         cmd_buf_len = 0;
         break;
+      } else if (key == '\t') {
+        // TODO: if allowing cursor to move, either tab-complete or ignore if in middle.
+
+        // Tab-completion.
+        int start = 0;
+        for (int i = cmd_buf_len - 1; i >= 0; i--) {
+          if (cmd_buf[i] == ' ') {
+            start = i + 1;
+            break;
+          }
+        }
+
+        char* to_tab_complete = malloc(cmd_buf_len - start + 1);
+        memcpy(to_tab_complete, &cmd_buf[start], cmd_buf_len - start);
+        to_tab_complete[cmd_buf_len - start] = 0;
+
+        int first_slash = start;
+        for (int i = start; i < cmd_buf_len; i++) {
+          if (cmd_buf[i] == '/') {
+            first_slash = i + 1;
+          }
+        }
+
+        // Completion with paths.
+        struct LinkedDirent* matches = tab_complete_directory(to_tab_complete);
+        int num_matches = 0;
+        for (struct LinkedDirent* current = matches; current != 0; current = current->next) {
+          num_matches++;
+        }
+
+        // Exclude ".", "..", and "lost+found" if matches <= 3, and first character is not '.'.
+        if (num_matches <= 3 && to_tab_complete[first_slash - start] != '.') {
+          num_matches = 0;
+          struct LinkedDirent* filtered_matches = 0;
+          struct LinkedDirent* filtered_tail = 0;
+          for (struct LinkedDirent* current = matches; current != 0; current = current->next) {
+            char* name = &current->dirent.d_name;
+            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+              // Skip.
+              continue;
+            }
+            num_matches++;
+            struct LinkedDirent* new_entry = create_linked_dirent(&current->dirent);
+            if (filtered_matches == 0) {
+              filtered_matches = new_entry;
+              filtered_tail = new_entry;
+            } else {
+              filtered_tail->next = new_entry;
+              filtered_tail = new_entry;
+            }
+          }
+          destroy_linked_dirents(matches);
+          matches = filtered_matches;
+        }
+
+        if (num_matches != 0) { // Only do something if match.
+          // Find longest common prefix.
+          int prefix_length = cmd_buf_len - first_slash;
+          while (1) {
+            char c = 0;
+            struct LinkedDirent* current = matches;
+            while (current != 0) {
+              char* name = &current->dirent.d_name;
+              if (name[prefix_length] == 0) {
+                // End of this name.
+                c = 0;
+                break;
+              }
+              if (c == 0) {
+                c = name[prefix_length];
+              } else if (name[prefix_length] != c) {
+                // Mismatch.
+                c = 0;
+                break;
+              }
+              current = current->next;
+            }
+            if (c == 0) {
+              // Mismatch found (or end).
+              break;
+            } else {
+              // All shared this character.
+              prefix_length++;
+            }
+          }
+
+          int new_characters = prefix_length - (cmd_buf_len - first_slash);
+          for (int i = 0; i < new_characters && cmd_buf_len < CMD_BUF_SIZE - 1; i++) {
+            char add_c = (&matches->dirent.d_name)[cmd_buf_len - first_slash];
+            char str[2] = {add_c, '\0'};
+            puts(str);
+            cmd_buf[cmd_buf_len++] = add_c;
+          }
+          // If at end of only one match, add space or '/'.
+          if (num_matches == 1) {
+            if (cmd_buf_len < CMD_BUF_SIZE - 1) {
+              char add_c;
+              if (matches->d_type == DT_DIR) {
+                add_c = '/';
+              } else {
+                add_c = ' ';
+              }
+              char str[2] = {add_c, '\0'};
+              puts(str);
+              cmd_buf[cmd_buf_len++] = add_c;
+            }
+          } else if (new_characters == 0) { // No new characters.
+            // Print matches.
+            puts("\n");
+            print_directory(matches, to_tab_complete[first_slash - start] != '.');
+
+            // Reprint prompt and command.
+            print_line_prefix();
+            print_cmd_buf();
+          }
+        }
+        free(to_tab_complete);
+        destroy_linked_dirents(matches);
       } else if (key == 127 || key == 8){
         // backspace
         if (cmd_buf_len > 0){
