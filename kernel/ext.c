@@ -2565,14 +2565,29 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
   if (cached_inode != NULL) {
     unsigned short mode = cached_inode->inode.mode;
     switch (mode & EXT2_S_MASK) {
+      case EXT2_S_IFIFO:
+        type = EXT2_DT_FIFO;
+        break;
+      case EXT2_S_IFCHR:
+        type = EXT2_DT_CHR;
+        break;
       case EXT2_S_IFDIR:
         type = EXT2_DT_DIR;
+        break;
+      case EXT2_S_IFBLK:
+        type = EXT2_DT_BLK;
         break;
       case EXT2_S_IFREG:
         type = EXT2_DT_REG;
         break;
       case EXT2_S_IFLNK:
         type = EXT2_DT_LNK;
+        break;
+      case EXT2_S_IFSOCK:
+        type = EXT2_DT_SOCK;
+        break;
+      default:
+        type = EXT2_DT_UNKNOWN;
         break;
     }
   }
