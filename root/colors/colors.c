@@ -2,7 +2,7 @@
 #include "../crt/print.h"
 
 // Starts counting from 30, and assumes no skips.
-char* color_names[20] = {
+char* color_names[22] = {
   "black",
   "red",
   "green",
@@ -22,7 +22,9 @@ char* color_names[20] = {
   "indigo",
   "light orange",
   "light yellow",
-  "gold"
+  "gold",
+  "light blue",
+  "light purple"
 };
 
 int main(void) {

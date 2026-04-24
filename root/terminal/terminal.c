@@ -354,6 +354,14 @@ static void apply_sgr_arg(int arg){
       // gold
       current_color = 0xB0;
       break;
+    case 50:
+      // light blue
+      current_color = 0xBB;
+      break;
+    case 51:
+      // light purple
+      current_color = 0xD7;
+      break;
   }
 }
 

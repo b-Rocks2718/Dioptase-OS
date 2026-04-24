@@ -151,7 +151,7 @@ void list_dir(char* path, bool print_header, bool is_last_dir, char* command) {
 
   if (print_header) {
     int args[1] = {(int) path};
-    printf("%s:\n", args);
+    printf("\x1b[51m%s:\n", args);
   }
 
   print_directory(entries, true);
