@@ -1,11 +1,14 @@
-#include "../../crt/print.h"
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
-#include "../../crt/string.h"
-#include "../../crt/heap.h"
-#include "../../crt/dirent.h"
-#include "../../crt/ps2.h"
+#include "../crt/print.h"
+#include "../crt/sys.h"
+#include "../crt/stdbool.h"
+#include "../crt/ctype.h"
+#include "../crt/string.h"
+#include "../crt/stdlib.h"
+#include "../crt/fcntl.h"
+#include "../crt/unistd.h"
+#include "../crt/dirent.h"
+#include "../crt/ps2.h"
+#include "../crt/sys/wait.h"
 
 #define CMD_BUF_SIZE 2048
 #define MAX_ARGV 16
@@ -132,6 +135,109 @@ void free_argv(unsigned argc, char** argv){
   free(argv);
 }
 
+void handle_ls(int argc, char** argv){
+  // print entries in current directory
+  int fd = open(".");
+  if (fd < 0){
+    puts("ls: failed to open current directory\n");
+  } else {
+    char* buffer = malloc(1024);
+    int bytes_read = getdents(fd, buffer, 1024);
+    if (bytes_read < 0){
+      puts("ls: failed to read directory entries\n");
+    } else {
+      // print each entry name followed by newline
+      // files in white, dirs in blue
+      unsigned offset = 0;
+      while (offset < (unsigned)bytes_read){
+        struct linux_dirent* entry = (struct linux_dirent*)(buffer + offset);
+        if (entry->d_name == '.'){
+          // skip entries beginning with '.'
+          offset += entry->d_reclen;
+          continue;
+        }
+        // d_type offset is (d_reclen - 1)
+        if (*((char*)(entry) + entry->d_reclen - 1) == DT_DIR){
+          puts("\x1b[34m");
+        } else {
+          puts("\x1b[37m");
+        }
+        puts(&entry->d_name);
+        puts("\n");
+        offset += entry->d_reclen;
+      }
+    }
+    free(buffer);
+    close(fd);
+  }
+}
+
+void handle_cat(int argc, char** argv){
+  if (argc < 2){
+    puts("cat: expected file argument\n");
+  } else {
+    int fd = open(argv[1]);
+    if (fd < 0){
+      puts("cat: failed to open file\n");
+    } else {
+      // read all bytes from file and write to STDOUT
+      char buffer[1024];
+      int bytes_read;
+      while ((bytes_read = read(fd, buffer, 1024)) > 0){
+        write(STDOUT, buffer, (unsigned)bytes_read);
+      }
+      if (bytes_read < 0){
+        puts("cat: failed to read file\n");
+      }
+      close(fd);
+    }
+  }
+}
+
+void handle_cp(int argc, char** argv){
+  // copy file: cp source dest
+  if (argc < 3){
+    puts("cp: expected source and destination arguments\n");
+    return;
+  } 
+    
+  int src_fd = open(argv[1]); 
+  if (src_fd < 0){
+    puts("cp: failed to open source file\n");
+    return;
+  } 
+  
+  int dest_fd = open(argv[2]);
+  if (dest_fd < 0){
+    puts("cp: failed to open destination file\n");
+    close(src_fd);
+    return;
+  }
+
+  // ready in all source bytes and copy to dest
+  char buffer[1024];
+  int bytes_read;
+  while ((bytes_read = read(src_fd, buffer, 1024)) > 0){
+    if (write(dest_fd, buffer, (unsigned)bytes_read) < 0){
+      puts("cp: failed to write to destination file\n");
+      return;
+    }
+  }
+  if (bytes_read < 0){
+    puts("cp: failed to read source file\n");
+    return;
+  }
+
+  // truncate dest to source size
+  if (truncate(dest_fd, seek(src_fd, 0, SEEK_END)) != 0){
+    puts("cp: failed to truncate destination file\n");
+    return;
+  }
+
+  close(src_fd);
+  close(dest_fd);
+}
+
 void handle_command(void){
   unsigned argc;
   char** argv;
@@ -148,53 +254,57 @@ void handle_command(void){
       puts("cd: failed to change directory\n");
     }
   } else if (streq(argv[0], "ls")){
-    // print entries in current directory
-    int fd = open(".");
-    if (fd < 0){
-      puts("ls: failed to open current directory\n");
-    } else {
-      char* buffer = malloc(1024);
-      int bytes_read = getdents(fd, buffer, 1024);
-      if (bytes_read < 0){
-        puts("ls: failed to read directory entries\n");
-      } else {
-        // print each entry name followed by newline
-        unsigned offset = 0;
-        while (offset < (unsigned)bytes_read){
-          struct linux_dirent* entry = (struct linux_dirent*)(buffer + offset);
-          puts(&entry->d_name);
-          puts("\n");
-          offset += entry->d_reclen;
-        }
-      }
-      free(buffer);
-      close(fd);
-    }
+    handle_ls(argc, argv);
   } else if (streq(argv[0], "cat")){
-    if (argc < 2){
-      puts("cat: expected file argument\n");
-    } else {
-      int fd = open(argv[1]);
-      if (fd < 0){
-        puts("cat: failed to open file\n");
-      } else {
-        // read all bytes from file and write to STDOUT
-        char buffer[1024];
-        int bytes_read;
-        while ((bytes_read = read(fd, buffer, 1024)) > 0){
-          write(STDOUT, buffer, (unsigned)bytes_read);
-        }
-        if (bytes_read < 0){
-          puts("cat: failed to read file\n");
-        }
-        close(fd);
-      }
-    }
+    handle_cat(argc, argv);
   } else if (streq(argv[0], "clear")){
     // clear screen by printing ANSI escape code
     puts("\x1b[2J\x1b[H");
   } else if (streq(argv[0], "exit")){
     exit(0);
+  } else if (streq(argv[0], "cp")){
+    handle_cp(argc, argv);
+  } else if (streq(argv[0], "mkdir")){
+    if (argc < 2){
+      puts("mkdir: expected path argument\n");
+    } else if (mkdir(argv[1]) != 0){
+      puts("mkdir: failed to create directory\n");
+    }
+  } else if (streq(argv[0], "rm")){
+    if (argc < 2){
+      puts("rm: expected path argument\n");
+    } else if (unlink(argv[1]) != 0){
+      puts("rm: failed to remove file\n");
+    }
+  } else if (streq(argv[0], "rmdir")){
+    if (argc < 2){
+      puts("rmdir: expected path argument\n");
+    } else if (rmdir(argv[1]) != 0){
+      puts("rmdir: failed to remove directory\n");
+    }
+  } else if (streq(argv[0], "mv")){
+    if (argc < 3){
+      puts("mv: expected source and destination arguments\n");
+    }
+    // implement mv as cp + rm
+    else {
+      handle_cp(argc, argv);
+      if (unlink(argv[1]) != 0){
+        puts("mv: failed to remove source file after copying\n");
+      }
+    }
+  } else if (streq(argv[0], "help")){
+    puts("built-in commands:\n");
+    puts("cd [path] - change current directory\n");
+    puts("ls - list entries in current directory\n");
+    puts("cat [file] - print contents of file to terminal\n");
+    puts("cp [source] [dest] - copy file from source to dest\n");
+    puts("mv [source] [dest] - move file from source to dest\n");
+    puts("rm [file] - remove file\n");
+    puts("mkdir [path] - create directory at path\n");
+    puts("rmdir [path] - remove directory at path (must be empty)\n");
+    puts("clear - clear the terminal screen\n");
+    puts("exit - exit the shell\n");
   } else {
     // exec other command
     int pid = fork();

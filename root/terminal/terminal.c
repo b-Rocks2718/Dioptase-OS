@@ -1,8 +1,9 @@
-#include "../../crt/print.h"
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
-#include "../../crt/vga.h"
+#include "../crt/print.h"
+#include "../crt/sys.h"
+#include "../crt/stdbool.h"
+#include "../crt/stddef.h"
+#include "../crt/unistd.h"
+#include "../crt/vga.h"
 
 #define CURSOR_BLINK_INTERVAL 100
 #define MAIN_LOOP_DELAY_INTERVAL 10

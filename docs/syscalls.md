@@ -49,7 +49,7 @@ Current implementation-defined bounds:
 - path arguments: at most 1024 bytes including the terminating NUL
 - `read()` / `write()` byte count per trap: at most 1024 bytes
 - `pipe()` ring-buffer capacity: 1024 bytes
-- `execv()` argument count: at most 16
+- `execv()` argument count: at most 64
 - each `execv()` argument string: at most 256 bytes including the terminating
   NUL
 - rebuilt `execv()` argv block must fit in the initial 16 KiB user stack
@@ -98,6 +98,9 @@ non-ELF regular files return `-1`.
 | `31` | `seek(fd, offset, whence)` | `fd`, `offset`, `whence` | Updates the descriptor offset and returns the new offset, or returns `-1` for an invalid descriptor or invalid `whence`. |
 | `34` | `getcwd(buffer, buffer_size)` | `buffer`, `buffer_size` | Copies the current cwd path plus trailing NUL into `buffer`. Returns `buffer` on success or `(char*)-1` on invalid user memory, missing cwd state, or insufficient buffer size. |
 | `39` | `truncate(fd, size)` | `fd`, `size` | Shrinks a regular file descriptor to `size` bytes and returns `0`, or returns `-1` for an invalid descriptor, a non-regular-file descriptor, or any request that would grow the file. |
+| `40` | `mkdir(path)` | `path` | Creates one empty subdirectory entry in the current cwd and returns `0`, or returns `-1` on invalid user memory, invalid name, duplicate basename, or create failure. |
+| `41` | `rmdir(path)` | `path` | Removes one empty subdirectory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is not a directory, is not empty, or the name is invalid. |
+| `42` | `unlink(path)` | `path` | Removes one non-directory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is a directory, or the name is invalid. |
 
 Additional file-descriptor notes:
 - `dup()` shares the same underlying descriptor object, so offset changes are
@@ -110,6 +113,15 @@ Additional file-descriptor notes:
   32-bit range.
 - `truncate()` is shrink-only. It leaves descriptor offsets unchanged and does
   not reclaim blocks.
+- `mkdir()`, `rmdir()`, and `unlink()` are currently basename-only wrappers
+  over the ext2 helpers. `path` must be one non-empty component in the current
+  working directory; slash-separated and absolute paths return `-1`.
+- `mkdir()`, `rmdir()`, and `unlink()` reject `.` and `..`.
+- `unlink()` currently applies to regular files and symlinks only; use
+  `rmdir()` for empty directories.
+- Successful `unlink()` and `rmdir()` remove the pathname immediately, but
+  final inode/block reclamation may still be deferred until the last live
+  wrapper for that inode is released.
 - Current implementation detail: `play_audio_file()` spawns a playback worker
   and returns immediately. The worker currently expects a supported PCM WAV
   file; malformed WAV contents currently panic the kernel instead of returning
@@ -127,7 +139,7 @@ Additional file-descriptor notes:
 
 `mmap()` details that matter to user mode:
 
-- user-visible flags come from `crt/sys.h`: `MMAP_SHARED`, `MMAP_READ`,
+- user-visible flags come from `root/crt/sys.h`: `MMAP_SHARED`, `MMAP_READ`,
   `MMAP_WRITE`, and `MMAP_EXEC`
 - the kernel always adds the internal `MMAP_USER` bit to user-created mappings
 - anonymous shared mappings are currently rejected

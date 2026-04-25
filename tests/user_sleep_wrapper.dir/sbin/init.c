@@ -7,7 +7,7 @@
  * - return 0 on success so the kernel-side harness can compare exact output
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 #define REQUESTED_SLEEP_JIFFIES 5
 

@@ -1,7 +1,7 @@
 #include "dirs.h"
-#include "../../../crt/print.h"
-#include "../../../crt/heap.h"
-#include "../../../crt/sys.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/stdlib.h"
+#include "../../../root/crt/sys.h"
 
 #define ENTRIES_PER_LINE 4
 #define SPACES_PER_TAB 8

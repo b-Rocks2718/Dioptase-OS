@@ -1,0 +1,48 @@
+***mkdir bad path pointer
+***test_syscall arg = -1
+***rmdir bad path pointer
+***test_syscall arg = -1
+***unlink bad path pointer
+***test_syscall arg = -1
+***slash path rejection
+***test_syscall arg = -1
+***test_syscall arg = -1
+***test_syscall arg = -1
+***mkdir create and traverse
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***mkdir duplicate
+***test_syscall arg = -1
+***unlink regular file
+***test_syscall arg = 0
+***test_syscall arg = 1
+***test_syscall arg = 86
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***unlink rejects directory
+***test_syscall arg = 0
+***test_syscall arg = -1
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***rmdir rejects file
+***test_syscall arg = 0
+***test_syscall arg = -1
+***test_syscall arg = 0
+***rmdir rejects non-empty directory
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = -1
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***rmdir empty directory
+***test_syscall arg = 0
+***test_syscall arg = -1
+***test_syscall arg = 0
+***test_syscall arg = 0

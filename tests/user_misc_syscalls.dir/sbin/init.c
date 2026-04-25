@@ -8,7 +8,7 @@
  *   success path without needing a checked-in binary fixture
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 #define TEST_WAV_BYTES 46
 

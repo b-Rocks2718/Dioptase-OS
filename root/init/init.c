@@ -1,7 +1,8 @@
-#include "../../crt/print.h"
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
+#include "../crt/print.h"
+#include "../crt/assert.h"
+#include "../crt/stddef.h"
+#include "../crt/unistd.h"
+#include "../crt/sys/wait.h"
 
 int main(void) {
   puts("| Hello from init process!\n");

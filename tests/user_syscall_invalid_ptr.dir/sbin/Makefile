@@ -6,7 +6,7 @@ CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bc
 BASM = $(TOOLCHAIN_ROOT)Dioptase-Assembler/build/$(VERSION)/basm
 BUILD_DIR = build
 
-CRT_DIR = ../../../crt
+CRT_DIR = ../../../root/crt
 CRT_STARTUP_SRC := $(CRT_DIR)/crt0.s
 CRT_ASM_SRCS := $(wildcard $(CRT_DIR)/*.s)
 CRT_C_SRCS := $(wildcard $(CRT_DIR)/*.c)

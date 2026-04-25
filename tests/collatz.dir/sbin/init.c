@@ -1,6 +1,5 @@
-#include "../../../crt/print.h"
-#include "../../../crt/sys.h"
-#include "../../../crt/constants.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/sys.h"
 
 // Compute the next Collatz value for one positive integer.
 unsigned next_collatz(unsigned x){
