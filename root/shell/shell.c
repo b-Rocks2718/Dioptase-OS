@@ -370,10 +370,11 @@ int main(void){
         memcpy(to_tab_complete, &cmd_buf[start], cmd_buf_len - start);
         to_tab_complete[cmd_buf_len - start] = 0;
 
-        int first_slash = start;
-        for (int i = start; i < cmd_buf_len; i++) {
+        int last_slash = start;
+        for (int i = cmd_buf_len - 1; i >= start; i--) {
           if (cmd_buf[i] == '/') {
-            first_slash = i + 1;
+            last_slash = i + 1;
+            break;
           }
         }
 
@@ -385,7 +386,7 @@ int main(void){
         }
 
         // Exclude ".", "..", and "lost+found" if matches <= 3, and first character is not '.'.
-        if (num_matches <= 3 && to_tab_complete[first_slash - start] != '.') {
+        if (num_matches <= 3 && to_tab_complete[last_slash - start] != '.') {
           num_matches = 0;
           struct LinkedDirent* filtered_matches = 0;
           struct LinkedDirent* filtered_tail = 0;
@@ -411,7 +412,7 @@ int main(void){
 
         if (num_matches != 0) { // Only do something if match.
           // Find longest common prefix.
-          int prefix_length = cmd_buf_len - first_slash;
+          int prefix_length = cmd_buf_len - last_slash;
           while (1) {
             char c = 0;
             struct LinkedDirent* current = matches;
@@ -440,9 +441,9 @@ int main(void){
             }
           }
 
-          int new_characters = prefix_length - (cmd_buf_len - first_slash);
+          int new_characters = prefix_length - (cmd_buf_len - last_slash);
           for (int i = 0; i < new_characters && cmd_buf_len < CMD_BUF_SIZE - 1; i++) {
-            char add_c = (&matches->dirent.d_name)[cmd_buf_len - first_slash];
+            char add_c = (&matches->dirent.d_name)[cmd_buf_len - last_slash];
             char str[2] = {add_c, '\0'};
             puts(str);
             cmd_buf[cmd_buf_len++] = add_c;
@@ -463,7 +464,7 @@ int main(void){
           } else if (new_characters == 0) { // No new characters.
             // Print matches.
             puts("\n");
-            print_directory(matches, to_tab_complete[first_slash - start] != '.');
+            print_directory(matches, to_tab_complete[last_slash - start] != '.');
 
             // Reprint prompt and command.
             print_line_prefix();
