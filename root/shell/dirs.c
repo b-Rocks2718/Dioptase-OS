@@ -8,7 +8,7 @@
 void *malloc(unsigned size);
 void free(void* p);
 
-#define ENTRIES_PER_LINE 4
+#define ENTRIES_PER_LINE 5
 #define SPACES_PER_TAB 8
 
 #define PRINT_BUFFER_SIZE 256
@@ -99,14 +99,9 @@ void print_print_buffer(char* print_buffer, unsigned index) {
   puts(print_buffer);
 }
 
-void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
-  if (head == 0) {
-    return;
-  }
-
+void get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, unsigned* longest, bool skip_current_and_parent) {
   int count = 0;
 
-  unsigned longest[ENTRIES_PER_LINE] = {0};
   // Find longest names for formatting.
   for (struct LinkedDirent* current = head; current != 0; current = current->next) {
     char* name = &current->dirent.d_name;
@@ -121,18 +116,56 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
     }
 
     unsigned length = strlen(name);
-    if (length > longest[count % ENTRIES_PER_LINE]) {
-      longest[count % ENTRIES_PER_LINE] = length;
+    if (length > longest[count % entries_per_line]) {
+      longest[count % entries_per_line] = length;
     }
     count++;
   }
 
-  for (int i = 0; i < ENTRIES_PER_LINE; i++) {
+  for (int i = 0; i < entries_per_line; i++) {
     // Add one for a space, and then round up.
     longest[i] = (longest[i] + SPACES_PER_TAB) & ~(SPACES_PER_TAB - 1);
   }
+}
 
-  count = 0;
+void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
+  if (head == 0) {
+    return;
+  }
+
+  unsigned longest_array[ENTRIES_PER_LINE] = {0};
+  get_column_widths(head, ENTRIES_PER_LINE, longest_array, skip_current_and_parent);
+
+  unsigned total_longest = 0;
+  unsigned one_line_width = 0;
+
+  for (int i = 0; i < ENTRIES_PER_LINE; i++) {
+    one_line_width += longest_array[i];
+    if (longest_array[i] > total_longest) {
+      total_longest = longest_array[i];
+    }
+  }
+
+  unsigned better_entries_per_line = TILE_ROW_WIDTH / total_longest;
+  unsigned entries_per_line = ENTRIES_PER_LINE;
+
+  // Check if ideal space.
+  // Overflow or not overflow and better option.
+  unsigned* longest = longest_array;
+  if (one_line_width > TILE_ROW_WIDTH || better_entries_per_line > ENTRIES_PER_LINE) {
+    entries_per_line = better_entries_per_line;
+    if (entries_per_line == 0) {
+      entries_per_line = 1;
+    }
+    // Redistribute.
+    longest = malloc(sizeof(unsigned) * entries_per_line);
+    for (int i = 0; i < entries_per_line; i++) {
+      longest[i] = 0;
+    }
+    get_column_widths(head, entries_per_line, longest, skip_current_and_parent);
+  }
+
+  int count = 0;
   char print_buffer[PRINT_BUFFER_SIZE];
   unsigned buffer_index = 0;
   for (struct LinkedDirent* current = head; current != 0; current = current->next) {
@@ -184,12 +217,12 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
     buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\x1b[37m", 5);
 
     unsigned name_length = strlen(name);
-    unsigned padding = longest[count % ENTRIES_PER_LINE] - name_length;
+    unsigned padding = longest[count % entries_per_line] - name_length;
     for (unsigned i = 0; i < padding; i++) {
       buffer_index = add_to_print_buffer(print_buffer, buffer_index, " ", 0);
     }
     count++;
-    if (count % ENTRIES_PER_LINE == 0) {
+    if (count % entries_per_line == 0) {
       // Print at end of line.
       buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\n", 0);
       print_print_buffer(print_buffer, buffer_index);
@@ -200,12 +233,15 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\x1b[37m", 5);
 
   // Final newline if we didn't end on one.
-  if (count % ENTRIES_PER_LINE != 0) {
+  if (count % entries_per_line != 0) {
     buffer_index = add_to_print_buffer(print_buffer, buffer_index, "\n", 0);
   }
 
   // Print rest of buffer.
   print_print_buffer(print_buffer, buffer_index);
+  if (longest != longest_array) {
+    free(longest);
+  }
 }
 
 struct LinkedDirent* tab_complete_directory(char* prefix) {

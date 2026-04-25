@@ -91,14 +91,16 @@ Built-in command matching is case-sensitive.
   specified as arguments.
 - Reads from `getdents()` to construct a linked list of directory entries.
 - ".", "..", and "lost+found" are skipped when printing entries.
-- Prints entries in rows with 4 columns each. Aligns to the longest name in the
-  column, and aligns to a multiple of 8 characters (like tabs).
+- Prints entries in rows with a variable number of columns depending on the
+  `TILE_ROW_WIDTH` from the VGA. Aligns to the longest name in the column, and
+  aligns to a multiple of 8 characters (like tabs).
 - Different file types are colored differently (e.g., directories are blue,
   regular files are white, symlinks are cyan, et cetera).
 
 Current caveats:
 
-- Long names are not accommodated, so the output will flow off the screen.
+- Does not resize with the terminal width, so if it is resized, the output
+  will not adjust accordingly.
 
 ### `cat FILE`
 
