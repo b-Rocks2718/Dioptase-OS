@@ -1,0 +1,19 @@
+***Hello from vmem_simple test!
+***Running private anonymous mmap test...
+***    mmap'd a page at virtual address 0x10000000
+***    wrote 42 to first int of mmap'd page
+***    read 42 from first int of mmap'd page
+***    munmap'd the page
+***Running private file-backed mmap test...
+***    mmap'd a file-backed page at virtual address 0x10000000
+***    contents of hello.txt: Hello!
+***    modified contents of hello.txt: Hello!!
+***    munmap'd the file-backed page
+***Running shared anonymous mmap test...
+***    TODO: implement shared anonymous mmap test
+***Running shared file-backed mmap test...
+***    mmap'd a file-backed page at virtual address 0x10000000
+***    contents of hello.txt: Hello!
+***    modified contents of hello.txt: Hello!!
+***    munmap'd the file-backed page
+***vmem_simple test complete!
