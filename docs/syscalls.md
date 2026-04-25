@@ -66,6 +66,7 @@ Current implementation-defined bounds:
 | `24` | `execv(path, argc, argv)` | `path`, `argc`, `argv` | Replaces the current user image. Success does not return. Failure returns `-1`. If `argc == 0`, `argv` is ignored and the new image starts with `argc = 0`, `argv = NULL`. |
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
+| `47` | `kill(child_desc)` | `child_desc` | Requests termination of the specified child and returns `0`, or returns `-1` for an invalid child descriptor. Current implementation detail: `wait_child()` currently returns `-1` for a killed child. |
 
 ### Exec
 
@@ -96,7 +97,9 @@ non-ELF regular files return `-1`.
 | `29` | `pipe(fds)` | `fds` | Allocates a pipe and writes `{read_fd, write_fd}` into the user array `fds[0..1]`. Returns `0` on success or `-1` on copy or descriptor-allocation failure. |
 | `30` | `dup(fd)` | `fd` | Returns a new file descriptor that references the same underlying descriptor object, including the shared current offset. Returns `-1` on failure. |
 | `31` | `seek(fd, offset, whence)` | `fd`, `offset`, `whence` | Updates the descriptor offset and returns the new offset, or returns `-1` for an invalid descriptor or invalid `whence`. |
+| `33` | `getdents(fd, buffer, buffer_size)` | `fd`, `buffer`, `buffer_size` | Copies up to the buffer size of full directory entries (`struct linux_dirent` format) into `buffer`. Increments the descriptor offset by bytes read from the file (note that this is not the same as the bytes copied since the entry structures are different). Returns the number of bytes copied or `-1` if the descriptor or offset is invalid or not a directory. |
 | `34` | `getcwd(buffer, buffer_size)` | `buffer`, `buffer_size` | Copies the current cwd path plus trailing NUL into `buffer`. Returns `buffer` on success or `(char*)-1` on invalid user memory, missing cwd state, or insufficient buffer size. |
+| `35` | `readlink(path, buffer, buffer_size)` | `path`, `buffer`, `buffer_size` | Copies up to the clamped byte count of the target of a symbolic link plus trailing NUL into `buffer`. Returns the number of bytes copied or `-1` on missing or invalid symlink. |
 | `39` | `truncate(fd, size)` | `fd`, `size` | Shrinks a regular file descriptor to `size` bytes and returns `0`, or returns `-1` for an invalid descriptor, a non-regular-file descriptor, or any request that would grow the file. |
 | `40` | `mkdir(path)` | `path` | Creates one empty subdirectory entry in the current cwd and returns `0`, or returns `-1` on invalid user memory, invalid name, duplicate basename, or create failure. |
 | `41` | `rmdir(path)` | `path` | Removes one empty subdirectory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is not a directory, is not empty, or the name is invalid. |

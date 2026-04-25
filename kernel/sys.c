@@ -1112,6 +1112,8 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
+  child->pending_signals = 0;
+
   // set up descriptors
   copy_descriptors(parent, child);
 
@@ -1162,6 +1164,7 @@ int handle_fork(unsigned pc, unsigned sp){
   }
 
   struct TCB* child = fork_tcb(tcb, child_desc, pc, sp);
+  tcb->child_descriptors[child_desc]->child_tcb = child;
   
   scheduler_wake_thread(child);
 
@@ -1183,7 +1186,7 @@ int handle_wait_child(int child_desc){
     return -1;
   }
 
-  unsigned rc = (unsigned)promise_get(child->child);
+  unsigned rc = (unsigned)promise_get(child->child_promise);
 
   // can only wait on a given child descriptor once; after this call the
   // descriptor is consumed and must not be used again
@@ -1572,6 +1575,26 @@ int handle_unlink(char* path){
   return rc;
 }
 
+int handle_kill(int child_desc){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  child_desc -= CHILD_DESCRIPTORS_START;
+  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+    return -1;
+  }
+
+  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
+  if (child == NULL){
+    return -1;
+  }
+
+  child->child_tcb->pending_signals |= 1;
+  
+  return 0;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -1748,6 +1771,9 @@ int trap_handler(unsigned code,
     case TRAP_GET_SPRITEMAP: {
       return (int)mmap_physmem(SPRITEMAP_SIZE, (unsigned)SPRITEMAP, MMAP_READ | MMAP_WRITE | MMAP_USER);
     }
+    case TRAP_KILL: {
+      return handle_kill(arg1);
+    }
     default: {
       // bad syscall, program dies
       *return_to_user = false;
@@ -1869,8 +1895,9 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
           if (fill){
             tcb->child_descriptors[i] = malloc(sizeof(struct ChildDescriptor));
             tcb->child_descriptors[i]->refcount = 1;
-            tcb->child_descriptors[i]->child = malloc(sizeof(struct Promise));
-            promise_init(tcb->child_descriptors[i]->child);
+            tcb->child_descriptors[i]->child_tcb = NULL;
+            tcb->child_descriptors[i]->child_promise = malloc(sizeof(struct Promise));
+            promise_init(tcb->child_descriptors[i]->child_promise);
           }
           return i;
         }
@@ -1972,8 +1999,8 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         return;
       }
       
-      if (descriptor->child != NULL){
-        promise_free(descriptor->child);
+      if (descriptor->child_promise != NULL){
+        promise_free(descriptor->child_promise);
       }
 
       free(descriptor);

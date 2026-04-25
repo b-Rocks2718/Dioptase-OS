@@ -3,6 +3,7 @@
 #include "../crt/stddef.h"
 #include "../crt/unistd.h"
 #include "../crt/sys/wait.h"
+#include "../crt/sys.h"
 
 int main(void) {
   puts("| Hello from init process!\n");
@@ -52,6 +53,8 @@ int main(void) {
   }
 
   wait_child(shell_pid);
+
+  kill(terminal_pid);
 
   return 67;
 }

@@ -141,6 +141,8 @@ static struct TCB* make_tcb(bool is_daemon){
 
   tcb->parent_promise = NULL;
 
+  tcb->pending_signals = 0;
+
   tcb->next = NULL;
 
   return tcb;
@@ -347,15 +349,32 @@ void event_loop(void) {
     struct TCB* me = core->current_thread;
     struct TCB* next = schedule_next_thread();
 
-    int was = interrupts_disable();
-    if (next != NULL) {
-      context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
-    } else {
-      interrupts_restore(was);
-
-      // put core to sleep to save power until the next interrupt if there's no work to do
+    if (next == NULL) {
+      // no work to do
       pause();
+      continue;
     }
+
+    if (next->pending_signals){
+      // free parent promise
+      if (next->parent_promise != NULL){
+        promise_set(next->parent_promise->child_promise, (void*)-1);
+        __atomic_store_n((int*)&next->parent_promise->child_tcb, NULL);
+
+        if (__atomic_fetch_add(&next->parent_promise->refcount, -1) == 1){
+          promise_free(next->parent_promise->child_promise);
+          free(next->parent_promise);
+        }
+      }
+
+      // kill this thread
+      reap_tcb((void*)next);
+
+      continue;
+    }
+
+    int was = interrupts_disable();
+    context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
   }
 
   kernel_shutdown();
@@ -438,10 +457,11 @@ void stop(unsigned rc) {
   bool is_idle = (current == &core->idle_thread);
 
   if (current->parent_promise != NULL){
-    promise_set(current->parent_promise->child, (void*)rc);
+    promise_set(current->parent_promise->child_promise, (void*)rc);
+    __atomic_store_n((int*)&current->parent_promise->child_tcb, NULL);
 
     if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
-      promise_free(current->parent_promise->child);
+      promise_free(current->parent_promise->child_promise);
       free(current->parent_promise);
     }
   }
