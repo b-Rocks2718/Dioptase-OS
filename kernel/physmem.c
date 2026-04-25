@@ -179,13 +179,30 @@ void physmem_init(void) {
     map_order++;
   }
   physmem_map = physmem_leak_order(map_order);
+
   // Initialize metadata for every physical frame.
+  // Ensure member offsets are as expected
+  assert((unsigned)(physmem_map+1) - (unsigned)physmem_map == 36, "Page not sized as expected\n");
+  assert((unsigned)&physmem_map->flags - (unsigned)physmem_map == 0, "flags not at offset 0\n");
+  assert((unsigned)&physmem_map->refs - (unsigned)physmem_map == 4, "refs not at offset 4\n");
+  assert((unsigned)&physmem_map->cache_entry - (unsigned)physmem_map == 8, "cache_entry not at offset 8\n");
+  assert((unsigned)&physmem_map->lock - (unsigned)physmem_map == 12, "lock not at offset 12\n");
+  assert((unsigned)&physmem_map->lock.lock.the_lock - (unsigned)physmem_map == 12, "lock.lock.the_lock not at offset 12\n");
+  assert((unsigned)&physmem_map->lock.lock.interrupt_state - (unsigned)physmem_map == 16, "lock.lock.interrupt_state not at offset 16\n");
+  assert((unsigned)&physmem_map->lock.count - (unsigned)physmem_map == 20, "lock.count not at offset 20\n");
+  assert((unsigned)&physmem_map->lock.wait_queue - (unsigned)physmem_map == 24, "lock.lock.interrupt_state not at offset 12\n");
+  assert((unsigned)&physmem_map->lock.wait_queue.head - (unsigned)physmem_map == 24, "lock.lock.interrupt_state not at offset 12\n");
+  assert((unsigned)&physmem_map->lock.wait_queue.tail - (unsigned)physmem_map == 28, "lock.lock.interrupt_state not at offset 12\n");
+  assert((unsigned)&physmem_map->lock.wait_queue.size - (unsigned)physmem_map == 32, "lock.lock.interrupt_state not at offset 12\n");
+  /* Initialization logic
   for (unsigned i = 0; i < PHYS_FRAME_COUNT; i++) {
-    physmem_map[i].flags = PG_PINNED;
-    sem_init(&physmem_map[i].lock, 1);
-    physmem_map[i].refs = NULL;
-    physmem_map[i].cache_entry = NULL;
+    // physmem_map[i].flags = PG_INIT_FLAGS;
+    // physmem_map[i].refs = NULL;
+    // physmem_map[i].cache_entry = NULL;
+    // sem_init(&physmem_map[i].lock, 1);
   }
+  */
+  physmem_metadata_init(physmem_map, PHYS_FRAME_COUNT, PG_PINNED);
 }
 
 // allocate a physical page of given order
@@ -414,7 +431,7 @@ void physmem_page_lock(struct Page* page) {
 }
 
 bool physmem_page_trylock(struct Page* page) {
-  sem_try_down(&page->lock);
+  return sem_try_down(&page->lock);
 }
 
 void physmem_page_unlock(struct Page* page) {

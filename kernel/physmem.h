@@ -62,9 +62,9 @@ void physmem_free(void* page);
 void physmem_check_leaks(void);
 
 enum PageFlags {
-  PG_DIRTY = 0x0,    // Has been written to since last writeback
   PG_PINNED = 0x1,   // Non-evictable: either is being managed by physmem, or not able to be evicted (but owned by exactly one thing)
   PG_ACCESSED = 0x2, // Software-managed access bit
+  PG_DIRTY = 0x4,    // Has been written to since last writeback
 };
 
 struct PageRef;
@@ -73,10 +73,12 @@ struct VME;
 
 struct Page {
   unsigned flags;
-  struct Semaphore lock;
   struct PageRef* refs;
   struct PageCacheEntry* cache_entry;
+  struct Semaphore lock;
 };
+
+// static_assert(sizeof(struct Page) == 64, "Page is unexpected size; physmem assembly will be sad");
 
 // Get the metadata from a frame physical address
 struct Page* get_page(void* frame);
@@ -94,4 +96,5 @@ void physmem_page_unlock(struct Page* page);
 void physmem_page_addRef(struct Page* page, unsigned virtual_addr);
 void physmem_page_removeRef(struct Page* page, unsigned virtual_addr);
 
+extern void physmem_metadata_init(struct Page* physmem_map, unsigned frame_count, unsigned pg_init_flags);
 #endif // PHYSMEM_H
