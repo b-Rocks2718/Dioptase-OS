@@ -122,7 +122,7 @@ void get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, uns
     count++;
   }
 
-  for (int i = 0; i < entries_per_line; i++) {
+  for (int i = 0; i < entries_per_line - 1; i++) {
     // Add one for a space, and then round up.
     longest[i] = (longest[i] + SPACES_PER_TAB) & ~(SPACES_PER_TAB - 1);
   }
