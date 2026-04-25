@@ -32,6 +32,32 @@ Each drive has its own blocking lock, waiter slot, and pending flag. That means 
 
 Tested in `sd_drives.c`. The ext2 tests `ext_read.c`, `ext_write.c`, `ext_new_file.c`, `ext_delete.c`, and `ext_rename.c` also exercise the SD path indirectly through the filesystem.
 
+### Audio
+
+The OS currently supports two separate audio paths backed by the hardware
+contracts in `docs/mem_map.md`.
+
+The older PCM path is kernel-driven. `play_audio_file(fd)` accepts a regular
+file descriptor for a supported signed 16-bit little-endian mono WAV file at
+25 kHz, spawns a playback worker, and streams decoded samples into the PCM
+audio ring buffer. That path owns the `AUDIO_*` control block and still uses the
+audio low-water interrupt.
+
+The synth path is user-driven. `get_synth_audio()` maps the synth audio MMIO
+page at `0x7FBC000..0x7FBCFFF` into the caller's user address space with
+read/write permission, matching the direct-MMIO style used by framebuffer
+syscalls. The kernel does not interpret or arbitrate individual synth register
+writes. User programs can write the page directly or use the DSYN helpers in
+`root/crt/synth_audio.c`; `root/synth` streams a DSYN file into the synth
+command ring and `root/dsyninfo` validates and summarizes one.
+
+The synth device has no interrupt source. Synth device version 2 exposes a
+read-only output-sample counter. Synth device version 4 adds a timestamped
+command ring; the DSYN player requires this ring and uses it to batch and queue
+register writes ahead of time so batched host audio rendering can still apply
+changes at exact synth sample positions. The player does not have a direct
+per-event write fallback for older synth-device versions.
+
 ### Timer
 
 The PIT is the kernel's periodic interrupt source. `pit_init(hertz)` converts the requested frequency into a cycles-per-interrupt value for the 100 MHz hardware clock and writes that to the PIT MMIO register. The device raises the interrupt on every core, but kernel timekeeping is centralized: only core 0 increments `current_jiffies`, manages periodic MLFQ boost bookkeeping, and performs the periodic PS/2 worker safety wakeup.

@@ -19,6 +19,10 @@
 
 #define MAX_PATH 1024
 
+#define DIOPTASE_PRIORITY_LOW 0
+#define DIOPTASE_PRIORITY_NORMAL 1
+#define DIOPTASE_PRIORITY_HIGH 2
+
 unsigned exit(int status);
 
 unsigned test_syscall(int arg);
@@ -80,6 +84,10 @@ int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 short* get_spritemap(void);
 
 int kill(int child);
+
+unsigned* get_synth_audio(void);
+
+int request_priority(int priority);
 
 void test_syscall_list(int num, int* args);
 

@@ -13,6 +13,7 @@
 #include "per_core.h"
 #include "promise.h"
 #include "audio.h"
+#include "synth_audio.h"
 #include "heap.h"
 #include "ext.h"
 #include "string.h"
@@ -1595,6 +1596,31 @@ int handle_kill(int child_desc){
   return 0;
 }
 
+static bool is_valid_thread_priority(int priority){
+  return priority >= LOW_PRIORITY && priority <= HIGH_PRIORITY;
+}
+
+int handle_request_priority(int priority){
+  if (!is_valid_thread_priority(priority)){
+    return -1;
+  }
+
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+
+  if (tcb == NULL){
+    interrupts_restore(was);
+    return -1;
+  }
+
+  // tcb is running, so it is not in the ready queue
+  // threfore is safe to change priority here
+  tcb->priority = (enum ThreadPriority)priority;
+  interrupts_restore(was);
+
+  return 0;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -1773,6 +1799,13 @@ int trap_handler(unsigned code,
     }
     case TRAP_KILL: {
       return handle_kill(arg1);
+    }
+    case TRAP_GET_SYNTH_AUDIO: {
+      return (int)mmap_physmem(SYNTH_AUDIO_SIZE, SYNTH_AUDIO_BASE,
+          MMAP_READ | MMAP_WRITE | MMAP_USER);
+    }
+    case TRAP_REQUEST_PRIORITY: {
+      return handle_request_priority(arg1);
     }
     default: {
       // bad syscall, program dies
