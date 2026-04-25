@@ -198,9 +198,14 @@ struct DirEntry {
 
 // d_type constants.
 #define EXT2_DT_UNKNOWN 0
+#define EXT2_DT_FIFO    1
+#define EXT2_DT_CHR     2
 #define EXT2_DT_DIR     4
+#define EXT2_DT_BLK     6
 #define EXT2_DT_REG     8
 #define EXT2_DT_LNK     10
+#define EXT2_DT_SOCK    12
+#define EXT2_DT_WHT     14
 
 struct linux_dirent {
     unsigned d_ino; // i-node number.

@@ -97,12 +97,12 @@ The terminal currently supports these SGR parameters:
 | --- | --- | --- |
 | `0` | Reset to default color | `0xFF` |
 | `30` | Black | `0x00` |
-| `31` | Red | `0xE0` |
-| `32` | Green | `0x1C` |
+| `31` | Red | `0xE9` |
+| `32` | Green | `0x3D` |
 | `33` | Yellow | `0xFC` |
-| `34` | Blue | `0x03` |
-| `35` | Magenta | `0xE3` |
-| `36` | Cyan | `0x1F` |
+| `34` | Blue | `0x2F` |
+| `35` | Magenta | `0xA2` |
+| `36` | Cyan | `0x7B` |
 | `37` | White | `0xFF` |
 | `38` | Light gray | `0x92` |
 | `39` | Dark gray | `0x49` |
@@ -113,11 +113,15 @@ The terminal currently supports these SGR parameters:
 | `44` | Bright blue | `0x5F` |
 | `45` | Purple | `0xA3` |
 | `46` | Indigo | `0x83` |
-| `47` | Light Orange | `0xF9` |
+| `47` | Light orange | `0xF9` |
+| `48` | Light yellow | `0xFE` |
+| `49` | Gold | `0xB0` |
+| `50` | Light blue | `0xBB` |
+| `51` | Light purple | `0xD7` |
 
-Codes `38` through `46` are Dioptase-specific foreground color extensions. They
+Codes `38` through `51` are Dioptase-specific foreground color extensions. They
 do not follow ANSI `38;...` extended-color syntax, and `40` through `47` are
-not treated as background colors.
+not treated as background colors. In the shell, you can run `colors` to see these.
 
 Unsupported SGR features such as ANSI background colors, bold, underline, and
 inverse video are ignored.

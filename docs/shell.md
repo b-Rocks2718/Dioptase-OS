@@ -35,15 +35,31 @@ Current implementation-defined limits and behaviors:
 - Command buffer size: `2048` bytes
 - The current editor accepts at most `2047` typed characters before ignoring
   further printable input
-- Accepted editing keys: printable ASCII, Enter, Backspace, left Shift, and
-  right Shift
+- Accepted editing keys: printable ASCII, Enter, Backspace, tab, left Shift,
+  and right Shift
 - Characters outside printable ASCII are ignored unless they are one of the
   special keys above
 - Backspace deletes one buffered character and visually erases it with
   `"\b \b"`
-- There is no cursor motion, insert mode, command history, or tab completion
+- There is no cursor motion, insert mode, or command history
 - The shell sleeps for `5` jiffies between keyboard polls when waiting for
   input
+
+## Tab Completion
+
+Upon detecting a tab key, the following occurs:
+
+- All possible completion matches are collected with `getdents()` and then
+  filtered by the current command buffer prefix.
+- "lost+found" is always excluded, and "." and ".." are excluded if the
+  command buffer prefix does not start with '.'.
+- If there are no matches, nothing happens.
+- If there is exactly one match, this match is appended to the command buffer
+  and printed. It will stop at directory boundaries or print a space if it
+  reaches a non-directory file.
+- If there are multiple matches, the command buffer is first updated to the
+  longest common prefix of all matches. If no common prefix exists, then the
+  matches are printed in the same format as `ls` uses.
 
 ## Command Parsing
 
@@ -71,16 +87,20 @@ Built-in command matching is case-sensitive.
 
 ### `ls`
 
-- Lists entries from the current directory only
-- Ignores any extra arguments
-- Reads one `1024`-byte `getdents()` chunk and prints each returned entry on
-  its own line
-- Directories are printed in blue and non-directories in white
+- Lists entries from the current directory by default or from the director(ies)
+  specified as arguments.
+- Reads from `getdents()` to construct a linked list of directory entries.
+- ".", "..", and "lost+found" are skipped when printing entries.
+- Prints entries in rows with a variable number of columns depending on the
+  `TILE_ROW_WIDTH` from the VGA. Aligns to the longest name in the column, and
+  aligns to a multiple of 8 characters (like tabs).
+- Different file types are colored differently (e.g., directories are blue,
+  regular files are white, symlinks are cyan, et cetera).
 
 Current caveats:
 
-- Large directories may be truncated because the shell does not loop over
-  multiple `getdents()` calls
+- Does not resize with the terminal width, so if it is resized, the output
+  will not adjust accordingly.
 
 ### `cat FILE`
 
