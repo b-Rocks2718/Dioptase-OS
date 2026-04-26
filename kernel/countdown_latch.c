@@ -1,5 +1,6 @@
 #include "countdown_latch.h"
 #include "atomic.h"
+#include "threads.h"
 
 void countdownlatch_init(struct CountDownLatch* latch, unsigned count) {
   latch->count = count;
@@ -12,9 +13,9 @@ void countdownlatch_sync(struct CountDownLatch* latch) {
 }
 
 void countdownlatch_down(struct CountDownLatch* latch) {
-  __atomic_fetch_add(&latch->count, -1);
+  __atomic_fetch_add((int*)&latch->count, -1);
 }
 
 void countdownlatch_up(struct CountDownLatch* latch) {
-  __atomic_fetch_add(&latch->count, 1);
+  __atomic_fetch_add((int*)&latch->count, 1);
 }
