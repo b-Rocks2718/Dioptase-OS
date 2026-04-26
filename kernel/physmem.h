@@ -73,6 +73,7 @@ struct VME;
 
 struct Page {
   unsigned flags;
+  unsigned ref_cnt; // ref_cnt == len(refs)
   struct PageRef* refs;
   struct PageCacheEntry* cache_entry;
   struct Semaphore lock;
