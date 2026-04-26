@@ -1,6 +1,8 @@
 #ifndef ELF_H
 #define ELF_H
 
+#include "constants.h"
+
 #define EI_CLASS 4
 #define EI_DATA 5
 #define EI_VERSION 6
@@ -12,6 +14,8 @@
 
 #define ELFDATA2LSB 1
 #define ELFDATA2MSB 2
+
+#define EM_DIOPTASE 0xD105
 
 struct ElfHeader {
   unsigned char e_ident[16];
@@ -45,7 +49,7 @@ struct ElfProgramHeader {
   unsigned p_align;
 };
 
-void elf_read(void* elf_image);
+bool elf_validate_image(void* elf_image, unsigned image_size);
 
 unsigned elf_load(void* elf_image);
 

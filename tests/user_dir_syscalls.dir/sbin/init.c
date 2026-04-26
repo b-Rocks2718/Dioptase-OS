@@ -5,14 +5,14 @@
  * - readlink.
  */
 
-#include "../../../crt/sys.h"
-#include "../../../crt/print.h"
-#include "../../../crt/heap.h"
+#include "../../../root/crt/sys.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/stdlib.h"
 #include "dirs.h"
 
 // int getdents(int fd, char* buffer, unsigned buffer_size);
 
-// int getcwd(char* buffer, unsigned buffer_size);
+// char* getcwd(char* buffer, unsigned buffer_size);
 
 // int readlink(char* path, char* buffer, unsigned buffer_size);
 
@@ -31,28 +31,28 @@ int write_all(char* buffer, unsigned size) {
 int main(void){
   // getcwd.
   char buffer[100];
-  int n = getcwd(buffer, 100);
+  getcwd(buffer, 100);
   int args[1] = {(int) buffer};
   printf("***%s\n", args);
 
   chdir("./folder/inner_folder0");
-  n = getcwd(buffer, 100);
+  getcwd(buffer, 100);
   printf("***%s\n", args);
 
   chdir("../inner_folder1/../inner_folder1/./");
-  n = getcwd(buffer, 100);
+  getcwd(buffer, 100);
   printf("***%s\n", args);
 
   chdir("/folder"); // Absolute path.
-  n = getcwd(buffer, 100);
+  getcwd(buffer, 100);
   printf("***%s\n", args);
 
   chdir("../././");
-  n = getcwd(buffer, 100);
+  getcwd(buffer, 100);
   printf("***%s\n", args);
 
   // readlink.
-  n = readlink("folder/symlink_file", buffer, 100);
+  int n = readlink("folder/symlink_file", buffer, 100);
   printf("***%s\n", args);
 
   n = readlink("folder/symlink_folder", buffer, 100);

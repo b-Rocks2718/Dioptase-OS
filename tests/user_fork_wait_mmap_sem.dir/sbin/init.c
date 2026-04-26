@@ -26,7 +26,7 @@
  *   that the same descriptor number cannot be waited on twice
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 #define PRIVATE_FILE_NAME "private.txt"
 #define SHARED_FILE_NAME "shared.txt"

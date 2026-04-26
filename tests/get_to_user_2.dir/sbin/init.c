@@ -1,4 +1,4 @@
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 #include "lib.h"
 
 int main(void){
