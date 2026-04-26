@@ -87,6 +87,8 @@ void vme_change_perms(struct VME* vme, unsigned new_flags);
 
 extern void tlb_miss_handler_(void);
 
+unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte);
+
 extern void ipi_handler_(void);
 
 extern void mark_ipi_handled(void);

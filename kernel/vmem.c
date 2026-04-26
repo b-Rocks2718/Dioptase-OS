@@ -571,9 +571,57 @@ void vme_change_perms(struct VME* vme, unsigned new_flags) {
   tlb_invalidate_range(vme->start, vme->end);
 }
 
+// Walks the page table & checks the PTE.
+// If the PTE is sufficient to handle the miss, updates the cache
+// If the PTE is not sufficient to handle the miss (no PTE, PTE doesn't have enough permissions), calls the page fault handler
 void tlb_miss_handler(void* vpn, unsigned flags) {
   unsigned fault_addr = (unsigned)(vpn) << 12;
 
+  unsigned* pd = get_pid();
+  unsigned* pte = vmem_get_pte(pd, fault_addr, true);
+
+  // Does the PTE adequately handle the miss?
+  bool needs_fault = false;
+  if (flags == 0) { // True TLB miss
+    if (!(*pte & VMEM_VALID))
+      needs_fault = true;
+  } else {
+    if (flags & VMEM_READ) {
+      if (*pte & VMEM_READ) {
+        flags &= ~VMEM_READ;
+      } else {
+        int args[2] = {fault_addr, flags};
+        say("| vmem: tlb permission error fault_addr=0x%X flags = 0x%X has read permission error\n", args);
+        panic("vmem: tlb read permission error");
+      }
+    }
+    if (flags & VMEM_WRITE) {
+      if (*pte & VMEM_WRITE) {
+        flags &= ~VMEM_WRITE;
+      } else {
+        needs_fault = true;
+      }
+    }
+    if (flags & VMEM_EXEC) {
+      if (*pte & VMEM_EXEC) {
+        flags &= ~VMEM_EXEC;
+      } else {
+        int args[2] = {fault_addr, flags};
+        say("| vmem: tlb permission error fault_addr=0x%X flags = 0x%X has exec permission error\n", args);
+        panic("vmem: tlb exec permission error");
+      }
+    }
+  }
+
+  if (needs_fault) {
+    *pte = page_fault_handler(fault_addr, flags, *pte);
+  }
+
+  tlb_write(fault_addr, *pte);
+}
+
+// Returns updated PTE value; does not modify the PTE
+unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -591,32 +639,15 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
     int args[2] = {fault_addr, flags};
     say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
     panic("vmem: TLB miss with no corresponding VME.\n");
-    return;
+    return 0;
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)) {
     int args[2] = {fault_addr, flags};
     say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
-    return;
+    return 0;
   }
-
-  unsigned page_dir_index = ((unsigned)vpn >> 10) & 0x3FF;
-
-  unsigned* pd = get_pid();
-  unsigned pde = pd[page_dir_index];
-
-  if (!(pde & VMEM_VALID)) {
-    // need to create a new page table for this PDE
-    unsigned pt_addr = create_page_table();
-    unsigned entry = pt_addr | VMEM_VALID | VMEM_READ | VMEM_WRITE;
-    pd[page_dir_index] = entry;
-    pde = entry;
-  }
-
-  unsigned* pt = (unsigned*)(pde & ~0xFFF);
-  unsigned page_table_index = (unsigned)vpn & 0x3FF;
-  unsigned pte = pt[page_table_index];
 
   if (!(pte & VMEM_VALID)) {
     // need to allocate a physical page and update the PTE
@@ -684,11 +715,9 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
       entry |= VMEM_EXEC;
     if (curr->flags & MMAP_USER)
       entry |= VMEM_USER;
-    pt[page_table_index] = entry;
     pte = entry;
   }
-
-  tlb_write(fault_addr, pte);
+  return pte;
 }
 
 void ipi_handler(unsigned data) {
