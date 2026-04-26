@@ -8,6 +8,8 @@
 void *malloc(unsigned size);
 void free(void* p);
 
+struct LinkedDirent* sbin_entries = 0;
+
 #define ENTRIES_PER_LINE 5
 #define SPACES_PER_TAB 8
 
@@ -263,6 +265,70 @@ struct LinkedDirent* tab_complete_directory(char* prefix) {
     memcpy(prefix_base, prefix, last_slash + 1);
     prefix_base[last_slash + 1] = 0;
     head = read_directory(prefix_base);
+  }
+
+  // Get from sbin if not already.
+  if (sbin_entries == 0) {
+    sbin_entries = read_directory("/sbin");
+    // Skip ".", "..", and "lost+found".
+    struct LinkedDirent* current = sbin_entries;
+    struct LinkedDirent* previous = 0;
+    unsigned count = 0;
+    while (current != 0 && count < 3) {
+      char* name = &current->dirent.d_name;
+      if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))
+            || strcmp(name, "lost+found") == 0) {
+        count++;
+        if (previous == 0) {
+          sbin_entries = current->next;
+        } else {
+          previous->next = current->next;
+        }
+        struct LinkedDirent* to_free = current;
+        current = current->next;
+        free(to_free);
+      } else {
+        previous = current;
+        current = current->next;
+      }
+    }
+    // Built-in commands.
+    char* built_ins[11] = {"rmdir", "rm", "mv", "mkdir", "ls", "help", "exit", "cp", "clear", "cd", "cat"};
+    for (int i = 0; i < 11; i++) {
+      unsigned name_length = strlen(built_ins[i]);
+      struct LinkedDirent* entry = malloc(sizeof(struct LinkedDirent) + name_length + 1);
+      entry->dirent.d_ino = 0;
+      entry->dirent.d_off = 0;
+      entry->dirent.d_reclen = sizeof(struct linux_dirent) + name_length + 1;
+      memcpy(&entry->dirent.d_name, built_ins[i], name_length + 1);
+      entry->d_type = DT_REG;
+      entry->next = 0;
+      if (sbin_entries == 0) {
+        sbin_entries = entry;
+      } else {
+        entry->next = sbin_entries;
+        sbin_entries = entry;
+      }
+    }
+  }
+  // Copy sbin entries.
+  struct LinkedDirent* copied_sbin = 0;
+  struct LinkedDirent* copied_sbin_tail = 0;
+  for (struct LinkedDirent* current = sbin_entries; current != 0; current = current->next) {
+    unsigned size = sizeof(struct LinkedDirent) + current->dirent.d_reclen - sizeof(struct linux_dirent);
+    struct LinkedDirent* new_entry = malloc(size);
+    memcpy(new_entry, current, size);
+    if (copied_sbin == 0) {
+      copied_sbin = new_entry;
+      copied_sbin_tail = new_entry;
+    } else {
+      copied_sbin_tail->next = new_entry;
+      copied_sbin_tail = new_entry;
+    }
+  }
+  if (copied_sbin_tail != 0) {
+    copied_sbin_tail->next = head;
+    head = copied_sbin;
   }
 
   if (head == 0) {
