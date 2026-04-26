@@ -2,4 +2,4 @@
 ffmpeg -i still_alive.mp3 -vn -ac 1 -ar 25000 -c:a pcm_s16le still_alive.wav
 
 # test command
-ffplay -f lavfi -i "sine=frequency=1000:duration=5"
+ffplay -f lavfi -i "sine=frequency=440:duration=5"

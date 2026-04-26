@@ -705,7 +705,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  puts("Lowering to TAC...\n");
+  puts("Lowering to IR...\n");
   tac_prog = prog_to_TAC(prog, emit_debug_info);
   if (tac_prog == NULL) {
     print_message("TAC lowering failed");

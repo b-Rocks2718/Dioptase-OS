@@ -2,6 +2,8 @@
  * syscall_display:
  * - exercise trap-dispatcher syscalls that update MMIO-backed VGA state or
  *   kernel-side console state without needing user pointers
+ * - verify request_priority() validates user priority values and updates the
+ *   current TCB's static priority
  * - verify the values they expose stay within the documented hardware contract
  * - smoke-test trap sleep/yield on the current kernel thread
  */
@@ -10,6 +12,7 @@
 #include "../kernel/debug.h"
 #include "../kernel/sys.h"
 #include "../kernel/vga.h"
+#include "../kernel/per_core.h"
 
 #define TEST_TILE_SCALE 3
 #define TEST_VSCROLL 17
@@ -56,6 +59,26 @@ int kernel_main(void){
     before_jiffies + 1);
 
   emit_result("yield", call_trap(TRAP_YIELD, 0, 0, 0, 0, 0, 0, 0));
+
+  emit_result("request_priority_invalid_low",
+    call_trap(TRAP_REQUEST_PRIORITY, -1, 0, 0, 0, 0, 0, 0));
+  emit_result("priority_after_invalid_low", get_current_tcb()->priority);
+
+  emit_result("request_priority_low",
+    call_trap(TRAP_REQUEST_PRIORITY, LOW_PRIORITY, 0, 0, 0, 0, 0, 0));
+  emit_result("priority_low", get_current_tcb()->priority);
+
+  emit_result("request_priority_high",
+    call_trap(TRAP_REQUEST_PRIORITY, HIGH_PRIORITY, 0, 0, 0, 0, 0, 0));
+  emit_result("priority_high", get_current_tcb()->priority);
+
+  emit_result("request_priority_invalid_high",
+    call_trap(TRAP_REQUEST_PRIORITY, HIGH_PRIORITY + 1, 0, 0, 0, 0, 0, 0));
+  emit_result("priority_after_invalid_high", get_current_tcb()->priority);
+
+  emit_result("request_priority_normal",
+    call_trap(TRAP_REQUEST_PRIORITY, NORMAL_PRIORITY, 0, 0, 0, 0, 0, 0));
+  emit_result("priority_normal", get_current_tcb()->priority);
 
   call_trap(TRAP_SET_TILE_SCALE, TEST_TILE_SCALE, 0, 0, 0, 0, 0, 0);
   emit_result("tile_scale", *TILE_SCALE);

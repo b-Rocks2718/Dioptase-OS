@@ -67,6 +67,14 @@ Current implementation-defined bounds:
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
 | `47` | `kill(child_desc)` | `child_desc` | Requests termination of the specified child and returns `0`, or returns `-1` for an invalid child descriptor. Current implementation detail: `wait_child()` currently returns `-1` for a killed child. |
+| `49` | `request_priority(priority)` | `priority` | Requests a static scheduler priority for the current thread. Returns `0` and updates the thread when `priority` is valid, or `-1` for an invalid priority. |
+
+`request_priority()` currently honors all valid requests without any permission
+checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
+`DIOPTASE_PRIORITY_NORMAL = 1`, and `DIOPTASE_PRIORITY_HIGH = 2`. The request
+does not reset the caller's current MLFQ level or remaining quantum; those
+dynamic scheduler fields continue to follow the scheduler rules documented in
+`scheduling.md`.
 
 ### Exec
 
@@ -129,6 +137,9 @@ Additional file-descriptor notes:
   and returns immediately. The worker currently expects a supported PCM WAV
   file; malformed WAV contents currently panic the kernel instead of returning
   `-1`.
+- The register-driven synth audio path is separate from `play_audio_file()`.
+  User programs map the synth MMIO page with `get_synth_audio()` and can use
+  the DSYN helpers documented in `synth_audio.md`.
 
 ### Synchronization and Virtual Memory
 
@@ -149,7 +160,7 @@ Additional file-descriptor notes:
 - file-backed mappings require a valid file descriptor and a non-negative offset
 - see `vmem.md` for full mapping, unmapping, sharing, and file-offset rules
 
-### Console, Keyboard, and VGA Helpers
+### Console, Keyboard, VGA, and Synth Helpers
 
 These traps expose device-oriented helpers rather than POSIX-style syscalls.
 MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
@@ -167,3 +178,10 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `11` | `get_vga_status()` | none | Returns the low byte of the VGA status register. |
 | `12` | `get_vga_frame_counter()` | none | Returns the 32-bit VGA frame counter. |
 | `26` | `set_text_color(color)` | `color` | Updates the console text color used by formatted output and returns `0`. |
+| `36` | `move_vscroll(delta)` | `delta` | Adds `delta` to the tile vertical-scroll register and returns `0`. |
+| `37` | `move_hscroll(delta)` | `delta` | Adds `delta` to the tile horizontal-scroll register and returns `0`. |
+| `43` | `set_sprite_scale(sprite_num, scale)` | `sprite_num`, `scale` | Writes one sprite-scale register and returns `0`, or returns `-1` for an invalid sprite number. |
+| `44` | `set_sprite_coords(sprite_num, x, y)` | `sprite_num`, `x`, `y` | Writes one sprite coordinate pair and returns `0`, or returns `-1` for an invalid sprite number. |
+| `45` | `load_text_tiles_colored(fg_color, bg_color)` | `fg_color`, `bg_color` | Loads the built-in text tileset with explicit colors, clears the display, and returns `0`. |
+| `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer. |
+| `48` | `get_synth_audio()` | none | Maps the synth audio MMIO page `0x7FBC000..0x7FBCFFF` into user space with read/write permission and returns the user pointer. The kernel does not serialize synth register ownership between processes. |

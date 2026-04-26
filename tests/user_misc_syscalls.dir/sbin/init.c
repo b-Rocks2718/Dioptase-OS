@@ -1,7 +1,7 @@
 /*
  * user_misc_syscalls guest:
  * - validate the user-visible wrappers for jiffies, sleep, getkey, semaphore,
- *   mmap, and play_audio_file
+ *   mmap, request_priority, and play_audio_file
  * - ensure semaphore exhaustion returns -1 instead of dereferencing an invalid
  *   descriptor slot
  * - generate a tiny valid WAV file in-place so play_audio_file can take a real
@@ -78,6 +78,12 @@ int main(void){
 
   yield();
   test_syscall(1);
+
+  test_syscall(request_priority(-1));
+  test_syscall(request_priority(DIOPTASE_PRIORITY_LOW));
+  test_syscall(request_priority(DIOPTASE_PRIORITY_HIGH));
+  test_syscall(request_priority(DIOPTASE_PRIORITY_HIGH + 1));
+  test_syscall(request_priority(DIOPTASE_PRIORITY_NORMAL));
 
   test_syscall(sem_open(-1));
 
