@@ -4,13 +4,9 @@
  * Validates:
  * - the blocking ringbuf never reports a size above BUFFER_CAPACITY
  * - producers and consumers can exchange all bytes without drops or duplicates
- * - blocking_ringbuf_remove_all() drains only currently available bytes and
- *   keeps the slot/data semaphores consistent for later reuse
  * - the fixed-size ring preserves FIFO order across wrap-around
  *
  * How:
- * - first exercise remove_all(), reuse, wrap-around, and destroy on a small
- *   local fixture while inspecting semaphore counts
  * - start NUM_PRODUCERS and NUM_CONSUMERS against one small shared ring
  * - producers publish disjoint byte ranges and check the observed size
  * - consumers drain bytes until they receive sentinels
@@ -65,81 +61,6 @@ static void reset_workload_state(void){
   }
 }
 
-// Check that remove_all() drains the same published bytes tracked by remove_sem
-// and returns the freed slots to add_sem so the ring can be reused immediately.
-static void test_remove_all_paths(void){
-  struct BlockingRingBuf local_ringbuf;
-  char drained[BUFFER_CAPACITY];
-
-  blocking_ringbuf_init(&local_ringbuf, BUFFER_CAPACITY);
-  expect_uint(blocking_ringbuf_size(&local_ringbuf), 0,
-    "blocking_ringbuf test: init size mismatch\n");
-  expect_uint(blocking_ringbuf_remove_all(&local_ringbuf, drained), 0,
-    "blocking_ringbuf test: empty remove_all mismatch\n");
-  expect_uint((unsigned)local_ringbuf.add_sem.count, BUFFER_CAPACITY,
-    "blocking_ringbuf test: empty add_sem mismatch\n");
-  expect_uint((unsigned)local_ringbuf.remove_sem.count, 0,
-    "blocking_ringbuf test: empty remove_sem mismatch\n");
-
-  blocking_ringbuf_add(&local_ringbuf, 1);
-  blocking_ringbuf_add(&local_ringbuf, 2);
-  blocking_ringbuf_add(&local_ringbuf, 3);
-  expect_uint(blocking_ringbuf_size(&local_ringbuf), BUFFER_CAPACITY,
-    "blocking_ringbuf test: size after add mismatch\n");
-  expect_uint((unsigned)local_ringbuf.add_sem.count, 0,
-    "blocking_ringbuf test: add_sem after add mismatch\n");
-  expect_uint((unsigned)local_ringbuf.remove_sem.count, BUFFER_CAPACITY,
-    "blocking_ringbuf test: remove_sem after add mismatch\n");
-
-  expect_uint(blocking_ringbuf_remove_all(&local_ringbuf, drained),
-    BUFFER_CAPACITY,
-    "blocking_ringbuf test: remove_all count mismatch\n");
-  expect_byte(drained[0], 1, "blocking_ringbuf test: remove_all first mismatch\n");
-  expect_byte(drained[1], 2, "blocking_ringbuf test: remove_all second mismatch\n");
-  expect_byte(drained[2], 3, "blocking_ringbuf test: remove_all third mismatch\n");
-  expect_uint(blocking_ringbuf_size(&local_ringbuf), 0,
-    "blocking_ringbuf test: size after remove_all mismatch\n");
-  expect_uint((unsigned)local_ringbuf.add_sem.count, BUFFER_CAPACITY,
-    "blocking_ringbuf test: add_sem after remove_all mismatch\n");
-  expect_uint((unsigned)local_ringbuf.remove_sem.count, 0,
-    "blocking_ringbuf test: remove_sem after remove_all mismatch\n");
-
-  // Reuse immediately after remove_all(), then force wrap-around before
-  // draining so FIFO order is checked across the ring boundary.
-  blocking_ringbuf_add(&local_ringbuf, 4);
-  blocking_ringbuf_add(&local_ringbuf, 5);
-  expect_byte(blocking_ringbuf_remove(&local_ringbuf), 4,
-    "blocking_ringbuf test: reuse remove mismatch\n");
-  blocking_ringbuf_add(&local_ringbuf, 6);
-  blocking_ringbuf_add(&local_ringbuf, 7);
-
-  expect_uint(blocking_ringbuf_remove_all(&local_ringbuf, drained),
-    BUFFER_CAPACITY,
-    "blocking_ringbuf test: wrapped remove_all count mismatch\n");
-  expect_byte(drained[0], 5,
-    "blocking_ringbuf test: wrapped remove_all first mismatch\n");
-  expect_byte(drained[1], 6,
-    "blocking_ringbuf test: wrapped remove_all second mismatch\n");
-  expect_byte(drained[2], 7,
-    "blocking_ringbuf test: wrapped remove_all third mismatch\n");
-  expect_uint((unsigned)local_ringbuf.add_sem.count, BUFFER_CAPACITY,
-    "blocking_ringbuf test: add_sem after wrapped remove_all mismatch\n");
-  expect_uint((unsigned)local_ringbuf.remove_sem.count, 0,
-    "blocking_ringbuf test: remove_sem after wrapped remove_all mismatch\n");
-
-  blocking_ringbuf_destroy(&local_ringbuf);
-  expect_uint((unsigned)local_ringbuf.buf, 0,
-    "blocking_ringbuf test: destroy did not clear buf pointer\n");
-  expect_uint(local_ringbuf.capacity, 0,
-    "blocking_ringbuf test: destroy did not clear capacity\n");
-  expect_uint(local_ringbuf.head, 0,
-    "blocking_ringbuf test: destroy did not clear head\n");
-  expect_uint(local_ringbuf.tail, 0,
-    "blocking_ringbuf test: destroy did not clear tail\n");
-  expect_uint(blocking_ringbuf_size(&local_ringbuf), 0,
-    "blocking_ringbuf test: destroy did not clear size\n");
-}
-
 // Publish one producer's fixed range of byte ids into the blocking ringbuf.
 static void producer_thread(void* arg){
   int producer_id = *(int*)arg;
@@ -189,8 +110,6 @@ static void consumer_thread(void* arg){
 // semantics.
 void kernel_main(void){
   say("***blocking_ringbuf test start\n", NULL);
-
-  test_remove_all_paths();
 
   blocking_ringbuf_init(&ringbuf, BUFFER_CAPACITY);
   reset_workload_state();

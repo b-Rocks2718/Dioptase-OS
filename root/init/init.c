@@ -1,7 +1,9 @@
-#include "../../crt/print.h"
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
+#include "../crt/print.h"
+#include "../crt/assert.h"
+#include "../crt/stddef.h"
+#include "../crt/unistd.h"
+#include "../crt/sys/wait.h"
+#include "../crt/sys.h"
 
 int main(void) {
   puts("| Hello from init process!\n");
@@ -29,29 +31,30 @@ int main(void) {
     close(stdout_pipe[0]);
 
     // child process: exec terminal emulator
-    //execv("/sbin/terminal", 0, NULL);
+    execv("/sbin/terminal", 0, NULL);
 
     // this probably never prints bc we have no terminal yet
-    puts("|failed to exec terminal emulator\n");
+    puts("| failed to exec terminal emulator\n");
     return -1;
   }
 
   // close read end of stdout pipe in parent
   close(stdout_pipe[0]);
 
-  // start bmacs
-  int bmacs_pid = fork();
-  if (bmacs_pid < 0) {
-    puts("| failed to fork bmacs process\n");
+  // start shell
+  int shell_pid = fork();
+  if (shell_pid < 0) {
+    puts("| failed to fork shell process\n");
     return -1;
-  } else if (bmacs_pid == 0) {
-    char* args[2] = {"/sbin/bmacs", "/stuff/test.c"};
-    execv("/sbin/bmacs", 2, args);
-    puts("| failed to exec bmacs\n");
+  } else if (shell_pid == 0) {
+    execv("/sbin/shell", 0, NULL);
+    puts("| failed to exec shell\n");
     return -1;
   }
 
-  wait_child(bmacs_pid);
+  wait_child(shell_pid);
+
+  kill(terminal_pid);
 
   return 67;
 }

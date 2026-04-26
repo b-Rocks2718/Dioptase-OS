@@ -12,7 +12,7 @@
  *   basename, and confirm the previously written byte persisted
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 #define CREATED_FILE_PATH "created/by/open/note.txt"
 #define CREATED_DIR_PATH "created/by/open"

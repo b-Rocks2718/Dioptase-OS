@@ -21,7 +21,7 @@
 #define INITIAL_USER_STACK_SIZE 0x4000
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
-#define EXEC_MAX_ARGC 16
+#define EXEC_MAX_ARGC 64
 #define EXEC_MAX_ARG_BYTES 256
 
 #define PIPE_BUFFER_CAPACITY 1024
@@ -563,6 +563,10 @@ int handle_read(int fd, char* buf, unsigned count){
     return -1;
   }
 
+  if (!node_is_file(file_node)){
+    return -1;
+  }
+
   blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
   int offset = tcb->file_descriptors[fd]->offset;
   if (offset < 0){
@@ -650,6 +654,11 @@ int handle_write(int fd, char* buf, unsigned count){
 
   struct Node* file_node = tcb->file_descriptors[fd]->file;
   if (file_node == NULL){
+    free(kbuf);
+    return -1;
+  }
+
+  if (!node_is_file(file_node)){
     free(kbuf);
     return -1;
   }
@@ -1103,11 +1112,20 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
+  child->pending_signals = 0;
+
   // set up descriptors
   copy_descriptors(parent, child);
 
   // copy cwd
   child->cwd = node_clone(parent->cwd);
+
+  // copy cwd path
+  if (parent->cwd_path != NULL){
+    unsigned cwd_path_bytes = strlen(parent->cwd_path) + 1;
+    child->cwd_path = malloc(cwd_path_bytes);
+    memcpy(child->cwd_path, parent->cwd_path, cwd_path_bytes);
+  }
 
   // set up vme_list and pid
   vmem_fork(parent, child);
@@ -1146,6 +1164,7 @@ int handle_fork(unsigned pc, unsigned sp){
   }
 
   struct TCB* child = fork_tcb(tcb, child_desc, pc, sp);
+  tcb->child_descriptors[child_desc]->child_tcb = child;
   
   scheduler_wake_thread(child);
 
@@ -1167,7 +1186,7 @@ int handle_wait_child(int child_desc){
     return -1;
   }
 
-  unsigned rc = (unsigned)promise_get(child->child);
+  unsigned rc = (unsigned)promise_get(child->child_promise);
 
   // can only wait on a given child descriptor once; after this call the
   // descriptor is consumed and must not be used again
@@ -1194,6 +1213,35 @@ int handle_exec(char* path, int argc, char** argv){
   if (prog == NULL){
     // could not find file
     return -1;
+  }
+
+  // don't exec non-files
+  if (!node_is_file(prog)){
+    node_free(prog);
+    return -1;
+  }
+
+  // don't exec non-elf files
+  {
+    unsigned prog_size = node_size_in_bytes(prog);
+    unsigned* prog_bytes = NULL;
+
+    if (prog_size == 0){
+      // don't exec empty file
+      node_free(prog);
+      return -1;
+    }
+
+    prog_bytes = mmap(prog_size, prog, 0, MMAP_READ);
+    if (prog_bytes == NULL || !elf_validate_image(prog_bytes, prog_size)){
+      if (prog_bytes != NULL){
+        munmap(prog_bytes);
+      }
+      node_free(prog);
+      return -1;
+    }
+
+    munmap(prog_bytes);
   }
 
   char** kargv = NULL;
@@ -1275,11 +1323,17 @@ int handle_getcwd(char* buffer, unsigned buffer_size) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
-  
-  int cwd_len = strlen(tcb->cwd_path);
-  if (buffer_size < (unsigned)cwd_len + 1) {
+
+  // guard against invalid cwd_path
+  if (tcb->cwd_path == NULL){
     return -1;
   }
+
+  unsigned cwd_len = strlen(tcb->cwd_path);
+  if (buffer_size <= cwd_len) {
+    return -1;
+  }
+
   int rc = copy_to_user(buffer, tcb->cwd_path, cwd_len + 1, tcb);
   if (rc != 0) {
     return -1;
@@ -1357,6 +1411,188 @@ int handle_fd_bytes_available(int fd){
   struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
 
   return blocking_ringbuf_size(&pipe->buf);
+}
+
+int handle_mkdir(char* path){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '\0'){
+    // empty name
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '\0'){
+    // can't create directory with name "."
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
+    // can't create directory with name ".."
+    free(buf);
+    return -1;
+  }
+
+  for (unsigned i = 0; buf[i] != '\0'; ++i){
+    // can't create directory with '/' in the name
+    if (buf[i] == '/'){
+      free(buf);
+      return -1;
+    }
+  }
+
+  struct Node* new_node = node_make_dir(tcb->cwd, buf);
+  rc = (new_node == NULL) ? -1 : 0;
+  free(buf);
+  node_free(new_node);
+  return rc;
+}
+
+int handle_rmdir(char* path){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '\0'){
+    // empty name
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '\0'){
+    // can't remove "."
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
+    // can't remove ".."
+    free(buf);
+    return -1;
+  }
+
+  for (unsigned i = 0; buf[i] != '\0'; ++i){
+    // can only remove stuff in current dir
+    if (buf[i] == '/'){
+      free(buf);
+      return -1;
+    }
+  }
+
+  struct Node* dir_node = node_find(tcb->cwd, buf);
+  if (dir_node == NULL){
+    free(buf);
+    return -1;
+  }
+
+  if (!node_is_dir(dir_node)){
+    node_free(dir_node);
+    free(buf);
+    return -1;
+  }
+
+  if (!dir_is_empty(dir_node)){
+    node_free(dir_node);
+    free(buf);
+    return -1;
+  }
+
+  node_free(dir_node);
+  rc = node_delete(tcb->cwd, buf);
+  free(buf);
+  return rc;
+}
+
+int handle_unlink(char* path){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
+  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+
+  if (rc != 0){
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '\0'){
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '\0'){
+    free(buf);
+    return -1;
+  }
+
+  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
+    free(buf);
+    return -1;
+  }
+
+  for (unsigned i = 0; buf[i] != '\0'; ++i){
+    if (buf[i] == '/'){
+      free(buf);
+      return -1;
+    }
+  }
+
+  struct Node* node = node_find(tcb->cwd, buf);
+  if (node == NULL){
+    free(buf);
+    return -1;
+  }
+
+  if (node_is_dir(node)){
+    node_free(node);
+    free(buf);
+    return -1;
+  }
+
+  node_free(node);
+  rc = node_delete(tcb->cwd, buf);
+  free(buf);
+  return rc;
+}
+
+int handle_kill(int child_desc){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  child_desc -= CHILD_DESCRIPTORS_START;
+  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+    return -1;
+  }
+
+  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
+  if (child == NULL){
+    return -1;
+  }
+
+  child->child_tcb->pending_signals |= 1;
+  
+  return 0;
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
@@ -1504,7 +1740,42 @@ int trap_handler(unsigned code,
     case TRAP_TRUNCATE: {
       return handle_truncate(arg1, (unsigned)arg2);
     }
+    case TRAP_MKDIR: {
+      return handle_mkdir((char*)arg1);
+    }
+    case TRAP_RMDIR: {
+      return handle_rmdir((char*)arg1);
+    }
+    case TRAP_UNLINK: {
+      return handle_unlink((char*)arg1);
+    }
+    case TRAP_SET_SPRITE_SCALE: {
+      if (arg1 < 0 || arg1 >= NUM_SPRITES){
+        return -1;
+      }
+      SPRITE_SCALES[arg1] = arg2;
+      return 0;
+    }
+    case TRAP_SET_SPRITE_COORDS: {
+      if (arg1 < 0 || arg1 >= NUM_SPRITES){
+        return -1;
+      }
+      SPRITE_COORDS[arg1 * 2] = arg2;
+      SPRITE_COORDS[arg1 * 2 + 1] = arg3;
+      return 0;
+    }
+    case TRAP_LOAD_TEXT_TILES_COLORED: {
+      load_text_tiles_colored(arg1, arg2);
+      return 0;
+    }
+    case TRAP_GET_SPRITEMAP: {
+      return (int)mmap_physmem(SPRITEMAP_SIZE, (unsigned)SPRITEMAP, MMAP_READ | MMAP_WRITE | MMAP_USER);
+    }
+    case TRAP_KILL: {
+      return handle_kill(arg1);
+    }
     default: {
+      // bad syscall, program dies
       *return_to_user = false;
       return -1;
     }
@@ -1624,8 +1895,9 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
           if (fill){
             tcb->child_descriptors[i] = malloc(sizeof(struct ChildDescriptor));
             tcb->child_descriptors[i]->refcount = 1;
-            tcb->child_descriptors[i]->child = malloc(sizeof(struct Promise));
-            promise_init(tcb->child_descriptors[i]->child);
+            tcb->child_descriptors[i]->child_tcb = NULL;
+            tcb->child_descriptors[i]->child_promise = malloc(sizeof(struct Promise));
+            promise_init(tcb->child_descriptors[i]->child_promise);
           }
           return i;
         }
@@ -1727,8 +1999,8 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         return;
       }
       
-      if (descriptor->child != NULL){
-        promise_free(descriptor->child);
+      if (descriptor->child_promise != NULL){
+        promise_free(descriptor->child_promise);
       }
 
       free(descriptor);

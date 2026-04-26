@@ -9,7 +9,7 @@
  *   the new EOF even though truncate intentionally does not reclaim blocks
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 int main(void){
   char buf[8];

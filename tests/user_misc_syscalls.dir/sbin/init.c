@@ -8,19 +8,35 @@
  *   success path without needing a checked-in binary fixture
  */
 
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 #define TEST_WAV_BYTES 46
+#define TEST_WAV_PCM_FORMAT 1U
+#define TEST_WAV_CHANNELS 1U
+#define TEST_WAV_SAMPLE_RATE 25000U
+#define TEST_WAV_BYTE_RATE 50000U
+#define TEST_WAV_BLOCK_ALIGN 2U
+#define TEST_WAV_BITS_PER_SAMPLE 16U
+#define TEST_WAV_DATA_BYTES 2U
+
+static void write_u16_le(char* bytes, unsigned value){
+  bytes[0] = value & 0xFF;
+  bytes[1] = (value >> 8) & 0xFF;
+}
+
+static void write_u32_le(char* bytes, unsigned value){
+  bytes[0] = value & 0xFF;
+  bytes[1] = (value >> 8) & 0xFF;
+  bytes[2] = (value >> 16) & 0xFF;
+  bytes[3] = (value >> 24) & 0xFF;
+}
 
 static void fill_test_wav(char* wav_bytes){
   wav_bytes[0] = 'R';
   wav_bytes[1] = 'I';
   wav_bytes[2] = 'F';
   wav_bytes[3] = 'F';
-  wav_bytes[4] = 38;
-  wav_bytes[5] = 0;
-  wav_bytes[6] = 0;
-  wav_bytes[7] = 0;
+  write_u32_le(wav_bytes + 4, TEST_WAV_BYTES - 8);
   wav_bytes[8] = 'W';
   wav_bytes[9] = 'A';
   wav_bytes[10] = 'V';
@@ -29,34 +45,18 @@ static void fill_test_wav(char* wav_bytes){
   wav_bytes[13] = 'm';
   wav_bytes[14] = 't';
   wav_bytes[15] = ' ';
-  wav_bytes[16] = 16;
-  wav_bytes[17] = 0;
-  wav_bytes[18] = 0;
-  wav_bytes[19] = 0;
-  wav_bytes[20] = 1;
-  wav_bytes[21] = 0;
-  wav_bytes[22] = 1;
-  wav_bytes[23] = 0;
-  wav_bytes[24] = (char)0xA8;
-  wav_bytes[25] = 0x61;
-  wav_bytes[26] = 0;
-  wav_bytes[27] = 0;
-  wav_bytes[28] = 0x50;
-  wav_bytes[29] = (char)0xC3;
-  wav_bytes[30] = 0;
-  wav_bytes[31] = 0;
-  wav_bytes[32] = 2;
-  wav_bytes[33] = 0;
-  wav_bytes[34] = 16;
-  wav_bytes[35] = 0;
+  write_u32_le(wav_bytes + 16, 16);
+  write_u16_le(wav_bytes + 20, TEST_WAV_PCM_FORMAT);
+  write_u16_le(wav_bytes + 22, TEST_WAV_CHANNELS);
+  write_u32_le(wav_bytes + 24, TEST_WAV_SAMPLE_RATE);
+  write_u32_le(wav_bytes + 28, TEST_WAV_BYTE_RATE);
+  write_u16_le(wav_bytes + 32, TEST_WAV_BLOCK_ALIGN);
+  write_u16_le(wav_bytes + 34, TEST_WAV_BITS_PER_SAMPLE);
   wav_bytes[36] = 'd';
   wav_bytes[37] = 'a';
   wav_bytes[38] = 't';
   wav_bytes[39] = 'a';
-  wav_bytes[40] = 2;
-  wav_bytes[41] = 0;
-  wav_bytes[42] = 0;
-  wav_bytes[43] = 0;
+  write_u32_le(wav_bytes + 40, TEST_WAV_DATA_BYTES);
   wav_bytes[44] = 0;
   wav_bytes[45] = 0;
 }

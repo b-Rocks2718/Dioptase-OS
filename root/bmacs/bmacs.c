@@ -1,11 +1,14 @@
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
-#include "../../crt/heap.h"
-#include "../../crt/print.h"
-#include "../../crt/string.h"
-#include "../../crt/vga.h"
-#include "../../crt/ps2.h"
+#include "../crt/sys.h"
+#include "../crt/stdbool.h"
+#include "../crt/stddef.h"
+#include "../crt/ctype.h"
+#include "../crt/print.h"
+#include "../crt/stdlib.h"
+#include "../crt/string.h"
+#include "../crt/fcntl.h"
+#include "../crt/unistd.h"
+#include "../crt/vga.h"
+#include "../crt/ps2.h"
 
 #define MAX_FILE_READ_BYTES_PER_SYSCALL 1024
 // bmacs uses one top border row plus a three-line footer, leaving 56 rows of
@@ -822,5 +825,12 @@ int main(int argc, char** argv){
 
   show_terminal_cursor();
   free_editor_state(&editor);
+
+  // clear the screen
+  puts("\x1b[2J");
+
+  // home cursor
+  puts("\x1b[H");
+
   return 0;
 }
