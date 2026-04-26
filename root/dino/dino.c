@@ -4,12 +4,12 @@
 #include "../crt/sys.h"
 #include "../crt/stdbool.h"
 
-#define GRAVITY 10
-#define JUMP_VELOCITY 0x20
+#define GRAVITY 6
+#define JUMP_VELOCITY 0x16
 #define GROUND_Y 357
 #define DINO_X 80
 
-#define GROUND_SPEED 15
+#define GROUND_SPEED 12
 #define TILE_LAYER_SCALE 1
 #define TILE_LAYER_SCREEN_SCALE 2
 #define TILE_SIZE 8
@@ -240,15 +240,15 @@ int score;
 
 int handle_collisions(void){
   // collision
-  if (obstacle_1_x <= DINO_X + 1 && obstacle_1_x + 6 >= DINO_X){
-    if (obstacle_1_y - 10 < dino_y){
+  if (obstacle_1_x <= DINO_X + 1 && obstacle_1_x + 12 >= DINO_X){
+    if (obstacle_1_y - 20 < dino_y){
       return 1; 
     } else {
       score += 1;
     }
   }
-  if (obstacle_2_x <= DINO_X + 1 && obstacle_2_x + 10 >= DINO_X){
-    if (obstacle_2_y - 5 < dino_y){
+  if (obstacle_2_x <= DINO_X + 1 && obstacle_2_x + 20 >= DINO_X){
+    if (obstacle_2_y - 10 < dino_y){
       return 1;
     } else {
       score += 1;
@@ -342,6 +342,10 @@ unsigned main(void){
       print_unsigned(score);
       // home cursor
       puts("\x1b[H");
+
+      // wait a bit, then drain key buffer
+      sleep(10);
+      while (getkey() != 0);
       while (1){
         // input
         unsigned key = getkey();
