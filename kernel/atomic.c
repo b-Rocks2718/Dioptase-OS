@@ -6,6 +6,7 @@
 #include "debug.h"
 #include "interrupts.h"
 #include "threads.h"
+#include "heap.h"
 
 void spin_lock_init(struct SpinLock* lock){
   lock->the_lock = 0;
@@ -95,6 +96,69 @@ void preempt_spin_lock_release(struct PreemptSpinLock* lock){
   bool was = __atomic_load_n(&lock->preempt_state);
   __atomic_exchange_n(&lock->the_lock, 0);
   preemption_restore(was);
+}
+
+// Initialize a CLH lock to the unlocked state
+void clh_lock_init(struct CLHLock* lock){
+  assert(lock != NULL, "clh_lock_init: lock is NULL.\n");
+  lock->dummy_node.locked = false;
+  lock->tail = &lock->dummy_node;
+}
+
+// Create a CLH control block for one thread/lock pairing
+struct CLHControlBlock* clh_create_control_block(){
+  struct CLHControlBlock* cb = (struct CLHControlBlock*)malloc(sizeof(struct CLHControlBlock));
+  cb->my_node = (struct CLHNode*)malloc(sizeof(struct CLHNode));
+  cb->my_node->locked = false;
+  cb->my_pred = NULL;
+  cb->allocated_node = cb->my_node;
+  cb->interrupt_state = 0;
+  return cb;
+}
+
+// Acquire a CLH lock in FIFO enqueue order
+void clh_acquire(struct CLHLock* lock, struct CLHControlBlock* cb){
+  assert(lock != NULL, "clh_acquire: lock is NULL.\n");
+  assert(cb != NULL, "clh_acquire: control block is NULL.\n");
+  assert(cb->my_node != NULL, "clh_acquire: control block node is NULL.\n");
+  assert(cb->my_pred == NULL, "clh_acquire: control block already owns or waits on a lock.\n");
+
+  __atomic_store_n(&cb->my_node->locked, true);
+  struct CLHNode* pred = (struct CLHNode*)__atomic_exchange_n((int*)&lock->tail, (int)cb->my_node);
+  cb->my_pred = pred;
+
+  assert(pred != NULL, "clh_acquire: lock has NULL tail; was clh_lock_init() called?\n");
+
+  while (true) {
+    int was = interrupts_disable();
+    if (!__atomic_load_n(&pred->locked)){
+      cb->interrupt_state = was;
+      return;
+    }
+    interrupts_restore(was);
+    pause();
+  }
+}
+
+// Release a CLH lock and hand ownership to the next queued waiter, if any
+void clh_release(struct CLHLock* lock, struct CLHControlBlock* cb){
+  assert(lock != NULL, "clh_release: lock is NULL.\n");
+  assert(cb != NULL, "clh_release: control block is NULL.\n");
+  assert(cb->my_node != NULL, "clh_release: control block node is NULL.\n");
+  assert(cb->my_pred != NULL, "clh_release: control block does not own a lock.\n");
+
+  __atomic_store_n(&cb->my_node->locked, false);
+  cb->my_node = cb->my_pred;
+  cb->my_pred = NULL;
+  interrupts_restore(cb->interrupt_state);
+}
+
+// Destroy a CLH control block after the associated lock is done being used
+void clh_destroy_control_block(struct CLHControlBlock* cb){
+  assert(cb != NULL, "clh_destroy_control_block: control block is NULL.\n");
+  assert(cb->my_pred == NULL, "clh_destroy_control_block: control block still owns or waits on a lock.\n");
+  free(cb->allocated_node);
+  free(cb);
 }
 
 // simple barrier synchronization for a known number of threads

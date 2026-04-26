@@ -15,6 +15,30 @@ struct PreemptSpinLock {
   bool preempt_state;
 };
 
+// CLH Node for fair spin lock
+struct CLHNode {
+  bool locked;
+};
+
+// CLH lock for fair spin lock
+struct CLHLock {
+  struct CLHNode dummy_node;
+  struct CLHNode* tail;
+};
+
+// CLH control block for one participating thread.
+//
+// Invariant: a thread must use one control block per CLH lock it can acquire.
+// CLH release rotates my_node to the predecessor node, so allocated_node records
+// the heap node originally created for this control block. Destruction is only
+// safe after the associated lock will never be used again
+struct CLHControlBlock {
+  struct CLHNode* my_node;
+  struct CLHNode* my_pred;
+  struct CLHNode* allocated_node;
+  int interrupt_state;
+};
+
 // initializes a spin lock to the unlocked state
 void spin_lock_init(struct SpinLock* lock);
 
@@ -44,6 +68,21 @@ bool preempt_spin_lock_try_acquire(struct PreemptSpinLock* lock);
 
 // restores preemption state
 void preempt_spin_lock_release(struct PreemptSpinLock* lock);
+
+// initializes a CLH lock to the unlocked state
+void clh_lock_init(struct CLHLock* lock);
+
+// creates a CLH control block for the calling thread
+struct CLHControlBlock* clh_create_control_block();
+
+// will acquire the CLH lock in a fair manner, with FIFO ordering
+void clh_acquire(struct CLHLock* lock, struct CLHControlBlock* cb);
+
+// releases the CLH lock, allowing the next waiting thread to acquire it
+void clh_release(struct CLHLock* lock, struct CLHControlBlock* cb);
+
+// destroys a CLH control block after its associated lock is retired
+void clh_destroy_control_block(struct CLHControlBlock* cb);
 
 // simple barrier synchronization for a known number of threads
 // threads spin until all threads have reached the barrier
