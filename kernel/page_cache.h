@@ -17,8 +17,6 @@ struct PageCacheEntry {
   struct PageCacheKey key;
   void* page_data; // Pointer to frame
 
-  unsigned flags;
-
   // how many bytes of the file this page actually contains
   unsigned file_bytes;
 

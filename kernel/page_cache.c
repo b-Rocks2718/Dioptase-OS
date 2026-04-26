@@ -43,7 +43,6 @@ static struct PageCacheEntry* page_cache_insert(struct PageCache* cache, struct 
   new_entry->key.inode = node->cached;
   new_entry->key.offset = offset;
   new_entry->page_data = page_data;
-  new_entry->flags = 0;
   new_entry->file_bytes = file_bytes;
 
   new_entry->next = cache->hash_map[hash];
@@ -93,7 +92,10 @@ void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned 
 
   struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
   if (entry != NULL) {
-    entry->flags |= PAGE_DIRTY;
+    struct Page* page = get_page(entry->page_data);
+    physmem_page_lock(page);
+    physmem_set_page_flags(page, PG_DIRTY);
+    physmem_page_unlock(page);
     blocking_lock_release(&cache->lock);
   } else {
     panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
@@ -162,13 +164,16 @@ void page_cache_flush_all(struct PageCache* cache) {
   for (unsigned i = 0; i < cache->hash_map_size; i++) {
     struct PageCacheEntry* entry = cache->hash_map[i];
     while (entry != NULL) {
-      if (entry->flags & PAGE_DIRTY) {
+      struct Page* page = get_page(entry->page_data);
+      physmem_page_lock(page);
+      if (page->flags & PAGE_DIRTY) {
         struct Node* node = malloc(sizeof(struct Node));
         node_init(node, entry->key.inode, EXT2_BAD_INO, &fs); // hopefully we don't actually need the parent inumber...
         node_write_all(node, entry->key.offset, entry->file_bytes, entry->page_data);
         free(node);
         // say("flushed 1 entry\n", NULL);
       }
+      physmem_page_unlock(page);
       entry = entry->next;
     }
   }
