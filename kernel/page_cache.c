@@ -166,7 +166,7 @@ void page_cache_flush_all(struct PageCache* cache) {
     while (entry != NULL) {
       struct Page* page = get_page(entry->page_data);
       physmem_page_lock(page);
-      if (page->flags & PAGE_DIRTY) {
+      if (page->flags & PG_DIRTY) {
         struct Node* node = malloc(sizeof(struct Node));
         node_init(node, entry->key.inode, EXT2_BAD_INO, &fs); // hopefully we don't actually need the parent inumber...
         node_write_all(node, entry->key.offset, entry->file_bytes, entry->page_data);

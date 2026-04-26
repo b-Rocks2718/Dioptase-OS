@@ -10,8 +10,6 @@ struct PageCacheKey {
   unsigned offset;
 };
 
-#define PAGE_DIRTY 0x1
-
 // metadata for the page cache entry
 struct PageCacheEntry {
   struct PageCacheKey key;
