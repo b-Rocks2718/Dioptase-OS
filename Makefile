@@ -166,7 +166,7 @@ if [ -d "$$sd1_dir" ]; then \
   sd1_output_dir="$(4)"; \
   dir_kib=$$(du -sk "$$sd1_dir" | cut -f1); \
   dir_blocks=$$(((dir_kib * 1024 + $(BLOCK_SIZE) - 1) / $(BLOCK_SIZE))); \
-  fs_blocks=$$((dir_blocks + $(SD_IMAGE_EXTRA_BLOCKS))); \
+  fs_blocks=$$((dir_blocks * 105 / 100 + $(SD_IMAGE_EXTRA_BLOCKS))); \
   if [ $$fs_blocks -lt $(SD_IMAGE_MIN_BLOCKS) ]; then \
     fs_blocks=$(SD_IMAGE_MIN_BLOCKS); \
   fi; \
