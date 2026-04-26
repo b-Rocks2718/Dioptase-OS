@@ -88,6 +88,10 @@ unsigned create_zeroed_page(void) { // TODO: does this need to lock?
   return (unsigned)page;
 }
 
+void* pte_phys_addr(unsigned pte) {
+  return (void*)(pte & ~(FRAME_SIZE - 1));
+}
+
 struct VME* vme_create(unsigned start, unsigned end, unsigned size,
                        struct Node* file, unsigned file_offset, unsigned flags, unsigned paddr) {
   struct VME* vme = (struct VME*)malloc(sizeof(struct VME));
@@ -157,7 +161,7 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
     if (vme->flags & MMAP_SHARED) {
       assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
       // shared mapping, remove the ref
-      struct Page* page = get_page((void*)(pte & ~(FRAME_SIZE - 1)));
+      struct Page* page = get_page((void*)pte_phys_addr(pte));
       physmem_page_lock(page);
       // TODO race condition what if it got evicted between us getting the page from the PTE and locking?
       physmem_page_removeRef(page, va);
@@ -168,7 +172,7 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
       // to the physmem allocator.
     } else {
       // private mapping, just free the physical page
-      physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
+      physmem_free((void*)pte_phys_addr(pte));
     }
 
     pt[page_table_index] = 0;
@@ -224,7 +228,7 @@ void vmem_destroy_address_space(struct TCB* tcb) {
   // free any page tables and invalidate PDE entries
   for (unsigned page_dir_index = 0; page_dir_index < 1024; page_dir_index++) {
     if (pd[page_dir_index] & VMEM_VALID) {
-      physmem_free((void*)(pd[page_dir_index] & ~(FRAME_SIZE - 1)));
+      physmem_free((void*)pte_phys_addr(pd[page_dir_index]));
       pd[page_dir_index] = 0;
     }
   }
@@ -622,6 +626,7 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
 
 // Returns updated PTE value; does not modify the PTE
 unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
+  int args[2] = {fault_addr, flags};
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -649,7 +654,31 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
     return 0;
   }
 
-  if (!(pte & VMEM_VALID)) {
+  if (flags != 0) { // Permission fault
+    if (flags & VMEM_READ) {
+      panic("vmem: can't handle a read permission fault");
+    }
+    if (flags & VMEM_WRITE) {
+      if (!(curr->flags & MMAP_WRITE)) {
+        panic("vmem: you're not allowed to write to this address range!"); // TODO kill user if relevant
+      }
+      // PTE says read-only but VME says writable => first write
+      // Dirty bit tracking
+      struct Page* page = get_page(pte_phys_addr(pte));
+      physmem_page_lock(page);
+      physmem_set_page_flags(page, PG_DIRTY);
+      pte |= VMEM_WRITE;
+      physmem_page_unlock(page);
+      // TODO: potentially COW (in the future)
+    }
+    if (flags & VMEM_EXEC) {
+      panic("vmem: can't handle an exec permission fault");
+    }
+  } else { // Missing PTE
+    assert(!(pte & VMEM_VALID), "flags = 0 for existing PTE");
+
+    bool allow_write = curr->flags & MMAP_WRITE;
+
     // need to allocate a physical page and update the PTE
     unsigned phys_page = 0;
     if (curr->file) {
@@ -664,9 +693,7 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
         physmem_page_addRef(page, fault_addr);
         physmem_page_unlock(page); // TODO is it safe to unlock before the PTE is actually written?
 
-        if (curr->flags & MMAP_WRITE) {
-          page_cache_mark_dirty(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start))); // TODO move this
-        }
+        allow_write = false; // Map as read-only so we can do dirty tracking on first write
         phys_page = (unsigned)cache_entry->page_data;
       } else {
         // FILE-BACKED PRIVATE MAPPING
@@ -709,7 +736,7 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
 
     if (curr->flags & MMAP_READ)
       entry |= VMEM_READ;
-    if (curr->flags & MMAP_WRITE)
+    if (allow_write)
       entry |= VMEM_WRITE;
     if (curr->flags & MMAP_EXEC)
       entry |= VMEM_EXEC;

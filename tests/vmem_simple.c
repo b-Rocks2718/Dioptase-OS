@@ -7,7 +7,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/ext.h"
 
-void private_anonymous_test(void){
+void private_anonymous_test(void) {
   int* p = mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
   say("***    mmap'd a page at virtual address 0x%X\n", &p);
 
@@ -21,7 +21,7 @@ void private_anonymous_test(void){
   say("***    munmap'd the page\n", NULL);
 }
 
-void private_file_backed_test(void){
+void private_file_backed_test(void) {
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
@@ -39,12 +39,12 @@ void private_file_backed_test(void){
   say("***    munmap'd the file-backed page\n", NULL);
 }
 
-void shared_anonymous_test(void){
+void shared_anonymous_test(void) {
   // might be hard to test without processes
   say("***    TODO: implement shared anonymous mmap test\n", NULL);
 }
 
-void shared_file_backed_test(void){
+void shared_file_backed_test(void) {
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
@@ -53,8 +53,12 @@ void shared_file_backed_test(void){
 
   say("***    contents of hello.txt: %s\n", &p);
 
+  struct Page* page = get_page(pte_phys_addr(*vmem_get_pte(get_pid(), (unsigned)p, false)));
+  assert(!(page->flags & PG_DIRTY), "Page should not be dirty\n");
+
   p[6] = '!';
   say("***    modified contents of hello.txt: %s\n", &p);
+  assert(page->flags & PG_DIRTY, "Page should be dirty\n");
 
   munmap(p);
   say("***    munmap'd the file-backed page\n", NULL);

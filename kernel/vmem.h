@@ -81,7 +81,11 @@ void free_vme_list(struct VME* vme);
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
 
+// Helper to get the pte from a virtual address
 unsigned* vmem_get_pte(unsigned* pd, unsigned virtual_address, bool create);
+
+// Helper to extract the physical address from a pte
+void* pte_phys_addr(unsigned pte);
 
 void vme_change_perms(struct VME* vme, unsigned new_flags);
 
