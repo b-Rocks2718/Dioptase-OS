@@ -2,8 +2,8 @@
 
 # this just copies the sprite animations into the sprite data
 
-  .align 4
   .data
+  .align 4
 
 DINO_FRAME:
   .fill 0
@@ -11,8 +11,8 @@ DINO_FRAME:
 SUN_FRAME:
   .fill 0
 
-  .align 4
   .text
+  .align 4
 
   .global do_animations
 do_animations:

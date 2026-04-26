@@ -3,8 +3,8 @@
 # Packing: two 16-bit pixels per .fill word (low half = first pixel)
 # Sheet: 128x64 px, cell 8x8 px, 16x8 cells, 8192 pixels, 4096 .fill words
 
-  .align 4
   .data
+  .align 4
   .global TILEMAP_DATA
 TILEMAP_DATA:
   .fill 0x08CD08CC
