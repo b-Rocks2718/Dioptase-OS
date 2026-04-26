@@ -63,11 +63,19 @@ the command records themselves.
 Synth device version 4 adds a timestamped command ring at synth-page offset
 `0x200`. DSYN playback requires this ring. The player writes 16-byte command
 records into the MMIO ring, publishes batches by advancing
-`SYNTH_AUDIO_CMD_WRITE_IDX`, and keeps a rolling 8192-sample command prebuffer
-ahead of playback. The synth device consumes due records inside its sample
-renderer before producing the target sample, so batched host rendering in
+`SYNTH_AUDIO_CMD_WRITE_IDX`, pre-fills the available command-ring slots at
+startup, and then keeps a rolling 8192-sample command prebuffer ahead of
+playback. The synth device consumes due records inside its sample renderer
+before producing the target sample, so batched host rendering in
 `EMU_AUDIO_FAST=yes` can still observe sample-accurate register changes within
 each batch.
+
+The player streams DSYN bytes from the file descriptor through a fixed
+1024-byte user-space buffer. It normally refills that buffer only when empty,
+but after publishing synth command-ring batches it may compact and top up the
+buffer early if fewer than 256 unread DSYN bytes remain and the command ring has
+no more than one 32-command publication batch free. That opportunistic read
+keeps disk I/O on periods where the synth device already has queued work.
 
 If the guest producer falls inside a 512-sample safety margin before publishing
 an event, the player re-centers that event and following events 8192 samples
