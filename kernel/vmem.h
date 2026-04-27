@@ -3,6 +3,7 @@
 
 #include "constants.h"
 #include "ext.h"
+#include "countdown_latch.h"
 
 // flags to pass into mmap
 #define MMAP_NONE   0x00
@@ -106,5 +107,18 @@ struct PageRef {
   // struct VME* vme;
   struct PageRef* next;
 };
+
+struct ShootdownRequest {
+  struct ShootdownRequest* next;
+  unsigned pid;
+  void* vaddr;
+  struct CountDownLatch* latch; // On handling a request, a thread will call down on this
+};
+
+// Block until all cores successfully shootdown this page ref
+void tlb_shootdown(struct PageRef* ref);
+
+// Block until all cores shootdown the linked list of page refs
+void tlb_shootdown_batch(struct PageRef* ref);
 
 #endif // VMEM_H

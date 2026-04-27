@@ -749,8 +749,43 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
 
 void ipi_handler(unsigned data) {
   mark_ipi_handled();
-
-  int cid = get_core_id();
-  int args[2] = {cid, data};
-  say("| Received IPI on core %d with data %d\n", args);
+  struct ShootdownRequest* request = (struct ShootdownRequest*)generic_spin_queue_remove_all(&per_core_data[get_core_id()].shootdown_requests);
+  while (request != NULL) {
+    struct ShootdownRequest* next = request->next;
+    tlb_invalidate_other(request->pid, request->vaddr); // Handle
+    countdownlatch_down(request->latch);                // Mark as handled (means element might get freed)
+    request = next;
+  }
 }
+
+// Block until all cores successfully shootdown this page ref
+void tlb_shootdown(struct PageRef* ref) {
+  unsigned num_cores = CONFIG.num_cores;
+  struct ShootdownRequest** created_requests = malloc(sizeof(struct ShootdownRequest*) * num_cores); // So we can clean up the requests once everyone is done
+  struct CountDownLatch latch;
+  countdownlatch_init(&latch, num_cores);
+  for (int i = 0; i < num_cores; i++) {
+    // Create a request & give to a core
+    struct ShootdownRequest* request = malloc(sizeof(struct ShootdownRequest));
+    request->latch = &latch;
+    request->pid = ref->thread->pid;
+    request->vaddr = (void*)ref->virtual_address;
+    request->next = NULL;
+    generic_spin_queue_add(&per_core_data[i].shootdown_requests, (struct GenericQueueElement*)request);
+
+    // Keep track of created requests
+    created_requests[i] = request;
+  }
+  send_ipi(0);
+  // Wait for all cores to finish shootdown
+  countdownlatch_sync(&latch);
+  // Clean up!
+  for (int i = 0; i < num_cores; i++) {
+    free(created_requests[i]);
+  }
+  free(created_requests);
+}
+
+// Block until all cores shootdown the linked list of page refs
+// void tlb_shootdown_batch(struct PageRef* ref) {
+// }

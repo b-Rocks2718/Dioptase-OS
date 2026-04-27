@@ -205,6 +205,11 @@ void physmem_init(void) {
   }
   */
   physmem_metadata_init(physmem_map, PHYS_FRAME_COUNT, PG_PINNED);
+
+  // init per core shootdown queues
+  for (int i = 0; i < MAX_CORES; i++) {
+    generic_spin_queue_init(&per_core_data[i].shootdown_requests);
+  }
 }
 
 // allocate a physical page of given order
@@ -473,7 +478,7 @@ void physmem_page_removeRef(struct Page* page, unsigned virtual_addr) {
       }
       curr->next = NULL;
       free(curr);
-      assert(page->ref_cnt!=0, "removing a ref from page with refcount 0");
+      assert(page->ref_cnt != 0, "removing a ref from page with refcount 0");
       page->ref_cnt--;
       return;
     }
