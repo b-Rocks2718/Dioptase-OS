@@ -379,7 +379,7 @@ int main(void){
         }
 
         // Completion with paths.
-        struct LinkedDirent* matches = tab_complete_directory(to_tab_complete);
+        struct LinkedDirent* matches = tab_complete_directory(to_tab_complete, last_slash == 0);
         int num_matches = 0;
         for (struct LinkedDirent* current = matches; current != 0; current = current->next) {
           num_matches++;

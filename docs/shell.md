@@ -51,6 +51,8 @@ Upon detecting a tab key, the following occurs:
 
 - All possible completion matches are collected with `getdents()` and then
   filtered by the current command buffer prefix.
+- Shell commands are included as matches if the prefix being matched is at
+  the start of the command buffer.
 - "lost+found" is always excluded, and "." and ".." are excluded if the
   command buffer prefix does not start with '.'.
 - If there are no matches, nothing happens.
@@ -225,5 +227,4 @@ The current shell does not implement:
 - command separators such as `;`, `&&`, or `||`
 - subshells
 - command history
-- tab completion
 - job control
