@@ -140,6 +140,27 @@ void page_cache_release(struct PageCache* cache, struct Node* node, unsigned off
 }
 */
 
+void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry) {
+  unsigned hash = ((unsigned)(entry->key.inode) ^ entry->key.offset) % cache->hash_map_size;
+  blocking_lock_acquire(&cache->lock);
+  struct PageCacheEntry* curr = cache->hash_map[hash];
+  struct PageCacheEntry* prev = NULL;
+  while (curr) {
+    if (curr == entry) {
+      // remove from hash map and free
+      if (prev) {
+        prev->next = entry->next;
+      } else {
+        cache->hash_map[hash] = entry->next;
+      }
+      break;
+    }
+    prev = entry;
+    entry = entry->next;
+  }
+  blocking_lock_release(&cache->lock);
+}
+
 void page_cache_destroy(struct PageCache* cache) {
   blocking_lock_acquire(&cache->lock);
   for (unsigned i = 0; i < cache->hash_map_size; i++) {

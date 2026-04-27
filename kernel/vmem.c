@@ -776,7 +776,12 @@ void tlb_shootdown(struct PageRef* ref) {
     // Keep track of created requests
     created_requests[i] = request;
   }
+  // Ask other cores to handle IPI
+  unsigned was = interrupts_disable();
   send_ipi(0);
+  // Call IPI handler, since IPI doesn't interrupt the core being run on
+  ipi_handler(0);
+  interrupts_restore(was);
   // Wait for all cores to finish shootdown
   countdownlatch_sync(&latch);
   // Clean up!
@@ -789,3 +794,52 @@ void tlb_shootdown(struct PageRef* ref) {
 // Block until all cores shootdown the linked list of page refs
 // void tlb_shootdown_batch(struct PageRef* ref) {
 // }
+
+// Page must be locked already
+void page_evict(struct Page* page) {
+  // Acquire the inode lock so no one can try to demand page it in before we finish writing back
+  struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?
+  void* frame = cache_entry->page_data;
+  blocking_lock_acquire(&cache_entry->key.inode->lock);
+
+  // Evict from page cache
+  // - TODO need to do revalidation in the page cache
+  page_cache_remove(&page_cache, cache_entry);
+
+  // Remove PTEs & invlpg
+  struct PageRef* ref = page->refs;
+  while (ref != NULL) {
+    // Overwrite the PTE
+    *vmem_get_pte((unsigned*)ref->thread->pid, ref->virtual_address, false) = 0; // TODO make sure no one can modify this pte before we do
+    // Shootdown on all cores
+    tlb_shootdown(ref);
+
+    struct PageRef* to_delete = ref;
+    ref = ref->next;
+    free(to_delete);
+    page->ref_cnt--;
+  }
+  assert(page->ref_cnt == 0, "page refcount != 0");
+  page->refs = NULL;
+
+  // Writeback
+  if (page->flags & PG_DIRTY) {
+    struct Node node;
+    node.cached = cache_entry->key.inode;
+    node.filesystem = &fs;
+    node.parent_inumber = EXT2_BAD_INO;
+    node_write_all_locked(&node, cache_entry->key.offset, FRAME_SIZE, cache_entry->page_data); // TODO does this make sense
+    physmem_clear_page_flags(page, PG_DIRTY);
+  }
+  blocking_lock_release(&cache_entry->key.inode->lock);
+
+  // Clean up metadata
+  cache_entry->key.inode->refcount--;
+  free(cache_entry);
+
+  // Free page
+  page->cache_entry = NULL;
+  physmem_set_page_flags(page, PG_PINNED);
+  sem_up(&page->lock);
+  physmem_free(frame);
+}

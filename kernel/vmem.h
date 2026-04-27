@@ -4,6 +4,7 @@
 #include "constants.h"
 #include "ext.h"
 #include "countdown_latch.h"
+#include "physmem.h"
 
 // flags to pass into mmap
 #define MMAP_NONE   0x00
@@ -120,5 +121,8 @@ void tlb_shootdown(struct PageRef* ref);
 
 // Block until all cores shootdown the linked list of page refs
 void tlb_shootdown_batch(struct PageRef* ref);
+
+// Evicts & frees a page (unlocking it in the process)
+void page_evict(struct Page* page);
 
 #endif // VMEM_H

@@ -2350,18 +2350,13 @@ unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* 
   return cnt;
 }
 
-unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src){
+unsigned node_write_all_locked(struct Node* node, unsigned offset, unsigned size, char* src){
   if (size == 0) return 0;
 
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned start_block = offset / block_size;
   unsigned end_block = (offset + size - 1) / block_size;
   unsigned bytes_copied = 0;
-
-  // Serialize the full write path for one inode so block growth, inode writeback,
-  // and data writes observe one consistent per-file state without re-entering
-  // inode_lock through icache_set().
-  blocking_lock_acquire(&node->cached->lock);
 
   assert(node_is_file(node) || node_is_symlink(node), "node_write_all: can only write to regular files or symlinks.\n");
 
@@ -2387,8 +2382,17 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 
     bytes_copied += copy_size;
   }
-  blocking_lock_release(&node->cached->lock);
 
+  return size;
+}
+
+unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src){
+  // Serialize the full write path for one inode so block growth, inode writeback,
+  // and data writes observe one consistent per-file state without re-entering
+  // inode_lock through icache_set().
+  blocking_lock_acquire(&node->cached->lock);
+  size = node_write_all_locked(node, offset, size, src);
+  blocking_lock_release(&node->cached->lock);
   return size;
 }
 

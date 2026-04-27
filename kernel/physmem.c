@@ -384,7 +384,7 @@ void physmem_free(void* page) {
     struct Page* metadata = get_page(page);
     metadata->cache_entry = NULL;
     assert(metadata->refs == NULL, "freeing a page that's still referenced");
-    physmem_set_page_flags(get_page(page), PG_PINNED); // TODO more flags? Locking?
+    physmem_set_page_flags(metadata, PG_PINNED); // TODO more flags? Locking?
     per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
     per_core->physmem_cache.count++;
 

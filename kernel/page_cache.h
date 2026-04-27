@@ -38,6 +38,9 @@ void page_cache_init(struct PageCache* cache, unsigned hash_map_size);
 struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* node,
                                           unsigned offset, unsigned file_bytes);
 
+// remove a page from the page cache
+void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry);
+
 // Conservatively mark one cached page dirty. Shared writable mappings call this
 // when they expose a cache page directly to userspace because the ISA does not
 // currently provide a hardware dirty bit for later writeback decisions.
