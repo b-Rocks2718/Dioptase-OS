@@ -76,6 +76,12 @@ get_tlb_addr:
   mov r1, tlba
   ret
 
+# Return the TLB miss flags register (cr10) value
+  .global get_mbi
+get_mbi:
+  mov r1, mbi
+  ret
+
   # Read the TLB entry for the virtual address in r1, and put the result in r1
   .global tlb_read
 tlb_read:
