@@ -32,6 +32,15 @@ void destroy_linked_dirents(struct LinkedDirent* head) {
   }
 }
 
+struct LinkedDirent* read_directory_no_error(char* path) {
+  struct LinkedDirent* entries = read_directory(path);
+  if (entries == (struct LinkedDirent*) -1) {
+    return 0;
+  }
+  return entries;
+}
+
+// Returns -1 on error. 0 represents empty.
 struct LinkedDirent* read_directory(char* path) {
   int fd = open(path);
   if (fd < 0) {
@@ -260,17 +269,17 @@ struct LinkedDirent* tab_complete_directory(char* prefix, bool include_commands)
   if (last_slash == -1) {
     // No base path.
     prefix_base[0] = 0;
-    head = read_directory(".");
+    head = read_directory_no_error(".");
   } else {
     memcpy(prefix_base, prefix, last_slash + 1);
     prefix_base[last_slash + 1] = 0;
-    head = read_directory(prefix_base);
+    head = read_directory_no_error(prefix_base);
   }
 
   if (include_commands) {
     // Get from sbin if not already.
     if (sbin_entries == 0) {
-      sbin_entries = read_directory("/sbin");
+      sbin_entries = read_directory_no_error("/sbin");
       // Skip ".", "..", and "lost+found".
       struct LinkedDirent* current = sbin_entries;
       struct LinkedDirent* previous = 0;
