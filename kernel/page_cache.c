@@ -153,8 +153,8 @@ void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry) {
       }
       break;
     }
-    prev = entry;
-    entry = entry->next;
+    prev = curr;
+    curr = curr->next;
   }
   blocking_lock_release(&cache->lock);
 }
