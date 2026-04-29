@@ -85,23 +85,6 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
   return entry;
 }
 
-void page_cache_mark_dirty(struct PageCache* cache, struct Node* node, unsigned offset) {
-  unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
-
-  blocking_lock_acquire(&cache->lock);
-
-  struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
-  if (entry != NULL) {
-    struct Page* page = get_page(entry->page_data);
-    physmem_page_lock(page);
-    physmem_set_page_flags(page, PG_DIRTY);
-    physmem_page_unlock(page);
-    blocking_lock_release(&cache->lock);
-  } else {
-    panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
-  }
-}
-
 /*
 // release a page from the page cache
 // decrementing its reference count and freeing it if the count reaches zero
