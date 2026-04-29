@@ -48,6 +48,26 @@ static struct PageCacheEntry* page_cache_lookup(struct PageCache* cache, struct 
   return NULL;
 }
 
+static void expect_file_contents(char* file_bytes) {
+  for (int row = 0; row < WRITERS; ++row) {
+    for (int i = 0; i < ROUNDS - 1; ++i) {
+      char expected = 'a' + (i % 26);
+      char got = file_bytes[(row * ROUNDS) + i];
+      if (got != expected) {
+        int args[4] = {row, i, (int)got, (int)expected};
+        say("***vmem eviction concurrency FAIL row=%d offset=%d got=0x%X expected=0x%X\n", args);
+      }
+    }
+
+    char got = file_bytes[(row * ROUNDS) + (ROUNDS - 1)];
+    if (got != '\n') {
+      int args[3] = {row, ROUNDS - 1, (int)got};
+      say("***vmem eviction concurrency FAIL row=%d offset=%d got=0x%X expected=0xA\n", args);
+      panic("vmem eviction concurrency: missing row terminator\n");
+    }
+  }
+}
+
 static void writer_thread(void* arg) {
   struct WriterArg* a = (struct WriterArg*)arg;
   int id = a->id;
@@ -133,11 +153,11 @@ void kernel_main(void) {
     int args[2] = {progress, WRITERS * ROUNDS - WRITERS};
     say("progress: %d / %d\n", args);
   }
-  say("***file bytes:\n", NULL);
 
   // verify backing file contains last writer values
   char* file_bytes = mmap(TEST_BYTES, file, 0, MMAP_READ);
-  say("%s", &file_bytes);
+  assert(file_bytes != NULL, "evict conc: mmap for verification returned NULL\n");
+  expect_file_contents(file_bytes);
 
   node_free(file);
   say("***vmem eviction concurrency test complete\n", NULL);
