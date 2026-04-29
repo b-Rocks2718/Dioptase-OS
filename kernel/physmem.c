@@ -250,15 +250,6 @@ void* physmem_alloc_order(int order) {
       physmem_is_frame_address((unsigned)node),
       "physmem alloc: free list returned an invalid frame address.\n");
 
-  // // Lock pages and mark them as allocated
-  // unsigned num_pages = 1 << order;
-  // for (unsigned i = 0; i < num_pages; i++) {
-  //   void* frame = node + (i * FRAME_SIZE);
-  //   struct Page* page = get_page(frame);
-  //   physmem_page_lock(page);
-  //   physmem_set_page_flags(page, PG_ALLOCED);
-  // }
-
   return node;
 }
 

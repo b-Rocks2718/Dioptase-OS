@@ -15,8 +15,6 @@ On a miss, it allocates a fresh physical page, reads up to one frame from the ba
 The cache key is the tuple of the node's cached inode pointer and the supplied page offset. The hash function is a simple XOR of those values modulo the hash table size.
 
 #### Dirty Tracking
-`page_cache_mark_dirty()` searches for the matching cached page and sets `PG_DIRTY` on the physical page. If no matching entry exists, the function panics.
-
 The dirty flag is a conservative software marker. The code does not show any hardware dirty-bit integration.
 
 #### Release / Writeback
@@ -36,7 +34,7 @@ When the refcount reaches zero, the entry is removed from the hash chain and fre
 ### Locking
 
 - `page_cache_init()` initializes a single blocking lock for the whole cache
-- `page_cache_acquire()`, `page_cache_mark_dirty()`, and `page_cache_release()` all acquire that lock while they inspect or mutate the hash table
+- `page_cache_acquire()` and `page_cache_release()` acquire that lock while they inspect or mutate the hash table
 - `page_cache_lookup()` and `page_cache_insert()` do not lock on their own and are only safe to call while the cache lock is held
 
 ### Not Yet Supported

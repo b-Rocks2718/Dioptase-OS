@@ -123,6 +123,7 @@ void tlb_shootdown(struct PageRef* ref);
 void tlb_shootdown_batch(struct PageRef* ref);
 
 // Evicts & frees a page (unlocking it in the process)
+// The page must be locked already
 void page_evict(struct Page* page);
 
 #endif // VMEM_H
