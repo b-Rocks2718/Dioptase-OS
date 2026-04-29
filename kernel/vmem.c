@@ -163,8 +163,9 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
       // shared mapping, remove the ref
       struct Page* page = get_page((void*)pte_phys_addr(pte));
       physmem_page_lock(page);
-      // TODO race condition what if it got evicted between us getting the page from the PTE and locking?
-      physmem_page_removeRef(page, va);
+      if (pt[page_table_index] == pte) { // Revalidate - ensure page didn't get evicted between finding the page and locking it
+        physmem_page_removeRef(page, va);
+      }
       physmem_page_unlock(page);
     } else if (vme->paddr != 0) {
       // Direct physmem mappings borrow an existing MMIO/physical window. The
@@ -583,15 +584,17 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
 
   unsigned* pd = get_pid();
   unsigned* pte = vmem_get_pte(pd, fault_addr, true);
+  unsigned was = interrupts_disable();
+  unsigned pte_value = *pte; // Lock this value in so we know it won't change throughout handling
 
   // Does the PTE adequately handle the miss?
   bool needs_fault = false;
   if (flags == 0) { // True TLB miss
-    if (!(*pte & VMEM_VALID))
+    if (!(pte_value & VMEM_VALID))
       needs_fault = true;
   } else {
     if (flags & VMEM_READ) {
-      if (*pte & VMEM_READ) {
+      if (pte_value & VMEM_READ) {
         flags &= ~VMEM_READ;
       } else {
         int args[2] = {fault_addr, flags};
@@ -600,14 +603,14 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
       }
     }
     if (flags & VMEM_WRITE) {
-      if (*pte & VMEM_WRITE) {
+      if (pte_value & VMEM_WRITE) {
         flags &= ~VMEM_WRITE;
       } else {
         needs_fault = true;
       }
     }
     if (flags & VMEM_EXEC) {
-      if (*pte & VMEM_EXEC) {
+      if (pte_value & VMEM_EXEC) {
         flags &= ~VMEM_EXEC;
       } else {
         int args[2] = {fault_addr, flags};
@@ -617,15 +620,18 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
     }
   }
 
-  if (needs_fault) {
-    *pte = page_fault_handler(fault_addr, flags, *pte);
+  if (!needs_fault) {
+    tlb_write(fault_addr, pte_value);
+    interrupts_restore(was);
+    return;
   }
+  interrupts_restore(was);
 
-  tlb_write(fault_addr, *pte);
+  page_fault_handler(fault_addr, flags, pte);
 }
 
-// Returns updated PTE value; does not modify the PTE
-unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
+// Updates PTE & TLB
+void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
   int args[2] = {fault_addr, flags};
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
@@ -644,15 +650,17 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
     int args[2] = {fault_addr, flags};
     say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
     panic("vmem: TLB miss with no corresponding VME.\n");
-    return 0;
+    return;
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)) {
     int args[2] = {fault_addr, flags};
     say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
-    return 0;
+    return;
   }
+
+  unsigned pte_value = *pte; // Make sure value is constant throughout
 
   if (flags != 0) { // Permission fault
     if (flags & VMEM_READ) {
@@ -664,87 +672,105 @@ unsigned page_fault_handler(unsigned fault_addr, unsigned flags, unsigned pte) {
       }
       // PTE says read-only but VME says writable => first write
       // Dirty bit tracking
-      struct Page* page = get_page(pte_phys_addr(pte));
+      struct Page* page = get_page(pte_phys_addr(pte_value));
       physmem_page_lock(page);
-      physmem_set_page_flags(page, PG_DIRTY);
-      pte |= VMEM_WRITE;
+      if (*pte == pte_value) { // Revalidate
+        physmem_set_page_flags(page, PG_DIRTY);
+        *pte |= VMEM_WRITE;
+        tlb_write(fault_addr, pte_value); // Must update tlb_write and pte value with no possibility for eviction between
+        physmem_page_unlock(page);
+        return;
+      }
       physmem_page_unlock(page);
+      // If revalidation didn't work, fall through to invalid PTE handler
       // TODO: potentially COW (in the future)
     }
     if (flags & VMEM_EXEC) {
       panic("vmem: can't handle an exec permission fault");
     }
-  } else { // Missing PTE
-    assert(!(pte & VMEM_VALID), "flags = 0 for existing PTE");
-
-    bool allow_write = curr->flags & MMAP_WRITE;
-
-    // need to allocate a physical page and update the PTE
-    unsigned phys_page = 0;
-    if (curr->file) {
-      if (curr->flags & MMAP_SHARED) {
-        // FILE-BACKED SHARED MAPPING
-        unsigned bytes_in_page = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
-
-        // shared mapping points directly into page cache
-        struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
-
-        struct Page* page = get_page(cache_entry->page_data);
-        physmem_page_addRef(page, fault_addr);
-        physmem_page_unlock(page); // TODO is it safe to unlock before the PTE is actually written?
-
-        allow_write = false; // Map as read-only so we can do dirty tracking on first write
-        phys_page = (unsigned)cache_entry->page_data;
-      } else {
-        // FILE-BACKED PRIVATE MAPPING
-        unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
-        unsigned current_size = node_size_in_bytes(curr->file);
-        unsigned bytes_remaining = 0;
-        if (current_size > file_page_offset) {
-          bytes_remaining = current_size - file_page_offset;
-        }
-
-        unsigned bytes_in_vme = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
-        unsigned bytes_in_page = bytes_remaining < bytes_in_vme ? bytes_remaining : bytes_in_vme;
-
-        // private mapping copies from page cache (TODO: COW)
-        struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file,
-                                                                (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
-
-        phys_page = (unsigned)physmem_alloc(); // TODO: make it unpinned once we're done copying if we can evict things to swap
-        memcpy((void*)phys_page, cache_entry->page_data, FRAME_SIZE);
-
-        // Release the old page once we're done copying
-        struct Page* source_page_metadata = get_page(cache_entry->page_data);
-        physmem_page_unlock(source_page_metadata);
-      }
-    } else {
-      assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
-
-      if (curr->paddr != 0) {
-        // Physmem mappings reserve one contiguous physical window. Each faulting
-        // virtual page must therefore advance through that window page-for-page
-        // instead of aliasing every VME page back onto the first physical page.
-        phys_page = curr->paddr + (fault_addr - curr->start);
-      } else {
-        // ANONYMOUS PRIVATE MAPPING
-        phys_page = create_zeroed_page(); // TODO: unpin it once swap exists
-      }
-    }
-
-    unsigned entry = phys_page | VMEM_VALID;
-
-    if (curr->flags & MMAP_READ)
-      entry |= VMEM_READ;
-    if (allow_write)
-      entry |= VMEM_WRITE;
-    if (curr->flags & MMAP_EXEC)
-      entry |= VMEM_EXEC;
-    if (curr->flags & MMAP_USER)
-      entry |= VMEM_USER;
-    pte = entry;
   }
-  return pte;
+
+  // Missing PTE
+  assert(!(*pte & VMEM_VALID), "flags = 0 for existing PTE");
+
+  // Create flags for PTE entry
+  unsigned pte_flags = VMEM_VALID;
+  if (curr->flags & MMAP_READ)
+    pte_flags |= VMEM_READ;
+  if (curr->flags & MMAP_WRITE)
+    pte_flags |= VMEM_WRITE;
+  if (curr->flags & MMAP_EXEC)
+    pte_flags |= VMEM_EXEC;
+  if (curr->flags & MMAP_USER)
+    pte_flags |= VMEM_USER;
+
+  bool allow_write = curr->flags & MMAP_WRITE;
+
+  // Need to allocate a physical page, update the PTE, and update the TLB
+  unsigned phys_page = 0;
+  if (curr->file) {
+    if (curr->flags & MMAP_SHARED) {
+      // FILE-BACKED SHARED MAPPING
+      unsigned bytes_in_page = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
+
+      // shared mapping points directly into page cache
+      struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
+      struct Page* page = get_page(cache_entry->page_data);
+      physmem_page_addRef(page, fault_addr);
+
+      pte_flags &= ~VMEM_WRITE; // Map as read-only so we can do dirty tracking on first write
+      pte_value = (unsigned)cache_entry->page_data | pte_flags;
+      *pte = pte_value;
+      tlb_write(fault_addr, pte_value);
+      physmem_page_unlock(page);
+      return;
+    } else {
+      // FILE-BACKED PRIVATE MAPPING
+      unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
+      unsigned current_size = node_size_in_bytes(curr->file);
+      unsigned bytes_remaining = 0;
+      if (current_size > file_page_offset) {
+        bytes_remaining = current_size - file_page_offset;
+      }
+
+      unsigned bytes_in_vme = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
+      unsigned bytes_in_page = bytes_remaining < bytes_in_vme ? bytes_remaining : bytes_in_vme;
+
+      // private mapping copies from page cache (TODO: COW)
+      struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file,
+                                                              (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
+
+      phys_page = (unsigned)physmem_alloc(); // TODO: make it unpinned once we're done copying if we can evict things to swap
+      memcpy((void*)phys_page, cache_entry->page_data, FRAME_SIZE);
+
+      // Release the old page once we're done copying
+      struct Page* source_page_metadata = get_page(cache_entry->page_data);
+      physmem_page_unlock(source_page_metadata);
+
+      // TODO locking or something once swap eviction exists
+      pte_value = phys_page | pte_flags;
+      *pte = pte_value;
+      tlb_write(fault_addr, pte_value);
+      return;
+    }
+  } else {
+    assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
+
+    if (curr->paddr != 0) {
+      // Physmem mappings reserve one contiguous physical window. Each faulting
+      // virtual page must therefore advance through that window page-for-page
+      // instead of aliasing every VME page back onto the first physical page.
+      phys_page = curr->paddr + (fault_addr - curr->start);
+    } else {
+      // ANONYMOUS PRIVATE MAPPING
+      phys_page = create_zeroed_page(); // TODO: unpin it once swap exists
+    }
+    // TODO locking once swap exists
+    pte_value = phys_page | pte_flags;
+    *pte = pte_value;
+    tlb_write(fault_addr, pte_value);
+    return;
+  }
 }
 
 void ipi_handler(unsigned data) {
