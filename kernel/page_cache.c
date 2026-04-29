@@ -52,37 +52,52 @@ static struct PageCacheEntry* page_cache_insert(struct PageCache* cache, struct 
 }
 
 // lookup a page if it is in the cache, insert into cache if not
+// TODO should we maybe just return the ppn or a page object? should the page object contain a PPN
 struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* node, unsigned offset, unsigned file_bytes) {
-  blocking_lock_acquire(&cache->lock);
+  while (true) {
+    blocking_lock_acquire(&cache->lock);
 
-  struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
-  if (entry) {
-    struct Page* page = get_page(entry->page_data);
-    physmem_page_lock(page); // TODO lock ordering
-    blocking_lock_release(&cache->lock);
+    struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
+    if (entry != NULL) {
+      // Lock page
+      void* page_data = entry->page_data;
+      struct Page* page = get_page(page_data);
+      blocking_lock_release(&cache->lock); // Can't hold the cache lock while acquiring a page lock
+      physmem_page_lock(page);
+
+      // Revalidate
+      blocking_lock_acquire(&cache->lock);
+      struct PageCacheEntry* verify = page_cache_lookup(cache, node, offset);
+      if ((verify != NULL) && (verify->page_data == page_data)) { // Success!
+        // say("Released cache lock - revalidate success\n", NULL);
+        blocking_lock_release(&cache->lock);
+        return entry;
+      } else { // Fail (it got evicted)
+        blocking_lock_release(&cache->lock);
+        physmem_page_unlock(page);
+        continue; // If revalidation failed, loop again
+      }
+    }
+
+    // Insert into the page cache
+    void* page_data = physmem_alloc(); // allocate a new page (pinned)
+    entry = page_cache_insert(cache, node, offset, file_bytes, page_data);
+    struct Page* page = get_page(page_data);
+    page->cache_entry = entry;
+    blocking_lock_release(&cache->lock); // Release the cache lock while acquiring other locks
+    // TODO need to make sure no one who tries to access the cache can see the data until we're done reading it in
+    physmem_page_lock(page);
+    physmem_clear_page_flags(page, PG_PINNED);
+
+    // load the page from disk into the newly allocated page_data
+    unsigned bytes_read = node_read_all(node, offset, FRAME_SIZE, page_data);
+    // zero remaining bytes
+    for (int i = bytes_read; i < FRAME_SIZE; i++) {
+      ((char*)page_data)[i] = 0;
+    }
+
     return entry;
   }
-
-  void* page_data = physmem_alloc(); // allocate a new page (pinned)
-
-  // load the page from disk into the newly allocated page_data
-  unsigned bytes_read = node_read_all(node, offset, FRAME_SIZE, page_data);
-
-  // zero remaining bytes
-  for (int i = bytes_read; i < FRAME_SIZE; i++) {
-    ((char*)page_data)[i] = 0;
-  }
-
-  entry = page_cache_insert(cache, node, offset, file_bytes, page_data);
-
-  struct Page* page = get_page(page_data);
-  page->cache_entry = entry;
-  physmem_page_lock(page); // TODO this should never block
-  physmem_clear_page_flags(page, PG_PINNED);
-
-  blocking_lock_release(&cache->lock);
-
-  return entry;
 }
 
 /*
@@ -164,7 +179,7 @@ void page_cache_destroy(struct PageCache* cache) {
 // NOT SYNCHRONIZED; testing purposes only
 void page_cache_flush_all(struct PageCache* cache) {
   blocking_lock_acquire(&cache->lock);
-
+  
   for (unsigned i = 0; i < cache->hash_map_size; i++) {
     struct PageCacheEntry* entry = cache->hash_map[i];
     while (entry != NULL) {
@@ -181,6 +196,6 @@ void page_cache_flush_all(struct PageCache* cache) {
       entry = entry->next;
     }
   }
-
+  
   blocking_lock_release(&cache->lock);
 }

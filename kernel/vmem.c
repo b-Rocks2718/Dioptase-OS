@@ -827,9 +827,8 @@ void page_evict(struct Page* page) {
   struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?
   void* frame = cache_entry->page_data;
   blocking_lock_acquire(&cache_entry->key.inode->lock);
-
+  
   // Evict from page cache
-  // - TODO need to do revalidation in the page cache
   page_cache_remove(&page_cache, cache_entry);
 
   // Remove PTEs & invlpg
