@@ -137,8 +137,8 @@ void kernel_main(void) {
 
   // verify backing file contains last writer values
   char* file_bytes = mmap(TEST_BYTES, file, 0, MMAP_READ);
-  say("%s", &file);
+  say("%s", &file_bytes);
 
   node_free(file);
-  say("\n***vmem eviction concurrency test complete\n", NULL);
+  say("***vmem eviction concurrency test complete\n", NULL);
 }
