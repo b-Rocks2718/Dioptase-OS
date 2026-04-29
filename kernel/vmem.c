@@ -164,7 +164,7 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
       struct Page* page = get_page((void*)pte_phys_addr(pte));
       physmem_page_lock(page);
       if (pt[page_table_index] == pte) { // Revalidate - ensure page didn't get evicted between finding the page and locking it
-        physmem_page_removeRef(page, va);
+        physmem_page_removeRef(page, va, (unsigned)pd);
       }
       physmem_page_unlock(page);
     } else if (vme->paddr != 0) {
@@ -794,7 +794,7 @@ void tlb_shootdown(struct PageRef* ref) {
     // Create a request & give to a core
     struct ShootdownRequest* request = malloc(sizeof(struct ShootdownRequest));
     request->latch = &latch;
-    request->pid = ref->thread->pid;
+    request->pid = ref->pid;
     request->vaddr = (void*)ref->virtual_address;
     request->next = NULL;
     generic_spin_queue_add(&per_core_data[i].shootdown_requests, (struct GenericQueueElement*)request);
@@ -836,7 +836,7 @@ void page_evict(struct Page* page) {
   struct PageRef* ref = page->refs;
   while (ref != NULL) {
     // Overwrite the PTE
-    *vmem_get_pte((unsigned*)ref->thread->pid, ref->virtual_address, false) = 0; // TODO make sure no one can modify this pte before we do
+    *vmem_get_pte((unsigned*)ref->pid, ref->virtual_address, false) = 0; // TODO make sure no one can modify this pte before we do
     // Shootdown on all cores
     tlb_shootdown(ref);
 

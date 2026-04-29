@@ -439,10 +439,7 @@ void physmem_page_unlock(struct Page* page) {
 void physmem_page_addRef(struct Page* page, unsigned virtual_addr) {
   // Create new page ref
   struct PageRef* ref = malloc(sizeof(struct PageRef));
-
-  int was = interrupts_disable();
-  ref->thread = get_current_tcb();
-  interrupts_restore(was);
+  ref->pid = (unsigned)get_pid();
   ref->virtual_address = virtual_addr;
 
   // Add to linked list
@@ -453,15 +450,12 @@ void physmem_page_addRef(struct Page* page, unsigned virtual_addr) {
   page->ref_cnt++;
 }
 
-void physmem_page_removeRef(struct Page* page, unsigned virtual_addr) {
-  int was = interrupts_disable();
-  struct TCB* current = get_current_tcb();
-  interrupts_restore(was);
+void physmem_page_removeRef(struct Page* page, unsigned virtual_addr, unsigned pid) {
   struct PageRef* prev = NULL;
   struct PageRef* curr = page->refs;
 
   while (curr != NULL) {
-    if (curr->thread == current && curr->virtual_address == virtual_addr) {
+    if (curr->pid == pid && curr->virtual_address == virtual_addr) {
       if (prev == NULL) {
         page->refs = curr->next;
       } else {

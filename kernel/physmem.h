@@ -95,7 +95,7 @@ void physmem_page_unlock(struct Page* page);
 
 // Add and remove PageRefs (defaults to current process; does not acquire lock)
 void physmem_page_addRef(struct Page* page, unsigned virtual_addr);
-void physmem_page_removeRef(struct Page* page, unsigned virtual_addr);
+void physmem_page_removeRef(struct Page* page, unsigned virtual_addr, unsigned pid);
 
 extern void physmem_metadata_init(struct Page* physmem_map, unsigned frame_count, unsigned pg_init_flags);
 #endif // PHYSMEM_H

@@ -103,7 +103,8 @@ extern unsigned send_ipi(unsigned data);
 
 // Describes how a page is being used
 struct PageRef {
-  struct TCB* thread;
+  // struct TCB* thread;
+  unsigned pid;
   unsigned virtual_address;
   // struct VME* vme;
   struct PageRef* next;
