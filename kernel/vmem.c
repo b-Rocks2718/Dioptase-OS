@@ -662,7 +662,7 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
 
   unsigned pte_value = *pte; // Make sure value is constant throughout
 
-  if (flags != 0) { // Permission fault
+  if (flags != 0 && (pte_value & VMEM_VALID != 0)) { // Permission fault
     if (flags & VMEM_READ) {
       panic("vmem: can't handle a read permission fault");
     }
@@ -827,7 +827,7 @@ void page_evict(struct Page* page) {
   struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?
   void* frame = cache_entry->page_data;
   blocking_lock_acquire(&cache_entry->key.inode->lock);
-  
+
   // Evict from page cache
   page_cache_remove(&page_cache, cache_entry);
 
