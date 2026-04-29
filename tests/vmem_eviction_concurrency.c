@@ -17,6 +17,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/machine.h"
 #include "../kernel/page_cache.h"
+#include "../kernel/barrier.h"
 
 #define WRITERS        3
 #define EVICTOR_CORE   3
@@ -26,6 +27,8 @@
 
 static int finished = 0;
 static int progress = 0;
+
+struct Barrier barrier;
 
 struct WriterArg {
   int id;
@@ -55,15 +58,18 @@ static void writer_thread(void* arg) {
   node_free(file);
   assert(mapping != NULL, "evict conc: mmap returned NULL\n");
 
+  barrier_sync(&barrier);
+
   for (int r = 0; r < ROUNDS - 1; ++r) {
     // write one byte slot owned by this writer each round
     unsigned offset = (id * ROUNDS) + r; // disjoint low-order bytes
     mapping[offset] = 97 + (r % 26);
 
-    // widen the race window; give eviction a chance to run
-    if ((r & (id * 2)) == 0)
-      yield();
     __atomic_fetch_add(&progress, 1);
+
+    // widen the race window; give eviction a chance to run
+    if ((r & 3) == 0)
+      yield();
   }
   mapping[(id * ROUNDS) + (ROUNDS - 1)] = '\n';
   __atomic_fetch_add(&finished, 1);
@@ -78,7 +84,6 @@ static void evictor_thread(void* _arg) {
   assert(file != NULL, "evict conc: failed to open fixture file\n");
 
   while (finished < WRITERS) {
-    say("a\n", NULL);
     blocking_lock_acquire(&page_cache.lock);
     // acquire page cache entry to find the page frame (if present)
     struct PageCacheEntry* entry = page_cache_lookup(&page_cache, file, 0);
@@ -91,7 +96,7 @@ static void evictor_thread(void* _arg) {
     } else {
       yield();
     }
-    say("c\n", NULL);
+    yield();
   }
 
   __atomic_fetch_add(&finished, 1);
@@ -105,7 +110,14 @@ void kernel_main(void) {
   struct Node* file = node_make_file(&fs.root, TEST_FILE_NAME);
   assert(file != NULL, "evict conc: failed to create fixture file\n");
 
+  // spawn evictor
+  struct Fun* evictor = malloc(sizeof(*evictor));
+  evictor->func = evictor_thread;
+  evictor->arg = NULL;
+  thread(evictor);
+
   // spawn writers
+  barrier_init(&barrier, WRITERS);
   for (int i = 0; i < WRITERS; ++i) {
     struct WriterArg* a = malloc(sizeof(*a));
     a->id = i;
@@ -115,19 +127,11 @@ void kernel_main(void) {
     thread(worker);
   }
 
-  // spawn evictor
-  struct Fun* evictor = malloc(sizeof(*evictor));
-  evictor->func = evictor_thread;
-  evictor->arg = NULL;
-  thread(evictor);
-
-  yield();
-
   // wait for writers to finish
   while (__atomic_load_n(&finished) != WRITERS + 1) {
+    sleep(50);
     int args[2] = {progress, WRITERS * ROUNDS - WRITERS};
     say("progress: %d / %d\n", args);
-    sleep(50);
   }
   say("***file bytes:\n", NULL);
 
@@ -136,5 +140,5 @@ void kernel_main(void) {
   say("%s", &file);
 
   node_free(file);
-  say("***vmem eviction concurrency test complete\n", NULL);
+  say("\n***vmem eviction concurrency test complete\n", NULL);
 }
