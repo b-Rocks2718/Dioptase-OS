@@ -822,6 +822,7 @@ void tlb_shootdown(struct PageRef* ref) {
 // }
 
 // Page must be locked already
+// Page must not be pinned
 void page_evict(struct Page* page) {
   // Acquire the inode lock so no one can try to demand page it in before we finish writing back
   struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?

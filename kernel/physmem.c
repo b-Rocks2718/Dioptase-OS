@@ -355,7 +355,7 @@ void* physmem_alloc(void) {
   blocking_lock_release(&per_core->physmem_cache.lock);
 
   core_unpin(prev);
-
+  assert(get_page(page)->flags & PG_PINNED, "ALLOCATING A FRAME THAT'S NOT PINNED");
   return page;
 }
 

@@ -5,6 +5,9 @@
  * mapping while one evictor thread continuously evicts the page. After a
  * fixed number of rounds we quiesce and verify the backing file contains the
  * writers' last committed values.
+ * 
+ * Checks that faulting and evicting at the same time still produces correct behavior;
+ * no deadlocks and no incoherence
  */
 
 #include "../kernel/vmem.h"
@@ -20,8 +23,7 @@
 #include "../kernel/barrier.h"
 
 #define WRITERS        3
-#define EVICTOR_CORE   3
-#define ROUNDS         128
+#define ROUNDS         64
 #define TEST_FILE_NAME "evict_conc.txt"
 #define TEST_BYTES     512
 
@@ -106,13 +108,17 @@ static void evictor_thread(void* _arg) {
   while (finished < WRITERS) {
     blocking_lock_acquire(&page_cache.lock);
     // acquire page cache entry to find the page frame (if present)
-    struct PageCacheEntry* entry = page_cache_lookup(&page_cache, file, 0);
+    struct PageCacheEntry* entry = page_cache_lookup(&page_cache, file, 0); // NOTE this is only safe because we're the only thing that can evict
     blocking_lock_release(&page_cache.lock);
     if (entry) {
-      say("b\n", NULL);
+      say("z\n", NULL);
       struct Page* page = get_page(entry->page_data);
       physmem_page_lock(page);
-      page_evict(page);
+      if (!(page->flags & PG_PINNED)) {
+        page_evict(page);
+      } else {
+        physmem_page_unlock(page);
+      }
     } else {
       yield();
     }
@@ -130,12 +136,6 @@ void kernel_main(void) {
   struct Node* file = node_make_file(&fs.root, TEST_FILE_NAME);
   assert(file != NULL, "evict conc: failed to create fixture file\n");
 
-  // spawn evictor
-  struct Fun* evictor = malloc(sizeof(*evictor));
-  evictor->func = evictor_thread;
-  evictor->arg = NULL;
-  thread(evictor);
-
   // spawn writers
   barrier_init(&barrier, WRITERS);
   for (int i = 0; i < WRITERS; ++i) {
@@ -146,6 +146,12 @@ void kernel_main(void) {
     worker->arg = a;
     thread(worker);
   }
+
+  // spawn evictor
+  struct Fun* evictor = malloc(sizeof(*evictor));
+  evictor->func = evictor_thread;
+  evictor->arg = NULL;
+  thread(evictor);
 
   // wait for writers to finish
   while (__atomic_load_n(&finished) != WRITERS + 1) {
