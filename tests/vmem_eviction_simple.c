@@ -116,7 +116,7 @@ void kernel_main(void) {
 
   struct Page* page = mapped_page(mapping);
   physmem_page_lock(page);
-  page_evict(page);
+  page_evict(page); // Definitely not pinned because writers have already faulted in the page
 
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL, "vmem evict tlb: failed to reopen fixture file\n");
