@@ -662,7 +662,7 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
 
   unsigned pte_value = *pte; // Make sure value is constant throughout
 
-  if (flags != 0 && (pte_value & VMEM_VALID != 0)) { // Permission fault
+  if ((flags != 0) && (pte_value & VMEM_VALID)) { // Permission fault
     if (flags & VMEM_READ) {
       panic("vmem: can't handle a read permission fault");
     }

@@ -34,7 +34,11 @@ static bool physmem_is_frame_address(unsigned phys_addr) {
 }
 
 unsigned frame_index_from_address(unsigned phys_addr) {
-  assert(physmem_is_frame_address(phys_addr), "physmem: invalid frame address.\n");
+  if (!physmem_is_frame_address(phys_addr)) {
+    int args[1] = {phys_addr};
+    say("tried to get index of frame address 0x%X\n", args);
+    panic("physmem: invalid frame address.\n");
+  }
   return (phys_addr - FRAMES_ADDR_START) / FRAME_SIZE;
 }
 
@@ -268,7 +272,7 @@ void physmem_free_order(void* page, int order) {
     struct Page* metadata = get_page((void*)(phys_addr + (i * FRAME_SIZE)));
     metadata->cache_entry = NULL;
     assert(metadata->refs == NULL, "freeing a page that's still referenced");
-    physmem_set_page_flags(get_page(page), PG_PINNED); // TODO more flags? Locking?
+    physmem_set_page_flags(metadata, PG_PINNED); // TODO more flags? Locking?
   }
 
   assert(page != NULL, "physmem free: page is NULL.\n");
