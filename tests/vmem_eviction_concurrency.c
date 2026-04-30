@@ -113,11 +113,13 @@ static void evictor_thread(void* _arg) {
     if (entry) {
       say("z\n", NULL);
       struct Page* page = get_page(entry->page_data, "get page - concurrency test");
-      physmem_page_lock(page);
       if (!(page->flags & PG_PINNED)) {
-        page_evict(page);
-      } else {
-        physmem_page_unlock(page);
+        physmem_page_lock(page);
+        if (!(page->flags & PG_PINNED)) {
+          page_evict(page);
+        } else {
+          physmem_page_unlock(page);
+        }
       }
     } else {
       yield();

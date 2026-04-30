@@ -68,12 +68,12 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
       // Revalidate
       blocking_lock_acquire(&cache->lock);
       struct PageCacheEntry* verify = page_cache_lookup(cache, node, offset);
-      if ((verify != NULL) && (verify->page_data == page_data)) { // Success!
+      if ((verify != NULL) && (verify->page_data == page_data) && !(page->flags & PG_PINNED)) { // Success!
         // say("Released cache lock - revalidate success\n", NULL);
         blocking_lock_release(&cache->lock);
         assert(verify == page->cache_entry, "page cache mismatch");
         return verify;
-      } else { // Fail (it got evicted)
+      } else { // Fail (it got evicted, or it's still being paged in)
         blocking_lock_release(&cache->lock);
         physmem_page_unlock(page);
         continue; // If revalidation failed, loop again
@@ -86,9 +86,8 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
     struct Page* page = get_page(page_data, "get page - cache acquire miss");
     page->cache_entry = entry;
     blocking_lock_release(&cache->lock); // Release the cache lock while acquiring other locks
-    // TODO need to make sure no one who tries to access the cache can see the data until we're done reading it in
+    // We're safe from eviction because the page is pinned
     physmem_page_lock(page);
-    physmem_clear_page_flags(page, PG_PINNED);
 
     // load the page from disk into the newly allocated page_data
     unsigned bytes_read = node_read_all(node, offset, FRAME_SIZE, page_data);
@@ -96,7 +95,7 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
     for (int i = bytes_read; i < FRAME_SIZE; i++) {
       ((char*)page_data)[i] = 0;
     }
-
+    physmem_clear_page_flags(page, PG_PINNED);
     return entry;
   }
 }
