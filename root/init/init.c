@@ -1,7 +1,9 @@
-#include "../../crt/print.h"
-#include "../../crt/sys.h"
-#include "../../crt/constants.h"
-#include "../../crt/debug.h"
+#include "../crt/print.h"
+#include "../crt/assert.h"
+#include "../crt/stddef.h"
+#include "../crt/unistd.h"
+#include "../crt/sys/wait.h"
+#include "../crt/sys.h"
 
 int main(void) {
   puts("| Hello from init process!\n");
@@ -32,7 +34,7 @@ int main(void) {
     execv("/sbin/terminal", 0, NULL);
 
     // this probably never prints bc we have no terminal yet
-    puts("|failed to exec terminal emulator\n");
+    puts("| failed to exec terminal emulator\n");
     return -1;
   }
 
@@ -51,6 +53,8 @@ int main(void) {
   }
 
   wait_child(shell_pid);
+
+  kill(terminal_pid);
 
   return 67;
 }

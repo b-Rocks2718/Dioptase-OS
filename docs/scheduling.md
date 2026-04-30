@@ -27,6 +27,10 @@ As mentioned previously, the idle thread wakes all thread in the per-core interr
 ### Static Priorities
 Each ready queue (the local and global queues) is divided into different queues for each static priority. There are currently three static priorities: `HIGH_PRIORITY`, `NORMAL_PRIORITY`, and `LOW_PRIORITY`. Each static priority gets an associated weight, and the ratio of these weights is equal to the ratios of the frequencies each priority of thread is scheduled. For example, high priority threads curreny have weight 4 and normal priority have weight 2, so high priority threads are chosen to be scheduled twice as often as normal priority. The exception is if one or more of the priority levels has no runnable threads; in this case the scheduler checks other priority levels until it finds a runnable thread. 
 
+User programs can request one of these static priority levels with
+`request_priority()`; see `syscalls.md` for the user-visible numeric values and
+current permission policy.
+
 To see this working, run `EMU_VGA=yes make priorities_test`
 
 ### Multi-Level Feedback Queue (MLFQ)

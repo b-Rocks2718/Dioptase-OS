@@ -10,7 +10,7 @@ SBIN_DIR := ../sbin
 PROGRAM_OUTPUT := $(SBIN_DIR)/$(PROGRAM)
 
 # root/<program> is one level shallower than tests/<name>.dir/sbin.
-CRT_DIR = ../../crt
+CRT_DIR = ../crt
 CRT_STARTUP_SRC := $(CRT_DIR)/crt0.s
 CRT_ASM_SRCS := $(wildcard $(CRT_DIR)/*.s)
 CRT_C_SRCS := $(wildcard $(CRT_DIR)/*.c)

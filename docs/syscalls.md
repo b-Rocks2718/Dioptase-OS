@@ -49,7 +49,7 @@ Current implementation-defined bounds:
 - path arguments: at most 1024 bytes including the terminating NUL
 - `read()` / `write()` byte count per trap: at most 1024 bytes
 - `pipe()` ring-buffer capacity: 1024 bytes
-- `execv()` argument count: at most 16
+- `execv()` argument count: at most 64
 - each `execv()` argument string: at most 256 bytes including the terminating
   NUL
 - rebuilt `execv()` argv block must fit in the initial 16 KiB user stack
@@ -66,6 +66,15 @@ Current implementation-defined bounds:
 | `24` | `execv(path, argc, argv)` | `path`, `argc`, `argv` | Replaces the current user image. Success does not return. Failure returns `-1`. If `argc == 0`, `argv` is ignored and the new image starts with `argc = 0`, `argv = NULL`. |
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
+| `47` | `kill(child_desc)` | `child_desc` | Requests termination of the specified child and returns `0`, or returns `-1` for an invalid child descriptor. Current implementation detail: `wait_child()` currently returns `-1` for a killed child. |
+| `49` | `request_priority(priority)` | `priority` | Requests a static scheduler priority for the current thread. Returns `0` and updates the thread when `priority` is valid, or `-1` for an invalid priority. |
+
+`request_priority()` currently honors all valid requests without any permission
+checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
+`DIOPTASE_PRIORITY_NORMAL = 1`, and `DIOPTASE_PRIORITY_HIGH = 2`. The request
+does not reset the caller's current MLFQ level or remaining quantum; those
+dynamic scheduler fields continue to follow the scheduler rules documented in
+`scheduling.md`.
 
 ### Exec
 
@@ -79,11 +88,15 @@ For `argc > 0`, `argv` must point to a readable user array of `argc` readable
 NUL-terminated strings. Invalid pointers, unterminated strings, or oversized
 argument vectors return `-1`.
 
+`execv()` currently accepts only regular files whose contents pass the kernel's
+ELF32 sanity checks. Directories, symlinks, empty files, and malformed or
+non-ELF regular files return `-1`.
+
 ### Filesystem, Pipes, and Audio
 
 | Code | Wrapper | Arguments | Result |
 | --- | --- | --- | --- |
-| `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Returns a file descriptor in `0..99`, or `-1` on copy, lookup, or descriptor-allocation failure. |
+| `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Creates the file if it does not exist. Returns a file descriptor in `0..99`, or `-1` on copy, creation, or descriptor-allocation failure. |
 | `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at EOF, or `-1` on failure. `STDIN` reads block waiting for keyboard input. |
 | `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. `STDOUT` and `STDERR` write characters to the console. |
 | `17` | `close(fd)` | `fd` | Closes a valid file descriptor and returns `0`, or returns `-1` for an invalid descriptor. |
@@ -92,6 +105,13 @@ argument vectors return `-1`.
 | `29` | `pipe(fds)` | `fds` | Allocates a pipe and writes `{read_fd, write_fd}` into the user array `fds[0..1]`. Returns `0` on success or `-1` on copy or descriptor-allocation failure. |
 | `30` | `dup(fd)` | `fd` | Returns a new file descriptor that references the same underlying descriptor object, including the shared current offset. Returns `-1` on failure. |
 | `31` | `seek(fd, offset, whence)` | `fd`, `offset`, `whence` | Updates the descriptor offset and returns the new offset, or returns `-1` for an invalid descriptor or invalid `whence`. |
+| `33` | `getdents(fd, buffer, buffer_size)` | `fd`, `buffer`, `buffer_size` | Copies up to the buffer size of full directory entries (`struct linux_dirent` format) into `buffer`. Increments the descriptor offset by bytes read from the file (note that this is not the same as the bytes copied since the entry structures are different). Returns the number of bytes copied or `-1` if the descriptor or offset is invalid or not a directory. |
+| `34` | `getcwd(buffer, buffer_size)` | `buffer`, `buffer_size` | Copies the current cwd path plus trailing NUL into `buffer`. Returns `buffer` on success or `(char*)-1` on invalid user memory, missing cwd state, or insufficient buffer size. |
+| `35` | `readlink(path, buffer, buffer_size)` | `path`, `buffer`, `buffer_size` | Copies up to the clamped byte count of the target of a symbolic link plus trailing NUL into `buffer`. Returns the number of bytes copied or `-1` on missing or invalid symlink. |
+| `39` | `truncate(fd, size)` | `fd`, `size` | Shrinks a regular file descriptor to `size` bytes and returns `0`, or returns `-1` for an invalid descriptor, a non-regular-file descriptor, or any request that would grow the file. |
+| `40` | `mkdir(path)` | `path` | Creates one empty subdirectory entry in the current cwd and returns `0`, or returns `-1` on invalid user memory, invalid name, duplicate basename, or create failure. |
+| `41` | `rmdir(path)` | `path` | Removes one empty subdirectory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is not a directory, is not empty, or the name is invalid. |
+| `42` | `unlink(path)` | `path` | Removes one non-directory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is a directory, or the name is invalid. |
 
 Additional file-descriptor notes:
 - `dup()` shares the same underlying descriptor object, so offset changes are
@@ -102,10 +122,24 @@ Additional file-descriptor notes:
   32-bit range.
 - `SEEK_END` rejects results that would be negative or would exceed signed
   32-bit range.
+- `truncate()` is shrink-only. It leaves descriptor offsets unchanged and does
+  not reclaim blocks.
+- `mkdir()`, `rmdir()`, and `unlink()` are currently basename-only wrappers
+  over the ext2 helpers. `path` must be one non-empty component in the current
+  working directory; slash-separated and absolute paths return `-1`.
+- `mkdir()`, `rmdir()`, and `unlink()` reject `.` and `..`.
+- `unlink()` currently applies to regular files and symlinks only; use
+  `rmdir()` for empty directories.
+- Successful `unlink()` and `rmdir()` remove the pathname immediately, but
+  final inode/block reclamation may still be deferred until the last live
+  wrapper for that inode is released.
 - Current implementation detail: `play_audio_file()` spawns a playback worker
   and returns immediately. The worker currently expects a supported PCM WAV
   file; malformed WAV contents currently panic the kernel instead of returning
   `-1`.
+- The register-driven synth audio path is separate from `play_audio_file()`.
+  User programs map the synth MMIO page with `get_synth_audio()` and can use
+  the DSYN helpers documented in `synth_audio.md`.
 
 ### Synchronization and Virtual Memory
 
@@ -119,14 +153,14 @@ Additional file-descriptor notes:
 
 `mmap()` details that matter to user mode:
 
-- user-visible flags come from `crt/sys.h`: `MMAP_SHARED`, `MMAP_READ`,
+- user-visible flags come from `root/crt/sys.h`: `MMAP_SHARED`, `MMAP_READ`,
   `MMAP_WRITE`, and `MMAP_EXEC`
 - the kernel always adds the internal `MMAP_USER` bit to user-created mappings
 - anonymous shared mappings are currently rejected
 - file-backed mappings require a valid file descriptor and a non-negative offset
 - see `vmem.md` for full mapping, unmapping, sharing, and file-offset rules
 
-### Console, Keyboard, and VGA Helpers
+### Console, Keyboard, VGA, and Synth Helpers
 
 These traps expose device-oriented helpers rather than POSIX-style syscalls.
 MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
@@ -144,3 +178,10 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `11` | `get_vga_status()` | none | Returns the low byte of the VGA status register. |
 | `12` | `get_vga_frame_counter()` | none | Returns the 32-bit VGA frame counter. |
 | `26` | `set_text_color(color)` | `color` | Updates the console text color used by formatted output and returns `0`. |
+| `36` | `move_vscroll(delta)` | `delta` | Adds `delta` to the tile vertical-scroll register and returns `0`. |
+| `37` | `move_hscroll(delta)` | `delta` | Adds `delta` to the tile horizontal-scroll register and returns `0`. |
+| `43` | `set_sprite_scale(sprite_num, scale)` | `sprite_num`, `scale` | Writes one sprite-scale register and returns `0`, or returns `-1` for an invalid sprite number. |
+| `44` | `set_sprite_coords(sprite_num, x, y)` | `sprite_num`, `x`, `y` | Writes one sprite coordinate pair and returns `0`, or returns `-1` for an invalid sprite number. |
+| `45` | `load_text_tiles_colored(fg_color, bg_color)` | `fg_color`, `bg_color` | Loads the built-in text tileset with explicit colors, clears the display, and returns `0`. |
+| `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer. |
+| `48` | `get_synth_audio()` | none | Maps the synth audio MMIO page `0x7FBC000..0x7FBCFFF` into user space with read/write permission and returns the user pointer. The kernel does not serialize synth register ownership between processes. |

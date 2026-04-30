@@ -1,4 +1,4 @@
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 #include "constants.h"
 
 #define BOARD_WIDTH 30

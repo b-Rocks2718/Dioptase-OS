@@ -1,4 +1,4 @@
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 int main(void){
   int x = test_syscall(1);

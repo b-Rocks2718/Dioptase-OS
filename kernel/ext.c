@@ -1357,6 +1357,43 @@ static bool dir_is_empty_locked(struct Node* dir){
   return true;
 }
 
+// ext2 directories are empty when every live entry is either "." or "..".
+// Removed entries with inode == 0 are free space and do not make the directory
+// non-empty.
+bool dir_is_empty(struct Node* dir){
+  unsigned index = 0;
+  struct DirEntry entry;
+
+  blocking_lock_acquire(&dir->cached->lock);
+
+  assert(node_is_dir(dir), "dir_is_empty: target node is not a directory.\n");
+
+  while (index < node_size_in_bytes(dir)){
+    int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*)&entry);
+    assert(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
+    assert(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+      "dir_is_empty: invalid directory record length.\n");
+    assert(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+      "dir_is_empty: directory record is not 4-byte aligned.\n");
+
+    if (entry.inode != 0){
+      bool is_dot = entry.name_len == 1 && strneq((char*)entry.name, ".", 1);
+      bool is_dot_dot = entry.name_len == 2 && strneq((char*)entry.name, "..", 2);
+
+      if (!is_dot && !is_dot_dot){
+        blocking_lock_release(&dir->cached->lock);
+        return false;
+      }
+    }
+
+    index += entry.rec_len;
+  }
+
+  blocking_lock_release(&dir->cached->lock);
+
+  return true;
+}
+
 struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mode){
   assert(dir != NULL, "alloc_inode: parent directory is NULL.\n");
   assert(name != NULL, "alloc_inode: name is NULL.\n");
@@ -1956,38 +1993,64 @@ void node_rename(struct Node* dir, char* old_name, char* new_name){
   node_free(node);
 }
 
-void node_delete(struct Node* dir, char* name){
+int node_delete(struct Node* dir, char* name){
   assert(dir != NULL, "node_delete: parent node is NULL.\n");
   assert(node_is_dir(dir), "node_delete: parent node is not a directory.\n");
   assert(name != NULL, "node_delete: name is NULL.\n");
-  assert(strlen(name) > 0, "node_delete: name is empty.\n");
-  assert(!ext2_name_has_separator(name),
-    "node_delete: name must be one directory entry component without '/'.\n");
-  assert(!ext2_name_is_dot(name),
-    "node_delete: cannot delete the '.' directory entry.\n");
-  assert(!ext2_name_is_dot_dot(name),
-    "node_delete: cannot delete the '..' directory entry.\n");
+  if (strlen(name) == 0){
+    // name is empty
+    return -1;
+  }
+  if (ext2_name_has_separator(name)){
+    // name must be one directory entry component without '/'
+    return -1;
+  }
+  if (ext2_name_is_dot(name)){
+    // cannot delete the '.' directory entry
+    return -1;
+  }
+  if (ext2_name_is_dot_dot(name)){
+    // cannot delete the '..' directory entry
+    return -1;
+  }
 
   // Hold the parent directory lock across lookup, unlink, and link-count
   // updates so the directory entry stream stays stable during deletion.
   blocking_lock_acquire(&dir->cached->lock);
-  assert(!dir->cached->delete_pending,
-    "node_delete: cannot mutate a directory that has already been unlinked.\n");
+  if (dir->cached->delete_pending){
+    // parent directory has already been unlinked, so abort the delete
+    blocking_lock_release(&dir->cached->lock);
+    return -1;
+  }
   
   struct Node* node = dir_find_entry_locked(dir, name);
-  
-  assert(node != NULL, "node_delete: no directory entry with the given name exists in the parent directory.\n");
 
+  if (node == NULL){
+    // no directory entry with the given name exists in the parent directory
+    blocking_lock_release(&dir->cached->lock);
+    return -1;
+  }
+  
   // Serialize the candidate inode against concurrent reads, writes, and, for
   // directories, against creates through already-open wrappers.
   blocking_lock_acquire(&node->cached->lock);
 
   if (node_is_dir(node)){
-    assert(dir_is_empty_locked(node), "node_delete: cannot delete a non-empty directory.\n");
+    if (!dir_is_empty_locked(node)){
+      // cannot delete a non-empty directory
+      blocking_lock_release(&node->cached->lock);
+      blocking_lock_release(&dir->cached->lock);
+      return -1;
+    }
   }
 
   bool rc = dir_remove_entry_locked(dir, name);
-  assert(rc, "node_delete: failed to remove the directory entry.\n");
+  if (!rc){
+    // failed to remove the directory entry for some reason, so abort the delete
+    blocking_lock_release(&node->cached->lock);
+    blocking_lock_release(&dir->cached->lock);
+    return -1;
+  }
 
   if (node_is_dir(node)){
     // parent directory also has a link from the child's ".." entry, so decrement that too
@@ -2393,6 +2456,25 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   return size;
 }
 
+bool node_shrink(struct Node* node, unsigned target_size){
+  assert(node != NULL, "node_shrink: node is NULL.\n");
+  assert(node_is_file(node), "node_shrink: can only shrink regular files.\n");
+
+  // shrink inode but does not free any blocks
+  blocking_lock_acquire(&node->cached->lock);
+
+  if (target_size > node->cached->inode.size){
+    blocking_lock_release(&node->cached->lock);
+    return false;
+  }
+
+  node->cached->inode.size = target_size;
+  node_sync_inode(node);
+
+  blocking_lock_release(&node->cached->lock);
+  return true;
+}
+
 unsigned short node_get_type(struct Node* node){
   return node->cached->inode.mode & EXT2_S_MASK;
 }
@@ -2483,14 +2565,29 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
   if (cached_inode != NULL) {
     unsigned short mode = cached_inode->inode.mode;
     switch (mode & EXT2_S_MASK) {
+      case EXT2_S_IFIFO:
+        type = EXT2_DT_FIFO;
+        break;
+      case EXT2_S_IFCHR:
+        type = EXT2_DT_CHR;
+        break;
       case EXT2_S_IFDIR:
         type = EXT2_DT_DIR;
+        break;
+      case EXT2_S_IFBLK:
+        type = EXT2_DT_BLK;
         break;
       case EXT2_S_IFREG:
         type = EXT2_DT_REG;
         break;
       case EXT2_S_IFLNK:
         type = EXT2_DT_LNK;
+        break;
+      case EXT2_S_IFSOCK:
+        type = EXT2_DT_SOCK;
+        break;
+      default:
+        type = EXT2_DT_UNKNOWN;
         break;
     }
   }

@@ -1,4 +1,4 @@
-#include "../../../crt/sys.h"
+#include "../../../root/crt/sys.h"
 
 /*
  * file_syscalls guest:
@@ -8,6 +8,8 @@
  *   the original fd
  * - verify seek() rejects negative results instead of storing an invalid file
  *   offset
+ * - verify open() can create missing intermediate directories before creating
+ *   the final file
  */
 
 int main(void){
@@ -50,6 +52,21 @@ int main(void){
 
   test_syscall(play_audio_file(STDOUT));
   test_syscall(close(fd));
+  test_syscall(close(fd));
+
+  fd = open("generated/./deep/../deep/note.txt");
+  test_syscall(fd >= 0);
+  test_syscall(write(fd, &y, 1));
+  test_syscall(seek(fd, 0, SEEK_SET));
+  test_syscall(read(fd, buf, 1));
+  test_syscall(buf[0]);
+  test_syscall(close(fd));
+
+  test_syscall(chdir("generated/deep"));
+  fd = open("note.txt");
+  test_syscall(fd >= 0);
+  test_syscall(read(fd, buf, 1));
+  test_syscall(buf[0]);
   test_syscall(close(fd));
 
   yield();

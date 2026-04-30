@@ -25,6 +25,12 @@ Reads are EOF-clamped and may start and end at arbitrary byte offsets. Logical b
 #### Regular File Writes
 `node_write_all()` writes arbitrary byte ranges and grows the file as needed. File growth allocates data blocks before issuing writes, updates inode size, and preserves zero-filled gaps because newly allocated blocks are cleared before use. The write path is serialized per inode, so concurrent writers to the same file do not race the block tree or inode writeback.
 
+`node_shrink()` reduces a regular file's logical size and writes the smaller
+inode size back to disk. It rejects growth requests, but it intentionally does
+not deallocate data blocks or clear truncated bytes. If the file later regrows
+into the preserved allocation before those bytes are overwritten, the old tail
+contents become visible again.
+
 #### Directories
 Directories use normal ext2 rev 0 directory records. New entries are added either by reusing slack space in an existing record or by allocating a new directory block. Deleted entries leave holes with `inode == 0`, and later creates may reuse those holes. `node_make_dir()` initializes `.` and `..`, and `node_delete()` only allows directory deletion when the directory is empty except for those two entries.
 
@@ -52,7 +58,7 @@ The filesystem uses several lock layers:
 ### Not Yet Supported
 - Hard links
 - Cross-directory rename
-- Truncate / file shrinking
+- Block reclamation during file shrinking
 - rwx permission enforcement
 - uid / gid
 - atime / mtime / ctime updates

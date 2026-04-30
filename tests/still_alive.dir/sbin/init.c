@@ -1,6 +1,5 @@
-#include "../../../crt/constants.h"
-#include "../../../crt/sys.h"
-#include "../../../crt/print.h"
+#include "../../../root/crt/sys.h"
+#include "../../../root/crt/print.h"
 
 void print_dramatically(char* str, unsigned delay){
   for (unsigned i = 0; str[i] != '\0'; i++){

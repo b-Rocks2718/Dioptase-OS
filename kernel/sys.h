@@ -46,6 +46,17 @@ enum TrapCode {
   TRAP_MOVE_VSCROLL = 36,
   TRAP_MOVE_HSCROLL = 37,
   TRAP_FD_BYTES_AVAILABLE = 38,
+  TRAP_TRUNCATE = 39,
+  TRAP_MKDIR = 40,
+  TRAP_RMDIR = 41,
+  TRAP_UNLINK = 42,
+  TRAP_SET_SPRITE_SCALE = 43,
+  TRAP_SET_SPRITE_COORDS = 44,
+  TRAP_LOAD_TEXT_TILES_COLORED = 45,
+  TRAP_GET_SPRITEMAP = 46,
+  TRAP_KILL,
+  TRAP_GET_SYNTH_AUDIO,
+  TRAP_REQUEST_PRIORITY,
 };
 
 #define SEEK_SET 0
@@ -96,7 +107,8 @@ struct SemDescriptor {
 };
 
 struct ChildDescriptor {
-  struct Promise* child;
+  struct TCB* child_tcb;
+  struct Promise* child_promise;
   int refcount;
 };
 

@@ -13,6 +13,9 @@
 #define TILEMAP_SIZE 32768
 #define TILE_FB_SIZE 9600
 
+#define SPRITEMAP_SIZE 0x8000
+#define NUM_SPRITES 16
+
 #define FB_NUM_TILES 4800
 #define FB_NUM_PIXELS 76800
 
@@ -23,6 +26,7 @@
 
 extern short* TILEMAP;
 extern short* TILE_FB;
+extern short* SPRITEMAP;
 extern short* TILE_HSCROLL;
 extern short* TILE_VSCROLL;
 extern char* VGA_STATUS;
@@ -32,6 +36,9 @@ extern char* TILE_SCALE;
 extern char* PIXEL_SCALE;
 
 extern short* PIXEL_FB;
+
+extern char* SPRITE_SCALES;
+extern short* SPRITE_COORDS;
 
 // initialize the VGA hardware and framebuffer
 void vga_init(void);

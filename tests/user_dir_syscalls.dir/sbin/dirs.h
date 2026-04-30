@@ -1,12 +1,10 @@
 #ifndef DIRS_H
 #define DIRS_H
 
-#include "../../../crt/dirent.h"
+#include "../../../root/crt/dirent.h"
+#include "../../../root/crt/string.h"
 
 #define BUFFER_SIZE 1024
-
-unsigned strlen(char* str);
-void* memcpy(void* dest, void* src, unsigned n);
 
 struct LinkedDirent {
     struct LinkedDirent *next;

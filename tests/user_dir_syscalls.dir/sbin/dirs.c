@@ -1,28 +1,10 @@
 #include "dirs.h"
-#include "../../../crt/print.h"
-#include "../../../crt/heap.h"
-#include "../../../crt/sys.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/stdlib.h"
+#include "../../../root/crt/sys.h"
 
 #define ENTRIES_PER_LINE 4
 #define SPACES_PER_TAB 8
-
-// Probably have these in CRT. They seem to be in kernel/string.h right now.
-unsigned strlen(char* str) {
-    unsigned len = 0;
-    while (str[len] != '\0') {
-        len++;
-    }
-    return len;
-}
-
-void* memcpy(void* dest, void* src, unsigned n) {
-    char* src_char = (char*) src;
-    char* dest_char = (char*) dest;
-    for (unsigned i = 0; i < n; i++) {
-        dest_char[i] = src_char[i];
-    }
-    return dest;
-}
 
 // Combines with '/'. Adds null terminator.
 char* combine_path(char* base_path, char* rest, unsigned base_length, unsigned rest_length) {

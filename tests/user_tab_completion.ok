@@ -1,0 +1,10 @@
+***[34mfolder[37m  [34msbin[37m    [37m
+***[34mfolder[37m  [37m
+***[37mfile0[37m                   [37mfile1[37m   [36mfile_link[37m       [34mfolder1[37m [36mfolder_link[37m
+***
+***
+***
+***
+***[31munknown[37m [49mfifo[37m    [48mcharacter_device[37m        [34mdirectory[37m       [48mblock_device[37m
+***[37mregular_file[37m    [36msymbolic_link[37m   [35msocket[37m  [37mwhiteout[37m        [37m
+***Done.

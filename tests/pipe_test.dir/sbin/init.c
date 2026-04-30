@@ -1,6 +1,5 @@
-#include "../../../crt/print.h"
-#include "../../../crt/sys.h"
-#include "../../../crt/constants.h"
+#include "../../../root/crt/print.h"
+#include "../../../root/crt/sys.h"
 
 // Read one start value, print its Collatz sequence, and free the list.
 int main(void) {

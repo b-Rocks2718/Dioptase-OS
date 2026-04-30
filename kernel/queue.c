@@ -444,6 +444,10 @@ bool keybuf_add(struct KeyBuf* kb, short p){
     // full
     return false;
   }
+  if (p == 0) {
+    // Don't add 0 keys.
+    return true;
+  }
 
   kb->buf[kb->head] = p;
   kb->head = (kb->head + 1) % KEYBUF_CAPACITY;
