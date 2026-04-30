@@ -71,7 +71,8 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
       if ((verify != NULL) && (verify->page_data == page_data)) { // Success!
         // say("Released cache lock - revalidate success\n", NULL);
         blocking_lock_release(&cache->lock);
-        return entry;
+        assert(verify == page->cache_entry, "page cache mismatch");
+        return verify;
       } else { // Fail (it got evicted)
         blocking_lock_release(&cache->lock);
         physmem_page_unlock(page);
