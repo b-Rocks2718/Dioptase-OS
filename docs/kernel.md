@@ -52,7 +52,7 @@ See `filesystem.md` for more details.
 ## Virtual Memory
 Uses a 2-level table, similar to x86
 
-TLB is software managed, so any miss invoked the tlb handler
+TLB is software managed, so any miss invokes the tlb handler
 
 VMEM currently supports:
 - private anonymous
