@@ -803,12 +803,8 @@ void tlb_shootdown(struct PageRef* ref) {
     // Keep track of created requests
     created_requests[i] = request;
   }
-  // Ask other cores to handle IPI
-  unsigned was = interrupts_disable();
-  send_ipi(0);
-  // Call IPI handler, since IPI doesn't interrupt the core being run on
-  ipi_handler(0);
-  interrupts_restore(was);
+  // All cores IPI
+  send_ipi(0); // This should interrupt us as well
   // Wait for all cores to finish shootdown
   countdownlatch_sync(&latch);
   // Clean up!
