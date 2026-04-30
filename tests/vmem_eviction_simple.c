@@ -57,7 +57,7 @@ static struct Page* mapped_page(char* mapping) {
   unsigned* pte = vmem_get_pte(get_pid(), (unsigned)mapping, false);
   assert(pte != NULL, "vmem evict tlb: failed to look up PTE\n");
   assert(*pte & VMEM_VALID, "vmem evict tlb: expected mapping to be valid\n");
-  return get_page(pte_phys_addr(*pte));
+  return get_page(pte_phys_addr(*pte), "get page - eviction test");
 }
 
 static char* map_fixture_page(void) {

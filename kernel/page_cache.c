@@ -61,7 +61,7 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
     if (entry != NULL) {
       // Lock page
       void* page_data = entry->page_data;
-      struct Page* page = get_page(page_data);
+      struct Page* page = get_page(page_data, "get page - cache acquire hit");
       blocking_lock_release(&cache->lock); // Can't hold the cache lock while acquiring a page lock
       physmem_page_lock(page);
 
@@ -82,7 +82,7 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
     // Insert into the page cache
     void* page_data = physmem_alloc(); // allocate a new page (pinned)
     entry = page_cache_insert(cache, node, offset, file_bytes, page_data);
-    struct Page* page = get_page(page_data);
+    struct Page* page = get_page(page_data, "get page - cache acquire miss");
     page->cache_entry = entry;
     blocking_lock_release(&cache->lock); // Release the cache lock while acquiring other locks
     // TODO need to make sure no one who tries to access the cache can see the data until we're done reading it in
@@ -179,11 +179,11 @@ void page_cache_destroy(struct PageCache* cache) {
 // NOT SYNCHRONIZED; testing purposes only
 void page_cache_flush_all(struct PageCache* cache) {
   blocking_lock_acquire(&cache->lock);
-  
+
   for (unsigned i = 0; i < cache->hash_map_size; i++) {
     struct PageCacheEntry* entry = cache->hash_map[i];
     while (entry != NULL) {
-      struct Page* page = get_page(entry->page_data);
+      struct Page* page = get_page(entry->page_data, "get page - cache flush all");
       physmem_page_lock(page);
       if (page->flags & PG_DIRTY) {
         struct Node* node = malloc(sizeof(struct Node));
@@ -196,6 +196,6 @@ void page_cache_flush_all(struct PageCache* cache) {
       entry = entry->next;
     }
   }
-  
+
   blocking_lock_release(&cache->lock);
 }

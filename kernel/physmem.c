@@ -33,10 +33,10 @@ static bool physmem_is_frame_address(unsigned phys_addr) {
   return (phys_addr & (FRAME_SIZE - 1)) == 0;
 }
 
-unsigned frame_index_from_address(unsigned phys_addr) {
+unsigned frame_index_from_address(unsigned phys_addr, char* source) {
   if (!physmem_is_frame_address(phys_addr)) {
-    int args[1] = {phys_addr};
-    say("tried to get index of frame address 0x%X\n", args);
+    int args[2] = {phys_addr, (int)source};
+    say("tried to get index of frame address 0x%X (called from %s)\n", args);
     panic("physmem: invalid frame address.\n");
   }
   return (phys_addr - FRAMES_ADDR_START) / FRAME_SIZE;
@@ -64,7 +64,7 @@ static void free_list_push(struct FreePageNode* block_addr, int order) {
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem: invalid block order.\n");
   assert(physmem_is_frame_address((unsigned)block_addr), "physmem: invalid block address.\n");
 
-  unsigned block_index = frame_index_from_address((unsigned)block_addr);
+  unsigned block_index = frame_index_from_address((unsigned)block_addr, "free list push");
   assert((block_index & ((1u << order) - 1)) == 0,
          "physmem: block address is not aligned to its size.\n");
 
@@ -97,7 +97,7 @@ static struct FreePageNode* free_list_pop(int order) {
   node->next = NULL;
   node->prev = NULL;
 
-  unsigned block_index = frame_index_from_address((unsigned)node);
+  unsigned block_index = frame_index_from_address((unsigned)node, "free list pop");
   mark_block_allocated(block_index);
 
   return node;
@@ -105,7 +105,7 @@ static struct FreePageNode* free_list_pop(int order) {
 
 // remove a specific block from free list for given order
 static struct FreePageNode* free_list_remove(struct FreePageNode* node) {
-  unsigned block_index = frame_index_from_address((unsigned)node);
+  unsigned block_index = frame_index_from_address((unsigned)node, "free list remove");
   unsigned order = node->free_order;
 
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem: invalid block order.\n");
@@ -242,7 +242,7 @@ void* physmem_alloc_order(int order) {
   while (current_order > order) {
     current_order--;
     unsigned buddy_addr = address_from_frame_index(
-        frame_index_from_address((unsigned)node) + (1u << current_order));
+        frame_index_from_address((unsigned)node, "physmem alloc order") + (1u << current_order));
     struct FreePageNode* buddy = (struct FreePageNode*)buddy_addr;
 
     free_list_push(buddy, current_order);
@@ -269,7 +269,7 @@ void physmem_free_order(void* page, int order) {
   unsigned phys_addr = (unsigned)page;
 
   for (unsigned i = 0; i < 1 << order; i++) {
-    struct Page* metadata = get_page((void*)(phys_addr + (i * FRAME_SIZE)));
+    struct Page* metadata = get_page((void*)(phys_addr + (i * FRAME_SIZE)), "get page - physmem free order");
     metadata->cache_entry = NULL;
     assert(metadata->refs == NULL, "freeing a page that's still referenced");
     physmem_set_page_flags(metadata, PG_PINNED); // TODO more flags? Locking?
@@ -281,7 +281,7 @@ void physmem_free_order(void* page, int order) {
       "physmem free: page is not a valid allocatable frame.\n");
 
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem free: invalid order.\n");
-  assert((frame_index_from_address(phys_addr) & ((1u << order) - 1)) == 0,
+  assert((frame_index_from_address(phys_addr, "physmem free order") & ((1u << order) - 1)) == 0,
          "physmem free: page address is not aligned to its size.\n");
 
   blocking_lock_acquire(&physmem_lock);
@@ -289,7 +289,7 @@ void physmem_free_order(void* page, int order) {
   __atomic_fetch_add(&order_frees[order], 1);
 
   // coalesce with buddy blocks if possible
-  unsigned block_index = frame_index_from_address(phys_addr);
+  unsigned block_index = frame_index_from_address(phys_addr, "physmem free order");
   while (order < PHYS_FRAME_MAX_ORDER) {
     unsigned buddy_index = block_index ^ (1u << order);
     if (buddy_index >= PHYS_FRAME_COUNT) {
@@ -355,7 +355,8 @@ void* physmem_alloc(void) {
   blocking_lock_release(&per_core->physmem_cache.lock);
 
   core_unpin(prev);
-  assert(get_page(page)->flags & PG_PINNED, "ALLOCATING A FRAME THAT'S NOT PINNED");
+  assert(page != 0, "ALLOCATING PAGE 0?");
+  assert(get_page(page, "get page - physmem alloc")->flags & PG_PINNED, "ALLOCATING A FRAME THAT'S NOT PINNED");
   return page;
 }
 
@@ -376,7 +377,7 @@ void physmem_free(void* page) {
 
   // push to local cache if there is room, otherwise free to global pool
   if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
-    struct Page* metadata = get_page(page);
+    struct Page* metadata = get_page(page, "get page - physmem free");
     metadata->cache_entry = NULL;
     assert(metadata->refs == NULL, "freeing a page that's still referenced");
     physmem_set_page_flags(metadata, PG_PINNED); // TODO more flags? Locking?
@@ -416,8 +417,8 @@ void physmem_check_leaks(void) {
   }
 }
 
-struct Page* get_page(void* frame) {
-  return &physmem_map[frame_index_from_address((unsigned)frame)];
+struct Page* get_page(void* frame, char* source) {
+  return &physmem_map[frame_index_from_address((unsigned)frame, source)];
 }
 
 void physmem_set_page_flags(struct Page* page, unsigned flags) {

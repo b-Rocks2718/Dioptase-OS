@@ -112,7 +112,7 @@ static void evictor_thread(void* _arg) {
     blocking_lock_release(&page_cache.lock);
     if (entry) {
       say("z\n", NULL);
-      struct Page* page = get_page(entry->page_data);
+      struct Page* page = get_page(entry->page_data, "get page - concurrency test");
       physmem_page_lock(page);
       if (!(page->flags & PG_PINNED)) {
         page_evict(page);

@@ -161,7 +161,7 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
     if (vme->flags & MMAP_SHARED) {
       assert(vme->file != NULL, "cannot yet handle shared anonymous pages\n");
       // shared mapping, remove the ref
-      struct Page* page = get_page((void*)pte_phys_addr(pte));
+      struct Page* page = get_page((void*)pte_phys_addr(pte), "get page - unmap VME");
       physmem_page_lock(page);
       if (pt[page_table_index] == pte) { // Revalidate - ensure page didn't get evicted between finding the page and locking it
         physmem_page_removeRef(page, va, (unsigned)pd);
@@ -672,7 +672,8 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
       }
       // PTE says read-only but VME says writable => first write
       // Dirty bit tracking
-      struct Page* page = get_page(pte_phys_addr(pte_value));
+      assert(pte_value != 0, "CRASHING OUT");
+      struct Page* page = get_page(pte_phys_addr(pte_value), "get page - fault handler write");
       physmem_page_lock(page);
       if (*pte == pte_value) { // Revalidate
         physmem_set_page_flags(page, PG_DIRTY);
@@ -715,7 +716,7 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
 
       // shared mapping points directly into page cache
       struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
-      struct Page* page = get_page(cache_entry->page_data);
+      struct Page* page = get_page(cache_entry->page_data, "get page - file backed shared");
       physmem_page_addRef(page, fault_addr);
 
       pte_flags &= ~VMEM_WRITE; // Map as read-only so we can do dirty tracking on first write
@@ -744,7 +745,7 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
       memcpy((void*)phys_page, cache_entry->page_data, FRAME_SIZE);
 
       // Release the old page once we're done copying
-      struct Page* source_page_metadata = get_page(cache_entry->page_data);
+      struct Page* source_page_metadata = get_page(cache_entry->page_data, "get page - fault handler file backed private");
       physmem_page_unlock(source_page_metadata);
 
       // TODO locking or something once swap eviction exists

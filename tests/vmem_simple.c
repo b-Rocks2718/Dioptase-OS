@@ -53,7 +53,7 @@ void shared_file_backed_test(void) {
 
   say("***    contents of hello.txt: %s\n", &p);
 
-  struct Page* page = get_page(pte_phys_addr(*vmem_get_pte(get_pid(), (unsigned)p, false)));
+  struct Page* page = get_page(pte_phys_addr(*vmem_get_pte(get_pid(), (unsigned)p, false)), "get page - simple test");
   assert(!(page->flags & PG_DIRTY), "Page should not be dirty\n");
 
   p[6] = '!';

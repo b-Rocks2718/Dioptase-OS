@@ -36,7 +36,7 @@ struct FreePageNode {
 void physmem_init(void);
 
 // get the frame index corresponding to a physical address (first frame is index 0)
-unsigned frame_index_from_address(unsigned phys_addr);
+unsigned frame_index_from_address(unsigned phys_addr, char* source);
 
 // get the physical address corresponding to a frame index (first frame is index 0)
 unsigned address_from_frame_index(unsigned frame_index);
@@ -82,7 +82,7 @@ struct Page {
 // static_assert(sizeof(struct Page) == 64, "Page is unexpected size; physmem assembly will be sad");
 
 // Get the metadata from a frame physical address
-struct Page* get_page(void* frame);
+struct Page* get_page(void* frame, char* source);
 
 // Set and clear flags (does not acquire lock)
 void physmem_set_page_flags(struct Page* page, unsigned flags);
