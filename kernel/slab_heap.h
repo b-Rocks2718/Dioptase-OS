@@ -16,17 +16,23 @@ struct SlabCache {
   unsigned objects_per_slab;
   struct Slab* full_slabs;
   struct Slab* partial_slabs;
-  struct Slab* empty_slabs;
+  struct Slab* empty_slabs; // keep max of 2 empty slabs
+  unsigned num_empty_slabs; 
 };
 
 struct FreeObject {
   struct FreeObject* next;
 };
 
+#define NUM_OBJECT_SIZES 9
+extern unsigned OBJECT_SIZES[NUM_OBJECT_SIZES];
+
 void slab_heap_init();
 
 void* slab_heap_alloc(unsigned size);
 
 void slab_heap_free(void* ptr);
+
+void slab_heap_destroy();
 
 #endif // SLAB_HEAP

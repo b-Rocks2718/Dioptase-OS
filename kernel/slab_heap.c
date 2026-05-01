@@ -3,9 +3,12 @@
 #include "constants.h"
 #include "physmem.h"
 #include "debug.h"
+#include "config.h"
+#include "per_core.h"
+#include "threads.h"
 
-#define NUM_OBJECT_SIZES 12
-unsigned OBJECT_SIZES[NUM_OBJECT_SIZES] = {4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
+#define NUM_OBJECT_SIZES 9
+unsigned OBJECT_SIZES[NUM_OBJECT_SIZES] = {4, 8, 16, 32, 64, 128, 256, 512, 1024};
 struct SlabCache slab_caches[NUM_OBJECT_SIZES];
 
 void slab_heap_init(){
@@ -16,6 +19,14 @@ void slab_heap_init(){
     slab_caches[i].full_slabs = NULL;
     slab_caches[i].partial_slabs = NULL;
     slab_caches[i].empty_slabs = NULL;
+    slab_caches[i].num_empty_slabs = 0;
+  }
+
+  for (int i = 0; i < MAX_CORES; i++) {
+    for (int j = 0; j < NUM_OBJECT_SIZES; j++) {
+      per_core_data[i].slab_cache_free_lists[j] = NULL;
+      per_core_data[i].slab_cache_counts[j] = 0;
+    }
   }
 }
 
@@ -33,7 +44,7 @@ struct Slab* slab_create(unsigned object_size) {
 
   // Initialize the free list
   struct FreeObject* current = (struct FreeObject*)slab->free_list;
-  for (unsigned i = metadata_objects; i < slab->free_objects - 1; i++) {
+  for (unsigned i = metadata_objects; i < slab->free_objects; i++) {
     current->next = (struct FreeObject*)((char*)current + object_size);
     current = current->next;
   }
@@ -53,9 +64,19 @@ void* slab_heap_alloc(unsigned size){
     }
   }
   
-  if (cache == NULL) {
-    return NULL; // No suitable cache found
+  assert(cache != NULL, "requested allocation size exceeds max supported size\n");
+
+  // check per-core free list first for fast path
+  int was = core_pin();
+  struct PerCore* core = get_per_core();
+  if (core->slab_cache_free_lists[i] != NULL) {
+    void* obj = core->slab_cache_free_lists[i];
+    core->slab_cache_free_lists[i] = ((struct FreeObject*)obj)->next; // Update free list
+    core->slab_cache_counts[i]--;
+    core_unpin(was);
+    return obj;
   }
+  core_unpin(was);
 
   blocking_lock_acquire(&cache->lock);
 
@@ -103,6 +124,7 @@ void* slab_heap_alloc(unsigned size){
     }
     slab->prev = NULL;
     cache->partial_slabs = slab;
+    cache->num_empty_slabs--;
 
     // Allocate from the newly moved slab
     void* obj = slab->free_list;
@@ -140,6 +162,10 @@ void slab_heap_free(void* obj){
   // Find the appropriate slab cache for the object's size
   struct SlabCache* cache = NULL;
   for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    // we don't need to lock the slab or anything to read object size, because 
+    // the slab metadata is immutable after creation
+    // and the slab won't be destroyed because we know at least one object 
+    // has not yet been freed back to it (the one we're freeing now)
     if (slab->object_size == OBJECT_SIZES[i]) {
       cache = &slab_caches[i];
       break;
@@ -155,12 +181,82 @@ void slab_heap_free(void* obj){
   slab->free_objects++;
 
   if (slab->free_objects == cache->objects_per_slab) {
-    // Move slab from partial slabs list to empty slabs list
+    // Remove slab from partial slabs list
+    if (slab->prev != NULL) {
+      slab->prev->next = slab->next;
+    } else {
+      cache->partial_slabs = slab->next;
+    }
+    if (slab->next != NULL) {
+      slab->next->prev = slab->prev;
+    }
+
+    if (cache->num_empty_slabs >= 2) {
+      // If we already have 2 empty slabs, free this one back to physical memory
+      physmem_free(slab);
+    } else {
+      // Move slab from partial slabs list to empty slabs list
+
+      // Add slab to empty slabs list
+      slab->next = cache->empty_slabs;
+      if (cache->empty_slabs != NULL) {
+        cache->empty_slabs->prev = slab;
+      }
+      slab->prev = NULL;
+      cache->empty_slabs = slab;
+      cache->num_empty_slabs++;
+    }
+  } else if (slab->free_objects == 1) {
+    // Move slab from full slabs list to partial slabs list
     
-  } else if (0) {
-    // Move slab from empty slabs list to partial slabs list
-   
+    // remove slab from full slabs list
+    if (slab->prev != NULL) {
+      slab->prev->next = slab->next;
+    } else {
+      cache->full_slabs = slab->next;
+    }
+    if (slab->next != NULL) {
+      slab->next->prev = slab->prev;
+    }
+
+    // add slab to partial slabs list
+    slab->next = cache->partial_slabs;
+    if (cache->partial_slabs != NULL) {
+      cache->partial_slabs->prev = slab;
+    }
+    slab->prev = NULL;
+    cache->partial_slabs = slab;
   }
 
   blocking_lock_release(&cache->lock);
+}
+
+void slab_heap_destroy() {
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    struct SlabCache* cache = &slab_caches[i];
+
+    // Free full slabs
+    struct Slab* slab = cache->full_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
+
+    // Free partial slabs
+    slab = cache->partial_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
+
+    // Free empty slabs
+    slab = cache->empty_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
+  }
 }
