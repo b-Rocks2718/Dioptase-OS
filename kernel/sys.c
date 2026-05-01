@@ -1115,6 +1115,11 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
   child->pending_signals = 0;
 
+  child->my_node = malloc(sizeof(struct CLHNode));
+  child->my_node->locked = false;
+  child->my_node->interrupt_state = 0;
+  child->my_pred = NULL;
+
   // set up descriptors
   copy_descriptors(parent, child);
 

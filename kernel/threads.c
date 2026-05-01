@@ -82,6 +82,8 @@ static void free_tcb(struct TCB* tcb) {
   node_free(tcb->cwd);
   free(tcb->cwd_path);
 
+  free(tcb->my_node);
+
   free(tcb);
 
   __atomic_fetch_add(&n_active, -1);
@@ -142,6 +144,14 @@ static struct TCB* make_tcb(bool is_daemon){
   tcb->parent_promise = NULL;
 
   tcb->pending_signals = 0;
+
+  // Daemon TCBs are intentionally leaked, so their CLH nodes must follow the
+  // same lifetime for leak accounting. Normal thread nodes are freed with the
+  // rest of their TCB resources.
+  tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
+  tcb->my_node->locked = false;
+  tcb->my_node->interrupt_state = 0;
+  tcb->my_pred = NULL;
 
   tcb->next = NULL;
 
@@ -214,6 +224,12 @@ void threads_init(void){
   scheduler_init();
 
   shutdown_barrier = CONFIG.num_cores;
+
+  for (int i = 0; i < MAX_CORES; ++i){
+    per_core_data[i].idle_clh_node = leak(sizeof(struct CLHNode));
+    per_core_data[i].idle_clh_node->locked = false;
+    per_core_data[i].idle_clh_node->interrupt_state = 0;
+  }
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
@@ -419,6 +435,11 @@ void bootstrap(void){
   tcb->uaccess_err_addr = 0;
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
+
+  assert(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
+  assert(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
+  tcb->my_node = per_core_data[me].idle_clh_node;
+  tcb->my_pred = NULL;
 
   core->current_thread = tcb;
 }

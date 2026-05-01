@@ -12,6 +12,8 @@
  *   to the other emulator cores
  * - wait until all workers are ready, then let them contend while the owner
  *   still holds the lock
+ * - for the CLH phase, each worker publishes its TCB so the owner can observe
+ *   that the worker has linked itself into the CLH queue (`my_pred != NULL`)
  * - have the owner release and immediately reacquire several times
  * - print the observed acquisition order without the test-harness `***`
  *   prefix, then print one deterministic `***` pass line after validation
@@ -29,6 +31,8 @@
 #include "../kernel/machine.h"
 #include "../kernel/print.h"
 #include "../kernel/threads.h"
+#include "../kernel/interrupts.h"
+#include "../kernel/per_core.h"
 
 #define MAX_WAITERS 3
 #define OWNER_ID 0
@@ -50,18 +54,16 @@ struct FairnessState {
   int done;
   int event_count;
   int order[MAX_EVENTS];
+  struct TCB* worker_tcb[SEEN_SLOTS];
 };
 
 struct WorkerArg {
   int id;
   int lock_kind;
-  struct CLHControlBlock* clh_cb;
 };
 
 static struct SpinLock normal_lock;
 static struct CLHLock clh_lock;
-static struct CLHControlBlock* clh_owner_cb;
-static struct CLHControlBlock* clh_worker_cbs[MAX_WAITERS];
 
 static struct FairnessState normal_state;
 static struct FairnessState clh_state;
@@ -82,6 +84,9 @@ static void reset_state(struct FairnessState* state) {
   state->event_count = 0;
   for (int i = 0; i < MAX_EVENTS; i++) {
     state->order[i] = -1;
+  }
+  for (int i = 0; i < SEEN_SLOTS; i++) {
+    state->worker_tcb[i] = NULL;
   }
 }
 
@@ -105,6 +110,11 @@ static void fairness_worker(void* arg) {
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   struct FairnessState* state = state_for_kind(worker->lock_kind);
 
+  int was = interrupts_disable();
+  struct TCB* me = get_current_tcb();
+  interrupts_restore(was);
+  __atomic_store_n((int*)&state->worker_tcb[worker->id], (int)me);
+
   __atomic_fetch_add(&state->ready, 1);
   while (__atomic_load_n(&state->go) == 0) {
     pause();
@@ -112,9 +122,9 @@ static void fairness_worker(void* arg) {
   __atomic_fetch_add(&state->attempting, 1);
 
   if (worker->lock_kind == LOCK_KIND_CLH) {
-    clh_acquire(&clh_lock, worker->clh_cb);
+    clh_acquire(&clh_lock);
     record_owner(state, worker->id);
-    clh_release(&clh_lock, worker->clh_cb);
+    clh_release(&clh_lock);
   } else {
     spin_lock_acquire(&normal_lock);
     record_owner(state, worker->id);
@@ -134,12 +144,11 @@ static enum CoreAffinity worker_affinity(int worker_index) {
   return core_affinities[core];
 }
 
-static void spawn_worker(int lock_kind, int id, struct CLHControlBlock* cb) {
+static void spawn_worker(int lock_kind, int id) {
   struct WorkerArg* arg = malloc(sizeof(struct WorkerArg));
   assert(arg != NULL, "clh fairness test: WorkerArg allocation failed.\n");
   arg->id = id;
   arg->lock_kind = lock_kind;
-  arg->clh_cb = cb;
 
   struct Fun* fun = malloc(sizeof(struct Fun));
   assert(fun != NULL, "clh fairness test: Fun allocation failed.\n");
@@ -179,8 +188,11 @@ static void wait_for_attempts(struct FairnessState* state, int waiters, char* pa
 
 static int clh_queued_count(int waiters) {
   int queued = 0;
-  for (int i = 0; i < waiters; i++) {
-    if (__atomic_load_n((int*)&clh_worker_cbs[i]->my_pred) != 0) {
+  for (int i = 1; i <= waiters; i++) {
+    struct TCB* worker_tcb =
+      (struct TCB*)__atomic_load_n((int*)&clh_state.worker_tcb[i]);
+    if (worker_tcb != NULL &&
+        __atomic_load_n((int*)&worker_tcb->my_pred) != 0) {
       queued += 1;
     }
   }
@@ -205,7 +217,7 @@ static void run_normal_phase(int waiters) {
   spin_lock_init(&normal_lock);
 
   for (int i = 1; i <= waiters; i++) {
-    spawn_worker(LOCK_KIND_NORMAL, i, NULL);
+    spawn_worker(LOCK_KIND_NORMAL, i);
   }
 
   wait_for_count(&normal_state.ready, waiters, READY_WAIT_BUDGET,
@@ -232,39 +244,30 @@ static void run_normal_phase(int waiters) {
 static void run_clh_phase(int waiters) {
   reset_state(&clh_state);
   clh_lock_init(&clh_lock);
-  clh_owner_cb = clh_create_control_block();
-
-  for (int i = 0; i < waiters; i++) {
-    clh_worker_cbs[i] = clh_create_control_block();
-  }
 
   for (int i = 1; i <= waiters; i++) {
-    spawn_worker(LOCK_KIND_CLH, i, clh_worker_cbs[i - 1]);
+    spawn_worker(LOCK_KIND_CLH, i);
   }
 
   wait_for_count(&clh_state.ready, waiters, READY_WAIT_BUDGET,
                  "clh fairness test: CLH workers did not become ready\n");
 
-  clh_acquire(&clh_lock, clh_owner_cb);
+  clh_acquire(&clh_lock);
   __atomic_store_n(&clh_state.go, 1);
   wait_for_clh_queue(waiters);
   settle_waiters();
 
   for (int i = 0; i < OWNER_REACQUIRE_ATTEMPTS; i++) {
-    clh_release(&clh_lock, clh_owner_cb);
-    clh_acquire(&clh_lock, clh_owner_cb);
+    clh_release(&clh_lock);
+    clh_acquire(&clh_lock);
     record_owner(&clh_state, OWNER_ID);
   }
 
-  clh_release(&clh_lock, clh_owner_cb);
+  clh_release(&clh_lock);
 
   wait_for_count(&clh_state.done, waiters, DONE_WAIT_BUDGET,
                  "clh fairness test: CLH workers did not finish\n");
-
-  for (int i = 0; i < waiters; i++) {
-    clh_destroy_control_block(clh_worker_cbs[i]);
-  }
-  clh_destroy_control_block(clh_owner_cb);
+  clh_lock_destroy(&clh_lock);
 }
 
 static int waiters_before_owner(struct FairnessState* state) {

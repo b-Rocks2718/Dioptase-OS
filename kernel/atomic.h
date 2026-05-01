@@ -16,27 +16,17 @@ struct PreemptSpinLock {
 };
 
 // CLH Node for fair spin lock
+// each thread gets exactly one CLH Node, as part of their TCB
+// Normal spinlock still marks the CLHNode as locked,
+// to enfore the invariant that threads only every acquire one spinlock at a time
 struct CLHNode {
   bool locked;
+  int interrupt_state;
 };
 
 // CLH lock for fair spin lock
 struct CLHLock {
-  struct CLHNode dummy_node;
   struct CLHNode* tail;
-};
-
-// CLH control block for one participating thread.
-//
-// Invariant: a thread must use one control block per CLH lock it can acquire.
-// CLH release rotates my_node to the predecessor node, so allocated_node records
-// the heap node originally created for this control block. Destruction is only
-// safe after the associated lock will never be used again
-struct CLHControlBlock {
-  struct CLHNode* my_node;
-  struct CLHNode* my_pred;
-  struct CLHNode* allocated_node;
-  int interrupt_state;
 };
 
 // initializes a spin lock to the unlocked state
@@ -72,17 +62,17 @@ void preempt_spin_lock_release(struct PreemptSpinLock* lock);
 // initializes a CLH lock to the unlocked state
 void clh_lock_init(struct CLHLock* lock);
 
-// creates a CLH control block for the calling thread
-struct CLHControlBlock* clh_create_control_block();
-
 // will acquire the CLH lock in a fair manner, with FIFO ordering
-void clh_acquire(struct CLHLock* lock, struct CLHControlBlock* cb);
+void clh_acquire(struct CLHLock* lock);
 
 // releases the CLH lock, allowing the next waiting thread to acquire it
-void clh_release(struct CLHLock* lock, struct CLHControlBlock* cb);
+void clh_release(struct CLHLock* lock);
 
-// destroys a CLH control block after its associated lock is retired
-void clh_destroy_control_block(struct CLHControlBlock* cb);
+// destroys a CLH lock after it is done being used
+void clh_lock_destroy(struct CLHLock* lock);
+
+// destroys a CLH lock and frees its memory after it is no longer needed
+void clh_lock_free(struct CLHLock* lock);
 
 // simple barrier synchronization for a known number of threads
 // threads spin until all threads have reached the barrier
