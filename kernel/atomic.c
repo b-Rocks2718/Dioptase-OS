@@ -8,17 +8,6 @@
 #include "threads.h"
 #include "heap.h"
 
-// return NULL until everything is set up to use tcb->my_node
-static struct TCB* spin_lock_owner_tcb(void){
-  int was = interrupts_disable();
-  struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
-  if (tcb == NULL || tcb->my_node == NULL) {
-    return NULL;
-  }
-  return tcb;
-}
-
 void spin_lock_init(struct SpinLock* lock){
   lock->the_lock = 0;
   lock->interrupt_state = 0;
@@ -27,8 +16,9 @@ void spin_lock_init(struct SpinLock* lock){
 // will disable interrupts on each attempt at getting the lock
 // when it returns, interrupts are disabled
 void spin_lock_acquire(struct SpinLock* lock){
-  struct TCB* me = spin_lock_owner_tcb();
-
+  int was = interrupts_disable();
+  struct TCB* me = get_current_tcb();
+  interrupts_restore(was);
   
   assert(!me->my_node->locked,
     "spin_lock_acquire: thread attempted to acquire a spinlock while already holding one.\n");
@@ -198,7 +188,9 @@ void clh_lock_free(struct CLHLock* lock){
 // threads spin until all threads have reached the barrier
 void spin_barrier_sync(int* barrier){
   // ensure we are not holding a spinlock
-  struct TCB* me = spin_lock_owner_tcb();
+  int was = interrupts_disable();
+  struct TCB* me = get_current_tcb();
+  interrupts_restore(was);
   assert(!me->my_node->locked,
     "spin_barrier_sync: thread attempted to synchronize while holding a spinlock.\n");
 
