@@ -22,6 +22,7 @@
 #include "../kernel/string.h"
 #include "../kernel/threads.h"
 #include "../kernel/barrier.h"
+#include "../kernel/semaphore.h"
 
 #define RENAME_WORKERS 2
 #define RENAME_ROUNDS 4
@@ -38,6 +39,7 @@ struct RenameWorkerArgs {
 
 static struct Barrier rename_start_barrier;
 static struct Barrier rename_done_barrier;
+static struct Semaphore rename_worker_exit_sem;
 static unsigned expected_inumbers[RENAME_WORKERS];
 
 static char* initial_names[RENAME_WORKERS] = {
@@ -131,6 +133,7 @@ static void rename_worker(void* arg) {
 
   // threads.c frees Fun->arg in the reaper after this worker returns.
   barrier_sync(done);
+  sem_up(&rename_worker_exit_sem);
 }
 
 // Loads one worker fixture before the threaded phase so the test knows the
@@ -165,6 +168,7 @@ int kernel_main(void) {
 
   barrier_init(&rename_start_barrier, RENAME_WORKERS + 1);
   barrier_init(&rename_done_barrier, RENAME_WORKERS + 1);
+  sem_init(&rename_worker_exit_sem, 0);
 
   for (unsigned i = 0; i < RENAME_WORKERS; ++i) {
     expected_inumbers[i] = load_worker_fixture(i);
@@ -191,8 +195,13 @@ int kernel_main(void) {
   barrier_sync(&rename_start_barrier);
   barrier_sync(&rename_done_barrier);
 
+  for (unsigned i = 0; i < RENAME_WORKERS; ++i) {
+    sem_down(&rename_worker_exit_sem);
+  }
+
   barrier_destroy(&rename_start_barrier);
   barrier_destroy(&rename_done_barrier);
+  sem_destroy(&rename_worker_exit_sem);
 
   for (unsigned i = 0; i < RENAME_WORKERS; ++i) {
     assert_name_pair(i, expected_inumbers[i], expected_texts[i], RENAME_ROUNDS,

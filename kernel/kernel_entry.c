@@ -42,11 +42,7 @@ void kernel_entry(void){
   __atomic_fetch_add(&awake_cores, 1);
 
   if (me == 0){
-    register_spurious_handlers();
     vga_init();
-    uart_init();
-    audio_init();
-    exc_init();
 
     say("| Core %d starting up...\n", &me);
 
@@ -56,11 +52,20 @@ void kernel_entry(void){
 
     say("| Mem size: 128MiB\n", NULL);
 
-    say("| Initializing physmem allocator...\n", NULL);
-    physmem_init();
+    register_spurious_handlers();
 
     say("| Initializing heap...\n", NULL);
     heap_init((void*)HEAP_START, HEAP_SIZE);
+
+    // init idle thread clh nodes
+    for (int i = 0; i < MAX_CORES; ++i){
+      per_core_data[i].idle_clh_node = leak(sizeof(struct CLHNode));
+      per_core_data[i].idle_clh_node->locked = false;
+      per_core_data[i].idle_clh_node->interrupt_state = 0;
+    }
+
+    say("| Initializing physmem allocator...\n", NULL);
+    physmem_init();
 
     say("| Initializing virtual memory...\n", NULL);
     vmem_global_init();
@@ -70,12 +75,14 @@ void kernel_entry(void){
     // when running on emulator, this will actually be a much lower frequency
 
     say("| Initializing threads...\n", NULL);
+    bootstrap();
     threads_init();
 
-    say("| Initializing sd driver...\n", NULL);
+    say("| Initializing drivers...\n", NULL);
+    uart_init();
+    audio_init();
+    exc_init();
     sd_init();
-
-    say("| Initializing PS/2 driver...\n", NULL);
     ps2_init();
 
     say("| Initializing ext2 filesystem...\n", NULL);
@@ -97,6 +104,9 @@ void kernel_entry(void){
     // register IPI handler for other cores to wake up this core
     register_handler((void*)boot_ipi_handler_, (void*)IPI_IVT_ENTRY);
 
+    // make the heap synchronized now
+    heap_sync_init();
+
     // initialize other cores
     say("| Waking up other cores...\n", NULL);
     for (int i = 1; i < num_cores; ++i) {
@@ -111,12 +121,11 @@ void kernel_entry(void){
     register_handler((void*)ipi_handler_, (void*)IPI_IVT_ENTRY);
   } else {
     say("| Core %d starting up...\n", &me);
+    
+    bootstrap();
   }
 
   vmem_core_init();
-
-  say("| Core %d creating idle thread context...\n", &me);
-  bootstrap();
 
   say("| Core %d enabling interrupts...\n", &me);
   interrupts_restore(DEFAULT_INTERRUPT_MASK);

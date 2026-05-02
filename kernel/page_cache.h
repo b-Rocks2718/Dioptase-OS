@@ -37,6 +37,9 @@ struct PageCache {
 // initialize the page cache
 void page_cache_init(struct PageCache* cache, unsigned hash_map_size);
 
+// destroy page-cache synchronization after all mappings/cache users are gone
+void page_cache_destroy(struct PageCache* cache);
+
 // lookup a page if it is in the cache, insert into cache if not
 struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* node, 
     unsigned offset, unsigned file_bytes);

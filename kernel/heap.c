@@ -20,7 +20,6 @@
 #include "blocking_lock.h"
 
 #define HEAP_WORD_BYTES 4u
-#define HEAP_DEBUG 1
 
 // Defined in kernel_entry.c; used here for heap state validation.
 extern unsigned HEAP_START;
@@ -32,58 +31,12 @@ static unsigned n_leak = 0;
 
 static unsigned *array;
 static unsigned len;
-static bool safe = false;
+static bool sync_init_done = false;
 static unsigned avail = 0; // head of the free-list; index 0 stays reserved as a sentinel
 static struct BlockingLock theLock;
 
 static void makeTaken(unsigned i, unsigned entries);
 static void makeAvail(unsigned i, unsigned entries);
-
-#ifdef HEAP_DEBUG
-// Purpose: emit a diagnostic line for makeTaken/makeAvail corruption.
-// Inputs: op_id identifies the callsite (0=makeTaken, 1=makeAvail);
-// i is the header index; entry_count is the block size in words.
-// Outputs: prints a single line to the console.
-// Preconditions: heap_init has set array/len; interrupts may be enabled.
-// Postconditions: no heap state changes.
-// CPU state assumptions: kernel mode; safe to call print routines.
-static void heap_debug_log_block(unsigned op_id, unsigned i, unsigned entry_count) {
-  unsigned core = get_core_id();
-  int args[7] = {
-    (int)core,
-    (int)op_id,
-    (int)i,
-    (int)entry_count,
-    (int)len,
-    (int)avail,
-    (int)array
-  };
-  say("| HEAP debug: core=%d op=%d idx=%d entries=%d len=%d avail=%d base=0x%X\n", args);
-}
-
-// Purpose: report an invalid pointer passed to free.
-// Inputs: p_addr is the pointer value; idx is the computed header index.
-// Outputs: prints a single line to the console.
-// Preconditions: heap_init has set array/len; interrupts may be enabled.
-// Postconditions: no heap state changes.
-// CPU state assumptions: kernel mode; safe to call print routines.
-static void heap_debug_log_bad_free(unsigned p_addr, int idx) {
-  unsigned core = get_core_id();
-  unsigned heap_start = (unsigned)array;
-  unsigned heap_end = heap_start + (len * HEAP_WORD_BYTES);
-  int args[7] = {
-    (int)core,
-    (int)p_addr,
-    (int)idx,
-    (int)heap_start,
-    (int)heap_end,
-    (int)len,
-    (int)avail
-  };
-  say("| HEAP debug: bad free core=%d p=0x%X idx=%d heap=0x%X-0x%X len=%d avail=%d\n",
-      args);
-}
-#endif
 
 // Purpose: sanity-check global heap state to catch corruption early.
 // Inputs: none.
@@ -141,28 +94,26 @@ unsigned footerFromHeader(unsigned i) { return i + size(i) - 1; }
 
 unsigned sanity(unsigned i) {
   heap_validate_state();
-  if (safe) {
-    if (i == 0)
-      return 0;
-    if (i >= len) {
-      int args[3] = {(int)i, (int)len, (int)array};
-      say("| HEAP sanity: i=%d len=%d base=0x%X\n", args);
-      panic("bad header index\n");
-    }
-    unsigned footer = footerFromHeader(i);
-    if (footer >= len) {
-      int args[3] = {(int)i, (int)footer, (int)len};
-      say("| HEAP bad footer: header=%d footer=%d len=%d\n", args);
-      panic("bad footer index\n");
-    }
-    unsigned hv = array[i];
-    unsigned fv = array[footer];
+  if (i == 0)
+    return 0;
+  if (i >= len) {
+    int args[3] = {(int)i, (int)len, (int)array};
+    say("| HEAP sanity: i=%d len=%d base=0x%X\n", args);
+    panic("bad header index\n");
+  }
+  unsigned footer = footerFromHeader(i);
+  if (footer >= len) {
+    int args[3] = {(int)i, (int)footer, (int)len};
+    say("| HEAP bad footer: header=%d footer=%d len=%d\n", args);
+    panic("bad footer index\n");
+  }
+  unsigned hv = array[i];
+  unsigned fv = array[footer];
 
-    if (hv != fv) {
-      int args[3] = {(int)i, (int)hv, (int)fv};
-      say("| HEAP bad block: header=%d hv=0x%X fv=0x%X\n", args);
-      panic("bad block\n");
-    }
+  if (hv != fv) {
+    int args[3] = {(int)i, (int)hv, (int)fv};
+    say("| HEAP bad block: header=%d hv=0x%X fv=0x%X\n", args);
+    panic("bad block\n");
   }
 
   return i;
@@ -199,11 +150,6 @@ static void remove(unsigned i) {
 
 // mark one block free and splice it at the head of the avail list
 static void makeAvail(unsigned i, unsigned entry_count) {
-#ifdef HEAP_DEBUG
-  if ((entry_count & 1) != 0) {
-    heap_debug_log_block(1, i, entry_count);
-  }
-#endif
   assert((entry_count & 1) == 0, "making avail with odd entry count\n");
   array[i] = entry_count;
   array[footerFromHeader(i)] = entry_count;
@@ -217,25 +163,28 @@ static void makeAvail(unsigned i, unsigned entry_count) {
 
 // mark one block allocated by setting the low-bit tag in header/footer
 static void makeTaken(unsigned i, unsigned entry_count) {
-#ifdef HEAP_DEBUG
-  if ((entry_count & 1) != 0) {
-    heap_debug_log_block(0, i, entry_count);
-  }
-#endif
   assert((entry_count & 1) == 0, "making taken with odd entry count\n");
   array[i] = entry_count + 1;
   array[footerFromHeader(i)] = entry_count + 1;
 }
 
 void check_leaks() {
-  blocking_lock_acquire(&theLock);
+  bool locked = false;
+  if (sync_init_done) {
+    blocking_lock_acquire(&theLock);
+    locked = true;
+  }
+
   int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
   if (n_free + n_leak != n_malloc) {
     say("| Warning: heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
   } else {
     say("| No heap leaks detected: (n_free:%d+n_leak:%d) == n_malloc:%d\n", args);
   }
-  blocking_lock_release(&theLock);
+
+  if (locked) {
+    blocking_lock_release(&theLock);
+  }
 }
 
 void heap_init(void* base, unsigned bytes) {
@@ -243,8 +192,6 @@ void heap_init(void* base, unsigned bytes) {
     int args[2] = {(int)base, bytes};
     say("| Heap init (start=0x%X, size=0x%X)\n", args); 
   }
-
-  blocking_lock_init(&theLock);
 
   unsigned alignedBase = ((unsigned)base + 4 + 3) / 4 * 4 - 4;
   assert((alignedBase % 4) == 0, "heap base not aligned to 4 bytes after alignment\n");
@@ -277,11 +224,18 @@ void heap_init(void* base, unsigned bytes) {
   makeTaken(0, 2);
   makeAvail(2, len - 4);
   makeTaken(len - 2, 2);
+}
 
-#ifdef HEAP_DEBUG
-  // Enable deep heap checks while debugging to catch corruption early.
-  safe = true;
-#endif
+void heap_sync_init() {
+  blocking_lock_init(&theLock);
+  sync_init_done = true;
+}
+
+// to be called only from kernel_shutdown
+void heap_sync_destroy() {
+  if (!sync_init_done) return;
+  sync_init_done = false;
+  blocking_lock_destroy(&theLock);
 }
 
 void *malloc(unsigned bytes) {
@@ -297,7 +251,9 @@ void *malloc(unsigned bytes) {
     entries++;
   }
 
-  blocking_lock_acquire(&theLock);
+  if (sync_init_done){
+    blocking_lock_acquire(&theLock);
+  }
 
   void *res = 0;
 
@@ -348,7 +304,9 @@ void *malloc(unsigned bytes) {
     panic("malloc failed\n");
   }
 
-  blocking_lock_release(&theLock);
+  if (sync_init_done){
+    blocking_lock_release(&theLock);
+  }
 
   return res;
 }
@@ -364,28 +322,20 @@ void free(void *p) {
   if (p == (void *)array)
     return;
 
-  blocking_lock_acquire(&theLock);
-
-#ifdef HEAP_DEBUG
-  heap_validate_state();
-#endif
+  if (sync_init_done){
+    blocking_lock_acquire(&theLock);
+  }
 
   n_free += 1;
   unsigned p_addr = (unsigned)p;
   unsigned heap_start = (unsigned)array;
   unsigned heap_end = heap_start + (len * HEAP_WORD_BYTES);
   if (p_addr < heap_start || p_addr >= heap_end || ((p_addr - heap_start) & (HEAP_WORD_BYTES - 1)) != 0) {
-#ifdef HEAP_DEBUG
-    heap_debug_log_bad_free(p_addr, -1);
-#endif
     panic("heap: free pointer out of range\n");
   }
 
   int idx = ((p_addr - heap_start) / HEAP_WORD_BYTES) - 3;
   if (idx < 0 || (unsigned)idx >= len) {
-#ifdef HEAP_DEBUG
-    heap_debug_log_bad_free(p_addr, idx);
-#endif
     panic("heap: free index out of range\n");
   }
   sanity(idx);
@@ -414,5 +364,7 @@ void free(void *p) {
 
   makeAvail(idx, sz);
 
-  blocking_lock_release(&theLock);
+  if (sync_init_done){
+    blocking_lock_release(&theLock);
+  }
 }

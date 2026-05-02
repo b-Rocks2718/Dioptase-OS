@@ -51,17 +51,17 @@ static int destroy_waiter_done = 0;
 
 // Read the number of threads currently blocked in gate_wait().
 static unsigned gate_waiter_count(void) {
-  spin_lock_acquire(&gate.cv.lock);
+  clh_lock_acquire(&gate.cv.lock);
   unsigned waiters = gate.cv.waiters;
-  spin_lock_release(&gate.cv.lock);
+  clh_lock_release(&gate.cv.lock);
   return waiters;
 }
 
 // Read the number of threads blocked on the gate's internal blocking lock.
 static unsigned gate_lock_waiter_count(void) {
-  spin_lock_acquire(&gate.lock.semaphore.lock);
+  clh_lock_acquire(&gate.lock.semaphore.lock);
   unsigned waiters = gate.lock.semaphore.wait_queue.size;
-  spin_lock_release(&gate.lock.semaphore.lock);
+  clh_lock_release(&gate.lock.semaphore.lock);
   return waiters;
 }
 
@@ -293,11 +293,9 @@ void kernel_main(void) {
     yield();
   }
 
-  if (gate_lock_waiter_count() != 0) {
-    int args[2] = { (int)gate_lock_waiter_count(), 0 };
-    say("***gate FAIL lock waiters after destroy=%d expected=%d\n", args);
-    panic("gate test: gate_destroy left lock waiters queued\n");
-  }
+  // gate_destroy() destroys the internal blocking lock, so the test must not
+  // inspect that lock's queue after this point. The behavioral contract is that
+  // the blocked waiter is reaped rather than resumed.
   if (__atomic_load_n(&destroy_waiter_done) != 0) {
     int args[2] = { __atomic_load_n(&destroy_waiter_done), 0 };
     say("***gate FAIL destroy waiter done=%d expected=%d\n", args);
@@ -312,6 +310,8 @@ void kernel_main(void) {
     say("***gate FAIL holder did not exit after destroy\n", NULL);
     panic("gate test: holder thread did not exit after destroy\n");
   }
+
+  sem_destroy(&holder_release_sem);
 
   say("***gate ok\n", NULL);
   say("***gate test complete\n", NULL);

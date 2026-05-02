@@ -19,6 +19,9 @@ enum SdDrive {
 // Initialize the SD driver and both drives. This must be called before any other SD functions
 void sd_init(void);
 
+// Destroy SD driver synchronization after filesystem/device users have stopped
+void sd_destroy(void);
+
 // Read multiple blocks starting from the given block number into the destination buffer
 // The buffer must be at least num_blocks * 512 bytes
 // Returns 0 on success or a negative error code on failure

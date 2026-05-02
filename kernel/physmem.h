@@ -34,6 +34,9 @@ struct FreePageNode {
 // initialize physical page allocator
 void physmem_init(void);
 
+// destroy allocator synchronization state after all allocation/free activity stops
+void physmem_destroy_locks(void);
+
 // get the frame index corresponding to a physical address (first frame is index 0)
 unsigned frame_index_from_address(unsigned phys_addr);
 

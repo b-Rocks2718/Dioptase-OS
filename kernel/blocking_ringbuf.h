@@ -6,7 +6,7 @@
 
 struct BlockingRingBuf {
   char* buf;
-  struct SpinLock spinlock;
+  struct CLHLock spinlock;
   struct Semaphore add_sem;
   struct Semaphore remove_sem;
   unsigned capacity;

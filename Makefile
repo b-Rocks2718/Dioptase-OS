@@ -16,9 +16,10 @@ SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
 # memory map
 TEXT_LOAD_ADDR := 0x10000
-DATA_LOAD_ADDR := 0x80000
+DATA_LOAD_ADDR := 0x90000
 RODATA_LOAD_ADDR := 0xD0000
 BSS_LOAD_ADDR := 0xE0000
+KERNEL_STACKS_BOTTOM := 0xF0000
 
 # ext2 filesystem config
 BLOCK_SIZE := 2048 # 1024, 2048, or 4096
@@ -509,6 +510,35 @@ define assemble_kernel_image
 	rodata_num_blocks=$$(((data_base - rodata_base) / $(KERNEL_BLOCK_SIZE))); \
 	data_num_blocks=$$(((bss_base - data_base) / $(KERNEL_BLOCK_SIZE))); \
 	bss_num_blocks=$$(((end_base - bss_base) / $(KERNEL_BLOCK_SIZE))); \
+	text_load_start=$$(( $(TEXT_LOAD_ADDR) )); \
+	data_load_start=$$(( $(DATA_LOAD_ADDR) )); \
+	rodata_load_start=$$(( $(RODATA_LOAD_ADDR) )); \
+	bss_load_start=$$(( $(BSS_LOAD_ADDR) )); \
+	kernel_stacks_bottom=$$(( $(KERNEL_STACKS_BOTTOM) )); \
+	text_load_end=$$(( text_load_start + text_num_blocks * $(KERNEL_BLOCK_SIZE) )); \
+	data_load_end=$$(( data_load_start + data_num_blocks * $(KERNEL_BLOCK_SIZE) )); \
+	rodata_load_end=$$(( rodata_load_start + rodata_num_blocks * $(KERNEL_BLOCK_SIZE) )); \
+	bss_load_end=$$(( bss_load_start + bss_num_blocks * $(KERNEL_BLOCK_SIZE) )); \
+	if [ $$text_load_end -gt $$data_load_start ]; then \
+	  echo "Kernel build error: text load range overlaps data load range." >&2; \
+	  echo "  text: $(TEXT_LOAD_ADDR)-$$text_load_end data starts: $(DATA_LOAD_ADDR)" >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$data_load_end -gt $$rodata_load_start ]; then \
+	  echo "Kernel build error: data load range overlaps rodata load range." >&2; \
+	  echo "  data: $(DATA_LOAD_ADDR)-$$data_load_end rodata starts: $(RODATA_LOAD_ADDR)" >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$rodata_load_end -gt $$bss_load_start ]; then \
+	  echo "Kernel build error: rodata load range overlaps bss load range." >&2; \
+	  echo "  rodata: $(RODATA_LOAD_ADDR)-$$rodata_load_end bss starts: $(BSS_LOAD_ADDR)" >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$bss_load_end -gt $$kernel_stacks_bottom ]; then \
+	  echo "Kernel build error: bss load range overlaps kernel stacks." >&2; \
+	  echo "  bss: $(BSS_LOAD_ADDR)-$$bss_load_end stacks start: $(KERNEL_STACKS_BOTTOM)" >&2; \
+	  exit 1; \
+	fi; \
 	"$(BASM)" -kernel -bin -o "$@" $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) $(1) \
 	  $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_AFTER_BOOT) \
 	  -DTEXT_START_BLOCK=$$text_start_block -DTEXT_NUM_BLOCKS=$$text_num_blocks -DTEXT_LOAD_ADDR=$(TEXT_LOAD_ADDR) \

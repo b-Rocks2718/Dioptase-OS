@@ -38,6 +38,7 @@ struct WorkerArg {
 };
 
 static int destroyed = 0;
+static int workers_finished = 0;
 
 // Free the payload and record that its destructor ran.
 static void payload_destructor(void* ptr) {
@@ -73,6 +74,7 @@ static void sharedptr_worker(void* arg) {
 
   strongptr_drop(&local);
   barrier_sync(w->done);
+  __atomic_fetch_add(&workers_finished, 1);
 }
 
 // Start the worker set, drop the root, and verify one final destruction.
@@ -80,6 +82,7 @@ void kernel_main(void) {
   say("***shared_ptr_parallel test start\n", NULL);
 
   __atomic_store_n(&destroyed, 0);
+  __atomic_store_n(&workers_finished, 0);
 
   struct Payload* payload = malloc(sizeof(struct Payload));
   assert(payload != NULL, "shared_ptr_parallel: payload allocation failed.\n");
@@ -116,6 +119,10 @@ void kernel_main(void) {
   strongptr_drop(&root);
 
   barrier_sync(&done);
+
+  while (__atomic_load_n(&workers_finished) != WORKER_COUNT) {
+    yield();
+  }
 
   barrier_destroy(&start);
   barrier_destroy(&done);

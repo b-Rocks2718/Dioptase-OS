@@ -9,6 +9,12 @@ void blocking_queue_init(struct BlockingQueue* b) {
   sem_init(&b->sem, 0);
 }
 
+void blocking_queue_destroy(struct BlockingQueue* b) {
+  assert(b != NULL, "blocking_queue_destroy: queue is NULL.\n");
+  sem_destroy(&b->sem);
+  generic_spin_queue_destroy(&b->queue);
+}
+
 // enqueue one element and publish one available item
 void blocking_queue_add(struct BlockingQueue* b, struct GenericQueueElement* element) {
   assert(element != NULL, "Cannot add NULL element to blocking queue.\n");

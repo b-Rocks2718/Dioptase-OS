@@ -48,6 +48,9 @@ struct VME {
 // Called once by the first core to set up global structures
 void vmem_global_init(void);
 
+// Destroy virtual-memory global synchronization after all address spaces stop
+void vmem_global_destroy(void);
+
 // Per-core virtual memory initialization
 void vmem_core_init(void);
 

@@ -14,6 +14,12 @@ void page_cache_init(struct PageCache* cache, unsigned hash_map_size){
   }
 }
 
+// to be called only from kernel_shutdown
+void page_cache_destroy(struct PageCache* cache){
+  assert(cache != NULL, "page_cache_destroy: cache is NULL.\n");
+  blocking_lock_destroy(&cache->lock);
+}
+
 // lookup a page in the page cache by inode and page index, incrementing its reference count if found
 // does not lock the cache, 
 static struct PageCacheEntry* page_cache_lookup(struct PageCache* cache, struct Node* node, unsigned offset){

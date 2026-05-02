@@ -1804,6 +1804,8 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
 }
 
 void bcache_destroy(struct BlockCache* cache){
+  assert(cache != NULL, "bcache_destroy: cache is NULL.\n");
+  blocking_lock_destroy(&cache->lock);
   free(cache->block_cache);
 }
 

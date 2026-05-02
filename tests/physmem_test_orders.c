@@ -285,5 +285,7 @@ void kernel_main(void) {
     sem_down(&finished_sem);
   }
 
+  sem_destroy(&finished_sem);
+
   say("***physmem test complete\n", NULL);
 }

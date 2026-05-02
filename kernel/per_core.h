@@ -20,6 +20,8 @@ struct PerCore {
   unsigned scheduler_iters;
   bool mlfq_boost_pending;
   bool rebalance_pending;
+
+  struct CLHNode* idle_clh_node;
   
   // I/O
   struct KeyBuf keybuf;

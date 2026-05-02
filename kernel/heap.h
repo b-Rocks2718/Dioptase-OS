@@ -17,6 +17,13 @@
 // initialize the heap allocator over one writable memory range
 void heap_init(void* start, unsigned size);
 
+// initialize heap synchronization primitives; 
+// must be called before using malloc/free in a multi-core context
+void heap_sync_init();
+
+// destroy heap synchronization after all other cores have stopped mutating heap
+void heap_sync_destroy(void);
+
 // allocate at least size bytes, or panic on allocator failure
 void* malloc(unsigned size);
 

@@ -53,6 +53,11 @@ void vmem_global_init(void){
   page_cache_init(&page_cache, 4096);
 }
 
+// to be called only by kernel_shutdown
+void vmem_global_destroy(void){
+  page_cache_destroy(&page_cache);
+}
+
 void vmem_core_init(void){
   tlb_flush();
   set_pid(0);

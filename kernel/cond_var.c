@@ -14,7 +14,7 @@ struct CondVarWaiter {
 };
 
 void cond_var_init(struct CondVar* cv){
-  spin_lock_init(&cv->lock);
+  clh_lock_init(&cv->lock);
   generic_queue_init(&cv->wait_queue);
   cv->waiters = 0;
 }
@@ -33,10 +33,10 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   // Publish this waiter before releasing the external lock so any later
   // signal/broadcast can target this exact waiter, even if it has not reached
   // sem_down() yet.
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   generic_queue_add(&cv->wait_queue, &waiter.link);
   cv->waiters += 1;
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   // release external lock before waiting
   blocking_lock_release(external_lock);
@@ -59,14 +59,14 @@ void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
 
   struct CondVarWaiter* waiter = NULL;
 
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   if (cv->waiters > 0) {
     waiter = (struct CondVarWaiter*)generic_queue_remove(&cv->wait_queue);
     assert(waiter != NULL,
       "cond_var signal: waiter count was non-zero but queue was empty.\n");
     cv->waiters -= 1;
   }
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   if (waiter != NULL) {
     sem_up(&waiter->semaphore);
@@ -80,10 +80,10 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
 
   struct CondVarWaiter* waiter = NULL;
 
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   waiter = (struct CondVarWaiter*)generic_queue_remove_all(&cv->wait_queue);
   cv->waiters = 0;
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   while (waiter != NULL) {
     struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
@@ -96,11 +96,11 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
 void cond_var_destroy(struct CondVar* cv){
   assert(cv != NULL, "cond_var destroy: cv is NULL.\n");
 
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   struct CondVarWaiter* waiter =
     (struct CondVarWaiter*)generic_queue_remove_all(&cv->wait_queue);
   cv->waiters = 0;
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   while (waiter != NULL) {
     struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
@@ -108,6 +108,7 @@ void cond_var_destroy(struct CondVar* cv){
     sem_destroy(&waiter->semaphore);
     waiter = next;
   }
+  clh_lock_destroy(&cv->lock);
 }
 
 void cond_var_free(struct CondVar* cv){

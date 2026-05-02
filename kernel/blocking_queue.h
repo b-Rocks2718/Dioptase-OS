@@ -15,6 +15,9 @@ struct BlockingQueue {
 // initialize an empty blocking queue
 void blocking_queue_init(struct BlockingQueue* b);
 
+// destroy queue synchronization state after all producers/consumers stop
+void blocking_queue_destroy(struct BlockingQueue* b);
+
 // append an element and wake one blocked remover
 void blocking_queue_add(struct BlockingQueue* b, struct GenericQueueElement* element);
 

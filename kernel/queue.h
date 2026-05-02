@@ -11,7 +11,7 @@ struct TCB;
 struct SpinQueue {
   struct TCB* head;
   struct TCB* tail;
-  struct SpinLock spinlock;
+  struct CLHLock spinlock;
   int size;
 };
 
@@ -48,7 +48,7 @@ struct GenericQueue {
 struct GenericSpinQueue {
   struct GenericQueueElement* head;
   struct GenericQueueElement* tail;
-  struct SpinLock spinlock;
+  struct CLHLock spinlock;
   int size;
 };
 
@@ -72,6 +72,9 @@ struct KeyBuf {
 
 // initialize an empty spin-locked FIFO queue
 void spin_queue_init(struct SpinQueue* queue);
+
+// destroy the internal spin lock after all users of the queue have stopped
+void spin_queue_destroy(struct SpinQueue* queue);
 
 // append a TCB to the tail of the spin queue
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data);
@@ -150,6 +153,9 @@ unsigned generic_queue_size(struct GenericQueue* queue);
 
 // initialize an empty spin-locked generic queue
 void generic_spin_queue_init(struct GenericSpinQueue* queue);
+
+// destroy the internal spin lock after all users of the queue have stopped
+void generic_spin_queue_destroy(struct GenericSpinQueue* queue);
 
 // append an element to the tail of the spin-locked generic queue
 void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueElement* data);

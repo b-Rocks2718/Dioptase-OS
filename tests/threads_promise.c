@@ -86,6 +86,8 @@ void kernel_main(void) {
     }
   }
 
+  promise_destroy(&promise);
+
   say("***promise ok\n", NULL);
   say("***promise test complete\n", NULL);
 }

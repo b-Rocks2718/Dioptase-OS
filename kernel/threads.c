@@ -28,6 +28,9 @@
 #include "vmem.h"
 #include "sys.h"
 #include "promise.h"
+#include "audio.h"
+#include "physmem.h"
+#include "sd_driver.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -81,6 +84,8 @@ static void free_tcb(struct TCB* tcb) {
 
   node_free(tcb->cwd);
   free(tcb->cwd_path);
+
+  free(tcb->my_node);
 
   free(tcb);
 
@@ -142,6 +147,11 @@ static struct TCB* make_tcb(bool is_daemon){
   tcb->parent_promise = NULL;
 
   tcb->pending_signals = 0;
+
+  tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
+  tcb->my_node->locked = false;
+  tcb->my_node->interrupt_state = 0;
+  tcb->my_pred = NULL;
 
   tcb->next = NULL;
 
@@ -295,6 +305,19 @@ void kernel_shutdown(void){
 
     ext2_destroy(&fs);
 
+    /* 
+     * destroy objects whose sem_destroy() may enqueue blocked
+     * daemon threads before destroying scheduler queue locks, and destroy the
+     * heap lock last so other lock destructors can still call free().
+     */
+    ps2_destroy();
+    audio_destroy();
+    sd_destroy();
+    vmem_global_destroy();
+    physmem_destroy_locks();
+    scheduler_destroy();
+    heap_sync_destroy();
+
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
     
     check_leaks();
@@ -419,6 +442,11 @@ void bootstrap(void){
   tcb->uaccess_err_addr = 0;
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
+
+  assert(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
+  assert(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
+  tcb->my_node = per_core_data[me].idle_clh_node;
+  tcb->my_pred = NULL;
 
   core->current_thread = tcb;
 }

@@ -96,6 +96,7 @@ void kernel_main(void) {
   if (sem_try_down(&local_sem)) {
     panic("semaphore test: sem_try_down consumed a non-existent second permit\n");
   }
+  sem_destroy(&local_sem);
 
   sem_init(&try_sem, NUM_TRY_PERMITS);
   try_ready = 0;
@@ -150,6 +151,7 @@ void kernel_main(void) {
   if (sem_try_down(&try_sem)) {
     panic("semaphore test: concurrent sem_try_down left an unexpected permit\n");
   }
+  sem_destroy(&try_sem);
 
   sem_init(&start_sem, 0);
   sem_init(&done_sem, 0);
@@ -198,6 +200,9 @@ void kernel_main(void) {
       panic("semaphore test: per-thread progress mismatch\n");
     }
   }
+
+  sem_destroy(&start_sem);
+  sem_destroy(&done_sem);
 
   say("***semaphore ok\n", NULL);
   say("***semaphore test complete\n", NULL);
