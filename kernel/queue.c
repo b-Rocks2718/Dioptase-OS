@@ -9,13 +9,22 @@
 void spin_queue_init(struct SpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
-  spin_lock_init(&queue->spinlock);
+  clh_lock_init(&queue->spinlock);
   queue->size = 0;
+}
+
+// free the CLH lock and clear queue pointers
+void spin_queue_destroy(struct SpinQueue* queue){
+  assert(queue != NULL, "spin_queue_destroy: queue is NULL.\n");
+  clh_lock_destroy(&queue->spinlock);
+  queue->head = NULL;
+  queue->tail = NULL;
+  __atomic_store_n(&queue->size, 0);
 }
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
   assert(data != NULL, "spin_queue_add: data is NULL.\n");
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   // Queue insertion always consumes a single detached node.
   // Force next=NULL to avoid linking stale list tails into this queue.
@@ -31,14 +40,14 @@ void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
 
   __atomic_fetch_add(&queue->size, 1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 }
 
 struct TCB* spin_queue_remove(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
-    spin_lock_release(&queue->spinlock);
+    clh_lock_release(&queue->spinlock);
     return NULL;
   }
 
@@ -52,20 +61,20 @@ struct TCB* spin_queue_remove(struct SpinQueue* queue){
 
   __atomic_fetch_add(&queue->size, -1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return node;
 }
 
 struct TCB* spin_queue_remove_all(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
   queue->head = NULL;
   queue->tail = NULL;
   __atomic_store_n(&queue->size, 0);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return head;
 }
@@ -75,11 +84,11 @@ unsigned spin_queue_size(struct SpinQueue* queue){
 }
 
 struct TCB* spin_queue_peek(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return head;
 }
@@ -285,13 +294,22 @@ unsigned generic_queue_size(struct GenericQueue* queue){
 void generic_spin_queue_init(struct GenericSpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
-  spin_lock_init(&queue->spinlock);
+  clh_lock_init(&queue->spinlock);
   queue->size = 0;
+}
+
+// free the CLH lock and clear queue pointers
+void generic_spin_queue_destroy(struct GenericSpinQueue* queue){
+  assert(queue != NULL, "generic_spin_queue_destroy: queue is NULL.\n");
+  clh_lock_destroy(&queue->spinlock);
+  queue->head = NULL;
+  queue->tail = NULL;
+  __atomic_store_n(&queue->size, 0);
 }
 
 void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueElement* data){
   assert(data != NULL, "generic_spin_queue_add: data is NULL.\n");
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   // Queue insertion always consumes a single detached node.
   // Force next=NULL to avoid linking stale list tails into this queue.
@@ -307,14 +325,14 @@ void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueE
 
   __atomic_fetch_add(&queue->size, 1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 }
 
 struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
-    spin_lock_release(&queue->spinlock);
+    clh_lock_release(&queue->spinlock);
     return NULL;
   }
 
@@ -328,20 +346,20 @@ struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* q
 
   __atomic_fetch_add(&queue->size, -1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return node;
 }
 
 struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   struct GenericQueueElement* head = queue->head;
   queue->head = NULL;
   queue->tail = NULL;
   __atomic_store_n(&queue->size, 0);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return head;
 }

@@ -48,9 +48,9 @@ static int round_done[EVENT_ROUNDS];
 
 // Read the number of threads currently blocked in event_wait().
 static unsigned event_waiter_count(void) {
-  spin_lock_acquire(&event.cv.lock);
+  clh_lock_acquire(&event.cv.lock);
   unsigned waiters = event.cv.waiters;
-  spin_lock_release(&event.cv.lock);
+  clh_lock_release(&event.cv.lock);
   return waiters;
 }
 

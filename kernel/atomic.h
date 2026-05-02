@@ -18,7 +18,9 @@ struct PreemptSpinLock {
 // CLH Node for fair spin lock
 // each thread gets exactly one CLH Node, as part of their TCB
 // Normal spinlock still marks the CLHNode as locked,
-// to enfore the invariant that threads only every acquire one spinlock at a time
+// to enforce the invariant that threads only ever acquire one spinlock at a time
+// PreemptSpinLock is exempt from this invariant, but should only be used
+// for kernel debug printing
 struct CLHNode {
   bool locked;
   int interrupt_state;
@@ -63,10 +65,10 @@ void preempt_spin_lock_release(struct PreemptSpinLock* lock);
 void clh_lock_init(struct CLHLock* lock);
 
 // will acquire the CLH lock in a fair manner, with FIFO ordering
-void clh_acquire(struct CLHLock* lock);
+void clh_lock_acquire(struct CLHLock* lock);
 
 // releases the CLH lock, allowing the next waiting thread to acquire it
-void clh_release(struct CLHLock* lock);
+void clh_lock_release(struct CLHLock* lock);
 
 // destroys a CLH lock after it is done being used
 void clh_lock_destroy(struct CLHLock* lock);

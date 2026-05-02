@@ -11,6 +11,9 @@ extern struct TCB* ps2_worker_thread;
 // Initialize the PS/2 driver
 void ps2_init(void);
 
+// Destroy PS/2 queue synchronization after interrupts and workers are stopped
+void ps2_destroy(void);
+
 // read a key from the PS/2 keyboard
 // return the guest keycode event, or 0 if no key is pressed
 // clears the key from the buffer

@@ -9,7 +9,7 @@
 // Semaphore allows only a set number of threads to access a resource at once
 // Note: destroyed semaphore will reap all waiting threads.
 struct Semaphore {
-  struct SpinLock lock;
+  struct CLHLock lock;
   int count;
   struct Queue wait_queue;
 };

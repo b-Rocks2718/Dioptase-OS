@@ -165,6 +165,14 @@ void physmem_init(void){
   }
 }
 
+// to be called only from kernel_shutdown
+void physmem_destroy_locks(void){
+  blocking_lock_destroy(&physmem_lock);
+  for (int i = 0; i < MAX_CORES; i++) {
+    blocking_lock_destroy(&per_core_data[i].physmem_cache.lock);
+  }
+}
+
 // allocate a physical page of given order
 // Panics if no free frames remain
 void* physmem_alloc_order(int order){

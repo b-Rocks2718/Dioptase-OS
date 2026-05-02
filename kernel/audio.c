@@ -42,6 +42,13 @@ void audio_init(void){
   spin_lock_init(&audio_wait_thread_lock);
 }
 
+// to be called only from kernel_shutdown
+void audio_destroy(void){
+  audio_output_disable();
+  audio_wait_thread = NULL;
+  blocking_lock_destroy(&audio_lock);
+}
+
 // Copy an even number of aligned PCM bytes into the fixed ring with ld/sd.
 extern unsigned audio_copy_even_bytes_to_ring_asm(char* src, unsigned write_idx,
     unsigned copy_bytes);

@@ -122,9 +122,9 @@ static void fairness_worker(void* arg) {
   __atomic_fetch_add(&state->attempting, 1);
 
   if (worker->lock_kind == LOCK_KIND_CLH) {
-    clh_acquire(&clh_lock);
+    clh_lock_acquire(&clh_lock);
     record_owner(state, worker->id);
-    clh_release(&clh_lock);
+    clh_lock_release(&clh_lock);
   } else {
     spin_lock_acquire(&normal_lock);
     record_owner(state, worker->id);
@@ -252,18 +252,18 @@ static void run_clh_phase(int waiters) {
   wait_for_count(&clh_state.ready, waiters, READY_WAIT_BUDGET,
                  "clh fairness test: CLH workers did not become ready\n");
 
-  clh_acquire(&clh_lock);
+  clh_lock_acquire(&clh_lock);
   __atomic_store_n(&clh_state.go, 1);
   wait_for_clh_queue(waiters);
   settle_waiters();
 
   for (int i = 0; i < OWNER_REACQUIRE_ATTEMPTS; i++) {
-    clh_release(&clh_lock);
-    clh_acquire(&clh_lock);
+    clh_lock_release(&clh_lock);
+    clh_lock_acquire(&clh_lock);
     record_owner(&clh_state, OWNER_ID);
   }
 
-  clh_release(&clh_lock);
+  clh_lock_release(&clh_lock);
 
   wait_for_count(&clh_state.done, waiters, DONE_WAIT_BUDGET,
                  "clh fairness test: CLH workers did not finish\n");

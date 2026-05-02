@@ -2000,8 +2000,9 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         }
       } else if (descriptor->file != NULL){
         node_free(descriptor->file);
-        blocking_lock_destroy(&descriptor->offset_lock);
       }
+
+      blocking_lock_destroy(&descriptor->offset_lock);
 
       free(descriptor);
 

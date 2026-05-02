@@ -26,7 +26,7 @@
 //   a future waiter stealing a stale wakeup token during reusable-generation
 //   patterns such as Event reuse.
 struct CondVar {
-  struct SpinLock lock;
+  struct CLHLock lock;
   struct GenericQueue wait_queue;
   unsigned waiters;
 };

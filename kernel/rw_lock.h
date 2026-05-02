@@ -8,7 +8,7 @@
 // Allows multiple readers or one writer at a time.
 // Write-preferring implementation: readers block if any writer is waiting.
 struct RwLock {
-  struct SpinLock lock;
+  struct CLHLock lock;
   struct Queue waiting_readers;
   struct Queue waiting_writers;
   unsigned readers; // invariant: readers > 0 implies !writer_active

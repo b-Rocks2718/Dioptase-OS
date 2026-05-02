@@ -41,9 +41,9 @@ static void sem_cleanup(struct Semaphore** sem_ptr) {
 
 // Read the current waiter count from the semaphore internals.
 static unsigned sem_waiter_count(struct Semaphore* sem) {
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
   unsigned n = sem->wait_queue.size;
-  spin_lock_release(&sem->lock);
+  clh_lock_release(&sem->lock);
   return n;
 }
 

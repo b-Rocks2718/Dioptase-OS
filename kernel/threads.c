@@ -28,6 +28,9 @@
 #include "vmem.h"
 #include "sys.h"
 #include "promise.h"
+#include "audio.h"
+#include "physmem.h"
+#include "sd_driver.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -145,9 +148,6 @@ static struct TCB* make_tcb(bool is_daemon){
 
   tcb->pending_signals = 0;
 
-  // Daemon TCBs are intentionally leaked, so their CLH nodes must follow the
-  // same lifetime for leak accounting. Normal thread nodes are freed with the
-  // rest of their TCB resources.
   tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
   tcb->my_node->locked = false;
   tcb->my_node->interrupt_state = 0;
@@ -224,12 +224,6 @@ void threads_init(void){
   scheduler_init();
 
   shutdown_barrier = CONFIG.num_cores;
-
-  for (int i = 0; i < MAX_CORES; ++i){
-    per_core_data[i].idle_clh_node = leak(sizeof(struct CLHNode));
-    per_core_data[i].idle_clh_node->locked = false;
-    per_core_data[i].idle_clh_node->interrupt_state = 0;
-  }
 
   struct Fun* reaper_fun = leak(sizeof (struct Fun));
   reaper_fun->func = (void (*)(void *))reaper;
@@ -310,6 +304,19 @@ void kernel_shutdown(void){
     }
 
     ext2_destroy(&fs);
+
+    /* 
+     * destroy objects whose sem_destroy() may enqueue blocked
+     * daemon threads before destroying scheduler queue locks, and destroy the
+     * heap lock last so other lock destructors can still call free().
+     */
+    ps2_destroy();
+    audio_destroy();
+    sd_destroy();
+    vmem_global_destroy();
+    physmem_destroy_locks();
+    scheduler_destroy();
+    heap_sync_destroy();
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
     

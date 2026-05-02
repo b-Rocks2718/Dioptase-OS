@@ -8,7 +8,7 @@
 // port of Gheith kernel implementation
 
 void sem_init(struct Semaphore* sem, int initial_count){
-  spin_lock_init(&sem->lock);
+  clh_lock_init(&sem->lock);
   sem->count = initial_count;
   queue_init(&sem->wait_queue);
 }
@@ -21,30 +21,30 @@ static void sem_add(void* arg){
   struct Semaphore* sem = (struct Semaphore*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
     sem->count--;
-    spin_lock_release(&sem->lock);
+    clh_lock_release(&sem->lock);
     scheduler_wake_thread(tcb);
   } else {
     queue_add(&sem->wait_queue, tcb);
-    spin_lock_release(&sem->lock);
+    clh_lock_release(&sem->lock);
   }
 }
 
 void sem_down(struct Semaphore* sem){
   // if the count is > 0, decrement it and return, 
   // otherwise block until another thread calls sem_up
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
     sem->count--;
-    spin_lock_release(&sem->lock);
+    clh_lock_release(&sem->lock);
     return;
   }
   
-  spin_lock_release(&sem->lock);
+  clh_lock_release(&sem->lock);
 
   int was = interrupts_disable();
 
@@ -55,27 +55,27 @@ void sem_down(struct Semaphore* sem){
 }
 
 bool sem_try_down(struct Semaphore* sem){
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
 
   if (sem->count > 0){
     sem->count--;
-    spin_lock_release(&sem->lock);
+    clh_lock_release(&sem->lock);
     return true;
   }
 
-  spin_lock_release(&sem->lock);
+  clh_lock_release(&sem->lock);
   return false;
 }
 
 void sem_up(struct Semaphore* sem){
   // try to wake up a waiting thread, if there are none, increment the count
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
 
   struct TCB* wakeup = queue_remove(&sem->wait_queue);
   if (wakeup == NULL){
     sem->count++;
   }
-  spin_lock_release(&sem->lock);
+  clh_lock_release(&sem->lock);
 
   if (wakeup != NULL){
     scheduler_wake_thread(wakeup);
@@ -84,11 +84,11 @@ void sem_up(struct Semaphore* sem){
 
 // add all threads waiting on the semaphore to the reaper queue
 void sem_destroy(struct Semaphore* sem) {
-  spin_lock_acquire(&sem->lock);
+  clh_lock_acquire(&sem->lock);
 
   struct TCB* dead = queue_remove_all(&sem->wait_queue);
 
-  spin_lock_release(&sem->lock);
+  clh_lock_release(&sem->lock);
 
   while (dead != NULL) {
     struct TCB* next = dead->next;
@@ -98,6 +98,8 @@ void sem_destroy(struct Semaphore* sem) {
     spin_queue_add(&reaper_queue, dead);
     dead = next;
   }
+
+  clh_lock_destroy(&sem->lock);
 }
 
 void sem_free(struct Semaphore* sem) {

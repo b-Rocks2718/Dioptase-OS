@@ -228,6 +228,8 @@ static void test_spin_queue(void) {
   expect_uint(spin_queue_size(&queue), 0, "queue test: spin queue size after remove_all mismatch\n");
   expect_tcb(spin_queue_peek(&queue), NULL, "queue test: spin queue peek after remove_all mismatch\n");
   expect_tcb(spin_queue_remove(&queue), NULL, "queue test: spin remove after remove_all mismatch\n");
+
+  spin_queue_destroy(&queue);
 }
 
 // Check sleep queue ordering across early, equal-deadline, and late wakeups.
@@ -402,6 +404,8 @@ static void test_generic_spin_queue(void) {
               "queue test: generic spin queue size after remove_all mismatch\n");
   expect_element(generic_spin_queue_remove(&queue), NULL,
                  "queue test: generic spin remove after remove_all mismatch\n");
+
+  generic_spin_queue_destroy(&queue);
 }
 
 // Check ring buffer add/remove order, wrap-around, and cleanup.

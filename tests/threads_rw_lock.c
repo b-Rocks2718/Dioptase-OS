@@ -151,9 +151,9 @@ void kernel_main(void) {
 
   // Wait until the writer is visibly queued so late readers cannot win by racing.
   while (true) {
-    spin_lock_acquire(&rwlock.lock);
+    clh_lock_acquire(&rwlock.lock);
     int waiting = rwlock.waiting_writers.size;
-    spin_lock_release(&rwlock.lock);
+    clh_lock_release(&rwlock.lock);
     if (waiting > 0) {
       break;
     }
@@ -203,6 +203,9 @@ void kernel_main(void) {
       panic("rw_lock test: writer preference violated\n");
     }
   }
+
+  sem_destroy(&release_sem);
+  rw_lock_destroy(&rwlock);
 
   say("***rw_lock ok\n", NULL);
   say("***rw_lock test complete\n", NULL);
