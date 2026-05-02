@@ -258,5 +258,7 @@ void slab_heap_destroy() {
       physmem_free(slab);
       slab = next;
     }
+
+    blocking_lock_destroy(&cache->lock);
   }
 }
