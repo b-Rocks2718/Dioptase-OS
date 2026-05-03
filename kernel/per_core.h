@@ -29,8 +29,8 @@ struct PerCore {
   // allocator
   struct PhysmemLocalCache physmem_cache;
 
-  struct FreeObject* slab_cache_free_lists[NUM_OBJECT_SIZES];
-  unsigned slab_cache_counts[NUM_OBJECT_SIZES];
+  struct FreeObject* free_lists[NUM_OBJECT_SIZES];
+  unsigned free_list_sizes[NUM_OBJECT_SIZES];
 };
 
 extern struct PerCore per_core_data[MAX_CORES];

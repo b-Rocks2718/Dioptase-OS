@@ -24,8 +24,8 @@ void slab_heap_init(){
 
   for (int i = 0; i < MAX_CORES; i++) {
     for (int j = 0; j < NUM_OBJECT_SIZES; j++) {
-      per_core_data[i].slab_cache_free_lists[j] = NULL;
-      per_core_data[i].slab_cache_counts[j] = 0;
+      per_core_data[i].free_lists[j] = NULL;
+      per_core_data[i].free_list_sizes[j] = 0;
     }
   }
 }
@@ -44,7 +44,7 @@ struct Slab* slab_create(unsigned object_size) {
 
   // Initialize the free list
   struct FreeObject* current = (struct FreeObject*)slab->free_list;
-  for (unsigned i = metadata_objects; i < slab->free_objects; i++) {
+  for (unsigned i = 0; i < slab->free_objects - 1; i++) {
     current->next = (struct FreeObject*)((char*)current + object_size);
     current = current->next;
   }
@@ -53,7 +53,7 @@ struct Slab* slab_create(unsigned object_size) {
   return slab;
 }
 
-void* slab_heap_alloc(unsigned size){
+void* slab_alloc(unsigned size){
   // Find the appropriate slab cache for the requested size
   struct SlabCache* cache = NULL;
   int i;
@@ -65,18 +65,6 @@ void* slab_heap_alloc(unsigned size){
   }
   
   assert(cache != NULL, "requested allocation size exceeds max supported size\n");
-
-  // check per-core free list first for fast path
-  int was = core_pin();
-  struct PerCore* core = get_per_core();
-  if (core->slab_cache_free_lists[i] != NULL) {
-    void* obj = core->slab_cache_free_lists[i];
-    core->slab_cache_free_lists[i] = ((struct FreeObject*)obj)->next; // Update free list
-    core->slab_cache_counts[i]--;
-    core_unpin(was);
-    return obj;
-  }
-  core_unpin(was);
 
   blocking_lock_acquire(&cache->lock);
 
@@ -155,8 +143,57 @@ void* slab_heap_alloc(unsigned size){
   }
 }
 
-void slab_heap_free(void* obj){
-  // find slab containing obj
+void* slab_heap_alloc(unsigned size) {
+  int i;
+  bool valid_size = false;
+  for (i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (size <= OBJECT_SIZES[i]) {
+      valid_size = true;
+      break;
+    }
+  }
+
+  assert(valid_size, "requested allocation size exceeds max supported size\n");
+
+  int core_was = core_pin();
+  struct PerCore* core = get_per_core();
+
+  // need to disable preemption around modification to per-core free list
+  int preempt_was = preemption_disable();
+  if (core->free_list_sizes[i] <= MIN_PER_CORE_FREE_LIST) {
+    // per-core free list is empty, we should get some objects from the slab cache
+    while (core->free_list_sizes[i] <= PER_CORE_FREE_LIST_REFILL) {
+      preemption_restore(preempt_was);
+
+      // enable preemption around blocking call, but keep pinned to this core
+      void* obj = slab_alloc(OBJECT_SIZES[i]);
+      if (obj == NULL) {
+        preempt_was = preemption_disable(); // to match expected state at the end of the loop
+        break; // slab cache is out of memory, we have to return what we got so far
+      }
+
+      preempt_was = preemption_disable();
+      // Free to per-core free list
+      ((struct FreeObject*)obj)->next = core->free_lists[i];
+      core->free_lists[i] = obj;
+      core->free_list_sizes[i]++;
+    }
+  }
+
+  // alloc from per-core free list
+  void* obj = core->free_lists[i];
+  if (obj != NULL) {
+    core->free_lists[i] = ((struct FreeObject*)obj)->next; // Update free list
+    core->free_list_sizes[i]--;
+  }
+
+  preemption_restore(preempt_was);
+  core_unpin(core_was);
+  
+  return obj;
+}
+
+void slab_free(void* obj) {
   struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
 
   // Find the appropriate slab cache for the object's size
@@ -229,6 +266,46 @@ void slab_heap_free(void* obj){
   }
 
   blocking_lock_release(&cache->lock);
+}
+
+void slab_heap_free(void* obj){
+  // find slab containing obj
+  struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  int core_was = core_pin();
+  int preempt_was = preemption_disable();
+  
+  struct PerCore* core = get_per_core();
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      if (core->free_list_sizes[i] >= MAX_PER_CORE_FREE_LIST) {
+        // per-core free list is full, we should move some back to the slab cache
+        while (core->free_list_sizes[i] > PER_CORE_FREE_LIST_REFILL) {
+          void* free_obj = core->free_lists[i];
+          core->free_lists[i] = ((struct FreeObject*)free_obj)->next; // Update free list
+          core->free_list_sizes[i]--;
+          
+          preemption_restore(preempt_was);
+          // enable preemption around blocking call, but keep pinned to this core
+
+          // Free back to slab cache
+          slab_free(free_obj);
+
+          preempt_was = preemption_disable();
+        }
+      }
+
+      // Free to per-core free list
+      ((struct FreeObject*)obj)->next = core->free_lists[i];
+      core->free_lists[i] = obj;
+      core->free_list_sizes[i]++;
+
+      preemption_restore(preempt_was);
+      core_unpin(core_was);
+      return;
+    }
+  }
+  panic("found slab with no matching cache\n");
 }
 
 void slab_heap_destroy() {

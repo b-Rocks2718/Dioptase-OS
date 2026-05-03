@@ -27,6 +27,10 @@ struct FreeObject {
 #define NUM_OBJECT_SIZES 9
 extern unsigned OBJECT_SIZES[NUM_OBJECT_SIZES];
 
+#define MIN_PER_CORE_FREE_LIST 0
+#define MAX_PER_CORE_FREE_LIST 64
+#define PER_CORE_FREE_LIST_REFILL 32
+
 void slab_heap_init();
 
 void* slab_heap_alloc(unsigned size);
