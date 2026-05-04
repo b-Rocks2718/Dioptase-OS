@@ -114,10 +114,15 @@ LEGACY_TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
 FIXED_KERNEL_TEST_NAMES := $(filter-out $(LEGACY_TEST_NAMES),$(basename $(notdir $(TEST_DATA_DIRS))))
 TEST_NAMES := $(sort $(LEGACY_TEST_NAMES) $(FIXED_KERNEL_TEST_NAMES))
 TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
-# Only tests with checked-in .ok baselines are valid for aggregate output checks.
+# Only tests with checked-in .ok or .panic baselines are valid for aggregate
+# output checks. .panic baselines list fixed substrings that must appear in raw
+# output from an expected kernel panic.
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
-TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
+TEST_PANIC_FILES := $(wildcard tests/*.panic)
+TEST_PANIC_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_PANIC_FILES))))
+TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
+TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
 ROOTFS_DIR := root
@@ -214,10 +219,10 @@ all: kernel.bin
 	@:
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
-test: $(if $(TEST_OK_SUMMARY_TARGETS),$(TEST_OK_SUMMARY_TARGETS),test-no-ok)
+test: $(if $(TEST_CHECK_SUMMARY_TARGETS),$(TEST_CHECK_SUMMARY_TARGETS),test-no-ok)
 
 test-no-ok:
-	@echo "No tests with .ok baselines were found under tests/."
+	@echo "No tests with .ok or .panic baselines were found under tests/."
 
 # Aggregate tests whose SD1 output replaces the original tests/<name>.dir.
 persistent: $(if $(PERSISTENT_TEST_NAMES),$(PERSISTENT_TEST_NAMES),persistent-no-tests)
@@ -342,12 +347,33 @@ $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	        echo "[$$test_name] run $$i/$$runs: pass"; \
+	      else \
+	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
 	  elif [ $$status -ne 0 ]; then \
@@ -385,12 +411,32 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    timeout_failures=$$((timeout_failures + 1)); \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      warning_failures=$$((warning_failures + 1)); \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      mismatch_failures=$$((mismatch_failures + 1)); \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	      else \
+	        mismatch_failures=$$((mismatch_failures + 1)); \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    warning_failures=$$((warning_failures + 1)); \
 	  elif [ $$status -ne 0 ]; then \
@@ -426,16 +472,40 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
-			break; \
+				break; \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
+				break; \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
+				break; \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	        echo "[$$test_name] run $$i/$$runs: pass"; \
+	      else \
+	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
+				break; \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-			break; \
+				break; \
 	  elif [ $$status -ne 0 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (exit $$status)"; \
 			break; \

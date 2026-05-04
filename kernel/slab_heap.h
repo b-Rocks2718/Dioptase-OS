@@ -3,12 +3,21 @@
 
 #include "blocking_lock.h"
 
+#define HEAP_DEBUG 1
+
+#define HEAP_POISON 0xABCDEFAA
+
 struct Slab {
   void* free_list; // Pointer to the first free object in the slab
   unsigned object_size;
   unsigned free_objects;
   struct Slab* next;
   struct Slab* prev;
+  
+  #ifdef HEAP_DEBUG
+  char allocation_bitmap[4]; // variable size struct
+    // we may reserve > 4 bytes for the bitmap
+  #endif
 };
 
 struct SlabCache {

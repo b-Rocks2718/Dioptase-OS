@@ -244,6 +244,8 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
 
+  assert(me->my_node->locked == false, "threads block: thread tried to block while holding a spinlock.\n");
+
   assert(me != idle, "threads block: idle thread attempted to block.\n");
 
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);

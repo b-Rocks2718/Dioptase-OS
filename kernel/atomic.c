@@ -133,6 +133,7 @@ void clh_lock_acquire(struct CLHLock* lock){
   assert(me != NULL, "clh_acquire: current TCB is NULL; CLH locks require thread context.\n");
   assert(me->my_node != NULL, "clh_acquire: control block node is NULL.\n");
   assert(me->my_pred == NULL, "clh_acquire: control block already owns or waits on a lock.\n");
+  assert(!me->my_node->locked, "clh_acquire: thread attempted to acquire a spinlock while already holding one.\n");
 
   // mark our own node as locked
   __atomic_store_n(&me->my_node->locked, true);
@@ -164,6 +165,7 @@ void clh_lock_release(struct CLHLock* lock){
   assert(me != NULL, "clh_release: current TCB is NULL; CLH locks require thread context.\n");
   assert(me->my_node->locked,
     "clh_release: thread attempted to release a CLH lock while not holding one.\n");
+  assert(me->my_pred != NULL, "clh_release: thread attempted to release a CLH lock with no recorded predecessor.\n");
 
   __atomic_store_n(&me->my_node->locked, false);
   me->my_node = me->my_pred;

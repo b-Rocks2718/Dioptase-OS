@@ -6,6 +6,7 @@
 #include "config.h"
 #include "per_core.h"
 #include "threads.h"
+#include "print.h"
 
 #define NUM_OBJECT_SIZES 9
 unsigned OBJECT_SIZES[NUM_OBJECT_SIZES] = {4, 8, 16, 32, 64, 128, 256, 512, 1024};
@@ -14,7 +15,15 @@ struct SlabCache slab_caches[NUM_OBJECT_SIZES];
 void slab_heap_init(){
   for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
     blocking_lock_init(&slab_caches[i].lock);
-    unsigned metadata_objects = (sizeof(struct Slab) + OBJECT_SIZES[i] - 1) / OBJECT_SIZES[i]; // Round up to nearest object size
+    unsigned slab_size = sizeof(struct Slab);
+    #ifdef HEAP_DEBUG
+    // remove bitmap from size, we calculate the real size here
+    slab_size -= 4;
+
+    // add in bitmap size
+    slab_size += (FRAME_SIZE - (sizeof(struct Slab) - 4) + 8 * OBJECT_SIZES[i]) / (8 * OBJECT_SIZES[i] + 1);
+    #endif
+    unsigned metadata_objects = (slab_size + OBJECT_SIZES[i] - 1) / OBJECT_SIZES[i]; // Round up to nearest object size
     slab_caches[i].objects_per_slab = (FRAME_SIZE / OBJECT_SIZES[i]) - metadata_objects;
     slab_caches[i].full_slabs = NULL;
     slab_caches[i].partial_slabs = NULL;
@@ -33,8 +42,15 @@ void slab_heap_init(){
 struct Slab* slab_create(unsigned object_size) {
   struct Slab* slab = (struct Slab*)physmem_alloc();
   
-  // work out how many objects the metadata takes up
-  unsigned metadata_objects = (sizeof(struct Slab) + object_size - 1) / object_size; // Round up to nearest object size
+  int i;
+  for (i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (object_size <= OBJECT_SIZES[i]) {
+      break;
+    }
+  }
+  assert(i < NUM_OBJECT_SIZES, "slab_create: object size exceeds max supported size\n");
+
+  unsigned metadata_objects = (FRAME_SIZE / object_size) - slab_caches[i].objects_per_slab; 
 
   slab->free_list = (char*)slab + metadata_objects * object_size; // reserve objects for slab metadata
   slab->object_size = object_size;
@@ -45,13 +61,65 @@ struct Slab* slab_create(unsigned object_size) {
   // Initialize the free list
   struct FreeObject* current = (struct FreeObject*)slab->free_list;
   for (unsigned i = 0; i < slab->free_objects - 1; i++) {
+    #ifdef HEAP_DEBUG
+    // poison free objects in debug mode to make use-after-free more obvious
+    for (int i = 1; i < object_size / 4; i++) {
+      ((unsigned*)current)[i] = HEAP_POISON;
+    }
+    #endif
+
     current->next = (struct FreeObject*)((char*)current + object_size);
     current = current->next;
   }
   current->next = NULL; // Last object points to NULL
 
+  #ifdef HEAP_DEBUG
+  // poison final object
+  for (int i = 1; i < object_size / 4; i++) {
+    ((unsigned*)current)[i] = HEAP_POISON;
+  }
+  #endif 
+
+  #ifdef HEAP_DEBUG
+  // initialize allocation bitmap to all 0's (all free)
+  unsigned bitmap_size = (slab_caches[i].objects_per_slab + 7) / 8; // Round up to nearest byte
+  for (unsigned j = 0; j < bitmap_size; j++) {
+    slab->allocation_bitmap[j] = 0;
+  }
+  #endif
+
   return slab;
 }
+
+#ifdef HEAP_DEBUG
+void bitmap_alloc(struct Slab* slab, void* obj) {
+  // find slab cache for this slab
+  struct SlabCache* cache = NULL;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
+    }
+  }
+  assert(cache != NULL, "found slab with no matching cache\n");
+
+  unsigned metadata_end = (unsigned)slab + (FRAME_SIZE - cache->objects_per_slab * slab->object_size);
+  unsigned obj_index = ((unsigned)obj - metadata_end) / slab->object_size;
+  unsigned byte_index = obj_index / 8;
+  unsigned bit_index = obj_index % 8;
+
+  blocking_lock_acquire(&cache->lock);
+
+  // assert that the bit is not already set (double allocation)
+  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) == 0, 
+    "double allocation detected in slab allocator\n");
+
+  // mark as allocated in bitmap
+  slab->allocation_bitmap[byte_index] |= (1u << bit_index);
+
+  blocking_lock_release(&cache->lock);
+}
+#endif
 
 void* slab_alloc(unsigned size){
   // Find the appropriate slab cache for the requested size
@@ -187,11 +255,52 @@ void* slab_heap_alloc(unsigned size) {
     core->free_list_sizes[i]--;
   }
 
+  #ifdef HEAP_DEBUG
+  struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  // update allocation bitmap
+  bitmap_alloc(slab, obj);
+
+  // check the poison value is still there
+  for (int i = 1; i < slab->object_size / 4; i++) {
+    assert(((unsigned*)obj)[i] == HEAP_POISON, 
+      "heap corruption detected: likely use after free\n");
+  }
+  #endif
+
   preemption_restore(preempt_was);
   core_unpin(core_was);
   
   return obj;
 }
+
+#ifdef HEAP_DEBUG
+void bitmap_free(struct Slab* slab, void* obj) {
+  struct SlabCache* cache = NULL;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
+    }
+  }
+  assert(cache != NULL, "found slab with no matching cache\n");
+
+  unsigned metadata_end = (unsigned)slab + (FRAME_SIZE - cache->objects_per_slab * slab->object_size);
+  unsigned obj_index = ((unsigned)obj - metadata_end) / slab->object_size;
+  unsigned byte_index = obj_index / 8;
+  unsigned bit_index = obj_index % 8;
+
+  blocking_lock_acquire(&cache->lock);
+
+  // assert that the bit is currently set (double free)
+  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) != 0, 
+    "double free detected in slab allocator\n");
+
+  // mark as free in bitmap
+  slab->allocation_bitmap[byte_index] &= ~(1u << bit_index);
+  blocking_lock_release(&cache->lock);
+}
+#endif
 
 void slab_free(void* obj) {
   struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
@@ -268,9 +377,51 @@ void slab_free(void* obj) {
   blocking_lock_release(&cache->lock);
 }
 
+bool slab_free_sanity(void* obj){
+  // check obj is within slab heap bounds
+  if ((unsigned)obj < (unsigned)FRAMES_ADDR_START || 
+      (unsigned)obj >= (unsigned)FRAMES_ADDR_END) {
+    return false;
+  }
+
+  // check obj is aligned to smallest object size
+  if ((unsigned)obj % OBJECT_SIZES[0] != 0) {
+    return false;
+  }
+
+  return true;
+}
+
 void slab_heap_free(void* obj){
+  #ifdef HEAP_DEBUG
+  if (!slab_free_sanity(obj)) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free invalid pointer\n");
+  }
+  #endif
+
   // find slab containing obj
   struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  #ifdef HEAP_DEBUG
+  // check object size makes sense
+  bool valid_size = false;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      valid_size = true;
+      break;
+    }
+  }
+  if (!valid_size) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free pointer with invalid object size\n");
+  }
+
+  if ((unsigned)obj % slab->object_size != 0) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free pointer that is not aligned to its object size\n");
+  }
+  #endif
 
   int core_was = core_pin();
   int preempt_was = preemption_disable();
@@ -299,6 +450,15 @@ void slab_heap_free(void* obj){
       ((struct FreeObject*)obj)->next = core->free_lists[i];
       core->free_lists[i] = obj;
       core->free_list_sizes[i]++;
+
+      #ifdef HEAP_DEBUG
+      bitmap_free(slab, obj);
+
+      // write poison value to freed object to make use-after-free more obvious
+      for (int i = 1; i < slab->object_size / 4; i++) {
+        ((unsigned*)obj)[i] = HEAP_POISON;
+      }
+      #endif
 
       preemption_restore(preempt_was);
       core_unpin(core_was);
