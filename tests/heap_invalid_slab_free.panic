@@ -1,2 +1,2 @@
 KERNEL PANIC
-attempting to free pointer with invalid object size
+heap free: invalid frame-aligned heap pointer.

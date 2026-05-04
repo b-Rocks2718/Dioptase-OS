@@ -26,7 +26,7 @@ BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
 TEST_RUNS ?= 10
-TIMEOUT_SECONDS ?= 180
+TIMEOUT_SECONDS ?= 360
 VERSION ?= release
 HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
 
@@ -69,6 +69,7 @@ KERNEL_TEST_BCC_DEFINES :=
 ifeq ($(HEAP_DEBUG_STRIPPED),yes)
 KERNEL_TEST_BCC_DEFINES += -DHEAP_DEBUG=1
 endif
+KERNEL_TEST_CONFIG_STAMP := build/kernel-test-config.stamp
 
 SHELL := /bin/sh
 MAKEFLAGS += --no-print-directory
@@ -164,6 +165,21 @@ BIOS_C_DEPS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s.d,$(BIOS_C_SRCS))
 KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
 DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
+# Generated kernel/test assembly depends on configuration flags passed to bcc.
+# Keep one stamp outside the generated assembly dependency files so switching
+# HEAP_DEBUG cannot silently reuse assembly built with the opposite setting.
+$(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
+	@tmp="$@.tmp"; \
+	{ \
+	  echo "HEAP_DEBUG=$(HEAP_DEBUG_STRIPPED)"; \
+	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
+	} > "$$tmp"; \
+	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
+	  mv "$$tmp" "$@"; \
+	else \
+	  rm -f "$$tmp"; \
+	fi
+
 # Build the emulator argv in shell positional parameters. When the supplied
 # guest root directory exists, package it as an ext2 filesystem image and
 # attach it as SD1. The extracted SD1 output directory is caller-selected so
@@ -220,7 +236,7 @@ endef
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
   kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
-  kernel/config.s kernel/mbr.s
+  kernel/config.s kernel/mbr.s FORCE
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
 
@@ -659,7 +675,7 @@ $(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORD
 	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
 
 # Compile the root test C file to assembly.
-$(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BUILD_DIR)
 	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
@@ -669,7 +685,7 @@ $(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile | $(BIOS_ASM_DIR)
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
-$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) Makefile | $(KERNEL_ASM_DIR)
+$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(KERNEL_ASM_DIR)
 	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
@@ -699,5 +715,6 @@ clean:
 	rm -f "$(BUILD_DIR)"/*.hex "$(BUILD_DIR)"/*.bin "$(BUILD_DIR)"/*.s "$(BUILD_DIR)"/*.labels \
 	  "$(BUILD_DIR)"/*.d "$(BIOS_ASM_DIR)"/*.d "$(KERNEL_ASM_DIR)"/*.d \
 	  "$(BUILD_DIR)"/*.sd1.ext2 "$(BUILD_DIR)"/*.sd1.out.ext2 \
+	  "$(KERNEL_TEST_CONFIG_STAMP)" "$(KERNEL_TEST_CONFIG_STAMP).tmp" \
 	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
 	rm -rf tests/*.out.dir

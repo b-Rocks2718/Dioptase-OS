@@ -16,7 +16,8 @@
 
 #define FREE_PAGE_BITMAP_SIZE 4055 // PHYS_FRAME_COUNT / 8 rounded up
 
-#define LOCAL_CACHE_SIZE 16
+#define LOCAL_CACHE_SIZE 64
+#define LOCAL_CACHE_REFILL 32
 
 struct PhysmemLocalCache {
   void* pages[LOCAL_CACHE_SIZE];

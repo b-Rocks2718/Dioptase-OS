@@ -1,16 +1,14 @@
 /*
- * Slab heap invalid-slab-metadata negative test.
+ * Heap raw-frame free negative test.
  *
  * Validates:
- * - HEAP_DEBUG rejects a frame-range pointer whose containing frame is not a
- *   slab with one of the supported object sizes.
+ * - free() rejects a frame-aligned physical page that is not tracked as a live
+ *   large heap allocation before treating it as slab metadata.
  *
  * How:
  * - allocate a raw physical page directly from physmem instead of slab_heap
- * - stamp the word where struct Slab::object_size would live with an unsupported
- *   size so the test does not depend on leftover page contents
- * - pass the page address to slab_heap_free(); the expected result is a kernel
- *   panic before the raw page is inserted into any slab freelist
+ * - pass the page address to free(); the expected result is a kernel panic
+ *   before the raw page is inserted into any heap freelist
  */
 
 #include "../kernel/heap.h"
@@ -22,7 +20,6 @@ void kernel_main(void) {
 
   heap_init();
   unsigned* page = (unsigned*)physmem_alloc();
-  page[1] = 12345;
 
   free(page);
 

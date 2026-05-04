@@ -116,6 +116,12 @@ Large allocations are tracked in a side table indexed by the first physical
 frame of the block. `free()` uses that side table to route exact large-allocation
 pointers back to `physmem_free_order()`.
 
+If `free()` receives a frame-aligned pointer inside the physical-frame arena and
+that frame is not the first frame of a live large heap allocation, it panics
+instead of interpreting the page as a slab. This catches raw `physmem` pages,
+large-allocation double frees, and other frame-base pointers before they can
+corrupt slab metadata.
+
 Current caller requirement: large allocations must be freed with the exact
 pointer returned by `malloc()`. Interior pointers are invalid.
 
@@ -198,6 +204,10 @@ by the poison check.
 Use-after-free writes are detected when the object is allocated again, not at the
 moment of the invalid write.
 
+The Makefile keeps a generated configuration stamp for kernel/test C assembly,
+so changing `HEAP_DEBUG` rebuilds allocator code with the matching preprocessor
+defines instead of reusing assembly generated for the previous mode.
+
 ### Current Limitations
 
 #### No General-Purpose C Library Heap Contract
@@ -218,7 +228,8 @@ depend on `malloc()` returning `NULL` for out-of-memory conditions.
 #### Large Allocations Have Less Debug Coverage
 
 Large allocations are tracked only by their first frame and order. They do not
-use slab allocation bitmaps or slab poison checks.
+use slab allocation bitmaps or slab poison checks. Exact large-allocation
+pointers are still validated against the large-allocation side table on `free()`.
 
 #### Internal Fragmentation Is Expected
 

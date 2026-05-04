@@ -308,10 +308,10 @@ void* physmem_alloc(void){
   // refill cache if necessary, then pop and return a page
   if (per_core->physmem_cache.count == 0) {
     // refill cache
-    for (int i = 0; i < LOCAL_CACHE_SIZE; i++) {
+    for (int i = 0; i < LOCAL_CACHE_REFILL; i++) {
       per_core->physmem_cache.pages[i] = physmem_alloc_order(0);
     }
-    per_core->physmem_cache.count = LOCAL_CACHE_SIZE;
+    per_core->physmem_cache.count = LOCAL_CACHE_REFILL;
   }
 
   // pop from local cache
@@ -332,6 +332,13 @@ void* physmem_leak(void){
 
 // free a physical page
 void physmem_free(void* page){
+  unsigned phys_addr = (unsigned)page;
+  assert(page != NULL, "physmem free: page is NULL.\n");
+  assert(
+    physmem_is_frame_address(phys_addr),
+    "physmem free: page is not a valid order-0 allocatable frame.\n"
+  );
+
   enum CoreAffinity prev = core_pin();
   struct PerCore* per_core = get_per_core();
 
@@ -339,20 +346,20 @@ void physmem_free(void* page){
   if (physmem_sync_initialized) blocking_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_freed, 1);
-  
-  // push to local cache if there is room, otherwise free to global pool
-  if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
-    per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
-    per_core->physmem_cache.count++;
 
-    if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
-    core_unpin(prev);
-  } else {
-    if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
-    core_unpin(prev);
-
-    physmem_free_order(page, 0);
+  // empty cache if full, then free to cache
+  if (per_core->physmem_cache.count == LOCAL_CACHE_SIZE) {
+    while (per_core->physmem_cache.count >= LOCAL_CACHE_REFILL){
+      physmem_free_order(per_core->physmem_cache.pages[per_core->physmem_cache.count - 1], 0);
+      per_core->physmem_cache.count--;
+    }
   }
+
+  per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
+  per_core->physmem_cache.count++;
+
+  if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+  core_unpin(prev);
 }
 
 void physmem_check_leaks(void){

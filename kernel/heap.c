@@ -92,6 +92,9 @@ static bool large_free_if_tracked(void* obj) {
   unsigned order = large_allocation_orders[frame_index];
   if (order == HEAP_LARGE_ALLOC_NONE) {
     if (heap_sync_initialized) blocking_lock_release(&large_allocation_lock);
+    int args[1] = { (int)obj };
+    say("heap free: frame-aligned pointer 0x%X is not a live large allocation\n", args);
+    panic("heap free: invalid frame-aligned heap pointer.\n");
     return false;
   }
 
