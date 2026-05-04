@@ -13,15 +13,15 @@
  *   any freelist or bitmap state is updated for the bad address
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/print.h"
 
 void kernel_main(void) {
   say("***slab heap interior pointer negative start\n", NULL);
 
-  slab_heap_init();
-  char* obj = (char*)slab_heap_alloc(32);
-  slab_heap_free(obj + 4);
+  heap_init();
+  char* obj = (char*)malloc(32);
+  free(obj + 4);
 
   say("***slab heap interior pointer negative FAIL\n", NULL);
 }

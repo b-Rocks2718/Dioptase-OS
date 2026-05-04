@@ -4,24 +4,38 @@
  * Validates:
  * - malloc() and free() preserve payload bytes across randomized allocation and
  *   free patterns
+ * - frame-backed large allocations can be live at the same time as normal slab
+ *   allocations
  * - freeing in shuffled order does not corrupt neighboring live allocations
  * - allocator reuse does not leak stale bytes into newly allocated blocks
  *
  * How:
  * - allocate a batch of random-sized blocks, fill each one with a deterministic
- *   pattern, and remember its metadata
+ *   pattern, and remember its metadata; fixed slots force large allocations so
+ *   each round mixes the slab path with one-frame and multi-frame large paths
  * - free half the blocks in shuffled order after verifying their contents
- * - allocate and immediately churn a second batch to force reuse of freed holes
+ * - allocate and immediately churn a second batch, including short-lived large
+ *   allocations, to force reuse of freed holes
  * - verify and free the remaining original blocks, then repeat for several rounds
  */
 
 #include "../kernel/heap.h"
+#include "../kernel/physmem.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 #include "../kernel/constants.h"
 
 #define ROUNDS 3
 #define N_BLOCKS 32
+
+#define SMALL_ALLOC_BASE 8u
+#define SMALL_ALLOC_SPAN 128u
+#define MEDIUM_ALLOC_BASE 64u
+#define MEDIUM_ALLOC_SPAN 512u
+#define LARGE_ALLOC_BASE 1280u
+#define LARGE_ALLOC_SPAN 768u
+#define MULTIFRAME_ALLOC_EXTRA 256u
+#define CHURN_LARGE_ALLOC_SPAN 512u
 
 // Generate deterministic pseudo-random values for the stress pattern.
 static unsigned rng_state = 0xC0FFEE01u;
@@ -69,6 +83,37 @@ struct BlockInfo {
   unsigned seed;
 };
 
+// Pick a live-block size. Specific slots force large allocations so this test
+// cannot accidentally stop covering the frame-backed heap path if the PRNG
+// sequence changes. The first slot is larger than one frame to cover nonzero
+// physmem orders; the other forced slots stay within one frame.
+static unsigned live_block_size(unsigned slot, unsigned roll) {
+  if ((slot % 32u) == 0) {
+    return FRAME_SIZE + MULTIFRAME_ALLOC_EXTRA + (roll % MULTIFRAME_ALLOC_EXTRA);
+  }
+
+  if ((slot % 7u) == 0) {
+    return LARGE_ALLOC_BASE + (roll % LARGE_ALLOC_SPAN);
+  }
+
+  if ((roll & 3u) == 0) {
+    return MEDIUM_ALLOC_BASE + (roll % MEDIUM_ALLOC_SPAN);
+  }
+
+  return SMALL_ALLOC_BASE + (roll % SMALL_ALLOC_SPAN);
+}
+
+// Pick a short-lived churn size. Every eighth churn allocation uses the large
+// path, then is immediately checked and freed to exercise large free/reuse while
+// normal slab objects are still live.
+static unsigned churn_block_size(unsigned slot, unsigned roll) {
+  if ((slot % 8u) == 0) {
+    return LARGE_ALLOC_BASE + (roll % CHURN_LARGE_ALLOC_SPAN);
+  }
+
+  return 16u + (roll % 256u);
+}
+
 // Run one heap stress workload with randomized sizes and free order.
 static void heap_stress(unsigned rounds, unsigned N) {
   static struct BlockInfo blocks[4096];
@@ -78,14 +123,7 @@ static void heap_stress(unsigned rounds, unsigned N) {
     // Phase 1: allocate and fill a baseline set of live blocks.
     for (unsigned i = 0; i < N; i++) {
       unsigned roll = rnd_u32();
-      unsigned sz;
-      if ((roll & 15u) == 0) {
-        sz = 512 + (roll % 2048);
-      } else if ((roll & 3u) == 0) {
-        sz = 64 + (roll % 512);
-      } else {
-        sz = 8 + (roll % 128);
-      }
+      unsigned sz = live_block_size((r * N) + i, roll);
 
       void* p = malloc(sz);
       if (!p) {
@@ -120,7 +158,7 @@ static void heap_stress(unsigned rounds, unsigned N) {
     // Phase 3: churn smaller blocks to force reuse of the freed holes.
     for (unsigned i = 0; i < halfway; i++) {
       unsigned roll = rnd_u32();
-      unsigned sz = 16 + (roll % 256);
+      unsigned sz = churn_block_size((r * halfway) + i, roll);
       void* p = malloc(sz);
       if (!p) panic("heap_stress: malloc failed during reuse phase\n");
       unsigned seed = 0xA5A5A5A5u ^ (r << 16) ^ i ^ roll;

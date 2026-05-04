@@ -20,9 +20,6 @@
 #include "exc.h"
 #include "audio.h"
 
-unsigned HEAP_START = 0x100000;
-unsigned HEAP_SIZE =  0x700000;
-
 extern void kernel_main(void);
 extern void boot_ipi_handler_(void);
 
@@ -54,8 +51,11 @@ void kernel_entry(void){
 
     register_spurious_handlers();
 
+    say("| Initializing physmem allocator...\n", NULL);
+    physmem_init();
+
     say("| Initializing heap...\n", NULL);
-    heap_init((void*)HEAP_START, HEAP_SIZE);
+    heap_init();
 
     // init idle thread clh nodes
     for (int i = 0; i < MAX_CORES; ++i){
@@ -63,9 +63,6 @@ void kernel_entry(void){
       per_core_data[i].idle_clh_node->locked = false;
       per_core_data[i].idle_clh_node->interrupt_state = 0;
     }
-
-    say("| Initializing physmem allocator...\n", NULL);
-    physmem_init();
 
     say("| Initializing virtual memory...\n", NULL);
     vmem_global_init();
@@ -104,7 +101,8 @@ void kernel_entry(void){
     // register IPI handler for other cores to wake up this core
     register_handler((void*)boot_ipi_handler_, (void*)IPI_IVT_ENTRY);
 
-    // make the heap synchronized now
+    // make the memory allocators synchronized now
+    physmem_sync_init();
     heap_sync_init();
 
     // initialize other cores

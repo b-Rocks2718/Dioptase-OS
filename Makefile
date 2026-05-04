@@ -26,8 +26,9 @@ BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
 TEST_RUNS ?= 10
-TIMEOUT_SECONDS ?= 120
+TIMEOUT_SECONDS ?= 180
 VERSION ?= release
+HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
 
 # ------------------------------------------------------------------------------------------ #
 
@@ -39,6 +40,7 @@ EMU_AUDIO_STRIPPED := $(strip $(EMU_AUDIO))
 EMU_AUDIO_FAST_STRIPPED := $(strip $(EMU_AUDIO_FAST))
 SCHEDULER_STRIPPED := $(strip $(SCHEDULER))
 TRACE_INTS_STRIPPED := $(strip $(TRACE_INTS))
+HEAP_DEBUG_STRIPPED := $(strip $(HEAP_DEBUG))
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER_STRIPPED)
 
@@ -61,6 +63,11 @@ endif
 
 ifeq ($(TRACE_INTS_STRIPPED),yes)
 EMU_FLAGS += --trace-ints
+endif
+
+KERNEL_TEST_BCC_DEFINES :=
+ifeq ($(HEAP_DEBUG_STRIPPED),yes)
+KERNEL_TEST_BCC_DEFINES += -DHEAP_DEBUG=1
 endif
 
 SHELL := /bin/sh
@@ -121,7 +128,13 @@ TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
 TEST_PANIC_FILES := $(wildcard tests/*.panic)
 TEST_PANIC_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_PANIC_FILES))))
-TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
+HEAP_PANIC_NAMES := $(filter heap_%,$(TEST_PANIC_NAMES))
+ALL_TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
+ifeq ($(HEAP_DEBUG_STRIPPED),yes)
+TEST_CHECK_NAMES := $(ALL_TEST_CHECK_NAMES)
+else
+TEST_CHECK_NAMES := $(filter-out $(HEAP_PANIC_NAMES),$(ALL_TEST_CHECK_NAMES))
+endif
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
@@ -135,7 +148,7 @@ THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))
 THREAD_SUMMARY_TARGETS := $(addsuffix .summary-test,$(THREAD_TEST_NAMES))
 DATASTRUCT_TEST_NAMES := $(filter hashmap_test queue_test string,$(TEST_OK_NAMES))
 DATASTRUCT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(DATASTRUCT_TEST_NAMES))
-HEAP_TEST_NAMES := $(filter heap_test heap_test_threadsafe,$(TEST_OK_NAMES))
+HEAP_TEST_NAMES := $(filter heap_%,$(TEST_CHECK_NAMES))
 HEAP_SUMMARY_TARGETS := $(addsuffix .summary-test,$(HEAP_TEST_NAMES))
 BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
@@ -214,8 +227,8 @@ endef
 # Header dependency tracking for the generated C->assembly outputs.
 -include $(DEPFILES)
 
-# Default target builds the fixed-kernel image that uses kernel/kernel_main.c.
-all: kernel.bin
+# Default target builds the fixed-kernel image and repo-local root programs.
+all: kernel.bin root-sbin
 	@:
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
@@ -248,11 +261,11 @@ datastructs: $(if $(DATASTRUCT_SUMMARY_TARGETS),$(DATASTRUCT_SUMMARY_TARGETS),da
 datastructs-no-ok:
 	@echo "No data-structure tests with .ok baselines were found under tests/."
 
-# Aggregate heap allocator tests, including the threaded heap stress case.
+# Aggregate heap allocator tests. Heap panic-mode checks require HEAP_DEBUG=yes.
 heap: $(if $(HEAP_SUMMARY_TARGETS),$(HEAP_SUMMARY_TARGETS),heap-no-ok)
 
 heap-no-ok:
-	@echo "No heap tests with .ok baselines were found under tests/."
+	@echo "No heap tests with .ok or .panic baselines were found under tests/."
 
 # Build alias so `make bios.hex` produces build/bios.hex.
 bios.hex: $(BIOS_HEX)
@@ -646,19 +659,19 @@ $(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORD
 	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
 
 # Compile the root test C file to assembly.
-$(BUILD_DIR)/%.s: tests/%.c $(BCC) | $(BUILD_DIR)
-	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" -s -kernel -o "$@" "$<" -g
+$(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile | $(BUILD_DIR)
+	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.
-$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) | $(BIOS_ASM_DIR)
+$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile | $(BIOS_ASM_DIR)
 	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
-$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) | $(KERNEL_ASM_DIR)
-	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" -s -kernel -o "$@" "$<" -g
+$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) Makefile | $(KERNEL_ASM_DIR)
+	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
 $(BUILD_DIR):

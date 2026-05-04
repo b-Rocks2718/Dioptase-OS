@@ -6,7 +6,7 @@
 #include "queue.h"
 #include "config.h"
 #include "physmem.h"
-#include "slab_heap.h"
+#include "heap.h"
 
 // Stores all core-local data
 struct PerCore {

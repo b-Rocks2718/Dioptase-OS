@@ -7,13 +7,13 @@ layer yet.
 
 ### Arena / Geometry
 
-`physmem` manages the physical address range `0x800000 - 0x7FB7FFF`, which is
-`PHYS_FRAME_COUNT = 30648` frames of size `FRAME_SIZE = 4096` bytes.
+`physmem` manages the physical address range `0x100000 - 0x7FB7FFF`, which is
+`PHYS_FRAME_COUNT = 32440` frames of size `FRAME_SIZE = 4096` bytes.
 
 Buddy numbering is defined in **frame-index space relative to
 `FRAMES_ADDR_START`**, not in absolute physical address space.
 
-- frame index 0 corresponds to physical address `0x800000`
+- frame index 0 corresponds to physical address `0x100000`
 - frame index `n` corresponds to `FRAMES_ADDR_START + n * FRAME_SIZE`
 - the buddy of block index `i` at order `k` is `i ^ (1 << k)`
 
@@ -38,7 +38,9 @@ use. It:
 - initializes every core-local order-0 cache
 
 The allocator assumes the frame arena is already reserved exclusively for
-physical-page allocation and is not shared with the heap, kernel image, or MMIO.
+dynamic physical-page allocation and does not overlap the kernel image, boot
+stacks, or MMIO. The kernel heap is a `physmem` client: it obtains slab pages
+and large allocation blocks from this arena through the normal physmem APIs.
 
 #### Buddy Free Lists
 
@@ -178,6 +180,7 @@ Allocator assertions and panic messages are intended to catch:
 
 `physmem` is currently exercised by:
 - `physmem_test.c`
+- `physmem_test_orders.c`
 
 `physmem_test.c` currently checks:
 
@@ -185,4 +188,9 @@ Allocator assertions and panic messages are intended to catch:
 - no duplicate live-page handout
 - page-content retention while pages are live
 - higher-order alignment and writability for every supported order
-- a large direct order-0 backend sample after draining per-core caches
+
+`physmem_test_orders.c` currently checks:
+
+- concurrent mixed-order allocation and free churn across multiple worker threads
+- no duplicate live first-frame handout for those mixed-order allocations
+- first-page content retention while blocks are live

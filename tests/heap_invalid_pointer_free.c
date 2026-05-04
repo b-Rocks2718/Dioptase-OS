@@ -11,14 +11,14 @@
  * - the expected result is a kernel panic from the slab free sanity check
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/print.h"
 
 void kernel_main(void) {
   say("***slab heap invalid pointer negative start\n", NULL);
 
-  slab_heap_init();
-  slab_heap_free((void*)4);
+  heap_init();
+  free((void*)4);
 
   say("***slab heap invalid pointer negative FAIL\n", NULL);
 }

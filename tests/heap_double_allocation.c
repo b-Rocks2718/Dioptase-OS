@@ -16,7 +16,7 @@
  * detector that ordinary public allocator calls should never reach.
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/per_core.h"
 #include "../kernel/threads.h"
 #include "../kernel/print.h"
@@ -25,8 +25,8 @@
 void kernel_main(void) {
   say("***slab heap double allocation negative start\n", NULL);
 
-  slab_heap_init();
-  void* obj = slab_heap_alloc(32);
+  heap_init();
+  void* obj = malloc(32);
 
   int core_was = core_pin();
   int preempt_was = preemption_disable();
@@ -45,7 +45,7 @@ void kernel_main(void) {
 
   preemption_restore(preempt_was);
 
-  slab_heap_alloc(32);
+  malloc(32);
 
   core_unpin(core_was);
   say("***slab heap double allocation negative FAIL\n", NULL);

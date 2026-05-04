@@ -13,18 +13,18 @@
  *   panic before the raw page is inserted into any slab freelist
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/physmem.h"
 #include "../kernel/print.h"
 
 void kernel_main(void) {
   say("***slab heap invalid slab negative start\n", NULL);
 
-  slab_heap_init();
+  heap_init();
   unsigned* page = (unsigned*)physmem_alloc();
   page[1] = 12345;
 
-  slab_heap_free(page);
+  free(page);
 
   say("***slab heap invalid slab negative FAIL\n", NULL);
 }

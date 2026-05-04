@@ -13,16 +13,16 @@
  *   transition
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/print.h"
 
 void kernel_main(void) {
   say("***slab heap double free negative start\n", NULL);
 
-  slab_heap_init();
-  void* obj = slab_heap_alloc(32);
-  slab_heap_free(obj);
-  slab_heap_free(obj);
+  heap_init();
+  void* obj = malloc(32);
+  free(obj);
+  free(obj);
 
   say("***slab heap double free negative FAIL\n", NULL);
 }

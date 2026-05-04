@@ -50,7 +50,7 @@ static bool vmem_range_can_hold(unsigned start, unsigned rounded_size,
 void vmem_global_init(void){
   register_handler(tlb_miss_handler_, (void*)TLB_MISS_IVT_ENTRY);
 
-  page_cache_init(&page_cache, 4096);
+  page_cache_init(&page_cache);
 }
 
 // to be called only by kernel_shutdown

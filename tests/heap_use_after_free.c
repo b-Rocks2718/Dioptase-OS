@@ -13,18 +13,18 @@
  *   same object and the poison check should panic before the caller receives it
  */
 
-#include "../kernel/slab_heap.h"
+#include "../kernel/heap.h"
 #include "../kernel/print.h"
 
 void kernel_main(void) {
   say("***slab heap use after free negative start\n", NULL);
 
-  slab_heap_init();
-  unsigned* obj = (unsigned*)slab_heap_alloc(32);
-  slab_heap_free(obj);
+  heap_init();
+  unsigned* obj = (unsigned*)malloc(32);
+  free(obj);
 
   obj[1] = 0x12345678;
-  slab_heap_alloc(32);
+  malloc(32);
 
   say("***slab heap use after free negative FAIL\n", NULL);
 }
