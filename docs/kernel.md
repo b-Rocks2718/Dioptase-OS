@@ -11,7 +11,7 @@ See `kernel_init.md` for more details.
 ## Threading
 
 Structure:
-- Allocates a fixed size stack per thread (TODO: use page allocator instead of heap, and use guard pages to detect overflow)
+- Allocates a fixed size stack per thread
 - Per-core and global ready queues with load-balancing
 - Kernel can set threads as `HIGH_PRIORITY`, `NORMAL_PRIORITY`, and `LOW_PRIORITY`. Within each priority, MLFQ is used to schedule threads
 - Preemptive, timer isr context switches to idle threads, idle thread cannot be preempted and finds next ready thread to switch to
