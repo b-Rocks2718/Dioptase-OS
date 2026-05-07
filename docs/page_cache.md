@@ -47,7 +47,7 @@ Eviction is currently invoked only by explicit caller requests; there is no auto
 ### Locking
 
 - `page_cache_init()` initializes a single blocking lock for the whole cache
-- `page_cache_acquire()` and `page_cache_release()` acquire that lock while they inspect or mutate the hash table
+- `page_cache_acquire()` acquires that lock while it inspects or mutates the hash table
 - `page_cache_lookup()` and `page_cache_insert()` do not lock on their own and are only safe to call while the cache lock is held
 
 #### Lock Ordering

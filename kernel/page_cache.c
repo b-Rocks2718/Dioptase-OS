@@ -100,44 +100,6 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
   }
 }
 
-/*
-// release a page from the page cache
-// decrementing its reference count and freeing it if the count reaches zero
-void page_cache_release(struct PageCache* cache, struct Node* node, unsigned offset) {
-  unsigned hash = ((unsigned)(node->cached) ^ offset) % cache->hash_map_size;
-  blocking_lock_acquire(&cache->lock);
-  struct PageCacheEntry* entry = cache->hash_map[hash];
-  struct PageCacheEntry* prev = NULL;
-  while (entry) {
-    if (entry->key.inode == node->cached && entry->key.offset == offset) {
-      if (entry->refcount > 1) {
-        // still live reference, just decrement refcount
-        entry->refcount--;
-      } else {
-        // no more references, remove from hash map and free
-        if (prev) {
-          prev->next = entry->next;
-        } else {
-          cache->hash_map[hash] = entry->next;
-        }
-
-        // no need to write back clean pages
-        if (entry->flags & PAGE_DIRTY) {
-          node_write_all(node, offset, entry->file_bytes, entry->page_data);
-        }
-
-        physmem_free(entry->page_data);
-        free(entry);
-      }
-      break;
-    }
-    prev = entry;
-    entry = entry->next;
-  }
-  blocking_lock_release(&cache->lock);
-}
-*/
-
 void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry) {
   unsigned hash = ((unsigned)(entry->key.inode) ^ entry->key.offset) % cache->hash_map_size;
   blocking_lock_acquire(&cache->lock);

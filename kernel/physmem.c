@@ -340,9 +340,6 @@ void* physmem_alloc(void) {
     // refill cache
     for (int i = 0; i < LOCAL_CACHE_SIZE; i++) {
       void* frame = physmem_alloc_order(0);
-      // struct Page* page = get_page(frame);
-      // physmem_clear_page_flags(page, PG_ALLOCED); // We added it to the cache, so it hasn't *actually* been allocated out
-      // physmem_page_unlock(page);
       per_core->physmem_cache.pages[i] = frame;
     }
     per_core->physmem_cache.count = LOCAL_CACHE_SIZE;

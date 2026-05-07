@@ -56,11 +56,11 @@ void kernel_entry(void) {
 
     say("| Mem size: 128MiB\n", NULL);
 
-    say("| Initializing heap...\n", NULL);
-    heap_init((void*)HEAP_START, HEAP_SIZE);
-
     say("| Initializing physmem allocator...\n", NULL);
     physmem_init();
+
+    say("| Initializing heap...\n", NULL);
+    heap_init((void*)HEAP_START, HEAP_SIZE);
 
     say("| Initializing virtual memory...\n", NULL);
     vmem_global_init();
