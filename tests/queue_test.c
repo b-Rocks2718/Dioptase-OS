@@ -24,6 +24,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
+#include "../kernel/TCB.h"
 
 struct TestElement {
   struct GenericQueueElement link;
@@ -120,10 +121,10 @@ static struct TCB* remove_sleep_node_at(struct SleepQueue* queue, unsigned jiffi
 // Check FIFO queue order, empty cases, and remove_all() cleanup.
 static void test_queue(void) {
   struct Queue queue;
-  struct TCB a;
-  struct TCB b;
-  struct TCB c;
-  struct TCB extra;
+  static struct TCB a;
+  static struct TCB b;
+  static struct TCB c;
+  static struct TCB extra;
 
   queue_init(&queue);
   expect_uint(queue_size(&queue), 0, "queue test: queue_init size mismatch\n");
@@ -176,10 +177,10 @@ static void test_queue(void) {
 // Check spin queue order, empty cases, and remove_all() cleanup.
 static void test_spin_queue(void) {
   struct SpinQueue queue;
-  struct TCB a;
-  struct TCB b;
-  struct TCB c;
-  struct TCB extra;
+  static struct TCB a;
+  static struct TCB b;
+  static struct TCB c;
+  static struct TCB extra;
 
   spin_queue_init(&queue);
   expect_uint(spin_queue_size(&queue), 0, "queue test: spin_queue_init size mismatch\n");
@@ -232,11 +233,11 @@ static void test_spin_queue(void) {
 // Check sleep queue ordering across early, equal-deadline, and late wakeups.
 static void test_sleep_queue(void) {
   struct SleepQueue queue;
-  struct TCB early_1;
-  struct TCB early_2;
-  struct TCB mid;
-  struct TCB late;
-  struct TCB extra;
+  static struct TCB early_1;
+  static struct TCB early_2;
+  static struct TCB mid;
+  static struct TCB late;
+  static struct TCB extra;
 
   sleep_queue_init(&queue);
   expect_uint(sleep_queue_size(&queue), 0, "queue test: sleep_queue_init size mismatch\n");

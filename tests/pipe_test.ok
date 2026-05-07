@@ -1,0 +1,8 @@
+***writing to pipe
+***reading from pipe
+***hello from init
+***duplicated write end of pipe
+***duplicated read end of pipe
+***reading from pipe again
+***hello again from init
+***done

@@ -250,7 +250,7 @@ inode plus the page-aligned byte `file_offset` used for that page.
 On the last `page_cache_release()` for that cached page, the kernel writes back
 `file_bytes` bytes to the backing file and frees the cached physical page.
 
-This gives shared visibility between concurrent mappings of the same cached file
+This gives shared visibilwity between concurrent mappings of the same cached file
 page. The current implementation defines sharing in terms of the page cache; it
 does not separately define coherence with any file-write path that bypasses that
 cache.

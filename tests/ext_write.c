@@ -335,6 +335,69 @@ static void check_cross_block_growth(struct Node* root, unsigned block_size) {
   say("***Cross-block growth: ok\n", NULL);
 }
 
+// Covers the lightweight truncate helper that only reduces the inode size. The
+// new EOF must persist across reopen, but the already-allocated tail blocks are
+// intentionally retained, so regrowth into that preserved range should expose
+// the old bytes until callers overwrite them.
+static void check_shrink_without_reclaim(struct Node* root, unsigned block_size) {
+  struct Node* shrink = node_make_file(root, "shrink.bin");
+  assert(shrink != NULL, "ext_write: failed to create shrink.bin.\n");
+
+  unsigned original_size = block_size + 8;
+  char* payload = alloc_filled_bytes(original_size, 'A',
+    "ext_write: failed to allocate the shrink test payload.\n");
+  for (unsigned i = block_size; i < original_size; ++i){
+    payload[i] = 'B';
+  }
+
+  unsigned cnt = node_write_all(shrink, 0, original_size, payload);
+  assert(cnt == original_size,
+    "ext_write: shrink test bootstrap write returned the wrong byte count.\n");
+  free(payload);
+
+  assert(node_shrink(shrink, 8),
+    "ext_write: node_shrink should succeed for smaller target sizes.\n");
+  assert(node_size_in_bytes(shrink) == 8,
+    "ext_write: node_shrink should update the in-memory file size immediately.\n");
+
+  char prefix[16];
+  cnt = node_read_all(shrink, 0, sizeof(prefix), prefix);
+  assert(cnt == 8,
+    "ext_write: reads should clamp at the new EOF after node_shrink.\n");
+  assert_region_is_byte(prefix, 0, 8, 'A',
+    "ext_write: node_shrink changed the bytes before the new EOF.\n");
+  node_free(shrink);
+
+  shrink = node_find(root, "shrink.bin");
+  assert(shrink != NULL, "ext_write: failed to reopen shrink.bin after shrinking it.\n");
+  assert(node_size_in_bytes(shrink) == 8,
+    "ext_write: shrunk file size did not persist to disk.\n");
+
+  cnt = node_read_all(shrink, 0, sizeof(prefix), prefix);
+  assert(cnt == 8,
+    "ext_write: reopened shrunk file should still clamp reads at the new EOF.\n");
+  assert_region_is_byte(prefix, 0, 8, 'A',
+    "ext_write: reopened shrunk file lost bytes before the new EOF.\n");
+
+  cnt = node_write_all(shrink, block_size + 4, 1, "Z");
+  assert(cnt == 1,
+    "ext_write: regrowth after node_shrink returned the wrong byte count.\n");
+  assert(node_size_in_bytes(shrink) == block_size + 5,
+    "ext_write: regrowth after node_shrink should extend the logical EOF again.\n");
+
+  char* bytes = read_node_bytes(shrink);
+  assert_region_is_byte(bytes, 0, block_size, 'A',
+    "ext_write: shrink-without-reclaim should preserve the first block's old bytes during regrowth.\n");
+  assert_region_is_byte(bytes, block_size, 4, 'B',
+    "ext_write: shrink-without-reclaim should preserve old tail bytes inside retained blocks.\n");
+  assert(bytes[block_size + 4] == 'Z',
+    "ext_write: regrowth after node_shrink did not persist the new payload byte.\n");
+  free(bytes);
+  node_free(shrink);
+
+  say("***Shrink without reclaim: ok\n", NULL);
+}
+
 // Covers the first write that must use the inode's single-indirect block. The
 // readback window includes the three bytes before the payload so the test also
 // proves the final gap bytes remained zero-filled.
@@ -432,6 +495,7 @@ int kernel_main(void) {
   check_concurrent_same_block_partial_writes(root, block_size);
   check_gap_zero_fill(root);
   check_cross_block_growth(root, block_size);
+  check_shrink_without_reclaim(root, block_size);
   check_single_indirect_growth(root, block_size);
 
   return 0;

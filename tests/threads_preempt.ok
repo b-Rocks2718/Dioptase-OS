@@ -1,3 +1,0 @@
-***threads preempt test start
-***threads preempt ok threads=16 rounds=10 total=160
-***threads preempt test complete

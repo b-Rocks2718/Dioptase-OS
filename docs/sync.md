@@ -59,6 +59,11 @@ Fixed-capacity blocking queue of `GenericQueueElement`s. One semaphore counts fr
 
 Tested in `threads_bounded_buffer.c`
 
+#### Blocking RingBuf
+Fixed-capacity blocking FIFO of `char` bytes backed by owned ring storage. One semaphore counts free byte slots and another counts queued bytes. `blocking_ringbuf_add()` blocks while the ring is full, and `blocking_ringbuf_remove()` blocks while it is empty. `blocking_ringbuf_remove_all()` drains all currently available bytes into a caller-provided buffer, and `blocking_ringbuf_destroy()` reaps blocked waiters while freeing the owned storage.
+
+Tested in `threads_blocking_ringbuf.c`
+
 #### Barrier
 Reusable barrier for a fixed set of threads. It uses a blocking lock plus two semaphores in a two-turnstile pattern so one generation cannot leak into the next. It must be reused by the same set of threads; other usage is undefined.
 

@@ -217,6 +217,90 @@ void unmap_vme(unsigned* pd, struct VME* vme) {
   tlb_invalidate_range(vme->start, vme->end);
 }
 
+// Shared file-backed VMEs treat the rounded tail of the final page as part of
+// the mapped page cache entry so writes can extend the file through mmap().
+// This helper mirrors the shared-file fault path when it decides how many bytes
+// of file data one cached page represents.
+static unsigned shared_vme_page_bytes(struct VME* vme, unsigned va) {
+  assert(vme != NULL, "shared_vme_page_bytes: VME must not be NULL.\n");
+  assert(vme->file != NULL,
+         "shared_vme_page_bytes: shared VME must be file-backed.\n");
+  assert(va >= vme->start && va < vme->end,
+         "shared_vme_page_bytes: virtual address must fall inside the VME.\n");
+
+  unsigned vme_offset = va - vme->start;
+  if (vme->size > vme_offset) {
+    unsigned bytes_remaining = vme->size - vme_offset;
+    if (bytes_remaining < FRAME_SIZE) {
+      return bytes_remaining;
+    }
+  }
+
+  return FRAME_SIZE;
+}
+
+// copy a thread's page dir/page tables and vme_list from src to dst
+void vmem_fork(struct TCB* src, struct TCB* dst) {
+  dst->vme_list = NULL;
+
+  // copy vme list to dst tcb
+  struct VME* prev_vme = NULL;
+  for (struct VME* vme = src->vme_list; vme != NULL; vme = vme->next) {
+    struct VME* new_vme = vme_create(vme->start, vme->end, vme->size,
+                                     vme->file, vme->file_offset,
+                                     vme->flags, vme->paddr);
+    vme_insert(dst, prev_vme, new_vme);
+    prev_vme = new_vme;
+  }
+
+  // copy page directory and page tables from src to dst
+  dst->pid = create_page_directory();
+  unsigned* src_pd = (unsigned*)src->pid;
+  unsigned* dst_pd = (unsigned*)dst->pid;
+
+  for (struct VME* vme = dst->vme_list; vme != NULL; vme = vme->next) {
+    if (!(vme->flags & MMAP_USER))
+      continue;
+
+    for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE) {
+      unsigned page_dir_index = (va >> 22) & 0x3FF;
+      unsigned page_table_index = (va >> 12) & 0x3FF;
+
+      unsigned pde = src_pd[page_dir_index];
+      if (!(pde & VMEM_VALID))
+        continue;
+
+      unsigned* src_pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+      unsigned pte = src_pt[page_table_index];
+      if (!(pte & VMEM_VALID))
+        continue;
+
+      unsigned* dst_pt;
+      if (dst_pd[page_dir_index] & VMEM_VALID) {
+        dst_pt = (unsigned*)(dst_pd[page_dir_index] & ~(FRAME_SIZE - 1));
+      } else {
+        dst_pt = (unsigned*)create_page_table();
+        dst_pd[page_dir_index] = (unsigned)dst_pt | (pde & 0xFFF);
+      }
+
+      unsigned paddr = pte & ~(FRAME_SIZE - 1);
+      if (vme->flags & MMAP_SHARED) {
+        unsigned page_offset = vme->file_offset + (va - vme->start);
+        unsigned page_bytes = shared_vme_page_bytes(vme, va);
+        struct PageCacheEntry* page = page_cache_acquire(&page_cache,
+                                                         vme->file, page_offset, page_bytes);
+        assert((unsigned)page->page_data == paddr,
+               "vmem_fork: shared source PTE must point at the page cache page.\n");
+        dst_pt[page_table_index] = pte;
+      } else {
+        unsigned* dst_page = physmem_alloc();
+        memcpy(dst_page, (void*)paddr, FRAME_SIZE);
+        dst_pt[page_table_index] = (unsigned)dst_page | (pte & 0xFFF);
+      }
+    }
+  }
+}
+
 // free all physical pages mapped by the given address space,
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb) {
@@ -579,7 +663,7 @@ void vme_change_perms(struct VME* vme, unsigned new_flags) {
 // Walks the page table & checks the PTE.
 // If the PTE is sufficient to handle the miss, updates the cache
 // If the PTE is not sufficient to handle the miss (no PTE, PTE doesn't have enough permissions), calls the page fault handler
-void tlb_miss_handler(void* vpn, unsigned flags) {
+int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_to_user) {
   unsigned fault_addr = (unsigned)(vpn) << 12;
 
   unsigned* pd = get_pid();
@@ -597,9 +681,7 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
       if (pte_value & VMEM_READ) {
         flags &= ~VMEM_READ;
       } else {
-        int args[2] = {fault_addr, flags};
-        say("| vmem: tlb permission error fault_addr=0x%X flags = 0x%X has read permission error\n", args);
-        panic("vmem: tlb read permission error");
+        needs_fault = true;
       }
     }
     if (flags & VMEM_WRITE) {
@@ -613,9 +695,7 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
       if (pte_value & VMEM_EXEC) {
         flags &= ~VMEM_EXEC;
       } else {
-        int args[2] = {fault_addr, flags};
-        say("| vmem: tlb permission error fault_addr=0x%X flags = 0x%X has exec permission error\n", args);
-        panic("vmem: tlb exec permission error");
+        needs_fault = true;
       }
     }
   }
@@ -623,20 +703,23 @@ void tlb_miss_handler(void* vpn, unsigned flags) {
   if (!needs_fault) {
     tlb_write(fault_addr, pte_value);
     interrupts_restore(was);
-    return;
+    return 0;
   }
   interrupts_restore(was);
 
-  page_fault_handler(fault_addr, flags, pte);
+  return page_fault_handler(fault_addr, flags, pte, epc_ptr, return_to_user);
 }
 
 // Updates PTE & TLB
-void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
+int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsigned* epc_ptr, bool* return_to_user) {
   int args[2] = {fault_addr, flags};
+
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
+
+  *return_to_user = true; // default to resuming the faulting context via rfe
 
   struct VME* curr = tcb->vme_list;
   while (curr) {
@@ -647,32 +730,37 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
   }
 
   if (curr == NULL) {
-    int args[2] = {fault_addr, flags};
-    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X has no corresponding VME\n", args);
-    panic("vmem: TLB miss with no corresponding VME.\n");
-    return;
+    int args[3] = {fault_addr, flags, (int)*epc_ptr};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X has no corresponding VME\n", args);
+    return segfault_helper(tcb, epc_ptr, return_to_user,
+                           "| User program killed due to access of unmapped address\n",
+                           "vmem: TLB miss with no corresponding VME.\n");
   }
 
   if ((curr->flags & MMAP_SHARED) && (curr->file == NULL)) {
-    int args[2] = {fault_addr, flags};
-    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X hit unsupported shared anonymous VME\n", args);
+    int args[3] = {fault_addr, flags, (int)*epc_ptr};
+    say("| vmem: tlb miss fault_addr=0x%X flags=0x%X epc=0x%X hit unsupported shared anonymous VME\n", args);
     panic("vmem: shared anonymous TLB miss not supported yet.\n");
-    return;
+    return -1;
   }
 
   unsigned pte_value = *pte; // Make sure value is constant throughout
 
   if ((flags != 0) && (pte_value & VMEM_VALID)) { // Permission fault
     if (flags & VMEM_READ) {
-      panic("vmem: can't handle a read permission fault");
+      return segfault_helper(tcb, epc_ptr, return_to_user,
+                             "| User program killed due to access of mapped page without sufficient permissions\n",
+                             "vmem: can't handle a read permission fault");
     }
     if (flags & VMEM_WRITE) {
       if (!(curr->flags & MMAP_WRITE)) {
-        panic("vmem: you're not allowed to write to this address range!"); // TODO kill user if relevant
+        return segfault_helper(tcb, epc_ptr, return_to_user,
+                               "| User program killed due to access of mapped page without sufficient permissions\n",
+                               "vmem: invalid privileges (write)");
       }
       // PTE says read-only but VME says writable => first write
       // Dirty bit tracking
-      assert(pte_value != 0, "CRASHING OUT");
+      assert(pte_value != 0, "PTE value should not be 0");
       struct Page* page = get_page(pte_phys_addr(pte_value), "get page - fault handler write");
       physmem_page_lock(page);
       if (*pte == pte_value) { // Revalidate
@@ -687,7 +775,9 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
       // TODO: potentially COW (in the future)
     }
     if (flags & VMEM_EXEC) {
-      panic("vmem: can't handle an exec permission fault");
+      return segfault_helper(tcb, epc_ptr, return_to_user,
+                             "| User program killed due to access of mapped page without sufficient permissions\n",
+                             "vmem: can't handle an exec permission fault");
     }
   }
 
@@ -712,7 +802,7 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
   if (curr->file) {
     if (curr->flags & MMAP_SHARED) {
       // FILE-BACKED SHARED MAPPING
-      unsigned bytes_in_page = (curr->size - (fault_addr - curr->start)) > FRAME_SIZE ? FRAME_SIZE : (curr->size - (fault_addr - curr->start));
+      unsigned bytes_in_page = shared_vme_page_bytes(curr, fault_addr);
 
       // shared mapping points directly into page cache
       struct PageCacheEntry* cache_entry = page_cache_acquire(&page_cache, curr->file, (curr->file_offset + (fault_addr - curr->start)), bytes_in_page); // Locks the page
@@ -771,6 +861,31 @@ void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte) {
     *pte = pte_value;
     tlb_write(fault_addr, pte_value);
     return;
+  }
+}
+
+// Handles killing the user / returning to the kernel / panicking on genuinely invalid memory accesses
+static int segfault_helper(struct TCB* tcb, unsigned* epc_ptr, bool* return_to_user, char* user_error_msg, char* kernel_error_msg) {
+
+  // ISA `cr0` is the trap/exception nesting depth after entry. A value of 1
+  // means this miss interrupted user mode; values above 1 mean the core was
+  // already in kernel mode and took a nested miss while handling that context.
+  bool was_user = get_cr0() == 1;
+
+  if (was_user) {
+    // User code touched a mapped page without sufficient permissions. Abort
+    // back to the kernel caller of `jump_to_user(...)`.
+    say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
+    *return_to_user = false;
+    return -1;
+  } else if (tcb->uaccess_active) {
+    // Kernel uaccess helpers recover by redirecting the faulting instruction
+    // stream to their local error path, then resuming kernel mode via rfe.
+    assert(tcb->uaccess_err_addr != NULL, "uaccess err addr not set");
+    *epc_ptr = (unsigned)tcb->uaccess_err_addr;
+    return 0;
+  } else {
+    panic("vmem: kernel TLB miss due to invalid privileges\n");
   }
 }
 

@@ -27,6 +27,8 @@
 #include "scheduler.h"
 #include "vmem.h"
 #include "page_cache.h"
+#include "sys.h"
+#include "promise.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -62,6 +64,25 @@ static void free_tcb(struct TCB* tcb) {
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
 
+  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
+    if (tcb->file_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_FILE, i);
+    }
+  }
+  for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
+    if (tcb->sem_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_SEM, i);
+    }
+  }
+  for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
+    if (tcb->child_descriptors[i]){
+      deallocate_descriptor(tcb, DESCRIPTOR_CHILD, i);
+    }
+  }
+
+  node_free(tcb->cwd);
+  free(tcb->cwd_path);
+
   free(tcb);
 
   __atomic_fetch_add(&n_active, -1);
@@ -83,8 +104,10 @@ static void reaper(void) {
 
 // return a TCB struct
 // defaults to: preemption enabled, not pinned, normal priority
-static struct TCB* make_tcb(bool leak_mem) {
-  struct TCB* tcb = leak_mem ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
+// If init_stdio is false, leave the descriptor tables empty so kernel-only
+// daemon threads do not allocate stdio descriptors they can never consume.
+static struct TCB* make_tcb(bool is_daemon) {
+  struct TCB* tcb = is_daemon ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
 
   tcb->flags = 0;
 
@@ -101,11 +124,25 @@ static struct TCB* make_tcb(bool leak_mem) {
   tcb->imr = DEFAULT_INTERRUPT_MASK;
   tcb->pid = 0;
   tcb->fault_addr = 0;
+  tcb->fault_flags = 0;
+  tcb->uaccess_active = 0;
+  tcb->uaccess_err_addr = 0;
 
   tcb->can_preempt = true;
   tcb->core_affinity = ANY_CORE;
   tcb->priority = NORMAL_PRIORITY;
   tcb->vme_list = NULL;
+
+  tcb->cwd = &fs.root;
+  tcb->cwd_path = is_daemon ? leak(2) : malloc(2);
+  tcb->cwd_path[0] = '/';
+  tcb->cwd_path[1] = 0;
+
+  init_descriptors(tcb, !is_daemon);
+
+  tcb->parent_promise = NULL;
+
+  tcb->pending_signals = 0;
 
   tcb->next = NULL;
 
@@ -128,7 +165,7 @@ void thread_(struct Fun* thread_fun,
   unsigned* the_stack = malloc(TCB_STACK_SIZE);
   assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
   assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->ra = (unsigned)thread_entry;
   tcb->thread_fun = thread_fun;
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
@@ -157,7 +194,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   unsigned* the_stack = leak(TCB_STACK_SIZE);
   assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
   assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ret_addr = (unsigned)thread_entry;
+  tcb->ra = (unsigned)thread_entry;
   tcb->thread_fun = thread_fun;
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
@@ -209,6 +246,7 @@ void thread_entry(void) {
   struct TCB* current_tcb = get_current_tcb();
   interrupts_restore(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
+  unsigned rc = 0;
   if (thread_fun != NULL) {
     // Catch corrupted thread trampoline state before an indirect branch can jump to 0x0.
     if (thread_fun->func == NULL) {
@@ -220,14 +258,14 @@ void thread_entry(void) {
       say("| thread_entry null func core=%d tcb=0x%X fun=0x%X arg=0x%X\n", args);
       panic("thread_entry: thread_fun->func is NULL.\n");
     }
-    (*thread_fun->func)(thread_fun->arg);
+    rc = (*(unsigned (*)(void *))thread_fun->func)(thread_fun->arg);
   }
 
   // Thread cleanup:
   // stop() places thread in reaper queue
   // reaper thread eventually frees thread
 
-  stop();
+  stop(rc);
 }
 
 // empty function to pass into context_switch
@@ -315,15 +353,32 @@ void event_loop(void) {
     struct TCB* me = core->current_thread;
     struct TCB* next = schedule_next_thread();
 
-    int was = interrupts_disable();
-    if (next != NULL) {
-      context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
-    } else {
-      interrupts_restore(was);
-
-      // put core to sleep to save power until the next interrupt if there's no work to do
+    if (next == NULL) {
+      // no work to do
       pause();
+      continue;
     }
+
+    if (next->pending_signals){
+      // free parent promise
+      if (next->parent_promise != NULL){
+        promise_set(next->parent_promise->child_promise, (void*)-1);
+        __atomic_store_n((int*)&next->parent_promise->child_tcb, NULL);
+
+        if (__atomic_fetch_add(&next->parent_promise->refcount, -1) == 1){
+          promise_free(next->parent_promise->child_promise);
+          free(next->parent_promise);
+        }
+      }
+
+      // kill this thread
+      reap_tcb((void*)next);
+
+      continue;
+    }
+
+    int was = interrupts_disable();
+    context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
   }
 
   kernel_shutdown();
@@ -359,9 +414,13 @@ void bootstrap(void) {
   tcb->thread_fun = NULL;
   tcb->bp = 0;
   tcb->sp = 0;
-  tcb->ret_addr = 0;
+  tcb->ra = 0;
   tcb->psr = 1;
   tcb->imr = 0;
+  tcb->fault_addr = 0;
+  tcb->fault_flags = 0;
+  tcb->uaccess_active = 0;
+  tcb->uaccess_err_addr = 0;
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 
@@ -394,11 +453,24 @@ void sleep(unsigned jiffies) {
 
 // terminate the current thread and
 // place it on the reaper queue to eventually free its resources
-void stop(void) {
+void stop(unsigned rc) {
   unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;
+  interrupts_restore(was);
   bool is_idle = (current == &core->idle_thread);
+
+  if (current->parent_promise != NULL){
+    promise_set(current->parent_promise->child_promise, (void*)rc);
+    __atomic_store_n((int*)&current->parent_promise->child_tcb, NULL);
+
+    if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
+      promise_free(current->parent_promise->child_promise);
+      free(current->parent_promise);
+    }
+  }
+
+  was = interrupts_disable();
 
   if (is_idle) {
     panic("idle thread cannot call stop().\n");

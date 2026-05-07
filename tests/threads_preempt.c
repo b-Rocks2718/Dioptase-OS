@@ -24,7 +24,7 @@
 #include "../kernel/machine.h"
 #include "../kernel/constants.h"
 
-#define NUM_THREADS 16
+#define NUM_THREADS 8
 #define PREEMPT_ROUNDS 10
 
 struct ThreadArg {

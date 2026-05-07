@@ -6,11 +6,11 @@ Interrupt Vector Table
 ### 0x400 - ...
 Where BIOS code is loaded (32KiB reserved). Can overwrite once kernel is entered. 
 
-### 0x10000 - 0x90000
-Kernel text (512KiB reserved for now)
+### 0x10000 - 0x80000
+Kernel text (448KiB reserved for now)
 
-### 0x90000 - 0xD0000
-Kernel data (256KiB)
+### 0x80000 - 0xD0000
+Kernel data (320KiB)
 
 ### 0xD0000 - 0xE0000
 Kernel rodata (64KiB)

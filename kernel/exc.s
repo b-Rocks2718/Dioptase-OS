@@ -40,9 +40,14 @@ invalid_instr_exc_handler_:
   or   r2, r1, r2
   mov  imr, r2
 
-  mov  r1, tlba
-  mov  r2, tlbf
+  # allocate space for return_to_user argument
+  push r0
+  mov  r1, sp # pass in pointer
   call invalid_instr_handler
+
+  pop  r2
+  cmp  r2, r0
+  bz   return_to_kernel
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -119,9 +124,14 @@ priv_exc_handler_:
   or   r2, r1, r2
   mov  imr, r2
 
-  mov  r1, tlba
-  mov  r2, tlbf
+  # allocate space for return_to_user argument
+  push r0
+  mov  r1, sp # pass in pointer
   call priv_instr_handler
+
+  pop  r2
+  cmp  r2, r0
+  bz   return_to_kernel
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -198,9 +208,14 @@ misaligned_pc_exc_handler_:
   or   r2, r1, r2
   mov  imr, r2
 
-  mov  r1, tlba
-  mov  r2, tlbf
+  # allocate space for return_to_user argument
+  push r0
+  mov  r1, sp # pass in pointer
   call misaligned_pc_handler
+
+  pop  r2
+  cmp  r2, r0
+  bz   return_to_kernel
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -237,3 +252,11 @@ misaligned_pc_exc_handler_:
   pop  r1
 
   rfe
+
+return_to_kernel:
+  add sp, sp, 92 # 4 + 19 = 23 regs, 23 * 4 = 92
+
+  pop ra
+  pop bp
+
+  ret

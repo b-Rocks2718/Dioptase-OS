@@ -42,7 +42,16 @@ tlb_miss_handler_:
 
   mov  r1, tlba
   mov  r2, tlbf
+  add  r3, sp, 12  # pass in pointer to the epc on the stack
+
+  push r0 # allocate stack space for the return_to_user boolean
+  mov  r4, sp # pass the address of the return_to_user boolean to miss handler
+
   call tlb_miss_handler
+
+  pop  r2
+  cmp  r2, r0
+  bz   return_to_kernel
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -78,7 +87,15 @@ tlb_miss_handler_:
   pop  r2
   pop  r1
 
-  rfe
+  rfe  # return to user
+
+return_to_kernel:
+  add sp, sp, 92 # 4 + 19 = 23 regs, 23 * 4 = 92
+
+  pop ra
+  pop bp
+
+  ret
 
   # for now, always ipi all cores
   .global send_ipi

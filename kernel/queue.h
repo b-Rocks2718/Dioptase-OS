@@ -1,10 +1,11 @@
 #ifndef QUEUE_H
 #define QUEUE_H
 
-#include "TCB.h"
 #include "atomic.h"
 
 // TCB queues:
+
+struct TCB;
 
 // FIFO queue protected by an internal spin lock
 struct SpinQueue {

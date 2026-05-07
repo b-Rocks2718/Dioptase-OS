@@ -22,8 +22,12 @@
 #define AUDIO_WORD_BYTES 4
 #define AUDIO_USABLE_BYTES 16382
 
-#define AUDIO_REFILL_TRIGGER_FREE_BYTES 4096
-#define AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES 15358
+/*
+ * LOW_WATER is expressed in buffered bytes. 12286 bytes leaves 4096 bytes of
+ * free ring space before waking the audio worker, so each refill gets a 4 KiB
+ * copy window instead of the previous 1 KiB default.
+ */
+#define AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES 12286
 
 // set up audio ISR and initialize control regs
 void audio_init(void);
@@ -132,6 +136,8 @@ int audio_wav_read_sample_s16le(struct AudioWav* wav, unsigned sample_idx);
 // Stream the WAV payload into the MMIO audio ring and block until playback has
 // drained the ring
 void audio_wav_play(struct AudioWav* wav);
+
+void audio_worker(void* audio_node);
 
 extern void audio_handler_(void);
 extern void mark_audio_handled(void);
