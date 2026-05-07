@@ -94,9 +94,9 @@ void* pte_phys_addr(unsigned pte);
 
 void vme_change_perms(struct VME* vme, unsigned new_flags);
 
-extern void tlb_miss_handler_(void);
+extern int tlb_miss_handler_(void);
 
-void page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte);
+int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsigned* epc_ptr, bool* return_to_user);
 
 extern void ipi_handler_(void);
 

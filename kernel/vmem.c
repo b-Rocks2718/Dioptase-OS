@@ -660,6 +660,31 @@ void vme_change_perms(struct VME* vme, unsigned new_flags) {
   tlb_invalidate_range(vme->start, vme->end);
 }
 
+// Handles killing the user / returning to the kernel / panicking on genuinely invalid memory accesses
+static int segfault_helper(struct TCB* tcb, unsigned* epc_ptr, bool* return_to_user, char* user_error_msg, char* kernel_error_msg) {
+
+  // ISA `cr0` is the trap/exception nesting depth after entry. A value of 1
+  // means this miss interrupted user mode; values above 1 mean the core was
+  // already in kernel mode and took a nested miss while handling that context.
+  bool was_user = get_cr0() == 1;
+
+  if (was_user) {
+    // User code touched a mapped page without sufficient permissions. Abort
+    // back to the kernel caller of `jump_to_user(...)`.
+    say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
+    *return_to_user = false;
+    return -1;
+  } else if (tcb->uaccess_active) {
+    // Kernel uaccess helpers recover by redirecting the faulting instruction
+    // stream to their local error path, then resuming kernel mode via rfe.
+    assert(tcb->uaccess_err_addr != NULL, "uaccess err addr not set");
+    *epc_ptr = (unsigned)tcb->uaccess_err_addr;
+    return 0;
+  } else {
+    panic("vmem: kernel TLB miss due to invalid privileges\n");
+  }
+}
+
 // Walks the page table & checks the PTE.
 // If the PTE is sufficient to handle the miss, updates the cache
 // If the PTE is not sufficient to handle the miss (no PTE, PTE doesn't have enough permissions), calls the page fault handler
@@ -768,7 +793,7 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
         *pte |= VMEM_WRITE;
         tlb_write(fault_addr, pte_value); // Must update tlb_write and pte value with no possibility for eviction between
         physmem_page_unlock(page);
-        return;
+        return 0;
       }
       physmem_page_unlock(page);
       // If revalidation didn't work, fall through to invalid PTE handler
@@ -814,7 +839,7 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
       *pte = pte_value;
       tlb_write(fault_addr, pte_value);
       physmem_page_unlock(page);
-      return;
+      return 0;
     } else {
       // FILE-BACKED PRIVATE MAPPING
       unsigned file_page_offset = curr->file_offset + (fault_addr - curr->start);
@@ -842,7 +867,7 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
       pte_value = phys_page | pte_flags;
       *pte = pte_value;
       tlb_write(fault_addr, pte_value);
-      return;
+      return 0;
     }
   } else {
     assert(!(curr->flags & MMAP_SHARED), "cannot yet handle shared anonymous pages\n");
@@ -860,32 +885,7 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
     pte_value = phys_page | pte_flags;
     *pte = pte_value;
     tlb_write(fault_addr, pte_value);
-    return;
-  }
-}
-
-// Handles killing the user / returning to the kernel / panicking on genuinely invalid memory accesses
-static int segfault_helper(struct TCB* tcb, unsigned* epc_ptr, bool* return_to_user, char* user_error_msg, char* kernel_error_msg) {
-
-  // ISA `cr0` is the trap/exception nesting depth after entry. A value of 1
-  // means this miss interrupted user mode; values above 1 mean the core was
-  // already in kernel mode and took a nested miss while handling that context.
-  bool was_user = get_cr0() == 1;
-
-  if (was_user) {
-    // User code touched a mapped page without sufficient permissions. Abort
-    // back to the kernel caller of `jump_to_user(...)`.
-    say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
-    *return_to_user = false;
-    return -1;
-  } else if (tcb->uaccess_active) {
-    // Kernel uaccess helpers recover by redirecting the faulting instruction
-    // stream to their local error path, then resuming kernel mode via rfe.
-    assert(tcb->uaccess_err_addr != NULL, "uaccess err addr not set");
-    *epc_ptr = (unsigned)tcb->uaccess_err_addr;
     return 0;
-  } else {
-    panic("vmem: kernel TLB miss due to invalid privileges\n");
   }
 }
 
