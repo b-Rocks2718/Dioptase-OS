@@ -689,6 +689,9 @@ static int segfault_helper(struct TCB* tcb, unsigned* epc_ptr, bool* return_to_u
 // If the PTE is sufficient to handle the miss, updates the cache
 // If the PTE is not sufficient to handle the miss (no PTE, PTE doesn't have enough permissions), calls the page fault handler
 int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_to_user) {
+
+  *return_to_user = true; // default to resuming the faulting context via rfe
+
   unsigned fault_addr = (unsigned)(vpn) << 12;
 
   unsigned* pd = get_pid();
@@ -743,8 +746,6 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
-
-  *return_to_user = true; // default to resuming the faulting context via rfe
 
   struct VME* curr = tcb->vme_list;
   while (curr) {
