@@ -588,7 +588,7 @@ int handle_read(int fd, char* buf, unsigned count){
 
   char* kbuf = malloc(bytes_to_read);
   unsigned rounded_offset = (unsigned)offset & ~(FRAME_SIZE - 1);
-  unsigned rounded_bytes = (bytes_to_read + ((unsigned)offset - rounded_offset) + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned rounded_bytes = bytes_to_read + ((unsigned)offset - rounded_offset);
   char* mmapped_file = mmap(rounded_bytes, file_node, rounded_offset,
     MMAP_READ | MMAP_SHARED);
   memcpy(kbuf, mmapped_file + ((unsigned)offset - rounded_offset),
