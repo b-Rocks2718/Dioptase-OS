@@ -72,6 +72,18 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
         // say("Released cache lock - revalidate success\n", NULL);
         blocking_lock_release(&cache->lock);
         assert(verify == page->cache_entry, "page cache mismatch");
+
+        // Update file_bytes
+        struct CachedInode* inode = verify->key.inode;
+        if (file_bytes > verify->file_bytes) {
+          verify->file_bytes = file_bytes;
+        }
+        blocking_lock_acquire(&inode->lock);
+        if (offset + file_bytes > inode->inode.size) {
+          inode->inode.size = offset + file_bytes;
+        }
+        blocking_lock_release(&inode->lock);
+
         return verify;
       } else { // Fail (it got evicted, or it's still being paged in)
         blocking_lock_release(&cache->lock);
@@ -88,6 +100,14 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
     blocking_lock_release(&cache->lock); // Release the cache lock while acquiring other locks
     // We're safe from eviction because the page is pinned
     physmem_page_lock(page);
+
+    // Update file_bytes
+    struct CachedInode* inode = entry->key.inode;
+    blocking_lock_acquire(&inode->lock);
+    if (offset + file_bytes > inode->inode.size) {
+      inode->inode.size = offset + file_bytes;
+    }
+    blocking_lock_release(&inode->lock);
 
     // load the page from disk into the newly allocated page_data
     unsigned bytes_read = node_read_all(node, offset, FRAME_SIZE, page_data);

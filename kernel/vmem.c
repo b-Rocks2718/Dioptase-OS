@@ -828,6 +828,8 @@ int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsig
   if (curr->file) {
     if (curr->flags & MMAP_SHARED) {
       // FILE-BACKED SHARED MAPPING
+
+      // allows mmap can to extend files
       unsigned bytes_in_page = shared_vme_page_bytes(curr, fault_addr);
 
       // shared mapping points directly into page cache
