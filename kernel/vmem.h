@@ -126,6 +126,8 @@ void tlb_shootdown(struct PageRef* ref);
 // Block until all cores shootdown the linked list of page refs
 void tlb_shootdown_batch(struct PageRef* ref);
 
+void page_shootdown(struct Page* page);
+
 // Evicts & frees a page (unlocking it in the process)
 // The page must be locked already
 void page_evict(struct Page* page);

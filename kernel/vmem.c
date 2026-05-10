@@ -936,18 +936,9 @@ void tlb_shootdown(struct PageRef* ref) {
 // void tlb_shootdown_batch(struct PageRef* ref) {
 // }
 
-// Page must be locked already
-// Page must not be pinned
-void page_evict(struct Page* page) {
-  assert(!(page->flags & PG_PINNED), "TRYING TO EVICT A PINNED PAGE\n");
-  // Acquire the inode lock so no one can try to demand page it in before we finish writing back
-  struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?
-  void* frame = cache_entry->page_data;
-  blocking_lock_acquire(&cache_entry->key.inode->lock);
-
-  // Evict from page cache
-  page_cache_remove(&page_cache, cache_entry);
-
+// Helper function to handle invalidating all referencing PTEs and invlpg TLB caches
+// Page must be locked
+void page_shootdown(struct Page* page) {
   // Remove PTEs & invlpg
   struct PageRef* ref = page->refs;
   while (ref != NULL) {
@@ -963,6 +954,21 @@ void page_evict(struct Page* page) {
   }
   assert(page->ref_cnt == 0, "page refcount != 0");
   page->refs = NULL;
+}
+
+// Page must be locked already
+// Page must not be pinned
+void page_evict(struct Page* page) {
+  assert(!(page->flags & PG_PINNED), "TRYING TO EVICT A PINNED PAGE\n");
+  // Acquire the inode lock so no one can try to demand page it in before we finish writing back
+  struct PageCacheEntry* cache_entry = page->cache_entry; // TODO what if someone else tries to evict at the same time as us?
+  void* frame = cache_entry->page_data;
+  blocking_lock_acquire(&cache_entry->key.inode->lock);
+
+  // Evict from page cache
+  page_cache_remove(&page_cache, cache_entry);
+
+  page_shootdown(page);
 
   // Writeback
   if (page->flags & PG_DIRTY) {

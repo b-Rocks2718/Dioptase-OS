@@ -18,6 +18,7 @@
 #include "ext.h"
 #include "string.h"
 #include "scheduler.h"
+#include "page_cache.h"
 
 #define INITIAL_USER_STACK_SIZE 0x4000
 #define SYSCALL_MAX_PATH_BYTES 1024
@@ -867,8 +868,59 @@ int handle_truncate(int fd, unsigned size){
     return -1;
   }
 
+  unsigned original_size = descriptor->file->cached->inode.size;
+
   if (!node_shrink(descriptor->file, size)){
     return -1;
+  }
+
+  // Note that node_shrink does not deallocate or overwrite blocks on disk, but reads from the file *should* be clamped to the right size
+
+  // Zero the new tail
+  unsigned rounded_tail_offset = size & ~(FRAME_SIZE - 1); // Rounded down to page boundary
+  unsigned bytes_in_tail = size - rounded_tail_offset;
+  struct PageCacheEntry* tail_entry = page_cache_acquire_if_present(&page_cache, descriptor->file, rounded_tail_offset); // Locks the page
+  if (tail_entry != NULL) {
+    struct Page* tail_page = get_page(tail_entry->page_data, "handle_truncate - tail");
+    assert(!(tail_page->flags & PG_PINNED), "truncation would remove a pinned page (rounded tail)");
+    page_shootdown(tail_page); // Remove all references
+    memset((void*)((unsigned)tail_entry->page_data + bytes_in_tail), 0, FRAME_SIZE - bytes_in_tail);
+    physmem_page_unlock(tail_page); // Unlock the page
+    // Page should now still be able to be acquired from the page cache
+  }
+
+  // Shootdown truncated page cache pages
+  unsigned offset = rounded_tail_offset + FRAME_SIZE;
+  while (offset < original_size) {
+    struct PageCacheEntry* entry = page_cache_acquire_if_present(&page_cache, descriptor->file, offset); // Locks the page
+    if (entry == NULL) {
+      offset += FRAME_SIZE;
+      continue;
+    }
+
+    struct Page* page = get_page(entry->page_data, "handle_truncate");
+    assert(!(page->flags & PG_PINNED), "truncation would remove a pinned page\n");
+    void* frame = entry->page_data;
+
+    // Evict from page cache
+    page_cache_remove(&page_cache, entry);
+
+    // Remove references
+    page_shootdown(page);
+
+    // No need to write back
+
+    // Clean up metadata
+    entry->key.inode->refcount--;
+    free(entry);
+
+    // Free page
+    page->cache_entry = NULL;
+    physmem_set_page_flags(page, PG_PINNED);
+    physmem_page_unlock(page);
+    physmem_free(frame);
+
+    offset += FRAME_SIZE;
   }
 
   return 0;

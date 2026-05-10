@@ -120,6 +120,39 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* 
   }
 }
 
+// Looks up the page if it is in the page cache; returns NULL if not
+struct PageCacheEntry* page_cache_acquire_if_present(struct PageCache* cache, struct Node* node, unsigned offset) {
+  while (true) {
+    blocking_lock_acquire(&cache->lock);
+
+    struct PageCacheEntry* entry = page_cache_lookup(cache, node, offset);
+
+    if (entry == NULL) {
+      blocking_lock_release(&cache->lock);
+      return NULL;
+    }
+
+    // Lock page
+    void* page_data = entry->page_data;
+    struct Page* page = get_page(page_data, "get page - cache acquire hit");
+    blocking_lock_release(&cache->lock); // Can't hold the cache lock while acquiring a page lock
+    physmem_page_lock(page);
+
+    // Revalidate
+    blocking_lock_acquire(&cache->lock);
+    struct PageCacheEntry* verify = page_cache_lookup(cache, node, offset);
+    if ((verify != NULL) && (verify->page_data == page_data) && !(page->flags & PG_PINNED)) { // Success!
+      blocking_lock_release(&cache->lock);
+      assert(verify == page->cache_entry, "page cache mismatch");
+      return verify;
+    } else { // Fail (it got evicted, or it's still being paged in)
+      blocking_lock_release(&cache->lock);
+      physmem_page_unlock(page);
+      continue; // If revalidation failed, loop again
+    }
+  }
+}
+
 void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry) {
   unsigned hash = ((unsigned)(entry->key.inode) ^ entry->key.offset) % cache->hash_map_size;
   blocking_lock_acquire(&cache->lock);

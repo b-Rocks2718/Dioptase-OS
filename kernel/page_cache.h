@@ -38,6 +38,9 @@ void page_cache_init(struct PageCache* cache, unsigned hash_map_size);
 struct PageCacheEntry* page_cache_acquire(struct PageCache* cache, struct Node* node,
                                           unsigned offset, unsigned file_bytes);
 
+// Looks up the page if it is in the page cache; returns NULL if not
+struct PageCacheEntry* page_cache_acquire_if_present(struct PageCache* cache, struct Node* node, unsigned offset);
+
 // remove a page from the page cache
 void page_cache_remove(struct PageCache* cache, struct PageCacheEntry* entry);
 
