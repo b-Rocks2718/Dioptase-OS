@@ -36,6 +36,7 @@ struct SpinQueue reaper_queue;
 int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
+bool shutting_down = false;
 
 int shutdown_barrier = 0;
 
@@ -282,6 +283,7 @@ void kernel_shutdown(void) {
   // Core 0 will print results and shut down the system,
   // other cores will wait for this to happen
   if (get_core_id() == 0) {
+    __atomic_store_n(&shutting_down, true);
 
     // all cores are now in shutdown, so heap operations should not block
     struct GenericQueueElement* keys = blocking_queue_remove_all(&ps2_queue);
@@ -293,7 +295,7 @@ void kernel_shutdown(void) {
     }
 
     page_cache_destroy(&page_cache);
-
+    
     ext2_destroy(&fs);
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
