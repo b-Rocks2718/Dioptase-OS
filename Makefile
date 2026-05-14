@@ -16,7 +16,7 @@ SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
 # memory map
 TEXT_LOAD_ADDR := 0x10000
-DATA_LOAD_ADDR := 0x80000
+DATA_LOAD_ADDR := 0x90000
 RODATA_LOAD_ADDR := 0xD0000
 BSS_LOAD_ADDR := 0xE0000
 
@@ -500,6 +500,21 @@ define assemble_kernel_image
 	fi; \
 	if [ $$rodata_base -lt $$text_base ] || [ $$data_base -lt $$rodata_base ] || [ $$bss_base -lt $$data_base ] || [ $$end_base -lt $$bss_base ]; then \
 	  echo "Kernel build error: section bases are not ordered text->rodata->data->bss->end." >&2; \
+	  exit 1; \
+	fi; \
+	text_zone_size=$$(( $(DATA_LOAD_ADDR) - $(TEXT_LOAD_ADDR) )); \
+	rodata_zone_size=$$(( $(RODATA_LOAD_ADDR) - $(DATA_LOAD_ADDR) )); \
+	data_zone_size=$$(( $(BSS_LOAD_ADDR) - $(RODATA_LOAD_ADDR) )); \
+	if [ $$((rodata_base - text_base)) -gt $$text_zone_size ]; then \
+	  echo "Kernel build error: text section exceeds its reserved zone $(TEXT_LOAD_ADDR)-$(DATA_LOAD_ADDR)." >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$((data_base - rodata_base)) -gt $$rodata_zone_size ]; then \
+	  echo "Kernel build error: rodata section exceeds its reserved zone $(DATA_LOAD_ADDR)-$(RODATA_LOAD_ADDR)." >&2; \
+	  exit 1; \
+	fi; \
+	if [ $$((bss_base - data_base)) -gt $$data_zone_size ]; then \
+	  echo "Kernel build error: data section exceeds its reserved zone $(RODATA_LOAD_ADDR)-$(BSS_LOAD_ADDR)." >&2; \
 	  exit 1; \
 	fi; \
 	text_start_block=$$((text_base / $(KERNEL_BLOCK_SIZE))); \
