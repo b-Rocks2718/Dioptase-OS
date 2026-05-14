@@ -503,18 +503,18 @@ define assemble_kernel_image
 	  exit 1; \
 	fi; \
 	text_zone_size=$$(( $(DATA_LOAD_ADDR) - $(TEXT_LOAD_ADDR) )); \
-	rodata_zone_size=$$(( $(RODATA_LOAD_ADDR) - $(DATA_LOAD_ADDR) )); \
-	data_zone_size=$$(( $(BSS_LOAD_ADDR) - $(RODATA_LOAD_ADDR) )); \
+	data_zone_size=$$(( $(RODATA_LOAD_ADDR) - $(DATA_LOAD_ADDR) )); \
+	rodata_zone_size=$$(( $(BSS_LOAD_ADDR) - $(RODATA_LOAD_ADDR) )); \
 	if [ $$((rodata_base - text_base)) -gt $$text_zone_size ]; then \
 	  echo "Kernel build error: text section exceeds its reserved zone $(TEXT_LOAD_ADDR)-$(DATA_LOAD_ADDR)." >&2; \
 	  exit 1; \
 	fi; \
 	if [ $$((data_base - rodata_base)) -gt $$rodata_zone_size ]; then \
-	  echo "Kernel build error: rodata section exceeds its reserved zone $(DATA_LOAD_ADDR)-$(RODATA_LOAD_ADDR)." >&2; \
+	  echo "Kernel build error: rodata section exceeds its reserved zone $(RODATA_LOAD_ADDR)-$(BSS_LOAD_ADDR)." >&2; \
 	  exit 1; \
 	fi; \
 	if [ $$((bss_base - data_base)) -gt $$data_zone_size ]; then \
-	  echo "Kernel build error: data section exceeds its reserved zone $(RODATA_LOAD_ADDR)-$(BSS_LOAD_ADDR)." >&2; \
+	  echo "Kernel build error: data section exceeds its reserved zone $(DATA_LOAD_ADDR)-$(RODATA_LOAD_ADDR)." >&2; \
 	  exit 1; \
 	fi; \
 	text_start_block=$$((text_base / $(KERNEL_BLOCK_SIZE))); \
