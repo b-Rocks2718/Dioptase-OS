@@ -62,7 +62,7 @@ The filesystem uses several lock layers:
 - rwx permission enforcement
 - uid / gid
 - atime / mtime / ctime updates
-- VFS layer or page cache
+- VFS layer
 
 ### Tests
 - `ext_read.c`

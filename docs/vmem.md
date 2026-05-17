@@ -84,6 +84,41 @@ the matching TLB value in `rA`.
 `vmem_core_init()` flushes the local core's TLB and clears the active PID to 0
 at boot.
 
+`tlb_shootdown()` performs cross-core TLB shootdown on a (pid, virtual address) pair, blocking until all cores have performed the shootdown.
+
+### Reverse Mapping
+
+The kernel maintains a reverse mapping from physical pages to their virtual mappings
+to support efficient invalidation during page eviction. This is currently only supported for file-backed pages in the page cache, but the same mechanism will be extended to anonymous pages once the kernel supports eviction for those as well.
+
+#### PageRef Structure
+
+Each virtual mapping of a physical page is represented by a `struct PageRef` entry
+containing:
+
+- `pid`: The page-directory ID (physical address of the page directory) of the mapping
+- `virtual_address`: The virtual address of the mapping
+- `next`: Pointer to the next `PageRef` in the list
+
+#### Reverse Mapping List
+
+When a thread installs a PTE pointing to a physical frame, it creates a new `PageRef`
+and inserts it at the head of `page->refs` (the linked list in the frame's `struct Page`
+metadata). The `page->ref_cnt` field maintains a count of these entries.
+
+When a thread later unmaps the page (via `munmap()` or during address-space teardown),
+it removes the corresponding `PageRef` from the list and decrements `page->ref_cnt`.
+
+#### Eviction Invalidation
+
+During page eviction (see **Eviction** in page_cache.md), the page-cache code walks
+the `page->refs` list to find all virtual mappings and invalidates them:
+
+- For each `PageRef`, construct a TLB shootdown request containing the `pid` and `virtual_address`
+- Submit the requests to other cores for TLB shootdown (via `tlb_shootdown()`)
+- Initiate the shootdown (via `send_ipi()`) and wait for acknowledgments from all cores
+- Once all cores have flushed the TLB entries, the physical page is safe to free
+
 ### Supported VM Features
 
 #### Global Initialization
@@ -234,15 +269,20 @@ Current behavior:
 The ISA provides TLB-miss vector at `0x82` / `0x208`, and the kernel
 registers it to `tlb_miss_handler()`.
 
-For a tlb miss, it:
+For a tlb miss, it finds the PTE (allocates a page table if the enclosing PDE is invalid). If the PTE is "sufficient" to handle the fault (i.e. it maps the address and has the requested permissions), the translation is written to the TLB.
 
-- finds the containing VME in the current thread's `vme_list`
-- allocates a page table if the enclosing PDE is still invalid
-- allocates or acquires the required backing page depending on the VME type
-- installs a PTE with the requested permissions
-- writes the resolved translation into the TLB
-
+Otherwise, the `page_fault_handler()` is called:
+- Finds the containing VME in the current thread's `vme_list`
+- If the page is mapped but there was a permission fault:
+  - Panics if the VME does not permisison for the attempted operation
+  - Otherwise (no write permission for VME allowing writes), updates the dirty bit and adds requested permission to the PTE
+    - This operation revalidates the PTE once the page lock is acquired (necessary to ensure eviction did not occur); if revalidation fails, falls thrugh to the "not mapped" case of the page fault handler
+  - Other permission faults may exist in the future but are not currently expected/supported
+- If the page is not mapped, allocates or acquires the required backing page depending on the VME type
+  - If the page is mapped file-backed and shared, it is mapped with read-only permissions so the dirty bit can be set on first write
+- Writes the resolved translation into the TLB
 If no containing VME exists, the kernel panics.
+The page fault handler is responsible for updating the reverse mapping of the backing page. So far this is only a concern for file-backed & shared mappings.
 
 ### Address-Space Teardown
 
@@ -269,10 +309,15 @@ Current VM code assumes:
 - one address space is active on only one core at a time
 
 That last point matters because `munmap()` invalidates TLB entries only on the
-current core. There is no cross-core TLB shootdown mechanism yet.
+current core. // TODO cross-core TLB shootdown exists, we should use it in munmap
 
-Shared file-backed page sharing is implemented with the global page cache, which
-has its own lock and reference counts.
+Shared file-backed page sharing is implemented with the global page cache.
+
+Current VM code assumes:
+- a thread's PTEs may be modified by another thread only during address space teardown or page reclaimation
+- these modifications will take the form of invalidation, fully zeroing the PTE
+When accessing metadata of a frame through the PTE, the PTE must be revalidated after the page lock is acquired to ensure that eviction hs not occurred.
+- Once the page lock is acquired, the PTE will be stable
 
 ### Current Limitations
 

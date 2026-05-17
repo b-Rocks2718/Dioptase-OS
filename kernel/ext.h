@@ -197,6 +197,9 @@ void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned
 // requested write size on success.
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src);
 
+// Like node_write_all but the caller must already hold the inode lock
+unsigned node_write_all_locked(struct Node* node, unsigned offset, unsigned size, char* src);
+
 // Shrinks a regular file to `target_size` bytes and writes the smaller inode
 // size back to disk. does not reclaim any blocks or clear truncated bytes.
 bool node_shrink(struct Node* node, unsigned target_size);

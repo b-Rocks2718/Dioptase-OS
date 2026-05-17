@@ -3,6 +3,8 @@
 
 #include "constants.h"
 #include "ext.h"
+#include "countdown_latch.h"
+#include "physmem.h"
 
 // flags to pass into mmap
 #define MMAP_NONE   0x00
@@ -80,18 +82,54 @@ void free_vme_list(struct VME* vme);
 // copy a thread's page dir/page tables and vme_list from src to dst
 void vmem_fork(struct TCB* src, struct TCB* dst);
 
-// free all physical pages mapped by the given address space, 
+// free all physical pages mapped by the given address space,
 // and free the page directory and page tables
 void vmem_destroy_address_space(struct TCB* tcb);
 
+// Helper to get the pte from a virtual address
+unsigned* vmem_get_pte(unsigned* pd, unsigned virtual_address, bool create);
+
+// Helper to extract the physical address from a pte
+void* pte_phys_addr(unsigned pte);
+
 void vme_change_perms(struct VME* vme, unsigned new_flags);
 
-extern void tlb_miss_handler_(void);
+extern int tlb_miss_handler_(void);
+
+int page_fault_handler(unsigned fault_addr, unsigned flags, unsigned* pte, unsigned* epc_ptr, bool* return_to_user);
 
 extern void ipi_handler_(void);
 
 extern void mark_ipi_handled(void);
 
 extern unsigned send_ipi(unsigned data);
+
+// Describes how a page is being used
+struct PageRef {
+  // struct TCB* thread;
+  unsigned pid;
+  unsigned virtual_address;
+  // struct VME* vme;
+  struct PageRef* next;
+};
+
+struct ShootdownRequest {
+  struct ShootdownRequest* next;
+  unsigned pid;
+  void* vaddr;
+  struct CountDownLatch* latch; // On handling a request, a thread will call down on this
+};
+
+// Block until all cores successfully shootdown this page ref
+void tlb_shootdown(struct PageRef* ref);
+
+// Block until all cores shootdown the linked list of page refs
+void tlb_shootdown_batch(struct PageRef* ref);
+
+void page_shootdown(struct Page* page);
+
+// Evicts & frees a page (unlocking it in the process)
+// The page must be locked already
+void page_evict(struct Page* page);
 
 #endif // VMEM_H

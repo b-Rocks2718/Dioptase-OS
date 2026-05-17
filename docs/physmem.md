@@ -25,6 +25,37 @@ one single top-level buddy tree. Instead, `physmem_init()` decomposes the arena
 into the largest aligned power-of-two blocks that fit and seeds one free list
 per order with that forest of top-level blocks.
 
+### Page Metadata
+
+Metadata for all physical frames is stored as a flat array in `physmem_map`. A frame's metadata is stored in a `struct Page`, retrievable via `get_page(frame_address)`. This metadata tracks the frame's current
+use across multiple subsystems:
+
+- `flags`: State bits for the page, drawn from `enum PageFlags`
+- `ref_cnt`: Reference count equal to the length of the `refs` list; indicates how
+  many virtual mappings currently point to this frame
+- `refs`: Head of a linked list of `struct PageRef` entries, each representing one
+  virtual mapping of this page (see **Reverse Mapping** in vmem.md)
+- `cache_entry`: Pointer to the page-cache entry if this frame is file-backed (see
+  **Data Stored Per Entry** in page_cache.md); `NULL` for anonymous pages
+- `lock`: Semaphore protecting this frame's metadata during modifications
+
+The metadata enables page reclamation.
+
+Currently defined `PageFlags` are:
+- `PG_DIRTY`: the page has been written to and needs to be written back before eviction
+- `PG_PINNED`: the page is pinned in memory and cannot be evicted until unpinned
+  - Note that only one thread may pin a page at a time, and the pinning thread is responsible for unpinning. 
+  - A page may not be reclaimed while it is pinned
+  - Currently, a page is pinned if it is part of the physical memory map, if it is free and thus being managed by the physical memory allocator, if it is backing a private mapping, or if it is being written to from disk (during `page_cache_acquire()`)
+    - Pinning during `page_cache_acquire()` signals that the page data is not stable yet
+- `PG_ACCESSED`: software managed accessed bit; not currently supported
+
+#### Concurrency / Invariants
+- A frame must be pinned as it is being freed; a frame will be pinned when it is allocated by the physmem allocator
+- A frame must not have any remaining references when it is freed
+- A frame's lock must be held during any modifications to its metadata. Flags may be examined when the lock is not held, but are not guaranteed to be stable
+- A frame's lock may still have waiters when it is freed, but they must release the lock in O(1) AND they must not modify the metadata. It is the responsibility of the waiter to detect that the page has been freed and fulfill this contract
+
 ### Supported Physmem Features
 
 #### Initialization

@@ -26,6 +26,7 @@
 #include "ps2.h"
 #include "scheduler.h"
 #include "vmem.h"
+#include "page_cache.h"
 #include "sys.h"
 #include "promise.h"
 
@@ -35,16 +36,17 @@ struct SpinQueue reaper_queue;
 int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 bool bootstrapping = true;
+bool shutting_down = false;
 
 int shutdown_barrier = 0;
 
-unsigned DEFAULT_INTERRUPT_MASK = 
-  GLOBAL_INT_ENABLE | 
-  SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
-  PIT_INT_ENABLE |
-  PS2_INT_ENABLE |
-  IPI_INT_ENABLE |
-  AUDIO_INT_ENABLE;
+unsigned DEFAULT_INTERRUPT_MASK =
+    GLOBAL_INT_ENABLE |
+    SD_0_INT_ENABLE | SD_1_INT_ENABLE |
+    PIT_INT_ENABLE |
+    PS2_INT_ENABLE |
+    IPI_INT_ENABLE |
+    AUDIO_INT_ENABLE;
 
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
@@ -56,10 +58,10 @@ static void free_fun(struct Fun* fun) {
 static void free_tcb(struct TCB* tcb) {
   assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
   assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
-  
+
   free(tcb->stack);
   free_fun(tcb->thread_fun);
-  
+
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
 
@@ -88,10 +90,10 @@ static void free_tcb(struct TCB* tcb) {
 }
 
 // reaper thread that runs forever and frees resources of threads that have been stopped
-static void reaper(void){
-  while (true){
+static void reaper(void) {
+  while (true) {
     struct TCB* tcb = spin_queue_remove_all(&reaper_queue);
-    while (tcb != NULL){
+    while (tcb != NULL) {
       struct TCB* prev = tcb;
       tcb = tcb->next;
       free_tcb(prev);
@@ -105,7 +107,7 @@ static void reaper(void){
 // defaults to: preemption enabled, not pinned, normal priority
 // If init_stdio is false, leave the descriptor tables empty so kernel-only
 // daemon threads do not allocate stdio descriptors they can never consume.
-static struct TCB* make_tcb(bool is_daemon){
+static struct TCB* make_tcb(bool is_daemon) {
   struct TCB* tcb = is_daemon ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
 
   tcb->flags = 0;
@@ -149,15 +151,14 @@ static struct TCB* make_tcb(bool is_daemon){
 }
 
 // create a thread to run the given function, and add it to the global ready queue
-void thread(struct Fun* thread_fun){
+void thread(struct Fun* thread_fun) {
   thread_(thread_fun, NORMAL_PRIORITY, ANY_CORE);
 }
 
-
 // create a thread to run the given function, and add it to the global ready queue
 // allows specifying the thread's priority and the core affinity
-void thread_(struct Fun* thread_fun, 
-    enum ThreadPriority priority, enum CoreAffinity core_affinity){
+void thread_(struct Fun* thread_fun,
+             enum ThreadPriority priority, enum CoreAffinity core_affinity) {
   struct TCB* tcb = make_tcb(false);
   __atomic_fetch_add(&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
@@ -170,9 +171,9 @@ void thread_(struct Fun* thread_fun,
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  
+  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof(unsigned) - 1]);
+  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof(unsigned) - 1]);
+
   tcb->priority = priority;
   tcb->core_affinity = core_affinity;
   tcb->mlfq_level = LEVEL_ZERO;
@@ -186,7 +187,7 @@ void thread_(struct Fun* thread_fun,
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity){
+void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity) {
   struct TCB* tcb = make_tcb(true);
 
   __atomic_fetch_add(&n_active_others, 1);
@@ -199,8 +200,8 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   tcb->stack = the_stack;
   tcb->psr = 1; // kernel mode
 
-  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
+  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof(unsigned) - 1]);
+  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof(unsigned) - 1]);
   tcb->priority = priority;
   tcb->core_affinity = core_affinity;
   tcb->mlfq_level = LEVEL_ZERO;
@@ -210,13 +211,13 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
 }
 
 // initialize thread structures; should only be called once on one core
-void threads_init(void){
+void threads_init(void) {
   scheduler_init();
 
   shutdown_barrier = CONFIG.num_cores;
 
-  struct Fun* reaper_fun = leak(sizeof (struct Fun));
-  reaper_fun->func = (void (*)(void *))reaper;
+  struct Fun* reaper_fun = leak(sizeof(struct Fun));
+  reaper_fun->func = (void (*)(void*))reaper;
   reaper_fun->arg = NULL;
 
   setup_thread(reaper_fun, LOW_PRIORITY, ANY_CORE);
@@ -229,7 +230,7 @@ void threads_init(void){
 // If false, they are enabled after the callback returns
 // Assumes callback doesn't modify the 'next' TCB
 // Preconditions: interrupts are disabled; current thread is core->current_thread
-void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrupts) {
+void block(unsigned was, void (*func)(void*), void* arg, bool run_with_interrupts) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
@@ -251,11 +252,10 @@ void thread_entry(void) {
     // Catch corrupted thread trampoline state before an indirect branch can jump to 0x0.
     if (thread_fun->func == NULL) {
       int args[4] = {
-        get_core_id(),
-        (int)current_tcb,
-        (int)thread_fun,
-        (int)thread_fun->arg
-      };
+          get_core_id(),
+          (int)current_tcb,
+          (int)thread_fun,
+          (int)thread_fun->arg};
       say("| thread_entry null func core=%d tcb=0x%X fun=0x%X arg=0x%X\n", args);
       panic("thread_entry: thread_fun->func is NULL.\n");
     }
@@ -274,33 +274,36 @@ void thread_entry(void) {
 static void nothing(void* unused) {}
 
 // cleanup and shutdown the system
-void kernel_shutdown(void){
+void kernel_shutdown(void) {
   interrupts_disable(); // move from interrupt-based keyboard handling to polling
 
   // wait for other cores to finish what they are doing
   spin_barrier_sync(&shutdown_barrier);
 
-  // Core 0 will print results and shut down the system, 
+  // Core 0 will print results and shut down the system,
   // other cores will wait for this to happen
   if (get_core_id() == 0) {
+    __atomic_store_n(&shutting_down, true);
 
     // all cores are now in shutdown, so heap operations should not block
     struct GenericQueueElement* keys = blocking_queue_remove_all(&ps2_queue);
-    while (keys != NULL){
+    while (keys != NULL) {
       // free existing keyboard events
       struct GenericQueueElement* next = keys->next;
       free(keys);
       keys = next;
     }
 
+    page_cache_destroy(&page_cache);
+    
     ext2_destroy(&fs);
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
-    
+
     check_leaks();
     physmem_check_leaks();
 
-    if (CONFIG.use_vga){
+    if (CONFIG.use_vga) {
       say("| Press Q to exit...\n", NULL);
 
       // Wait for a full 'q' key cycle (make then break).
@@ -317,21 +320,24 @@ void kernel_shutdown(void){
           continue;
         }
 
-        if (saw_q_make && (key == 'q' || key == 'Q')) break;
+        if (saw_q_make && (key == 'q' || key == 'Q'))
+          break;
         saw_q_make = 0;
       }
     } else {
       say("| Halting...\n", NULL);
     }
 
-    while (true) shutdown();
+    while (true)
+      shutdown();
   } else {
-    while (true) pause();
+    while (true)
+      pause();
   }
 }
 
 // idle thread loop
-// calls to block() context switch to here, 
+// calls to block() context switch to here,
 // where we decide which thread to run next and switch to it
 void event_loop(void) {
   /* only the idle thread can enter this function */
@@ -381,10 +387,10 @@ void event_loop(void) {
 }
 
 // set up thread context for the first thread on this core (which is now the idle thread)
-void bootstrap(void){
+void bootstrap(void) {
   int imr = get_imr();
-  assert((imr & GLOBAL_INT_ENABLE) == 0, 
-    "interrupts should be disabled when bootstrapping thread context.\n");
+  assert((imr & GLOBAL_INT_ENABLE) == 0,
+         "interrupts should be disabled when bootstrapping thread context.\n");
 
   int me = get_core_id();
   struct PerCore* core = get_per_core();
@@ -401,7 +407,7 @@ void bootstrap(void){
   tcb->r26 = 0;
   tcb->r27 = 0;
   tcb->r28 = 0;
-  
+
   tcb->next = NULL;
   tcb->can_preempt = false;
   tcb->core_affinity = me;
@@ -424,7 +430,7 @@ void bootstrap(void){
 }
 
 // voluntarily yield the CPU and re-queue the current thread
-void yield(void){
+void yield(void) {
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   scheduler_charge_yield(tcb);
@@ -432,12 +438,12 @@ void yield(void){
 }
 
 // add a thread to the reaper queue to have its resources freed by the reaper thread
-void reap_tcb(void* tcb){
+void reap_tcb(void* tcb) {
   spin_queue_add(&reaper_queue, (struct TCB*)tcb);
 }
 
 // block the current thread until a target jiffy count is reached
-void sleep(unsigned jiffies){
+void sleep(unsigned jiffies) {
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   struct PerCore* core = get_per_core();
@@ -447,7 +453,7 @@ void sleep(unsigned jiffies){
   block(was, sleep_queue_add, (void*)args, true);
 }
 
-// terminate the current thread and 
+// terminate the current thread and
 // place it on the reaper queue to eventually free its resources
 void stop(unsigned rc) {
   unsigned was = interrupts_disable();
@@ -480,7 +486,7 @@ void stop(unsigned rc) {
 }
 
 // disable preemption and return whether it was previously enabled or not
-bool preemption_disable(void){
+bool preemption_disable(void) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
 
@@ -497,7 +503,7 @@ bool preemption_disable(void){
 }
 
 // restore preemption to the given value
-void preemption_restore(bool was){
+void preemption_restore(bool was) {
   int intrs = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
 
@@ -510,7 +516,7 @@ void preemption_restore(bool was){
 }
 
 // pin a thread to the current core, preventing it from being scheduled on other cores
-enum CoreAffinity core_pin(void){
+enum CoreAffinity core_pin(void) {
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
@@ -529,7 +535,7 @@ enum CoreAffinity core_pin(void){
 }
 
 // allow a thread to be scheduled on any core
-void core_unpin(enum CoreAffinity prev){
+void core_unpin(enum CoreAffinity prev) {
   int was = interrupts_disable();
   unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();

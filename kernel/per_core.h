@@ -6,6 +6,7 @@
 #include "queue.h"
 #include "config.h"
 #include "physmem.h"
+#include "vmem.h"
 
 // Stores all core-local data
 struct PerCore {
@@ -25,6 +26,9 @@ struct PerCore {
 
   // allocator
   struct PhysmemLocalCache physmem_cache;
+
+  // Shootdown requests
+  struct GenericSpinQueue shootdown_requests; // TODO replace with something more O(1) - maybe funky queues?
 };
 
 extern struct PerCore per_core_data[MAX_CORES];

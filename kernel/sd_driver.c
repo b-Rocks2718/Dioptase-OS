@@ -215,9 +215,10 @@ static int sd_wait_done(enum SdDrive drive, int was){
   int status;
   int err;
 
-  if (__atomic_load_n(&bootstrapping)) {
+  if (__atomic_load_n(&bootstrapping) || __atomic_load_n(&shutting_down)) {
     // During bootstrapping, we don't have threads or interrupts set up yet, 
     // so we have to busy wait
+    // During shut down, we're running in an idle thread, so we can't block
     interrupts_restore(was);
     do {
       if (drive == SD_DRIVE_0) {

@@ -45,6 +45,9 @@ extern unsigned get_efg(void);
 // Return the TLB miss address register (cr7) value
 extern unsigned get_tlb_addr(void);
 
+// Return the mailbox in register (cr10) value
+extern unsigned get_mbi(void);
+
 // Read the TLB entry for the given virtual address, returning the physical address it maps to
 // returns 0 if there is no TLB entry for the given virtual address
 extern unsigned tlb_read(void* vaddr);

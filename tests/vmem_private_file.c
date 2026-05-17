@@ -30,17 +30,18 @@
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 #include "../kernel/string.h"
+#include "../kernel/page_cache.h"
 
 #define WORKER_COUNT 4
-#define ROUNDS 4
+#define ROUNDS       4
 
 #define TEST_FILE_NAME "hello.txt"
 // File-backed mmap offsets are page-aligned; use the second 4 KiB page so the
 // first-page sentinel catches any offset-handling bug immediately.
-#define TEST_FILE_OFFSET 4096
-#define TEST_FILE_SIZE 4107
+#define TEST_FILE_OFFSET   4096
+#define TEST_FILE_SIZE     4107
 #define PRIVATE_FILE_BYTES 11
-#define PRIVATE_BASE_TEXT "PRIVATEmap\n"
+#define PRIVATE_BASE_TEXT  "PRIVATEmap\n"
 
 static struct Barrier phase_barrier;
 static int finished = 0;
@@ -56,7 +57,7 @@ static char private_worker_byte(int id, int round) {
 static void read_file_bytes(char* dest) {
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL,
-    "vmem private file thread: failed to reopen fixture file.\n");
+         "vmem private file thread: failed to reopen fixture file.\n");
 
   unsigned size = node_size_in_bytes(file);
   if (size != TEST_FILE_SIZE) {
@@ -76,16 +77,15 @@ static void read_file_bytes(char* dest) {
 }
 
 static void expect_bytes(char* got, char* expected, int worker_id,
-  int round, int phase) {
+                         int round, int phase) {
   for (unsigned i = 0; i < PRIVATE_FILE_BYTES; ++i) {
     if (got[i] != expected[i]) {
       int args[5] = {
-        worker_id,
-        round,
-        phase,
-        (int)i,
-        ((int)got[i] << 8) | (unsigned char)expected[i]
-      };
+          worker_id,
+          round,
+          phase,
+          (int)i,
+          ((int)got[i] << 8) | (unsigned char)expected[i]};
       say("***vmem private file thread FAIL id=%d round=%d phase=%d offset=%d pair=0x%X\n", args);
       panic("vmem private file thread: byte contents mismatch.\n");
     }
@@ -105,12 +105,12 @@ static void private_file_worker(void* arg) {
   for (int round = 0; round < ROUNDS; ++round) {
     struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
     assert(file != NULL,
-      "vmem private file thread: worker failed to open fixture file.\n");
+           "vmem private file thread: worker failed to open fixture file.\n");
 
     char* mapping = mmap(PRIVATE_FILE_BYTES, file, TEST_FILE_OFFSET,
-      MMAP_READ | MMAP_WRITE);
+                         MMAP_READ | MMAP_WRITE);
     assert(mapping != NULL,
-      "vmem private file thread: mmap returned NULL.\n");
+           "vmem private file thread: mmap returned NULL.\n");
     node_free(file);
 
     memcpy(expected, (void*)PRIVATE_BASE_TEXT, PRIVATE_FILE_BYTES);
@@ -146,12 +146,12 @@ void kernel_main(void) {
   for (int i = 0; i < WORKER_COUNT; ++i) {
     struct WorkerArg* arg = malloc(sizeof(struct WorkerArg));
     assert(arg != NULL,
-      "vmem private file thread: failed to allocate worker args.\n");
+           "vmem private file thread: failed to allocate worker args.\n");
     arg->id = i;
 
     struct Fun* fun = malloc(sizeof(struct Fun));
     assert(fun != NULL,
-      "vmem private file thread: failed to allocate thread metadata.\n");
+           "vmem private file thread: failed to allocate thread metadata.\n");
     fun->func = private_file_worker;
     fun->arg = arg;
     thread(fun);
@@ -161,7 +161,8 @@ void kernel_main(void) {
   for (int round = 0; round < ROUNDS; ++round) {
     barrier_sync(&phase_barrier);
     barrier_sync(&phase_barrier);
-
+    
+    page_cache_flush_all(&page_cache);
     read_file_bytes(file_bytes);
     expect_bytes(file_bytes, (char*)PRIVATE_BASE_TEXT, WORKER_COUNT, round, 2);
 
@@ -169,6 +170,7 @@ void kernel_main(void) {
     barrier_sync(&phase_barrier);
 
     read_file_bytes(file_bytes);
+    page_cache_flush_all(&page_cache);
     expect_bytes(file_bytes, (char*)PRIVATE_BASE_TEXT, WORKER_COUNT, round, 3);
   }
 

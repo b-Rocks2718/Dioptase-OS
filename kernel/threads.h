@@ -34,6 +34,9 @@ extern unsigned DEFAULT_INTERRUPT_MASK;
 // after which we consider the system to be done with bootstrapping and fully operational
 extern bool bootstrapping;
 
+// false until core 0 starts destroying things in kernel_shutdown
+extern bool shutting_down;
+
 // initialize thread structures; should only be called once on one core
 void threads_init(void);
 
