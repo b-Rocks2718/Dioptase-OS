@@ -2,18 +2,18 @@
 
 The kernel physical page allocator manages the frame arena documented in
 `kernel_mem_map.md` with a buddy allocator plus a small per-core order-0 cache.
-It is an in-kernel allocator only; there is no user-visible virtual memory
-layer yet.
+It is an in-kernel physical-frame allocator only; user-visible virtual memory is
+managed separately by the VM subsystem documented in `vmem.md`.
 
 ### Arena / Geometry
 
-`physmem` manages the physical address range `0x800000 - 0x7FB7FFF`, which is
-`PHYS_FRAME_COUNT = 30648` frames of size `FRAME_SIZE = 4096` bytes.
+`physmem` manages the physical address range `0x100000 - 0x7FB7FFF`, which is
+`PHYS_FRAME_COUNT = 32440` frames of size `FRAME_SIZE = 4096` bytes.
 
 Buddy numbering is defined in **frame-index space relative to
 `FRAMES_ADDR_START`**, not in absolute physical address space.
 
-- frame index 0 corresponds to physical address `0x800000`
+- frame index 0 corresponds to physical address `0x100000`
 - frame index `n` corresponds to `FRAMES_ADDR_START + n * FRAME_SIZE`
 - the buddy of block index `i` at order `k` is `i ^ (1 << k)`
 
@@ -29,16 +29,20 @@ per order with that forest of top-level blocks.
 
 #### Initialization
 
-`physmem_init()` must run once during early boot before concurrent allocator
-use. It:
+`physmem_init()` must run once during early boot before any allocator use. It:
 
 - validates that the documented arena size matches `PHYS_FRAME_COUNT`
-- initializes the global buddy lock
 - seeds the buddy free lists across the whole frame arena
 - initializes every core-local order-0 cache
 
+`physmem_sync_init()` must run after the heap and threading primitives are ready
+but before secondary cores can use the allocator concurrently. It initializes the
+global buddy lock and every per-core cache lock, then enables allocator locking.
+
 The allocator assumes the frame arena is already reserved exclusively for
-physical-page allocation and is not shared with the heap, kernel image, or MMIO.
+dynamic physical-page allocation and does not overlap the kernel image, boot
+stacks, or MMIO. The kernel heap is a `physmem` client: it obtains slab pages
+and large allocation blocks from this arena through the normal physmem APIs.
 
 #### Buddy Free Lists
 
@@ -96,7 +100,9 @@ or differently sized buddy.
 
 `physmem_alloc()` and `physmem_free()` are optimized for single-page traffic.
 
-Each core has a local cache of `LOCAL_CACHE_SIZE = 16` order-0 pages.
+Each core has a local cache of `LOCAL_CACHE_SIZE = 64` order-0 pages. Empty
+caches refill from the global buddy allocator in `LOCAL_CACHE_REFILL = 32` page
+batches.
 
 `physmem_alloc()`:
 
@@ -107,10 +113,13 @@ Each core has a local cache of `LOCAL_CACHE_SIZE = 16` order-0 pages.
 
 `physmem_free()`:
 
+- validates that the page pointer is a non-NULL, frame-aligned address inside
+  the documented frame arena before it can enter any per-core cache
 - pins the current thread to the current core
 - acquires that core's cache lock
-- pushes the page into the local cache if there is room
-- otherwise returns the page directly to the global buddy allocator
+- if the local cache is full, drains cached pages back to the global buddy
+  allocator until the cache count is below `LOCAL_CACHE_REFILL`
+- pushes the page into the local cache
 
 Higher-order allocations and frees bypass the per-core caches and always use the
 global buddy allocator directly.
@@ -170,6 +179,8 @@ Allocator assertions and panic messages are intended to catch:
 
 - out-of-range frame addresses
 - misaligned block addresses
+- invalid `physmem_free()` order-0 page pointers before they enter a per-core
+  cache
 - invalid orders
 - arena geometry mismatches at boot
 - out-of-memory conditions during allocation
@@ -178,6 +189,8 @@ Allocator assertions and panic messages are intended to catch:
 
 `physmem` is currently exercised by:
 - `physmem_test.c`
+- `physmem_test_orders.c`
+- `physmem_invalid_free.c`
 
 `physmem_test.c` currently checks:
 
@@ -185,4 +198,12 @@ Allocator assertions and panic messages are intended to catch:
 - no duplicate live-page handout
 - page-content retention while pages are live
 - higher-order alignment and writability for every supported order
-- a large direct order-0 backend sample after draining per-core caches
+
+`physmem_test_orders.c` currently checks:
+
+- concurrent mixed-order allocation and free churn across multiple worker threads
+- no duplicate live first-frame handout for those mixed-order allocations
+- first-page content retention while blocks are live
+
+`physmem_invalid_free.c` checks that invalid order-0 frees panic before the bad
+pointer can be published into a per-core cache.

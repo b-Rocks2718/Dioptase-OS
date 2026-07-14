@@ -5,18 +5,19 @@
 
 #define FRAME_SIZE 4096
 
-#define FRAMES_ADDR_START 0x800000
+#define FRAMES_ADDR_START 0x100000
 #define FRAMES_ADDR_END 0x7FB8000
 
-#define PHYS_FRAME_COUNT 30648
+#define PHYS_FRAME_COUNT 32440
 
 #define PHYS_FRAME_MAX_ORDER 14
 // because my macro support is bad :(
 #define PHYS_FRAME_MAX_ORDER_PLUS_ONE 15
 
-#define FREE_PAGE_BITMAP_SIZE 3831 // PHYS_FRAME_COUNT / 8 rounded up
+#define FREE_PAGE_BITMAP_SIZE 4055 // PHYS_FRAME_COUNT / 8 rounded up
 
-#define LOCAL_CACHE_SIZE 16
+#define LOCAL_CACHE_SIZE 64
+#define LOCAL_CACHE_REFILL 32
 
 struct PhysmemLocalCache {
   void* pages[LOCAL_CACHE_SIZE];
@@ -34,6 +35,12 @@ struct FreePageNode {
 // initialize physical page allocator
 void physmem_init(void);
 
+// initialize locks for physical page allocator
+void physmem_sync_init(void);
+
+// destroy allocator synchronization state after all allocation/free activity stops
+void physmem_destroy_locks(void);
+
 // get the frame index corresponding to a physical address (first frame is index 0)
 unsigned frame_index_from_address(unsigned phys_addr);
 
@@ -46,6 +53,10 @@ void* physmem_alloc_order(int order);
 
 // free a physical page of given order
 void physmem_free_order(void* page, int order);
+
+void* physmem_leak_order(int order);
+
+void* physmem_leak(void);
 
 // allocate a physical page
 // Panics if no free frames remain

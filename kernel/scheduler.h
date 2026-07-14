@@ -10,6 +10,9 @@ extern unsigned REBALANCE_INTERVAL;
 // initialize scheduler structures; should only be called by threads_init
 void scheduler_init(void);
 
+// destroy scheduler queue locks after all cores have reached shutdown
+void scheduler_destroy(void);
+
 // add a thread to the global ready queues, or if it's pinned, to its core's pinned queue
 void global_queue_add(void* tcb);
 

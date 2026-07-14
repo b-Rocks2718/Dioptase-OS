@@ -5,13 +5,20 @@
 #include "debug.h"
 
 // initialize the page cache
-void page_cache_init(struct PageCache* cache, unsigned hash_map_size){
-  cache->hash_map = leak(sizeof(struct PageCacheEntry*) * hash_map_size);
+void page_cache_init(struct PageCache* cache){
+  static unsigned hash_map_size = 4096; // 16384 bytes
+  cache->hash_map = physmem_leak_order(2); // 4096 entries * 4 bytes each = 16384 bytes = 2^2 pages
   cache->hash_map_size = hash_map_size;
   blocking_lock_init(&cache->lock);
   for(unsigned i = 0; i < hash_map_size; i++){
     cache->hash_map[i] = NULL;
   }
+}
+
+// to be called only from kernel_shutdown
+void page_cache_destroy(struct PageCache* cache){
+  assert(cache != NULL, "page_cache_destroy: cache is NULL.\n");
+  blocking_lock_destroy(&cache->lock);
 }
 
 // lookup a page in the page cache by inode and page index, incrementing its reference count if found

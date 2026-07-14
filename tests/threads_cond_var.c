@@ -34,9 +34,9 @@ static int in_critical = 0;
 
 // Read the current waiter count straight from the condvar internals.
 static unsigned cond_var_waiter_count(void) {
-  spin_lock_acquire(&cv.lock);
+  clh_lock_acquire(&cv.lock);
   unsigned n = cv.waiters;
-  spin_lock_release(&cv.lock);
+  clh_lock_release(&cv.lock);
   return n;
 }
 
@@ -137,6 +137,9 @@ void kernel_main(void) {
     say("***cond_var FAIL waiters=%d expected=%d\n", args);
     panic("cond_var test: waiter count mismatch after broadcast\n");
   }
+
+  cond_var_destroy(&cv);
+  blocking_lock_destroy(&lock);
 
   say("***cond_var ok\n", NULL);
   say("***cond_var test complete\n", NULL);

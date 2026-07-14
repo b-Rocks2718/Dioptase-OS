@@ -91,6 +91,9 @@ struct TCB {
 
   int pending_signals;
 
+  struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
+  struct CLHNode* my_pred;
+
   struct TCB* next;
 };
 

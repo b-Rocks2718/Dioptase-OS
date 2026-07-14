@@ -2,6 +2,7 @@
 #include "debug.h"
 #include "constants.h"
 #include "machine.h"
+#include "heap.h"
 
 // initialize queue state plus the slot/item semaphores
 void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
@@ -11,6 +12,20 @@ void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
   b->capacity = capacity;
 }
 
+void bounded_buffer_destroy(struct BoundedBuffer* b) {
+  assert(b != NULL, "bounded_buffer_destroy: buffer is NULL.\n");
+
+  sem_destroy(&b->add_sem);
+  sem_destroy(&b->remove_sem);
+  generic_spin_queue_destroy(&b->queue);
+  b->capacity = 0;
+}
+
+void bounded_buffer_free(struct BoundedBuffer* b) {
+  bounded_buffer_destroy(b);
+  free(b);
+}
+
 // block for space, then enqueue one element
 void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* element) {
   assert(element != NULL, "Cannot add NULL element to blocking queue.\n");
@@ -18,7 +33,7 @@ void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* ele
   while (!added){
     sem_down(&b->add_sem);
 
-    spin_lock_acquire(&b->queue.spinlock);
+    clh_lock_acquire(&b->queue.spinlock);
     if (b->queue.size < b->capacity) {
       // add to queue
 
@@ -35,7 +50,7 @@ void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* ele
 
       added = true;
     }
-    spin_lock_release(&b->queue.spinlock);
+    clh_lock_release(&b->queue.spinlock);
   }
 
   sem_up(&b->remove_sem);

@@ -107,6 +107,20 @@ void sd_init(void){
   sd_wait_thread_1 = NULL;
 }
 
+void sd_destroy(void){
+  /*
+   * Preconditions:
+   * - Filesystem teardown has completed.
+   * - No core can issue new SD commands or wait on the SD locks.
+   */
+  blocking_lock_destroy(&sd_lock_0);
+  blocking_lock_destroy(&sd_lock_1);
+  sd_wait_thread_0_pending = false;
+  sd_wait_thread_0 = NULL;
+  sd_wait_thread_1_pending = false;
+  sd_wait_thread_1 = NULL;
+}
+
 // Write a command to DMA_CTRL_REG and wait for completion
 // Caller must hold the lock for the drive
 int sd_send_command(enum SdDrive drive, int cmd){

@@ -95,9 +95,9 @@ static void worker_thread(void* arg) {
 
 // Read the number of threads blocked on the barrier's internal blocking lock.
 static unsigned barrier_lock_waiter_count(void) {
-  spin_lock_acquire(&barrier.lock.semaphore.lock);
+  clh_lock_acquire(&barrier.lock.semaphore.lock);
   unsigned waiters = barrier.lock.semaphore.wait_queue.size;
-  spin_lock_release(&barrier.lock.semaphore.lock);
+  clh_lock_release(&barrier.lock.semaphore.lock);
   return waiters;
 }
 
@@ -234,11 +234,9 @@ void kernel_main(void) {
     yield();
   }
 
-  if (barrier_lock_waiter_count() != 0) {
-    int args[2] = { (int)barrier_lock_waiter_count(), 0 };
-    say("***barrier FAIL lock waiters after destroy=%d expected=%d\n", args);
-    panic("barrier test: barrier_destroy left lock waiters queued\n");
-  }
+  // barrier_destroy() destroys the embedded blocking lock, so the test must
+  // not inspect that lock's queue after this point. The destroy contract is
+  // checked by ensuring the blocked waiter was reaped rather than resumed.
   if (__atomic_load_n(&destroy_waiter_done) != 0) {
     int args[2] = { __atomic_load_n(&destroy_waiter_done), 0 };
     say("***barrier FAIL destroy waiter done=%d expected=%d\n", args);
@@ -253,6 +251,8 @@ void kernel_main(void) {
     say("***barrier FAIL holder did not exit after destroy\n", NULL);
     panic("barrier test: holder thread did not exit after destroy\n");
   }
+
+  sem_destroy(&holder_release_sem);
 
   say("***barrier ok\n", NULL);
   say("***barrier test complete\n", NULL);

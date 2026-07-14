@@ -18,6 +18,8 @@ These tools are expected to be built already (default `VERSION=release`):
 ### Targets
 
 - `make bios.hex` builds the BIOS image at `build/bios.hex`.
+- `make all` builds the fixed kernel image and every program with a
+  `root/*/Makefile`, placing guest executables under `root/sbin/`.
 - `make bios.labels` writes label lines (`#...`) from `build/bios.hex` to
   `build/bios.labels`.
 - `make <test>.bin` compiles `Dioptase-OS/tests/<test>.c`, compiles all `kernel/*.c`,
@@ -33,15 +35,15 @@ These tools are expected to be built already (default `VERSION=release`):
   and prints `successes/runs`. A run fails on timeout, non-zero exit, or if
   `tests/<test>.raw` contains `Warning` or `Spurious` or `PANIC`.
 - `make <test>.fail` is the same as `.test` but stops on the first failure.
-- `make test` runs every test that has a checked-in `tests/<test>.ok` baseline
-  through the quiet `.summary-test` path.
+- `make test` runs every test that has a checked-in `tests/<test>.ok` or
+  `tests/<test>.panic` baseline through the quiet `.summary-test` path.
 - `make ext` runs the ext2-related baseline-checked subset:
   `ext_read`, `ext_new_file`, `ext_write`, `ext_rename`, and `ext_delete`.
 - `make threads` runs every baseline-checked `threads_*` test.
 - `make datastructs` runs the baseline-checked utility tests:
   `hashmap_test`, `queue_test`, and `string`.
-- `make heap` runs the baseline-checked heap allocator tests:
-  `heap_test` and `heap_test_threadsafe`.
+- `make heap` runs the baseline-checked `heap_*` allocator tests. Heap
+  panic-mode negative checks run only when `HEAP_DEBUG=yes`.
 - `make clean` removes build outputs and temporary assembly outputs.
 
 ### Configuration
@@ -51,6 +53,9 @@ These tools are expected to be built already (default `VERSION=release`):
 - `TEST_RUNS` controls the number of test iterations.
 - `SCHEDULER` controls the emulators scheduling for multicore runs. Options are `free`, `random`, and `rr` (round robin)
 - `TIMEOUT_SECONDS` controls the per-run timeout for `.test`/`.fail`.
+- `HEAP_DEBUG=yes` passes `-DHEAP_DEBUG=1` to kernel/test C builds and enables
+  heap bitmap/poison diagnostics. `make test` and `make heap` skip the
+  `heap_*.panic` negative tests when this is not `yes`.
 - `BLOCK_SIZE` controls the ext2 block size used for tests with `tests/<test>.dir`.
 - The aggregate targets `make test`, `make ext`, `make threads`, `make datastructs`,
   and `make heap` all honor `TEST_RUNS`, `TIMEOUT_SECONDS`, `BLOCK_SIZE`,
@@ -74,8 +79,8 @@ These tools are expected to be built already (default `VERSION=release`):
 - Generated assembly files are named `*.s` and kept after assembly.
 - Kernel C assembly outputs live under `build/kernel/` to keep them separate
   from the root test's assembly file.
-- The aggregate test targets only include tests with checked-in `.ok` baselines,
-  just like `make test`.
+- The aggregate test targets only include tests with checked-in `.ok` or
+  `.panic` baselines, just like `make test`.
 - `superblock` is left as an explicit one-off target instead of part of `make ext`
   because its checked-in baseline depends on the ext2 image geometry.
 - Tests with `tests/<test>.dir` use that directory to build an ext2 image for SD1;

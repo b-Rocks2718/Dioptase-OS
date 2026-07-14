@@ -32,6 +32,9 @@
 // set up audio ISR and initialize control regs
 void audio_init(void);
 
+// disable the device and destroy audio synchronization state during shutdown
+void audio_destroy(void);
+
 /*
  * Parsed PCM WAV mapped into kernel virtual memory.
  *

@@ -1,0 +1,2 @@
+KERNEL PANIC
+cond_var wait: external lock must be held by caller.

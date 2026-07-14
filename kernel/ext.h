@@ -4,7 +4,6 @@
 #include "ext2_structs.h"
 #include "atomic.h"
 #include "machine.h"
-#include "shared.h"
 #include "queue.h"
 #include "hashmap.h"
 #include "blocking_lock.h"

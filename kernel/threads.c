@@ -28,6 +28,9 @@
 #include "vmem.h"
 #include "sys.h"
 #include "promise.h"
+#include "audio.h"
+#include "physmem.h"
+#include "sd_driver.h"
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
@@ -81,6 +84,8 @@ static void free_tcb(struct TCB* tcb) {
 
   node_free(tcb->cwd);
   free(tcb->cwd_path);
+
+  free(tcb->my_node);
 
   free(tcb);
 
@@ -142,6 +147,11 @@ static struct TCB* make_tcb(bool is_daemon){
   tcb->parent_promise = NULL;
 
   tcb->pending_signals = 0;
+
+  tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
+  tcb->my_node->locked = false;
+  tcb->my_node->interrupt_state = 0;
+  tcb->my_pred = NULL;
 
   tcb->next = NULL;
 
@@ -234,6 +244,8 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
 
+  assert(me->my_node->locked == false, "threads block: thread tried to block while holding a spinlock.\n");
+
   assert(me != idle, "threads block: idle thread attempted to block.\n");
 
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
@@ -294,10 +306,16 @@ void kernel_shutdown(void){
     }
 
     ext2_destroy(&fs);
+    ps2_destroy();
+    audio_destroy();
+    sd_destroy();
+    vmem_global_destroy();
+    scheduler_destroy();
+    physmem_destroy_locks();
+    heap_destroy();
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
     
-    check_leaks();
     physmem_check_leaks();
 
     if (CONFIG.use_vga){
@@ -419,6 +437,11 @@ void bootstrap(void){
   tcb->uaccess_err_addr = 0;
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
+
+  assert(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
+  assert(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
+  tcb->my_node = per_core_data[me].idle_clh_node;
+  tcb->my_pred = NULL;
 
   core->current_thread = tcb;
 }

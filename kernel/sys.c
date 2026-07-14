@@ -1115,6 +1115,11 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
   child->pending_signals = 0;
 
+  child->my_node = malloc(sizeof(struct CLHNode));
+  child->my_node->locked = false;
+  child->my_node->interrupt_state = 0;
+  child->my_pred = NULL;
+
   // set up descriptors
   copy_descriptors(parent, child);
 
@@ -1995,8 +2000,9 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
         }
       } else if (descriptor->file != NULL){
         node_free(descriptor->file);
-        blocking_lock_destroy(&descriptor->offset_lock);
       }
+
+      blocking_lock_destroy(&descriptor->offset_lock);
 
       free(descriptor);
 

@@ -396,7 +396,8 @@ void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
     memcpy(component, name + start, size - 1);
     component[size - 1] = 0;
 
-    assert(ringbuf_add_front(path, component), "ext2_expand_path: path buffer overflow.\n");
+    int rc = ringbuf_add_front(path, component);
+    assert(rc != 0, "ext2_expand_path: path buffer overflow.\n");
     start = end;
   }
 }
@@ -415,7 +416,8 @@ static void ext2_prepend_path(struct Ext2* fs, struct RingBuf* path, char* targe
   for (unsigned i = 0; i < suffix_size; ++i){
     char* component = ringbuf_remove_back(path);
     assert(component != NULL, "ext2_prepend_path: path queue unexpectedly underflowed.\n");
-    assert(ringbuf_add_front(&rebuilt, component), "ext2_prepend_path: path buffer overflow.\n");
+    int rc = ringbuf_add_front(&rebuilt, component);
+    assert(rc != 0, "ext2_prepend_path: path buffer overflow.\n");
   }
 
   ringbuf_destroy(path);
@@ -1802,6 +1804,8 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
 }
 
 void bcache_destroy(struct BlockCache* cache){
+  assert(cache != NULL, "bcache_destroy: cache is NULL.\n");
+  blocking_lock_destroy(&cache->lock);
   free(cache->block_cache);
 }
 

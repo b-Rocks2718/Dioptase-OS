@@ -1,0 +1,2 @@
+KERNEL PANIC
+attempting to free pointer that is not aligned to its object size

@@ -78,6 +78,13 @@ void ps2_init(void){
   register_handler((void*)ps2_handler_, (void*)PS2_IVT_ENTRY);
 }
 
+// to be called only from kernel_shutdown
+void ps2_destroy(void){
+  blocking_queue_destroy(&ps2_queue);
+  ps2_worker_thread = NULL;
+  keys_pending = false;
+}
+
 // read a key from the PS/2 keyboard
 // return the guest keycode event, or 0 if no key is pressed
 // clears the key from the buffer

@@ -1,5 +1,6 @@
 #include "blocking_ringbuf.h"
 
+#include "atomic.h"
 #include "debug.h"
 #include "heap.h"
 
@@ -28,7 +29,7 @@ void blocking_ringbuf_init(struct BlockingRingBuf* b, unsigned capacity){
       "blocking_ringbuf_init: failed to allocate ring storage.\n");
   }
 
-  spin_lock_init(&b->spinlock);
+  clh_lock_init(&b->spinlock);
   sem_init(&b->add_sem, capacity);
   sem_init(&b->remove_sem, 0);
   b->capacity = capacity;
@@ -40,7 +41,7 @@ void blocking_ringbuf_init(struct BlockingRingBuf* b, unsigned capacity){
 void blocking_ringbuf_add(struct BlockingRingBuf* b, char byte){
   sem_down(&b->add_sem);
 
-  spin_lock_acquire(&b->spinlock);
+  clh_lock_acquire(&b->spinlock);
   assert((unsigned)b->size < b->capacity,
     "blocking_ringbuf_add: free-slot permit had no matching ring space.\n");
 
@@ -48,14 +49,14 @@ void blocking_ringbuf_add(struct BlockingRingBuf* b, char byte){
   b->tail = blocking_ringbuf_next_idx(b, b->tail);
   __atomic_fetch_add(&b->size, 1);
 
-  spin_lock_release(&b->spinlock);
+  clh_lock_release(&b->spinlock);
   sem_up(&b->remove_sem);
 }
 
 char blocking_ringbuf_remove(struct BlockingRingBuf* b){
   sem_down(&b->remove_sem);
 
-  spin_lock_acquire(&b->spinlock);
+  clh_lock_acquire(&b->spinlock);
   assert(b->size > 0,
     "blocking_ringbuf_remove: data permit had no matching queued byte.\n");
 
@@ -63,7 +64,7 @@ char blocking_ringbuf_remove(struct BlockingRingBuf* b){
   b->head = blocking_ringbuf_next_idx(b, b->head);
   __atomic_fetch_add(&b->size, -1);
 
-  spin_lock_release(&b->spinlock);
+  clh_lock_release(&b->spinlock);
   sem_up(&b->add_sem);
   return byte;
 }
@@ -77,6 +78,7 @@ void blocking_ringbuf_destroy(struct BlockingRingBuf* b){
 
   sem_destroy(&b->add_sem);
   sem_destroy(&b->remove_sem);
+  clh_lock_destroy(&b->spinlock);
   free(b->buf);
   b->buf = NULL;
   b->capacity = 0;

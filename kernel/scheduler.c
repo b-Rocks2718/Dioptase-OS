@@ -85,6 +85,21 @@ void scheduler_init(void){
   global_admission_iters = 0;
 }
 
+// to be called only from kernel_shutdown
+void scheduler_destroy(void){
+  spin_queue_destroy(&reaper_queue);
+
+  for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
+    for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
+      spin_queue_destroy(&global_ready_queue[priority][level]);
+    }
+  }
+
+  for (int i = 0; i < MAX_CORES; i++) {
+    spin_queue_destroy(&per_core_data[i].pinned_queue);
+  }
+}
+
 // Add one ANY_CORE thread to the shared ready buckets that mirror the per-core
 // local ready queues
 static void global_bucket_add(struct TCB* thread) {
