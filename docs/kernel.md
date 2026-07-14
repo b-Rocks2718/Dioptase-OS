@@ -1,5 +1,13 @@
 # Kernel Design
 
+## Initialization
+
+Boot starts in `kernel/init.s`, core 0 initializes global subsystems, secondary
+cores are woken with a boot IPI, and every core enters the idle-thread scheduler
+loop after the start barrier.
+
+See `kernel_init.md` for more details.
+
 ## Threading
 
 Structure:
@@ -31,8 +39,11 @@ Supported Sync Primatives:
 See `sync.md` for more details.
 
 ## Heap
-Global heap shared by all cores, free blocks kept in doubly linked list  
-TODO: replace with slab allocator
+Global heap shared by all cores. Small allocations use slab caches with
+per-core free lists, and larger allocations use whole order-based `physmem`
+blocks.
+
+See `heap.md` for more details.
 
 ## File System
 ext2 rev 0

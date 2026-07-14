@@ -10,6 +10,12 @@
 #define DSYN_MAGIC_3 'N'
 #define DSYN_READ_BUFFER_BYTES 1024u
 /*
+ * Refill when fewer than 256 unread bytes remain. DSYN events are 12 bytes, so
+ * this leaves roughly twenty already-buffered events while a blocking disk read
+ * is attempted only when the synth command ring is close to full.
+ */
+#define DSYN_READ_REFILL_THRESHOLD_BYTES 256u
+/*
  * DSYN events store byte offsets from the MMIO contract. The playback code
  * forms byte addresses with unsigned arithmetic so register accesses do not
  * compile into division/multiplication helper calls.
@@ -30,6 +36,7 @@ struct DsynReader {
   char buffer[DSYN_READ_BUFFER_BYTES];
   unsigned offset;
   unsigned available;
+  int eof;
 };
 
 static unsigned synth_audio_read_reg(unsigned* regs, unsigned offset){
@@ -69,20 +76,71 @@ static void dsyn_reader_init(struct DsynReader* reader, int fd){
   reader->fd = fd;
   reader->offset = 0;
   reader->available = 0;
+  reader->eof = 0;
+}
+
+static unsigned dsyn_reader_buffered_bytes(struct DsynReader* reader){
+  return reader->available - reader->offset;
 }
 
 static int dsyn_reader_fill(struct DsynReader* reader){
-  int nread = read(reader->fd, reader->buffer, DSYN_READ_BUFFER_BYTES);
+  int nread;
 
+  if (reader->eof){
+    return DSYN_ERR_TRUNCATED;
+  }
+  nread = read(reader->fd, reader->buffer, DSYN_READ_BUFFER_BYTES);
   if (nread < 0){
     return DSYN_ERR_READ;
   }
   if (nread == 0){
+    reader->eof = 1;
     return DSYN_ERR_TRUNCATED;
   }
 
   reader->offset = 0;
   reader->available = (unsigned)nread;
+  return DSYN_OK;
+}
+
+static void dsyn_reader_compact(struct DsynReader* reader){
+  unsigned remaining = dsyn_reader_buffered_bytes(reader);
+
+  if (reader->offset == 0){
+    return;
+  }
+
+  for (unsigned i = 0; i < remaining; ++i){
+    reader->buffer[i] = reader->buffer[reader->offset + i];
+  }
+  reader->offset = 0;
+  reader->available = remaining;
+}
+
+static int dsyn_reader_try_refill_tail(struct DsynReader* reader){
+  int nread;
+
+  if (reader->eof){
+    return DSYN_OK;
+  }
+  if (reader->available == DSYN_READ_BUFFER_BYTES &&
+      reader->offset == 0){
+    return DSYN_OK;
+  }
+
+  dsyn_reader_compact(reader);
+  nread = read(reader->fd, reader->buffer + reader->available,
+    DSYN_READ_BUFFER_BYTES - reader->available);
+
+  if (nread < 0){
+    return DSYN_ERR_READ;
+  }
+  if (nread == 0){
+    reader->eof = 1;
+    return DSYN_OK;
+  }
+
+  reader->available += (unsigned)nread;
   return DSYN_OK;
 }
 
@@ -282,6 +340,31 @@ static unsigned synth_audio_ring_status_space(unsigned status){
   return status >> SYNTH_AUDIO_CMD_STATUS_SPACE_SHIFT;
 }
 
+static int synth_audio_ring_near_full(unsigned* regs){
+  unsigned status = synth_audio_read_reg(regs, SYNTH_AUDIO_CMD_STATUS_OFFSET);
+
+  /*
+   * "Near full" means the device has at least all but one software publication
+   * batch queued. That gives the player useful audio lead before taking a
+   * potentially blocking disk read, without waiting for a completely full ring.
+   */
+  return synth_audio_ring_status_space(status) <=
+    SYNTH_AUDIO_DSYN_RING_BATCH_COMMANDS;
+}
+
+static int maybe_refill_dsyn_reader(unsigned* regs,
+    struct DsynReader* reader){
+  if (dsyn_reader_buffered_bytes(reader) >=
+      DSYN_READ_REFILL_THRESHOLD_BYTES){
+    return DSYN_OK;
+  }
+  if (!synth_audio_ring_near_full(regs)){
+    return DSYN_OK;
+  }
+
+  return dsyn_reader_try_refill_tail(reader);
+}
+
 static int synth_audio_ring_empty(unsigned* regs){
   return (synth_audio_read_reg(regs, SYNTH_AUDIO_CMD_STATUS_OFFSET) &
     SYNTH_AUDIO_CMD_STATUS_EMPTY) != 0;
@@ -329,11 +412,11 @@ static int synth_audio_ring_status_error(unsigned status){
 static void wait_until_synth_audio_ring_enqueue_window(unsigned* regs,
     unsigned target_sample){
   /*
-   * Keep ring playback as a rolling prebuffer instead of filling the whole ring
-   * as far into the song as possible. Waiting until the event is within the
-   * configured lead keeps command traffic distributed over playback while still
-   * giving the renderer enough future work to apply events inside batched audio
-   * output.
+   * After the startup prefill, keep ring playback as a rolling prebuffer
+   * instead of filling the whole ring as far into the song as possible.
+   * Waiting until the event is within the configured lead keeps command
+   * traffic distributed over playback while still giving the renderer enough
+   * future work to apply events inside batched audio output.
    */
   unsigned enqueue_sample =
     target_sample - SYNTH_AUDIO_DSYN_RING_LEAD_SAMPLES;
@@ -432,6 +515,7 @@ int synth_audio_play_dsyn_fd(int fd){
   unsigned ring_write_idx = 0;
   unsigned ring_staged_commands = 0;
   unsigned ring_free_commands = 0;
+  unsigned startup_prefill_remaining = 0;
   int rc;
 
   rc = synth_audio_read_dsyn_header_fd(fd, &header);
@@ -455,9 +539,12 @@ int synth_audio_play_dsyn_fd(int fd){
     synth_audio_read_reg(regs, SYNTH_AUDIO_CMD_WRITE_IDX_OFFSET);
   ring_free_commands = synth_audio_ring_status_space(synth_audio_read_reg(
     regs, SYNTH_AUDIO_CMD_STATUS_OFFSET));
+  startup_prefill_remaining = ring_free_commands;
   target_sample += SYNTH_AUDIO_DSYN_RING_LEAD_SAMPLES;
 
   for (unsigned i = 0; i < header.event_count; ++i){
+    unsigned startup_prefill_event = startup_prefill_remaining != 0;
+
     rc = synth_audio_read_dsyn_event_reader(&reader, &event);
     if (rc != DSYN_OK){
       synth_audio_stop(regs);
@@ -468,22 +555,39 @@ int synth_audio_play_dsyn_fd(int fd){
     if (event.delta_samples != 0){
       synth_audio_flush_ring_batch(regs, ring_write_idx,
         &ring_staged_commands);
+      rc = maybe_refill_dsyn_reader(regs, &reader);
+      if (rc != DSYN_OK){
+        synth_audio_stop(regs);
+        return rc;
+      }
     }
-    wait_until_synth_audio_ring_enqueue_window(regs, target_sample);
+    if (!startup_prefill_event){
+      wait_until_synth_audio_ring_enqueue_window(regs, target_sample);
+    }
     target_sample = synth_audio_keep_target_ahead(regs, target_sample);
     if (ring_free_commands == 0){
+      startup_prefill_remaining = 0;
       synth_audio_flush_ring_batch(regs, ring_write_idx,
         &ring_staged_commands);
       ring_free_commands = wait_until_synth_audio_ring_space(regs);
+      target_sample = synth_audio_keep_target_ahead(regs, target_sample);
     }
     synth_audio_write_ring_command(regs, ring_write_idx, target_sample,
       event.reg_offset, event.value);
     ring_write_idx = synth_audio_ring_advance_idx(ring_write_idx);
     ring_staged_commands += 1;
     ring_free_commands -= 1;
+    if (startup_prefill_remaining != 0){
+      startup_prefill_remaining -= 1;
+    }
     if (ring_staged_commands >= SYNTH_AUDIO_DSYN_RING_BATCH_COMMANDS){
       synth_audio_flush_ring_batch(regs, ring_write_idx,
         &ring_staged_commands);
+      rc = maybe_refill_dsyn_reader(regs, &reader);
+      if (rc != DSYN_OK){
+        synth_audio_stop(regs);
+        return rc;
+      }
     }
   }
 

@@ -244,6 +244,8 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
 
+  assert(me->my_node->locked == false, "threads block: thread tried to block while holding a spinlock.\n");
+
   assert(me != idle, "threads block: idle thread attempted to block.\n");
 
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
@@ -304,23 +306,16 @@ void kernel_shutdown(void){
     }
 
     ext2_destroy(&fs);
-
-    /* 
-     * destroy objects whose sem_destroy() may enqueue blocked
-     * daemon threads before destroying scheduler queue locks, and destroy the
-     * heap lock last so other lock destructors can still call free().
-     */
     ps2_destroy();
     audio_destroy();
     sd_destroy();
     vmem_global_destroy();
-    physmem_destroy_locks();
     scheduler_destroy();
-    heap_sync_destroy();
+    physmem_destroy_locks();
+    heap_destroy();
 
     say("| Finished in %d jiffies\n", (int*)&current_jiffies);
     
-    check_leaks();
     physmem_check_leaks();
 
     if (CONFIG.use_vga){

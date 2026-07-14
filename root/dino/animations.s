@@ -11,8 +11,8 @@ DINO_FRAME:
 SUN_FRAME:
   .fill 0
 
-  .align 4
   .text
+  .align 4
 
   .global do_animations
 do_animations:

@@ -3,8 +3,8 @@
 # Packing: two 16-bit pixels per .fill word (low half = first pixel)
 # Sheet: 96x32 px, cell 32x32 px, 3x1 cells, 3072 pixels, 1536 .fill words
 
-  .align 4
   .data
+  .align 4
   .global SUNSHEET_DATA
 SUNSHEET_DATA:
   .fill 0x0F3F0F3F

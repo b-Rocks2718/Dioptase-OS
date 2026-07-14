@@ -3,8 +3,8 @@
 # Packing: two 16-bit pixels per .fill word (low half = first pixel)
 # Sheet: 192x32 px, cell 32x32 px, 6x1 cells, 6144 pixels, 3072 .fill words
 
-  .align 4
   .data
+  .align 4
   .global DINORUNSHEET_DATA
 DINORUNSHEET_DATA:
   .fill 0x0F3F0F3F

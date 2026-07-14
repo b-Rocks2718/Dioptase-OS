@@ -279,11 +279,11 @@ static void apply_sgr_arg(int arg){
       break;
     case 31:
       // red
-      current_color = 0xE0;
+      current_color = 0xE9;
       break;
     case 32:
       // green
-      current_color = 0x1C;
+      current_color = 0x3D;
       break;
     case 33:
       // yellow
@@ -291,15 +291,15 @@ static void apply_sgr_arg(int arg){
       break;
     case 34:
       // blue
-      current_color = 0x03;
+      current_color = 0x2F;
       break;
     case 35:
       // magenta
-      current_color = 0xE3;
+      current_color = 0xA2;
       break;
     case 36:
       // cyan
-      current_color = 0x1F;
+      current_color = 0x7B;
       break;
     case 37:
       // white
@@ -345,6 +345,22 @@ static void apply_sgr_arg(int arg){
     case 47:
       // light orange
       current_color = 0xF9;
+      break;
+    case 48:
+      // light yellow
+      current_color = 0xFE;
+      break;
+    case 49:
+      // gold
+      current_color = 0xB0;
+      break;
+    case 50:
+      // light blue
+      current_color = 0xBB;
+      break;
+    case 51:
+      // light purple
+      current_color = 0xD7;
       break;
   }
 }

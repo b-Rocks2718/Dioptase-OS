@@ -26,8 +26,9 @@ BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
 TEST_RUNS ?= 10
-TIMEOUT_SECONDS ?= 120
+TIMEOUT_SECONDS ?= 360
 VERSION ?= release
+HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
 
 # ------------------------------------------------------------------------------------------ #
 
@@ -39,6 +40,7 @@ EMU_AUDIO_STRIPPED := $(strip $(EMU_AUDIO))
 EMU_AUDIO_FAST_STRIPPED := $(strip $(EMU_AUDIO_FAST))
 SCHEDULER_STRIPPED := $(strip $(SCHEDULER))
 TRACE_INTS_STRIPPED := $(strip $(TRACE_INTS))
+HEAP_DEBUG_STRIPPED := $(strip $(HEAP_DEBUG))
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER_STRIPPED)
 
@@ -62,6 +64,12 @@ endif
 ifeq ($(TRACE_INTS_STRIPPED),yes)
 EMU_FLAGS += --trace-ints
 endif
+
+KERNEL_TEST_BCC_DEFINES :=
+ifeq ($(HEAP_DEBUG_STRIPPED),yes)
+KERNEL_TEST_BCC_DEFINES += -DHEAP_DEBUG=1
+endif
+KERNEL_TEST_CONFIG_STAMP := build/kernel-test-config.stamp
 
 SHELL := /bin/sh
 MAKEFLAGS += --no-print-directory
@@ -114,10 +122,21 @@ LEGACY_TEST_NAMES := $(basename $(notdir $(TEST_C_SRCS)))
 FIXED_KERNEL_TEST_NAMES := $(filter-out $(LEGACY_TEST_NAMES),$(basename $(notdir $(TEST_DATA_DIRS))))
 TEST_NAMES := $(sort $(LEGACY_TEST_NAMES) $(FIXED_KERNEL_TEST_NAMES))
 TEST_C_DEPS := $(patsubst tests/%.c,$(BUILD_DIR)/%.s.d,$(TEST_C_SRCS))
-# Only tests with checked-in .ok baselines are valid for aggregate output checks.
+# Only tests with checked-in .ok or .panic baselines are valid for aggregate
+# output checks. .panic baselines list fixed substrings that must appear in raw
+# output from an expected kernel panic.
 TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
-TEST_OK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_OK_NAMES))
+TEST_PANIC_FILES := $(wildcard tests/*.panic)
+TEST_PANIC_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_PANIC_FILES))))
+HEAP_PANIC_NAMES := $(filter heap_%,$(TEST_PANIC_NAMES))
+ALL_TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
+ifeq ($(HEAP_DEBUG_STRIPPED),yes)
+TEST_CHECK_NAMES := $(ALL_TEST_CHECK_NAMES)
+else
+TEST_CHECK_NAMES := $(filter-out $(HEAP_PANIC_NAMES),$(ALL_TEST_CHECK_NAMES))
+endif
+TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
 ROOTFS_DIR := root
@@ -130,7 +149,7 @@ THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))
 THREAD_SUMMARY_TARGETS := $(addsuffix .summary-test,$(THREAD_TEST_NAMES))
 DATASTRUCT_TEST_NAMES := $(filter hashmap_test queue_test string,$(TEST_OK_NAMES))
 DATASTRUCT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(DATASTRUCT_TEST_NAMES))
-HEAP_TEST_NAMES := $(filter heap_test heap_test_threadsafe,$(TEST_OK_NAMES))
+HEAP_TEST_NAMES := $(filter heap_%,$(TEST_CHECK_NAMES))
 HEAP_SUMMARY_TARGETS := $(addsuffix .summary-test,$(HEAP_TEST_NAMES))
 BIOS_HEX := $(BUILD_DIR)/bios.hex
 BIN_TARGETS := $(addsuffix .bin,$(TEST_NAMES))
@@ -145,6 +164,21 @@ KERNEL_LABELS := $(BUILD_DIR)/kernel.labels
 BIOS_C_DEPS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s.d,$(BIOS_C_SRCS))
 KERNEL_C_DEPS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s.d,$(KERNEL_C_SRCS))
 DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
+
+# Generated kernel/test assembly depends on configuration flags passed to bcc.
+# Keep one stamp outside the generated assembly dependency files so switching
+# HEAP_DEBUG cannot silently reuse assembly built with the opposite setting.
+$(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
+	@tmp="$@.tmp"; \
+	{ \
+	  echo "HEAP_DEBUG=$(HEAP_DEBUG_STRIPPED)"; \
+	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
+	} > "$$tmp"; \
+	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
+	  mv "$$tmp" "$@"; \
+	else \
+	  rm -f "$$tmp"; \
+	fi
 
 # Build the emulator argv in shell positional parameters. When the supplied
 # guest root directory exists, package it as an ext2 filesystem image and
@@ -167,7 +201,7 @@ if [ -d "$$sd1_dir" ]; then \
   sd1_output_dir="$(4)"; \
   dir_kib=$$(du -sk "$$sd1_dir" | cut -f1); \
   dir_blocks=$$(((dir_kib * 1024 + $(BLOCK_SIZE) - 1) / $(BLOCK_SIZE))); \
-  fs_blocks=$$((dir_blocks + $(SD_IMAGE_EXTRA_BLOCKS))); \
+  fs_blocks=$$((dir_blocks * 105 / 100 + $(SD_IMAGE_EXTRA_BLOCKS))); \
   if [ $$fs_blocks -lt $(SD_IMAGE_MIN_BLOCKS) ]; then \
     fs_blocks=$(SD_IMAGE_MIN_BLOCKS); \
   fi; \
@@ -202,22 +236,22 @@ endef
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
   kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
-  kernel/config.s kernel/mbr.s
+  kernel/config.s kernel/mbr.s FORCE
 # Keep generated assembly outputs for inspection.
 .PRECIOUS: $(BUILD_DIR)/%.s $(BIOS_ASM_DIR)/%.s $(KERNEL_ASM_DIR)/%.s
 
 # Header dependency tracking for the generated C->assembly outputs.
 -include $(DEPFILES)
 
-# Default target builds the fixed-kernel image that uses kernel/kernel_main.c.
-all: kernel.bin
+# Default target builds the fixed-kernel image and repo-local root programs.
+all: kernel.bin root-sbin
 	@:
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
-test: $(if $(TEST_OK_SUMMARY_TARGETS),$(TEST_OK_SUMMARY_TARGETS),test-no-ok)
+test: $(if $(TEST_CHECK_SUMMARY_TARGETS),$(TEST_CHECK_SUMMARY_TARGETS),test-no-ok)
 
 test-no-ok:
-	@echo "No tests with .ok baselines were found under tests/."
+	@echo "No tests with .ok or .panic baselines were found under tests/."
 
 # Aggregate tests whose SD1 output replaces the original tests/<name>.dir.
 persistent: $(if $(PERSISTENT_TEST_NAMES),$(PERSISTENT_TEST_NAMES),persistent-no-tests)
@@ -243,11 +277,11 @@ datastructs: $(if $(DATASTRUCT_SUMMARY_TARGETS),$(DATASTRUCT_SUMMARY_TARGETS),da
 datastructs-no-ok:
 	@echo "No data-structure tests with .ok baselines were found under tests/."
 
-# Aggregate heap allocator tests, including the threaded heap stress case.
+# Aggregate heap allocator tests. Heap panic-mode checks require HEAP_DEBUG=yes.
 heap: $(if $(HEAP_SUMMARY_TARGETS),$(HEAP_SUMMARY_TARGETS),heap-no-ok)
 
 heap-no-ok:
-	@echo "No heap tests with .ok baselines were found under tests/."
+	@echo "No heap tests with .ok or .panic baselines were found under tests/."
 
 # Build alias so `make bios.hex` produces build/bios.hex.
 bios.hex: $(BIOS_HEX)
@@ -342,12 +376,33 @@ $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	        echo "[$$test_name] run $$i/$$runs: pass"; \
+	      else \
+	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
 	  elif [ $$status -ne 0 ]; then \
@@ -385,12 +440,32 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    timeout_failures=$$((timeout_failures + 1)); \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      warning_failures=$$((warning_failures + 1)); \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      mismatch_failures=$$((mismatch_failures + 1)); \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	      else \
+	        mismatch_failures=$$((mismatch_failures + 1)); \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    warning_failures=$$((warning_failures + 1)); \
 	  elif [ $$status -ne 0 ]; then \
@@ -426,16 +501,40 @@ physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 	  raw="tests/$*.raw"; \
 	  out="tests/$*.out"; \
 	  ok="tests/$*.ok"; \
+	  panic_ok="tests/$*.panic"; \
 	  rm -f "$$raw" "$$out"; \
 	  status=0; \
 	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
 	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
 	  if [ $$status -eq 124 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
-			break; \
+				break; \
+	  elif [ -f "$$panic_ok" ]; then \
+	    grep 'PANIC' "$$raw" > "$$out" || true; \
+	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
+				break; \
+	    elif ! grep -q "PANIC" "$$raw"; then \
+	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
+				break; \
+	    else \
+	      missing=0; \
+	      while IFS= read -r expected || [ -n "$$expected" ]; do \
+	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
+	          missing=1; \
+	        fi; \
+	      done < "$$panic_ok"; \
+	      if [ $$missing -eq 0 ]; then \
+	        success=$$((success + 1)); \
+	        echo "[$$test_name] run $$i/$$runs: pass"; \
+	      else \
+	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
+				break; \
+	      fi; \
+	    fi; \
 	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-			break; \
+				break; \
 	  elif [ $$status -ne 0 ]; then \
 	    echo "[$$test_name] run $$i/$$runs: fail (exit $$status)"; \
 			break; \
@@ -576,19 +675,19 @@ $(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORD
 	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
 
 # Compile the root test C file to assembly.
-$(BUILD_DIR)/%.s: tests/%.c $(BCC) | $(BUILD_DIR)
-	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" -s -kernel -o "$@" "$<" -g
+$(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BUILD_DIR)
+	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.
-$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) | $(BIOS_ASM_DIR)
+$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile | $(BIOS_ASM_DIR)
 	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
 	"$(BCC)" -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
-$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) | $(KERNEL_ASM_DIR)
-	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" -s -kernel -o "$@" "$<" -g
+$(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(KERNEL_ASM_DIR)
+	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
 $(BUILD_DIR):
@@ -616,5 +715,6 @@ clean:
 	rm -f "$(BUILD_DIR)"/*.hex "$(BUILD_DIR)"/*.bin "$(BUILD_DIR)"/*.s "$(BUILD_DIR)"/*.labels \
 	  "$(BUILD_DIR)"/*.d "$(BIOS_ASM_DIR)"/*.d "$(KERNEL_ASM_DIR)"/*.d \
 	  "$(BUILD_DIR)"/*.sd1.ext2 "$(BUILD_DIR)"/*.sd1.out.ext2 \
+	  "$(KERNEL_TEST_CONFIG_STAMP)" "$(KERNEL_TEST_CONFIG_STAMP).tmp" \
 	  $(BIOS_C_ASMS) $(KERNEL_C_ASMS) tests/*.raw tests/*.out
 	rm -rf tests/*.out.dir

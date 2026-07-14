@@ -5,8 +5,9 @@
 #include "debug.h"
 
 // initialize the page cache
-void page_cache_init(struct PageCache* cache, unsigned hash_map_size){
-  cache->hash_map = leak(sizeof(struct PageCacheEntry*) * hash_map_size);
+void page_cache_init(struct PageCache* cache){
+  static unsigned hash_map_size = 4096; // 16384 bytes
+  cache->hash_map = physmem_leak_order(2); // 4096 entries * 4 bytes each = 16384 bytes = 2^2 pages
   cache->hash_map_size = hash_map_size;
   blocking_lock_init(&cache->lock);
   for(unsigned i = 0; i < hash_map_size; i++){

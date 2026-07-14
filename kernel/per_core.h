@@ -6,6 +6,7 @@
 #include "queue.h"
 #include "config.h"
 #include "physmem.h"
+#include "heap.h"
 
 // Stores all core-local data
 struct PerCore {
@@ -27,6 +28,9 @@ struct PerCore {
 
   // allocator
   struct PhysmemLocalCache physmem_cache;
+
+  struct FreeObject* free_lists[NUM_OBJECT_SIZES];
+  unsigned free_list_sizes[NUM_OBJECT_SIZES];
 };
 
 extern struct PerCore per_core_data[MAX_CORES];

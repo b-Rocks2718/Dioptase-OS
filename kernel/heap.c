@@ -1,370 +1,659 @@
-/* Copyright (C) 2025 Ahmed Gheith and contributors.
- *
- * Use restricted to classroom projects.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 #include "heap.h"
-#include "atomic.h"
-#include "print.h"
-#include "machine.h"
+
 #include "constants.h"
+#include "physmem.h"
 #include "debug.h"
-#include "blocking_lock.h"
+#include "config.h"
+#include "per_core.h"
+#include "threads.h"
+#include "print.h"
 
-#define HEAP_WORD_BYTES 4u
+#define NUM_OBJECT_SIZES 9
+#define HEAP_LARGE_ALLOC_NONE 0xFF // byte sentinel; live orders are 0..PHYS_FRAME_MAX_ORDER
+unsigned OBJECT_SIZES[NUM_OBJECT_SIZES] = {4, 8, 16, 32, 64, 128, 256, 512, 1024};
+struct SlabCache slab_caches[NUM_OBJECT_SIZES];
+static bool heap_sync_initialized = false;
 
-// Defined in kernel_entry.c; used here for heap state validation.
-extern unsigned HEAP_START;
-extern unsigned HEAP_SIZE;
+/*
+ * Large allocation side table.
+ *
+ * Slabs only manage objects up to OBJECT_SIZES[NUM_OBJECT_SIZES - 1]. Larger
+ * heap requests are backed by whole physmem blocks and return the block base
+ * directly. The first frame index of the block stores the order so free() can
+ * route the exact pointer back to physmem_free_order().
+ *
+ * Invariants:
+ * - HEAP_LARGE_ALLOC_NONE means the frame is not the first frame of a live
+ *   large heap allocation.
+ * - A non-NONE entry is present only at the first frame of an allocation.
+ * - Live order values fit in one byte because PHYS_FRAME_MAX_ORDER is 14.
+ * - Large allocations must be freed with the exact pointer returned by malloc().
+ */
+static unsigned char large_allocation_orders[PHYS_FRAME_COUNT];
+static struct BlockingLock large_allocation_lock;
 
-static unsigned n_malloc = 0;
-static unsigned n_free = 0;
-static unsigned n_leak = 0;
+#ifdef HEAP_DEBUG
+unsigned n_malloc = 0;
+unsigned n_free = 0;
+unsigned n_leak = 0;
+#endif
 
-static unsigned *array;
-static unsigned len;
-static bool sync_init_done = false;
-static unsigned avail = 0; // head of the free-list; index 0 stays reserved as a sentinel
-static struct BlockingLock theLock;
+static bool heap_is_frame_aligned_phys_addr(unsigned addr) {
+  if (addr < FRAMES_ADDR_START || addr >= FRAMES_ADDR_END) {
+    return false;
+  }
+  return (addr & (FRAME_SIZE - 1)) == 0;
+}
 
-static void makeTaken(unsigned i, unsigned entries);
-static void makeAvail(unsigned i, unsigned entries);
+static int large_allocation_order_for_size(unsigned size) {
+  int order = 0;
+  unsigned block_size = FRAME_SIZE;
 
-// Purpose: sanity-check global heap state to catch corruption early.
-// Inputs: none.
-// Outputs: (panics on invalid state).
-// Preconditions: heap_init has been called; HEAP_START/HEAP_SIZE are valid.
-// Postconditions: no state changes when valid; halts on invalid state.
-// Invariants: array points inside the heap region and len fits in HEAP_SIZE.
-// CPU state assumptions: kernel mode; interrupts may be enabled or disabled;
-// single-core or multi-core.
-static void heap_validate_state(void) {
-  unsigned array_addr = (unsigned)array;
-  unsigned heap_start = HEAP_START;
-  unsigned heap_size = HEAP_SIZE;
-  unsigned heap_end = heap_start + heap_size;
-
-  if (heap_size == 0 || heap_end < heap_start) {
-    int args[2] = { (int)heap_start, (int)heap_size };
-    say("| HEAP validate failed: bad heap bounds start=0x%X size=0x%X\n", args);
-    panic("heap: invalid bounds\n");
+  while (block_size < size) {
+    assert(order < PHYS_FRAME_MAX_ORDER,
+      "heap large alloc: requested allocation exceeds max physical block size.\n");
+    order++;
+    block_size = block_size * 2;
   }
 
-  if (array_addr == 0 || (array_addr & (HEAP_WORD_BYTES - 1)) != 0) {
-    int args[2] = { (int)array_addr, HEAP_WORD_BYTES };
-    say("| HEAP validate failed: bad array=0x%X align=%d\n", args);
-    panic("heap: invalid base pointer\n");
+  return order;
+}
+
+static void large_allocation_mark(void* page, int order) {
+  unsigned frame_index = frame_index_from_address((unsigned)page);
+
+  if (heap_sync_initialized) blocking_lock_acquire(&large_allocation_lock);
+
+  assert(large_allocation_orders[frame_index] == HEAP_LARGE_ALLOC_NONE,
+    "heap large alloc: physical frame is already tracked as a large allocation.\n");
+  large_allocation_orders[frame_index] = order;
+
+  if (heap_sync_initialized) blocking_lock_release(&large_allocation_lock);
+}
+
+static void* large_alloc(unsigned size, bool leaked) {
+  int order = large_allocation_order_for_size(size);
+  void* page = leaked ? physmem_leak_order(order) : physmem_alloc_order(order);
+
+  large_allocation_mark(page, order);
+  return page;
+}
+
+static bool large_free_if_tracked(void* obj) {
+  unsigned addr = (unsigned)obj;
+  if (!heap_is_frame_aligned_phys_addr(addr)) {
+    return false;
   }
 
-  if (array_addr < heap_start || array_addr >= heap_end) {
-    int args[3] = { (int)array_addr, (int)heap_start, (int)heap_end };
-    say("| HEAP validate failed: array out of range base=0x%X start=0x%X end=0x%X\n", args);
-    panic("heap: base out of range\n");
+  unsigned frame_index = frame_index_from_address(addr);
+
+  if (heap_sync_initialized) blocking_lock_acquire(&large_allocation_lock);
+
+  unsigned order = large_allocation_orders[frame_index];
+  if (order == HEAP_LARGE_ALLOC_NONE) {
+    if (heap_sync_initialized) blocking_lock_release(&large_allocation_lock);
+    int args[1] = { (int)obj };
+    say("heap free: frame-aligned pointer 0x%X is not a live large allocation\n", args);
+    panic("heap free: invalid frame-aligned heap pointer.\n");
+    return false;
   }
 
-  if (len == 0 || len > (heap_size / HEAP_WORD_BYTES)) {
-    int args[3] = { (int)len, (int)heap_size, HEAP_WORD_BYTES };
-    say("| HEAP validate failed: bad len=%d heap_size=0x%X word=%d\n", args);
-    panic("heap: invalid length\n");
+  large_allocation_orders[frame_index] = HEAP_LARGE_ALLOC_NONE;
+
+  if (heap_sync_initialized) blocking_lock_release(&large_allocation_lock);
+
+  physmem_free_order(obj, (int)order);
+  return true;
+}
+
+void heap_init(){
+  heap_large_alloc_init(large_allocation_orders,
+    PHYS_FRAME_COUNT, HEAP_LARGE_ALLOC_NONE);
+
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    unsigned slab_size = sizeof(struct Slab);
+    #ifdef HEAP_DEBUG
+    // remove bitmap from size, we calculate the real size here
+    slab_size -= 4;
+
+    // add in bitmap size
+    slab_size += (FRAME_SIZE - (sizeof(struct Slab) - 4) + 8 * OBJECT_SIZES[i]) / (8 * OBJECT_SIZES[i] + 1);
+    #endif
+    unsigned metadata_objects = (slab_size + OBJECT_SIZES[i] - 1) / OBJECT_SIZES[i]; // Round up to nearest object size
+    slab_caches[i].objects_per_slab = (FRAME_SIZE / OBJECT_SIZES[i]) - metadata_objects;
+    slab_caches[i].full_slabs = NULL;
+    slab_caches[i].partial_slabs = NULL;
+    slab_caches[i].empty_slabs = NULL;
+    slab_caches[i].num_empty_slabs = 0;
   }
 
-  unsigned len_bytes = len * HEAP_WORD_BYTES;
-  if (array_addr > heap_end - len_bytes) {
-    int args[4] = { (int)array_addr, (int)len_bytes, (int)heap_start, (int)heap_end };
-    say("| HEAP validate failed: range base=0x%X len=0x%X start=0x%X end=0x%X\n", args);
-    panic("heap: range overflow\n");
+  for (int i = 0; i < MAX_CORES; i++) {
+    for (int j = 0; j < NUM_OBJECT_SIZES; j++) {
+      per_core_data[i].free_lists[j] = NULL;
+      per_core_data[i].free_list_sizes[j] = 0;
+    }
   }
 }
 
-static bool isTaken(unsigned i) { return array[i] & 1; }
-static bool isAvail(unsigned i) { return !(array[i] & 1); }
-static unsigned size(unsigned i) { return array[i] & ~(unsigned)(1); }
-
-unsigned headerFromFooter(unsigned i) { return i - size(i) + 1; }
-
-unsigned footerFromHeader(unsigned i) { return i + size(i) - 1; }
-
-unsigned sanity(unsigned i) {
-  heap_validate_state();
-  if (i == 0)
-    return 0;
-  if (i >= len) {
-    int args[3] = {(int)i, (int)len, (int)array};
-    say("| HEAP sanity: i=%d len=%d base=0x%X\n", args);
-    panic("bad header index\n");
+void heap_sync_init(){
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    blocking_lock_init(&slab_caches[i].lock);
   }
-  unsigned footer = footerFromHeader(i);
-  if (footer >= len) {
-    int args[3] = {(int)i, (int)footer, (int)len};
-    say("| HEAP bad footer: header=%d footer=%d len=%d\n", args);
-    panic("bad footer index\n");
-  }
-  unsigned hv = array[i];
-  unsigned fv = array[footer];
-
-  if (hv != fv) {
-    int args[3] = {(int)i, (int)hv, (int)fv};
-    say("| HEAP bad block: header=%d hv=0x%X fv=0x%X\n", args);
-    panic("bad block\n");
-  }
-
-  return i;
+  blocking_lock_init(&large_allocation_lock);
+  heap_sync_initialized = true;
 }
 
-static unsigned left(unsigned i) { return sanity(headerFromFooter(i - 1)); }
+struct Slab* slab_create(unsigned object_size) {
+  struct Slab* slab = (struct Slab*)physmem_alloc();
 
-static unsigned right(unsigned i) { return sanity(i + size(i)); }
-
-static unsigned next(unsigned i) { return sanity(array[i + 1]); }
-
-static unsigned prev(unsigned i) { return sanity(array[i + 2]); }
-
-static void setNext(unsigned i, unsigned x) { array[i + 1] = x; }
-
-static void setPrev(unsigned i, unsigned x) { array[i + 2] = x; }
-
-// detach one free block from the intrusive avail list
-static void remove(unsigned i) {
-  unsigned prevIndex = prev(i);
-  unsigned nextIndex = next(i);
-
-  if (prevIndex == 0) {
-    /* at head */
-    avail = nextIndex;
-  } else {
-    /* in the middle */
-    setNext(prevIndex, nextIndex);
+  int i;
+  for (i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (object_size <= OBJECT_SIZES[i]) {
+      break;
+    }
   }
-  if (nextIndex != 0) {
-    setPrev(nextIndex, prevIndex);
+  assert(i < NUM_OBJECT_SIZES, "slab_create: object size exceeds max supported size\n");
+
+  unsigned metadata_objects = (FRAME_SIZE / object_size) - slab_caches[i].objects_per_slab;
+
+  slab->free_list = (char*)slab + metadata_objects * object_size; // reserve objects for slab metadata
+  slab->object_size = object_size;
+  slab->free_objects = (FRAME_SIZE / object_size) - metadata_objects; // Calculate how many objects can fit in the slab
+  slab->next = NULL;
+  slab->prev = NULL;
+
+  // Initialize the free list
+  struct FreeObject* current = (struct FreeObject*)slab->free_list;
+  for (unsigned i = 0; i < slab->free_objects - 1; i++) {
+    #ifdef HEAP_DEBUG
+    // poison free objects in debug mode to make use-after-free more obvious
+    for (int i = 1; i < object_size / 4; i++) {
+      ((unsigned*)current)[i] = HEAP_POISON;
+    }
+    #endif
+
+    current->next = (struct FreeObject*)((char*)current + object_size);
+    current = current->next;
   }
+  current->next = NULL; // Last object points to NULL
+
+  #ifdef HEAP_DEBUG
+  // poison final object
+  for (int i = 1; i < object_size / 4; i++) {
+    ((unsigned*)current)[i] = HEAP_POISON;
+  }
+  #endif
+
+  #ifdef HEAP_DEBUG
+  // initialize allocation bitmap to all 0's (all free)
+  unsigned bitmap_size = (slab_caches[i].objects_per_slab + 7) / 8; // Round up to nearest byte
+  for (unsigned j = 0; j < bitmap_size; j++) {
+    slab->allocation_bitmap[j] = 0;
+  }
+  #endif
+
+  return slab;
 }
 
-// mark one block free and splice it at the head of the avail list
-static void makeAvail(unsigned i, unsigned entry_count) {
-  assert((entry_count & 1) == 0, "making avail with odd entry count\n");
-  array[i] = entry_count;
-  array[footerFromHeader(i)] = entry_count;
-  setNext(i, avail);
-  setPrev(i, 0);
-  if (avail != 0) {
-    setPrev(avail, i);
+#ifdef HEAP_DEBUG
+void bitmap_alloc(struct Slab* slab, void* obj) {
+  // find slab cache for this slab
+  struct SlabCache* cache = NULL;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
+    }
   }
-  avail = i;
+  if (cache == NULL) {
+    int args[4] = {(int)obj, (int)slab, (int)slab->object_size, (int)slab->free_objects};
+    say("heap bitmap_alloc: obj=0x%X slab=0x%X object_size=%d free_objects=%d\n", args);
+    panic("heap bitmap_alloc: object is not in a valid slab cache\n");
+  }
+
+  unsigned metadata_end = (unsigned)slab + (FRAME_SIZE - cache->objects_per_slab * slab->object_size);
+  unsigned obj_index = ((unsigned)obj - metadata_end) / slab->object_size;
+  unsigned byte_index = obj_index / 8;
+  unsigned bit_index = obj_index % 8;
+
+  if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
+
+  // assert that the bit is not already set (double allocation)
+  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) == 0,
+    "double allocation detected in slab allocator\n");
+
+  // mark as allocated in bitmap
+  slab->allocation_bitmap[byte_index] |= (1u << bit_index);
+
+  if (heap_sync_initialized) blocking_lock_release(&cache->lock);
 }
+#endif
 
-// mark one block allocated by setting the low-bit tag in header/footer
-static void makeTaken(unsigned i, unsigned entry_count) {
-  assert((entry_count & 1) == 0, "making taken with odd entry count\n");
-  array[i] = entry_count + 1;
-  array[footerFromHeader(i)] = entry_count + 1;
-}
-
-void check_leaks() {
-  bool locked = false;
-  if (sync_init_done) {
-    blocking_lock_acquire(&theLock);
-    locked = true;
-  }
-
-  int args[4] = {n_free, n_leak, n_free + n_leak, n_malloc};
-  if (n_free + n_leak != n_malloc) {
-    say("| Warning: heap leaks detected: (n_free:%d+n_leak:%d)==%d != n_malloc:%d\n", args);
-  } else {
-    say("| No heap leaks detected: (n_free:%d+n_leak:%d) == n_malloc:%d\n", args);
-  }
-
-  if (locked) {
-    blocking_lock_release(&theLock);
-  }
-}
-
-void heap_init(void* base, unsigned bytes) {
-  {
-    int args[2] = {(int)base, bytes};
-    say("| Heap init (start=0x%X, size=0x%X)\n", args); 
-  }
-
-  unsigned alignedBase = ((unsigned)base + 4 + 3) / 4 * 4 - 4;
-  assert((alignedBase % 4) == 0, "heap base not aligned to 4 bytes after alignment\n");
-  assert(alignedBase >= (unsigned)base, "aligned base is less than base\n");
-  unsigned delta = alignedBase - (unsigned)base;
-  assert(delta < 4, "delta is too large\n");
-
-  base = (void *)alignedBase;
-
-  assert(bytes >= delta, "bytes is less than delta\n");
-  bytes -= delta;
-
-  bytes = bytes / 4 * 4;
-  assert((bytes % 4) == 0, "bytes is not a multiple of 4\n");
-
-  assert(bytes >
-         32, "bytes is too small\n"); // 8 (start marker) + 16 (one available node) + 8 (end marker)
-
-  {
-    int args[2] = {(int)base, (int)(base) + bytes};
-    say("| Heap range 0x%X - 0x%X\n", args);
-  }
-
-  /* can't say new becasue we're initializing the heap */
-  array = (unsigned *)base;
-
-  len = bytes / 4;
-  // The heap is framed by permanently taken sentinels so free() can safely
-  // inspect left/right neighbors without special-casing the ends.
-  makeTaken(0, 2);
-  makeAvail(2, len - 4);
-  makeTaken(len - 2, 2);
-}
-
-void heap_sync_init() {
-  blocking_lock_init(&theLock);
-  sync_init_done = true;
-}
-
-// to be called only from kernel_shutdown
-void heap_sync_destroy() {
-  if (!sync_init_done) return;
-  sync_init_done = false;
-  blocking_lock_destroy(&theLock);
-}
-
-void *malloc(unsigned bytes) {
-  // say("malloc(%d)\n", &bytes);
-  if (bytes == 0)
-    return (void *)array;
-
-  unsigned entries = ((bytes + 3) / 4) + 4;
-  if (entries < 4)
-    entries = 4;
-
-  if (entries & 1) {
-    entries++;
-  }
-
-  if (sync_init_done){
-    blocking_lock_acquire(&theLock);
-  }
-
-  void *res = 0;
-
-  unsigned mx = UINT_MAX;
-  unsigned it = 0;
-
-  {
-    // Best-fit search keeps fragmentation lower than first-fit for this simple
-    // free-list allocator.
-    int countDown = 20;
-    unsigned p = avail;
-    while (p != 0) {
-      if (isTaken(p)) {
-        say("| block is taken in malloc 0x%X\n", (int*)&p);
-        panic("heap corruption detected\n");
-      }
-      unsigned sz = size(p);
-
-      if (sz >= entries) {
-        if (sz < mx) {
-          mx = sz;
-          it = p;
-        }
-        countDown--;
-        if ((countDown == 0) || (sz == entries))
-          break;
-      }
-      p = next(p);
+void* slab_alloc(unsigned size){
+  // Find the appropriate slab cache for the requested size
+  struct SlabCache* cache = NULL;
+  int i;
+  for (i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (size <= OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
     }
   }
 
-  if (it != 0) {
-    remove(it);
-    int extra = mx - entries;
-    if (extra >= 4) {
-      makeTaken(it, entries);
-      makeAvail(it + entries, extra);
-    } else {
-      makeTaken(it, mx);
+  assert(cache != NULL, "requested allocation size exceeds max supported size\n");
+
+  if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
+
+  if (cache->partial_slabs != NULL) {
+    // Allocate from a partial slab
+    struct Slab* slab = cache->partial_slabs;
+    void* obj = slab->free_list;
+    slab->free_list = ((struct FreeObject*)obj)->next; // Update free list
+    slab->free_objects--;
+
+    if (slab->free_objects == 0) {
+      // Move slab from partial slabs list to full slabs list
+
+      // Remove slab from partial slabs list
+      cache->partial_slabs = slab->next;
+      if (cache->partial_slabs != NULL) {
+        cache->partial_slabs->prev = NULL;
+      }
+
+      // Add slab to full slabs list
+      slab->next = cache->full_slabs;
+      if (cache->full_slabs != NULL) {
+        cache->full_slabs->prev = slab;
+      }
+      slab->prev = NULL;
+      cache->full_slabs = slab;
     }
-    res = &array[it + 3];
-  }
 
-  if (res != NULL) {
-    n_malloc += 1;
+    if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+    return obj;
+  } else if (cache->empty_slabs != NULL) {
+    // Move an empty slab to the partial slabs list
+
+    // remove slab from empty slabs list
+    struct Slab* slab = cache->empty_slabs;
+    cache->empty_slabs = slab->next;
+    if (cache->empty_slabs != NULL) {
+      cache->empty_slabs->prev = NULL;
+    }
+
+    // add slab to partial slabs list
+    slab->next = cache->partial_slabs;
+    if (cache->partial_slabs != NULL) {
+      cache->partial_slabs->prev = slab;
+    }
+    slab->prev = NULL;
+    cache->partial_slabs = slab;
+    cache->num_empty_slabs--;
+
+    // Allocate from the newly moved slab
+    void* obj = slab->free_list;
+    slab->free_list = ((struct FreeObject*)obj)->next; // Update free list
+    slab->free_objects--;
+
+    if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+    return obj;
   } else {
-    int args[1] = {bytes};
-    panic("malloc failed\n");
-  }
+    // No available slabs, create a new one
+    struct Slab* new_slab = slab_create(OBJECT_SIZES[i]);
 
-  if (sync_init_done){
-    blocking_lock_release(&theLock);
-  }
+    // Add the new slab to the partial slabs list
+    if (cache->partial_slabs != NULL) {
+      cache->partial_slabs->prev = new_slab;
+    }
+    new_slab->next = cache->partial_slabs;
+    new_slab->prev = NULL;
+    cache->partial_slabs = new_slab;
 
-  return res;
+    // Allocate from the new slab
+    void* obj = new_slab->free_list;
+    new_slab->free_list = ((struct FreeObject*)obj)->next; // Update free list
+    new_slab->free_objects--;
+
+    if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+    return obj;
+  }
 }
 
-void* leak(unsigned bytes){
+static void* alloc(unsigned size, bool leaked) {
+  assert(size > 0, "tried to alloc 0 bytes?\n");
+
+  int i;
+  bool valid_size = false;
+  for (i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (size <= OBJECT_SIZES[i]) {
+      valid_size = true;
+      break;
+    }
+  }
+
+  if (!valid_size) {
+    return large_alloc(size, leaked);
+  }
+
+  int core_was = core_pin();
+  struct PerCore* core = get_per_core();
+
+  // need to disable preemption around modification to per-core free list
+  int preempt_was = preemption_disable();
+  if (core->free_list_sizes[i] <= MIN_PER_CORE_FREE_LIST) {
+    // per-core free list is empty, we should get some objects from the slab cache
+    while (core->free_list_sizes[i] <= PER_CORE_FREE_LIST_REFILL) {
+      preemption_restore(preempt_was);
+
+      // enable preemption around blocking call, but keep pinned to this core
+      void* obj = slab_alloc(OBJECT_SIZES[i]);
+      if (obj == NULL) {
+        preempt_was = preemption_disable(); // to match expected state at the end of the loop
+        break; // slab cache is out of memory, we have to return what we got so far
+      }
+
+      preempt_was = preemption_disable();
+      // Free to per-core free list
+      ((struct FreeObject*)obj)->next = core->free_lists[i];
+      core->free_lists[i] = obj;
+      core->free_list_sizes[i]++;
+    }
+  }
+
+  // alloc from per-core free list
+  void* obj = core->free_lists[i];
+  if (obj != NULL) {
+    core->free_lists[i] = ((struct FreeObject*)obj)->next; // Update free list
+    core->free_list_sizes[i]--;
+  }
+
+  #ifdef HEAP_DEBUG
+  struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  // update allocation bitmap
+  bitmap_alloc(slab, obj);
+
+  // check the poison value is still there
+  for (int i = 1; i < slab->object_size / 4; i++) {
+    assert(((unsigned*)obj)[i] == HEAP_POISON,
+      "heap corruption detected: likely use after free\n");
+  }
+  #endif
+
+  preemption_restore(preempt_was);
+  core_unpin(core_was);
+
+  return obj;
+}
+
+void* malloc(unsigned size) {
+  #ifdef HEAP_DEBUG
+  __atomic_fetch_add((int*)&n_malloc, 1);
+  #endif
+  return alloc(size, false);
+}
+
+void* leak(unsigned size) {
+  #ifdef HEAP_DEBUG
   __atomic_fetch_add((int*)&n_leak, 1);
-  return malloc(bytes);
+  #endif
+  return alloc(size, true);
 }
 
-void free(void *p) {
-  if (p == 0)
+#ifdef HEAP_DEBUG
+void bitmap_free(struct Slab* slab, void* obj) {
+  struct SlabCache* cache = NULL;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
+    }
+  }
+  assert(cache != NULL, "found slab with no matching cache\n");
+
+  unsigned metadata_end = (unsigned)slab + (FRAME_SIZE - cache->objects_per_slab * slab->object_size);
+  unsigned obj_index = ((unsigned)obj - metadata_end) / slab->object_size;
+  unsigned byte_index = obj_index / 8;
+  unsigned bit_index = obj_index % 8;
+
+  if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
+
+  // assert that the bit is currently set (double free)
+  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) != 0,
+    "double free detected in slab allocator\n");
+
+  // mark as free in bitmap
+  slab->allocation_bitmap[byte_index] &= ~(1u << bit_index);
+  if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+}
+#endif
+
+void slab_free(void* obj) {
+  struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  // Find the appropriate slab cache for the object's size
+  struct SlabCache* cache = NULL;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    // we don't need to lock the slab or anything to read object size, because
+    // the slab metadata is immutable after creation
+    // and the slab won't be destroyed because we know at least one object
+    // has not yet been freed back to it (the one we're freeing now)
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      cache = &slab_caches[i];
+      break;
+    }
+  }
+
+  assert(cache != NULL, "found slab with no matching cache\n");
+  if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
+
+  // Free the object back to the slab
+  ((struct FreeObject*)obj)->next = slab->free_list;
+  slab->free_list = obj;
+  slab->free_objects++;
+
+  if (slab->free_objects == cache->objects_per_slab) {
+    // Remove slab from partial slabs list
+    if (slab->prev != NULL) {
+      slab->prev->next = slab->next;
+    } else {
+      cache->partial_slabs = slab->next;
+    }
+    if (slab->next != NULL) {
+      slab->next->prev = slab->prev;
+    }
+
+    if (cache->num_empty_slabs >= 2) {
+      // If we already have 2 empty slabs, free this one back to physical memory
+      physmem_free(slab);
+    } else {
+      // Move slab from partial slabs list to empty slabs list
+
+      // Add slab to empty slabs list
+      slab->next = cache->empty_slabs;
+      if (cache->empty_slabs != NULL) {
+        cache->empty_slabs->prev = slab;
+      }
+      slab->prev = NULL;
+      cache->empty_slabs = slab;
+      cache->num_empty_slabs++;
+    }
+  } else if (slab->free_objects == 1) {
+    // Move slab from full slabs list to partial slabs list
+
+    // remove slab from full slabs list
+    if (slab->prev != NULL) {
+      slab->prev->next = slab->next;
+    } else {
+      cache->full_slabs = slab->next;
+    }
+    if (slab->next != NULL) {
+      slab->next->prev = slab->prev;
+    }
+
+    // add slab to partial slabs list
+    slab->next = cache->partial_slabs;
+    if (cache->partial_slabs != NULL) {
+      cache->partial_slabs->prev = slab;
+    }
+    slab->prev = NULL;
+    cache->partial_slabs = slab;
+  }
+
+  if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+}
+
+bool slab_free_sanity(void* obj){
+  // check obj is within slab heap bounds
+  if ((unsigned)obj < (unsigned)FRAMES_ADDR_START ||
+      (unsigned)obj >= (unsigned)FRAMES_ADDR_END) {
+    return false;
+  }
+
+  // check obj is aligned to smallest object size
+  if ((unsigned)obj % OBJECT_SIZES[0] != 0) {
+    return false;
+  }
+
+  return true;
+}
+
+void free(void* obj){
+  #ifdef HEAP_DEBUG
+  __atomic_fetch_add((int*)&n_free, 1);
+
+  if (!slab_free_sanity(obj)) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free invalid pointer\n");
+  }
+  #endif
+
+  if (large_free_if_tracked(obj)) {
     return;
-  if (p == (void *)array)
-    return;
-
-  if (sync_init_done){
-    blocking_lock_acquire(&theLock);
   }
 
-  n_free += 1;
-  unsigned p_addr = (unsigned)p;
-  unsigned heap_start = (unsigned)array;
-  unsigned heap_end = heap_start + (len * HEAP_WORD_BYTES);
-  if (p_addr < heap_start || p_addr >= heap_end || ((p_addr - heap_start) & (HEAP_WORD_BYTES - 1)) != 0) {
-    panic("heap: free pointer out of range\n");
+  // find slab containing obj
+  struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
+
+  #ifdef HEAP_DEBUG
+  // check object size makes sense
+  bool valid_size = false;
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      valid_size = true;
+      break;
+    }
+  }
+  if (!valid_size) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free pointer with invalid object size\n");
   }
 
-  int idx = ((p_addr - heap_start) / HEAP_WORD_BYTES) - 3;
-  if (idx < 0 || (unsigned)idx >= len) {
-    panic("heap: free index out of range\n");
+  if ((unsigned)obj % slab->object_size != 0) {
+    say("invalid pointer passed to slab_free: %X\n", &obj);
+    panic("attempting to free pointer that is not aligned to its object size\n");
   }
-  sanity(idx);
-  if (isAvail(idx)) {
-    int args[2] = { (int)p, idx };
-    say("| freeing free block, p:0x%X idx:%d\n", args);
-    panic("double free detected\n");
+  #endif
+
+  int core_was = core_pin();
+  int preempt_was = preemption_disable();
+
+  struct PerCore* core = get_per_core();
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    if (slab->object_size == OBJECT_SIZES[i]) {
+      if (core->free_list_sizes[i] >= MAX_PER_CORE_FREE_LIST) {
+        // per-core free list is full, we should move some back to the slab cache
+        while (core->free_list_sizes[i] > PER_CORE_FREE_LIST_REFILL) {
+          void* free_obj = core->free_lists[i];
+          core->free_lists[i] = ((struct FreeObject*)free_obj)->next; // Update free list
+          core->free_list_sizes[i]--;
+
+          preemption_restore(preempt_was);
+          // enable preemption around blocking call, but keep pinned to this core
+
+          // Free back to slab cache
+          slab_free(free_obj);
+
+          preempt_was = preemption_disable();
+        }
+      }
+
+      // Free to per-core free list
+      ((struct FreeObject*)obj)->next = core->free_lists[i];
+      core->free_lists[i] = obj;
+      core->free_list_sizes[i]++;
+
+      #ifdef HEAP_DEBUG
+      bitmap_free(slab, obj);
+
+      // write poison value to freed object to make use-after-free more obvious
+      for (int i = 1; i < slab->object_size / 4; i++) {
+        ((unsigned*)obj)[i] = HEAP_POISON;
+      }
+      #endif
+
+      preemption_restore(preempt_was);
+      core_unpin(core_was);
+      return;
+    }
+  }
+  {
+    int args[4] = {(int)obj, (int)slab, (int)slab->object_size, (int)slab->free_objects};
+    say("free no cache: obj=0x%X slab=0x%X object_size=%d free_objects=%d\n", args);
+    panic("found slab with no matching cache\n");
+  }
+}
+
+void heap_destroy() {
+  bool locks_initialized = heap_sync_initialized;
+
+  // kernel_shutdown() stops all other heap users before calling heap_destroy().
+  // From this point on the cache locks are teardown objects, not synchronization
+  // guards. Disable allocator locking before destroying those locks because each
+  // lock owns a CLH tail node that was itself allocated from this heap.
+  heap_sync_initialized = false;
+
+  if (locks_initialized) {
+    for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+      blocking_lock_destroy(&slab_caches[i].lock);
+    }
+    blocking_lock_destroy(&large_allocation_lock);
   }
 
-  int sz = size(idx);
+  for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
+    struct SlabCache* cache = &slab_caches[i];
 
-  int leftIndex = left(idx);
-  int rightIndex = right(idx);
+    // Free full slabs
+    struct Slab* slab = cache->full_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
 
-  // Coalesce adjacent free blocks before re-inserting the merged block.
-  if (isAvail(leftIndex)) {
-    remove(leftIndex);
-    idx = leftIndex;
-    sz += size(leftIndex);
+    // Free partial slabs
+    slab = cache->partial_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
+
+    // Free empty slabs
+    slab = cache->empty_slabs;
+    while (slab != NULL) {
+      struct Slab* next = slab->next;
+      physmem_free(slab);
+      slab = next;
+    }
   }
 
-  if (isAvail(rightIndex)) {
-    remove(rightIndex);
-    sz += size(rightIndex);
-  }
-
-  makeAvail(idx, sz);
-
-  if (sync_init_done){
-    blocking_lock_release(&theLock);
-  }
+  #ifdef HEAP_DEBUG
+    int args[3] = {n_free, n_leak, n_malloc};
+    if (n_free != n_malloc) {
+      say("| Warning: heap malloc/free mismatch: n_free:%d n_leak:%d n_malloc:%d\n", args);
+    } else {
+      say("| No heap malloc leaks detected: n_free:%d n_leak:%d n_malloc:%d\n", args);
+    }
+  #endif
 }

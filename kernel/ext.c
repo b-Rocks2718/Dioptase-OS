@@ -396,7 +396,8 @@ void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
     memcpy(component, name + start, size - 1);
     component[size - 1] = 0;
 
-    assert(ringbuf_add_front(path, component), "ext2_expand_path: path buffer overflow.\n");
+    int rc = ringbuf_add_front(path, component);
+    assert(rc != 0, "ext2_expand_path: path buffer overflow.\n");
     start = end;
   }
 }
@@ -415,7 +416,8 @@ static void ext2_prepend_path(struct Ext2* fs, struct RingBuf* path, char* targe
   for (unsigned i = 0; i < suffix_size; ++i){
     char* component = ringbuf_remove_back(path);
     assert(component != NULL, "ext2_prepend_path: path queue unexpectedly underflowed.\n");
-    assert(ringbuf_add_front(&rebuilt, component), "ext2_prepend_path: path buffer overflow.\n");
+    int rc = ringbuf_add_front(&rebuilt, component);
+    assert(rc != 0, "ext2_prepend_path: path buffer overflow.\n");
   }
 
   ringbuf_destroy(path);
@@ -2567,14 +2569,29 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
   if (cached_inode != NULL) {
     unsigned short mode = cached_inode->inode.mode;
     switch (mode & EXT2_S_MASK) {
+      case EXT2_S_IFIFO:
+        type = EXT2_DT_FIFO;
+        break;
+      case EXT2_S_IFCHR:
+        type = EXT2_DT_CHR;
+        break;
       case EXT2_S_IFDIR:
         type = EXT2_DT_DIR;
+        break;
+      case EXT2_S_IFBLK:
+        type = EXT2_DT_BLK;
         break;
       case EXT2_S_IFREG:
         type = EXT2_DT_REG;
         break;
       case EXT2_S_IFLNK:
         type = EXT2_DT_LNK;
+        break;
+      case EXT2_S_IFSOCK:
+        type = EXT2_DT_SOCK;
+        break;
+      default:
+        type = EXT2_DT_UNKNOWN;
         break;
     }
   }

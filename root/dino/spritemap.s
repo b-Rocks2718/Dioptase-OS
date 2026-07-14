@@ -3,8 +3,8 @@
 # Packing: two 16-bit pixels per .fill word (low half = first pixel)
 # Sheet: 256x32 px, cell 32x32 px, 8x1 cells, 8192 pixels, 4096 .fill words
 
-  .align 4
   .data
+  .align 4
   .global SPRITEMAP_DATA
 SPRITEMAP_DATA:
   .fill 0x0F3F0F3F

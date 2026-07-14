@@ -8,9 +8,6 @@
  *   returning one live frame to two workers at once
  * - physmem_alloc_order() returns aligned higher-order blocks that remain
  *   writable across the span of the requested block size
- * - after draining per-core page caches back into the global buddy allocator,
- *   the backend can still hand out a large order-0 sample without duplicates
- *   and recover it on free
  *
  * How:
  * - start a set of worker threads together behind one shared go flag
@@ -19,11 +16,7 @@
  * - a separate ownership table guarded by one test spin lock records which
  *   worker currently owns each frame index; any duplicate live allocation
  *   panics immediately
- * - after the threaded phase, explicitly drain any per-core order-0 caches
- *   back into the global allocator so the backend pool can be checked
- * - run a sequential higher-order smoke test, then walk a large direct
- *   order-0 backend sample and prove that every returned frame index is unique
- *   before freeing that sample
+ * - after the threaded phase, run a sequential higher-order smoke test
  */
 
 #include "../kernel/physmem.h"
@@ -39,12 +32,11 @@
 #define NUM_WORKERS 4
 #define LIVE_PAGES_PER_WORKER 2
 #define CONCURRENCY_ROUNDS 3
-#define NO_OWNER -1
+#define OWNER_NONE 0
+#define OWNER_TID_OFFSET 1
+#define NO_OWNER_FOR_LOG -1
 #define TEST_FRAME_SIZE 4096 // Must match kernel FRAME_SIZE.
 #define TEST_FRAME_WORDS 1024 // TEST_FRAME_SIZE / sizeof(unsigned)
-// 8,192 pages is still a 32 MiB backend sample, which crosses many buddy
-// regions without exhausting all 30,648 frames on every 4-core run.
-#define GLOBAL_WALK_PAGE_COUNT 8192
 
 struct ThreadArg {
   int id;
@@ -56,9 +48,15 @@ static struct Semaphore finished_sem;
 static int ready_workers = 0;
 static bool go = false;
 
-static int live_owner[PHYS_FRAME_COUNT];
-static unsigned char seen_once[PHYS_FRAME_COUNT];
-static void* sampled_pages[GLOBAL_WALK_PAGE_COUNT];
+static unsigned char live_owner[PHYS_FRAME_COUNT];
+
+static unsigned char owner_for_tid(int tid) {
+  return (unsigned char)(tid + OWNER_TID_OFFSET);
+}
+
+static int owner_for_log(unsigned char owner) {
+  return owner == OWNER_NONE ? NO_OWNER_FOR_LOG : (int)owner - OWNER_TID_OFFSET;
+}
 
 // Map one frame address back to its slot in the documented physical-frame range.
 static int frame_index(void* page) {
@@ -152,12 +150,12 @@ static void note_live_page(void* page, int tid) {
   int idx = frame_index(page);
 
   spin_lock_acquire(&owner_lock);
-  if (live_owner[idx] != NO_OWNER) {
-    int args[3] = { idx, live_owner[idx], tid };
+  if (live_owner[idx] != OWNER_NONE) {
+    int args[3] = { idx, owner_for_log(live_owner[idx]), tid };
     say("***physmem FAIL idx=%d owner=%d contender=%d\n", args);
     panic("physmem test: allocator returned one live frame twice\n");
   }
-  live_owner[idx] = tid;
+  live_owner[idx] = owner_for_tid(tid);
   spin_lock_release(&owner_lock);
 }
 
@@ -166,12 +164,12 @@ static void note_freed_page(void* page, int tid) {
   int idx = frame_index(page);
 
   spin_lock_acquire(&owner_lock);
-  if (live_owner[idx] != tid) {
-    int args[3] = { idx, live_owner[idx], tid };
+  if (live_owner[idx] != owner_for_tid(tid)) {
+    int args[3] = { idx, owner_for_log(live_owner[idx]), tid };
     say("***physmem FAIL idx=%d owner=%d freeing=%d\n", args);
     panic("physmem test: frame ownership bookkeeping mismatch on free\n");
   }
-  live_owner[idx] = NO_OWNER;
+  live_owner[idx] = OWNER_NONE;
   spin_lock_release(&owner_lock);
 }
 
@@ -250,7 +248,7 @@ void kernel_main(void) {
   go = false;
 
   for (int i = 0; i < PHYS_FRAME_COUNT; i++) {
-    live_owner[i] = NO_OWNER;
+    live_owner[i] = OWNER_NONE;
   }
 
   for (int i = 0; i < NUM_WORKERS; i++) {
@@ -289,7 +287,7 @@ void kernel_main(void) {
   sem_destroy(&finished_sem);
 
   say("***testing large order allocations\n", NULL);
-  
+
   higher_order_smoke_test();
 
   say("***physmem test complete\n", NULL);

@@ -4,18 +4,23 @@
  * Validates:
  * - concurrent malloc() and free() preserve payload bytes for every live block
  * - one thread's heap churn does not corrupt another thread's live allocations
+ * - frame-backed large allocations remain correct while mixed with normal slab
+ *   allocations from other threads
  * - allocator reuse remains correct even while several workers fragment the heap
  *
  * How:
  * - start NUM_THREADS workers together behind one go flag
  * - each worker allocates a batch of random-sized blocks, fills them with a
- *   per-thread deterministic pattern, and frees half in shuffled order
- * - each worker then churns short-lived allocations to force reuse before
- *   verifying and freeing the remaining original blocks
+ *   per-thread deterministic pattern, and frees half in shuffled order; fixed
+ *   per-worker slots force one-frame and multi-frame large allocations each
+ *   round
+ * - each worker then churns short-lived allocations, including large objects,
+ *   to force reuse before verifying and freeing the remaining original blocks
  * - the test completes only after every worker finished all rounds
  */
 
 #include "../kernel/heap.h"
+#include "../kernel/physmem.h"
 #include "../kernel/threads.h"
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
@@ -25,6 +30,15 @@
 #define NUM_THREADS 6
 #define ROUNDS 3
 #define N_BLOCKS 32
+
+#define SMALL_ALLOC_BASE 8u
+#define SMALL_ALLOC_SPAN 128u
+#define MEDIUM_ALLOC_BASE 64u
+#define MEDIUM_ALLOC_SPAN 256u
+#define LARGE_ALLOC_BASE 1280u
+#define LARGE_ALLOC_SPAN 512u
+#define MULTIFRAME_ALLOC_EXTRA 128u
+#define CHURN_LARGE_ALLOC_SPAN 384u
 
 struct ThreadArg {
   int id;
@@ -83,6 +97,43 @@ static void shuffle(int tid) {
   }
 }
 
+// Pick a live-block size for one worker. Each worker gets one multi-frame
+// large allocation and one one-frame large allocation per round, but their
+// slots differ so large allocations are interleaved with other threads' slab
+// allocations instead of bunching at the same index.
+static unsigned worker_live_block_size(int tid, unsigned round, unsigned i,
+    unsigned roll) {
+  unsigned multi_frame_slot = ((unsigned)tid + round) % N_BLOCKS;
+  unsigned large_slot = ((unsigned)tid + round + 11u) % N_BLOCKS;
+
+  if (i == multi_frame_slot) {
+    return FRAME_SIZE + MULTIFRAME_ALLOC_EXTRA + (roll % MULTIFRAME_ALLOC_EXTRA);
+  }
+
+  if (i == large_slot) {
+    return LARGE_ALLOC_BASE + (roll % LARGE_ALLOC_SPAN);
+  }
+
+  if ((roll & 3u) == 0) {
+    return MEDIUM_ALLOC_BASE + (roll % MEDIUM_ALLOC_SPAN);
+  }
+
+  return SMALL_ALLOC_BASE + (roll % SMALL_ALLOC_SPAN);
+}
+
+// Pick a short-lived churn size. One churn allocation per worker per round uses
+// the large path while the worker still has a mixed live set.
+static unsigned worker_churn_block_size(int tid, unsigned round, unsigned i,
+    unsigned roll) {
+  unsigned large_slot = ((unsigned)tid + round) % (N_BLOCKS / 2);
+
+  if (i == large_slot) {
+    return LARGE_ALLOC_BASE + (roll % CHURN_LARGE_ALLOC_SPAN);
+  }
+
+  return 16u + (roll % 128u);
+}
+
 // Run the heap stress sequence for one worker thread.
 static void heap_worker(void* arg) {
   struct ThreadArg* a = (struct ThreadArg*)arg;
@@ -98,14 +149,7 @@ static void heap_worker(void* arg) {
     // Phase 1: allocate and fill a batch of live blocks.
     for (unsigned i = 0; i < N_BLOCKS; i++) {
       unsigned roll = rnd_u32(tid);
-      unsigned sz;
-      if ((roll & 15u) == 0) {
-        sz = 256 + (roll % 512);
-      } else if ((roll & 3u) == 0) {
-        sz = 64 + (roll % 256);
-      } else {
-        sz = 8 + (roll % 128);
-      }
+      unsigned sz = worker_live_block_size(tid, r, i, roll);
 
       void* p = malloc(sz);
       if (!p) {
@@ -138,7 +182,7 @@ static void heap_worker(void* arg) {
     // Phase 3: churn short-lived allocations to force cross-thread reuse.
     for (unsigned i = 0; i < halfway; i++) {
       unsigned roll = rnd_u32(tid);
-      unsigned sz = 16 + (roll % 128);
+      unsigned sz = worker_churn_block_size(tid, r, i, roll);
       void* p = malloc(sz);
       if (!p) panic("heap_threadsafe: malloc failed during reuse phase\n");
       unsigned seed = 0xA5A5A5A5u ^ (r << 16) ^ i ^ roll ^ (tid << 24);
