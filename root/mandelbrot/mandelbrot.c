@@ -62,8 +62,11 @@ int main(void){
   // Draw one static Mandelbrot view for manual inspection.
   display_mandelbrot(start_x, start_y, diff);
 
-  while (getkey() != 'q'){
-    sleep(5);
+  unsigned char key = 0;
+  while (key != 'q'){
+    if (read(STDIN, &key, 1) != 1){
+      sleep(5);
+    }
   }
 
   // show cursor

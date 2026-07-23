@@ -54,9 +54,11 @@ enum TrapCode {
   TRAP_SET_SPRITE_COORDS = 44,
   TRAP_LOAD_TEXT_TILES_COLORED = 45,
   TRAP_GET_SPRITEMAP = 46,
-  TRAP_KILL,
-  TRAP_GET_SYNTH_AUDIO,
-  TRAP_REQUEST_PRIORITY,
+  TRAP_SIGNAL_CHILD = 47,
+  TRAP_GET_SYNTH_AUDIO = 48,
+  TRAP_REQUEST_PRIORITY = 49,
+  TRAP_SET_FOREGROUND_CHILD = 50,
+  TRAP_SIGNAL_FOREGROUND = 51,
 };
 
 #define SEEK_SET 0
@@ -72,6 +74,10 @@ enum TrapCode {
 #define FILE_DESCRIPTORS_START 0
 #define SEM_DESCRIPTORS_START 100
 #define CHILD_DESCRIPTORS_START 200
+
+#define DIOPTASE_SIGNAL_TERMINATE 0
+#define DIOPTASE_SIGNAL_FIRST_BIT 1
+#define DIOPTASE_SIGNAL_TERMINATE_MASK 1
 
 struct TCB;
 struct Node;
@@ -107,10 +113,20 @@ struct SemDescriptor {
 };
 
 struct ChildDescriptor {
+  // A non-NULL child_tcb observed while holding state_lock names a live TCB.
+  // Every exit path clears it under this lock before that TCB reaches reaper.
+  // display_claimed is also protected by state_lock and remains valid after
+  // child_tcb is cleared so the foreground owner can recover the display.
+  struct CLHLock state_lock;
   struct TCB* child_tcb;
   struct Promise* child_promise;
+  bool display_claimed;
   int refcount;
 };
+
+// Drop one descriptor reference.  The caller must not hold state_lock because
+// the final release destroys it.
+void child_descriptor_release(struct ChildDescriptor* descriptor);
 
 struct Pipe {
   struct BlockingRingBuf buf;
@@ -119,6 +135,9 @@ struct Pipe {
 
 // set up IVT with trap handler entry point
 void trap_init(void);
+
+// clean up any resources used by the trap handler
+void trap_destroy(void);
 
 // Enter user mode through rfe
 // can pass in r1, r2 for use as either a return value or argc and argv

@@ -8,11 +8,11 @@ is a small interactive command interpreter with a fixed set of built-ins and a
 simple external-command launcher.
 
 Related documents:
-- `syscalls.md` for `fork()`, `execv()`, `wait_child()`, `getkey()`, path
+- `syscalls.md` for `fork()`, `execv()`, `wait_child()`, `read()`, path
   resolution, and file operations
 - `filesystem.md` for pathname traversal and current ext2 behavior
-- `terminal.md` for the ANSI sequences that the shell prompt and `clear`
-  command rely on
+- `terminal.md` for keyboard-byte translation and the ANSI sequences that the
+  shell prompt and `clear` command rely on
 
 ## Startup and Process Topology
 
@@ -20,8 +20,12 @@ Related documents:
 - `/sbin/init` starts `/sbin/terminal`, then starts `/sbin/shell`.
 - The shell writes prompts and command output to `STDOUT`, which the terminal
   process renders.
-- The shell reads keyboard events itself with `getkey()`. It does not use
-  `read(STDIN, ...)` for line editing.
+- The terminal reads keyboard events with `getkey()`, translates them into an
+  input byte stream, and writes that stream to the shell's `STDIN` pipe.
+- The shell reads line-editing bytes with `read(STDIN, ...)`.
+- When launching an external command, the shell marks that child as the single
+  foreground child before waiting and clears the foreground slot after
+  `wait_child()` returns.
 - When the shell exits, `/sbin/init` waits for it, kills the terminal process,
   and currently returns status `67`.
 
@@ -35,15 +39,15 @@ Current implementation-defined limits and behaviors:
 - Command buffer size: `2048` bytes
 - The current editor accepts at most `2047` typed characters before ignoring
   further printable input
-- Accepted editing keys: printable ASCII, Enter, Backspace, tab, left Shift,
-  and right Shift
+- Accepted editing bytes: printable ASCII, newline, Backspace, tab, and ETX
+  (`0x03`, produced by Ctrl-C in the terminal)
 - Characters outside printable ASCII are ignored unless they are one of the
-  special keys above
+  special bytes above
 - Backspace deletes one buffered character and visually erases it with
   `"\b \b"`
+- ETX cancels the current command buffer and prints `^C`
 - There is no cursor motion, insert mode, or command history
-- The shell sleeps for `5` jiffies between keyboard polls when waiting for
-  input
+- The shell blocks in `read(STDIN, ...)` while waiting for input bytes
 
 ## Tab Completion
 
@@ -206,7 +210,16 @@ program.
 - If that fails, the child tries `execv(argv0, argc, argv)`
 - If both `execv()` calls fail, the child prints `failed to exec command` and
   exits with status `1`
-- The parent waits synchronously with `wait_child()`
+- The parent installs the child as the terminal foreground child and waits
+  synchronously with `wait_child()`
+- A zero-count semaphore gates the child between `fork()` and `execv()`. The
+  parent installs the foreground descriptor before releasing that gate, so the
+  program cannot use a direct display trap before the kernel can attribute it
+  to the foreground job.
+- After the child exits, the parent clears the foreground slot. If the kernel
+  reports that the child used direct display traps, the shell writes the
+  terminal-private `ESC [ 67 J` recovery command before printing the next
+  prompt.
 
 Consequences:
 

@@ -49,6 +49,24 @@ unsigned frame;
 unsigned frame2;
 unsigned ground_scroll_screen_px;
 
+static int read_input_event(void){
+  int available = fd_bytes_available(STDIN);
+
+  if (available > 0){
+    unsigned char byte;
+    if (read(STDIN, &byte, 1) == 1){
+      return byte;
+    }
+    return 0;
+  }
+
+  if (available < 0){
+    return getkey();
+  }
+
+  return 0;
+}
+
 void draw_tile(unsigned x, unsigned y, short tile){
   TILE_FB[x + TILE_ROW_WIDTH * y] = tile;
 }
@@ -319,7 +337,7 @@ unsigned main(void){
     update_positions();
 
     // input
-    unsigned key = getkey();
+    unsigned key = read_input_event();
     if (key == 0x71) {
       restore_terminal_video();
       return 0;
@@ -345,10 +363,10 @@ unsigned main(void){
 
       // wait a bit, then drain key buffer
       sleep(10);
-      while (getkey() != 0);
+      while (read_input_event() != 0);
       while (1){
         // input
-        unsigned key = getkey();
+        unsigned key = read_input_event();
         if (key == 'q') {
           restore_terminal_video();
           return 0;

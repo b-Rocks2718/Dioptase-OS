@@ -84,3 +84,24 @@ User programs enter the kernel with the single `trap` instruction.
 - IVT entry `0x004`: shared trap vector
 
 Current trap code assignments are documented in `syscalls.md`.
+
+## Terminal Foreground Control
+
+Dioptase-OS currently has one foreground child slot for
+the interactive terminal.
+
+- The shell sets the foreground child to the external command it is about to
+  wait for.
+- The terminal sends Ctrl-C to that foreground child with
+  `signal_foreground(DIOPTASE_SIGNAL_TERMINATE)`.
+- Normal keyboard bytes still flow through the terminal input pipe inherited as
+  `STDIN`.
+- A foreground child's descriptor records whether that live child used a direct
+  VGA configuration or mapping trap. The descriptor state lock protects this
+  claim together with the child TCB lifetime.
+- After `wait_child()`, the shell clears the foreground slot.
+  `set_foreground_child(-1)` atomically returns the old descriptor's display
+  claim while the foreground and descriptor locks exclude concurrent claims.
+- If the returned claim is set, the shell queues the terminal-private display
+  recovery sequence before it prints the next prompt. The terminal, rather than
+  the shell, resets VGA and renderer state in pipe order.

@@ -3,12 +3,16 @@
 ### Display model
 
 - The terminal renders to the tile framebuffer returned by `get_tile_fb()`.
+- The terminal reads shell/program output from `STDIN` and renders those bytes.
+- The terminal reads raw keyboard events with `getkey()` and writes translated
+  input bytes to `STDOUT`, which `/sbin/init` connects to the shell's `STDIN`.
 - The visible screen is `80` columns by `60` rows.
 - Each character cell is one `8x8` tile.
 - The low byte of each tile framebuffer entry is the tile index.
 - The high byte of each tile framebuffer entry is the tile color.
 - The terminal loads the built-in text tileset with `load_text_tiles()`.
-- The terminal sets tile scale to `0` and initializes tile vertical scroll to `0`.
+- The terminal sets tile scale to `0` and initializes tile horizontal and
+  vertical scroll to `0`.
 
 ### Text rendering
 
@@ -23,6 +27,24 @@
   models one color byte for text output.
 - The cursor position is tracked in visible screen coordinates, not raw
   framebuffer coordinates. This matters once the screen has scrolled.
+
+### Keyboard translation
+
+- Key release events update terminal modifier state and do not produce input
+  bytes.
+- Left and right Shift modify printable letters, number-row keys, and supported
+  punctuation before the byte is written to `STDOUT`.
+- Left and right Ctrl translate Ctrl-letter combinations into ASCII control
+  bytes.
+- Ctrl-C calls `signal_foreground(DIOPTASE_SIGNAL_TERMINATE)`. If no live
+  foreground child is set, Ctrl-C writes ASCII ETX (`0x03`) to `STDOUT` so the
+  shell prompt can cancel its current input buffer.
+- Enter writes newline (`\n`).
+- Printable ASCII, Escape, Backspace, Delete, and Tab are forwarded as one
+  byte.
+- Arrow keys are forwarded using the existing Dioptase `KEY_LEFT`,
+  `KEY_RIGHT`, `KEY_UP`, and `KEY_DOWN` byte values.
+- Other raw keycodes are ignored.
 
 ### Cursor and scrolling behavior
 
@@ -76,6 +98,7 @@ supports the following final bytes:
 | `ESC [ J` | Erase from cursor to end of screen | Same as `ESC [ 0 J` |
 | `ESC [ 1 J` | Erase from start of screen to cursor | |
 | `ESC [ 2 J` | Erase entire screen | |
+| `ESC [ 67 J` | Restore terminal display ownership | Dioptase-private recovery command described below |
 | `ESC [ K` | Erase from cursor to end of line | Same as `ESC [ 0 K` |
 | `ESC [ 1 K` | Erase from start of line to cursor | |
 | `ESC [ 2 K` | Erase entire line | |
@@ -88,6 +111,26 @@ supports the following final bytes:
 | `ESC [ a ; b m` | Apply up to two SGR codes in order | Example: `ESC [ 0 ; 32 m` resets then sets green |
 | `ESC [ ? 25 l` | Hide cursor | |
 | `ESC [ ? 25 h` | Show cursor | |
+
+### Foreground display recovery
+
+The shell writes the private `ESC [ 67 J` command after an external foreground
+child exits if the kernel reports that the child used direct display traps.
+Because the command and the next prompt use the same output pipe, the terminal
+processes recovery before rendering that prompt.
+
+Recovery restores the terminal's established startup state:
+
+- reload the built-in text tiles
+- set tile scale and both tile scroll registers to `0`
+- hide every sprite by moving it to `HIDDEN_SPRITE_COORD`
+- reset circular-scroll state and clear the visible framebuffer
+- home and show the cursor
+- reset saved-cursor, delayed-wrap, blink, and text-color state
+
+The shell does not write VGA registers directly. This keeps the hardware state
+and the terminal's renderer state under the same owner even when a foreground
+program is terminated before it can clean up.
 
 ### Supported SGR color codes
 
@@ -147,6 +190,8 @@ inverse video are ignored.
 ### Implementation notes
 
 - The terminal reads from `STDIN` in batches of up to `128` bytes.
+- The terminal drains all currently queued keyboard events once per main-loop
+  iteration before rendering pending output.
 - Before rendering a batch, it erases the cursor from the framebuffer. After the
   batch is processed, it redraws the cursor immediately if the cursor is
   visible.

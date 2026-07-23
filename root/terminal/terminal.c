@@ -4,6 +4,8 @@
 #include "../crt/stddef.h"
 #include "../crt/unistd.h"
 #include "../crt/vga.h"
+#include "../crt/ps2.h"
+#include "../crt/terminal.h"
 
 #define CURSOR_BLINK_INTERVAL 100
 #define MAIN_LOOP_DELAY_INTERVAL 10
@@ -15,6 +17,9 @@
 #define MAX_ESCAPE_ARGS 2
 
 #define TERMINAL_BUF_SIZE 128
+#define TERMINAL_DEFAULT_TILE_SCALE 0
+#define TERMINAL_SCROLL_ORIGIN 0
+#define TERMINAL_DEFAULT_TEXT_COLOR 0xFF
 
 short* TILE_FB = NULL;
 
@@ -36,9 +41,11 @@ bool wrap_pending = false;
 
 unsigned last_cursor_blink = 0;
 
-char current_color = 0xFF;
+char current_color = TERMINAL_DEFAULT_TEXT_COLOR;
 short under_cursor = 0x0000;
 char terminal_buf[TERMINAL_BUF_SIZE];
+bool input_shift_held = false;
+bool input_ctrl_held = false;
 
 static void put_terminal_char(char c);
 
@@ -66,6 +73,125 @@ static int fb_index_for_position(int row, int col){
 
 static int cursor_fb_index(void){
   return fb_index_for_position(cursor_row, cursor_col);
+}
+
+static char apply_shift_to_char(char c){
+  if (c >= 'a' && c <= 'z'){
+    return c - 'a' + 'A';
+  }
+
+  if (c == '0'){
+    return ')';
+  } else if (c == '1'){
+    return '!';
+  } else if (c == '2'){
+    return '@';
+  } else if (c == '3'){
+    return '#';
+  } else if (c == '4'){
+    return '$';
+  } else if (c == '5'){
+    return '%';
+  } else if (c == '6'){
+    return '^';
+  } else if (c == '7'){
+    return '&';
+  } else if (c == '8'){
+    return '*';
+  } else if (c == '9'){
+    return '(';
+  } else if (c == '-'){
+    return '_';
+  } else if (c == '='){
+    return '+';
+  } else if (c == '['){
+    return '{';
+  } else if (c == ']'){
+    return '}';
+  } else if (c == '\\'){
+    return '|';
+  } else if (c == ';'){
+    return ':';
+  } else if (c == '\''){
+    return '"';
+  } else if (c == ','){
+    return '<';
+  } else if (c == '.'){
+    return '>';
+  } else if (c == '/'){
+    return '?';
+  } else if (c == '`'){
+    return '~';
+  }
+
+  return c;
+}
+
+static void write_terminal_input_char(char c){
+  write(STDOUT, &c, 1);
+}
+
+static void handle_ctrl_key(short key){
+  if (key == 'c'){
+    if (signal_foreground(DIOPTASE_SIGNAL_TERMINATE) != 0){
+      write_terminal_input_char(0x03);
+    }
+    return;
+  }
+
+  if (key >= 'a' && key <= 'z'){
+    write_terminal_input_char((char)(key - 'a' + 1));
+  }
+}
+
+static void handle_keyboard_event(short key){
+  if (key & 0xFF00){
+    key = key & 0xFF;
+    if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
+      input_shift_held = false;
+    } else if (key == KEY_LEFT_CTRL || key == KEY_RIGHT_CTRL){
+      input_ctrl_held = false;
+    }
+    return;
+  }
+
+  if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
+    input_shift_held = true;
+    return;
+  }
+  if (key == KEY_LEFT_CTRL || key == KEY_RIGHT_CTRL){
+    input_ctrl_held = true;
+    return;
+  }
+
+  if (input_ctrl_held){
+    handle_ctrl_key(key);
+    return;
+  }
+
+  if (input_shift_held && key >= 32 && key < 127){
+    key = apply_shift_to_char((char)key);
+  }
+
+  if (key == '\r'){
+    key = '\n';
+  }
+
+  if ((key >= 32 && key < 127) || key == '\n' || key == '\t' ||
+      key == 0x1B || key == KEY_LEFT || key == KEY_RIGHT ||
+      key == KEY_UP || key == KEY_DOWN || key == KEY_HOME ||
+      key == KEY_END || key == KEY_PAGE_UP || key == KEY_PAGE_DOWN ||
+      key == 127 || key == 8){
+    write_terminal_input_char((char)key);
+  }
+}
+
+static void forward_keyboard_input(void){
+  short key;
+
+  while ((key = getkey()) != 0){
+    handle_keyboard_event(key);
+  }
 }
 
 static void erase_cursor(void){
@@ -165,6 +291,52 @@ static void move_cursor_backward(int cols){
 static void cursor_home(void){
   cursor_row = 0;
   cursor_col = 0;
+}
+
+// Restore the display and all renderer state owned by this terminal after a
+// foreground program used direct VGA traps.
+//
+// Preconditions:
+// - This runs in the terminal user process while parsing its STDIN stream.
+// - render_bytes() erased the cursor before entering the escape parser.
+// - TILE_FB is the terminal's live user mapping of the tile framebuffer.
+//
+// Ordering:
+// - The shell writes this command after clearing the kernel foreground slot
+//   and before writing the next prompt, so pipe byte order makes recovery
+//   happen before that prompt is rendered.
+//
+// Postconditions:
+// - Tile scale and both scroll registers match terminal startup state.
+// - The built-in text tiles are loaded and every sprite is hidden.
+// - The visible framebuffer, cursor, scrolling, color, saved cursor, wrapping,
+//   and blink state match a freshly cleared terminal.
+static void reset_display_state(void){
+  load_text_tiles();
+  set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_hscroll(TERMINAL_SCROLL_ORIGIN);
+  set_vscroll(TERMINAL_SCROLL_ORIGIN);
+
+  for (unsigned sprite = 0; sprite < NUM_SPRITES; ++sprite){
+    set_sprite_coords(sprite, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
+  }
+
+  scroll_top_row = TERMINAL_SCROLL_ORIGIN;
+  for (int row = 0; row < TILE_COL_HEIGHT; ++row){
+    clear_visible_row(row);
+  }
+
+  cursor_home();
+  saved_cursor_row = 0;
+  saved_cursor_col = 0;
+  saved_wrap_pending = false;
+  wrap_pending = false;
+  current_color = TERMINAL_DEFAULT_TEXT_COLOR;
+  cursor_visible = true;
+  cursor_drawn = false;
+  cursor_blink_on = true;
+  last_cursor_blink = get_current_jiffies();
+  under_cursor = 0;
 }
 
 static void advance_cursor_newline(void){
@@ -541,6 +713,10 @@ static bool handle_escape_sequence(char c){
         // reset scroll
         scroll_top_row = 0;
         set_vscroll(0);
+      } else if (arg == TERMINAL_RESET_DISPLAY_CSI_ARG){
+        // Private full recovery includes VGA state that ordinary CSI 2J does
+        // not own, plus the terminal's corresponding software state.
+        reset_display_state();
       }
       break;
     }
@@ -678,10 +854,11 @@ int main(void){
   clear_screen();
   TILE_FB = get_tile_fb();
   load_text_tiles();
-  set_tile_scale(0);
-  set_vscroll(0);
+  set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_hscroll(TERMINAL_SCROLL_ORIGIN);
+  set_vscroll(TERMINAL_SCROLL_ORIGIN);
 
-  scroll_top_row = 0;
+  scroll_top_row = TERMINAL_SCROLL_ORIGIN;
   cursor_home();
   wrap_pending = false;
   cursor_blink_on = true;
@@ -690,6 +867,7 @@ int main(void){
 
   while (true){
     blink_cursor();
+    forward_keyboard_input();
 
     // read a max of TERMINAL_BUF_SIZE bytes from stdin
     // render the bytes read from stdin to the terminal framebuffer

@@ -6,22 +6,13 @@
 #include "sys/mman.h"
 #include "sys/wait.h"
 
-/*
- * Deprecated compatibility aliases for code that still includes sys.h and uses
- * the older combined MMAP_* names. New code should use PROT_* and MAP_*.
- */
-#define MMAP_ANON   -1
-#define MMAP_NONE   0x00
-#define MMAP_SHARED 0x01
-#define MMAP_READ   0x04
-#define MMAP_WRITE  0x08
-#define MMAP_EXEC   0x10
-
 #define MAX_PATH 1024
 
 #define DIOPTASE_PRIORITY_LOW 0
 #define DIOPTASE_PRIORITY_NORMAL 1
 #define DIOPTASE_PRIORITY_HIGH 2
+
+#define DIOPTASE_SIGNAL_TERMINATE 0
 
 unsigned exit(int status);
 
@@ -83,11 +74,15 @@ int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 
 short* get_spritemap(void);
 
-int kill(int child);
+int signal_child(int child, int signal);
 
 unsigned* get_synth_audio(void);
 
 int request_priority(int priority);
+
+int set_foreground_child(int child);
+
+int signal_foreground(int signal);
 
 void test_syscall_list(int num, int* args);
 

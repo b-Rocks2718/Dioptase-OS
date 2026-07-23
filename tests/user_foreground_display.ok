@@ -1,0 +1,7 @@
+***test_syscall arg = 0
+***test_syscall arg = -1
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 0
+***test_syscall arg = 1

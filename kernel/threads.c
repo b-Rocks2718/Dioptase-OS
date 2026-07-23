@@ -56,6 +56,43 @@ static void free_fun(struct Fun* fun) {
   free(fun);
 }
 
+// Publish one child exit and revoke its TCB from every descriptor holder.
+//
+// Atomicity: state_lock serializes child_tcb and pending-signal access across
+// cores.  Once this function clears child_tcb, no sender can obtain the TCB;
+// only then may the caller enqueue it for reaping.
+static void publish_child_exit(struct TCB* child, unsigned rc) {
+  struct ChildDescriptor* descriptor = child->parent_promise;
+  if (descriptor == NULL){
+    return;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  assert(descriptor->child_tcb == child,
+    "child exit: descriptor does not reference exiting TCB.\n");
+  descriptor->child_tcb = NULL;
+  clh_lock_release(&descriptor->state_lock);
+
+  promise_set(descriptor->child_promise, (void*)rc);
+  child->parent_promise = NULL;
+  child_descriptor_release(descriptor);
+}
+
+// The scheduler takes the same lock as signal senders.  A false result can
+// only defer a concurrent signal until a later scheduler pass.
+static bool child_has_termination_signal(struct TCB* child) {
+  struct ChildDescriptor* descriptor = child->parent_promise;
+  if (descriptor == NULL){
+    return false;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  bool terminate = descriptor->child_tcb == child &&
+    (child->pending_signals & DIOPTASE_SIGNAL_TERMINATE_MASK);
+  clh_lock_release(&descriptor->state_lock);
+  return terminate;
+}
+
 static void free_tcb(struct TCB* tcb) {
   assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
   assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
@@ -146,7 +183,15 @@ static struct TCB* make_tcb(bool is_daemon){
 
   tcb->parent_promise = NULL;
 
-  tcb->pending_signals = 0;
+  // Daemon threads never enter user mode.  ChildDescriptor.state_lock, rather
+  // than a TCB-local lock, protects the signal state of user threads.
+  if (!is_daemon) {
+    tcb->pending_signals = 0;
+    for (int i = 0; i < MAX_SIGNALS; i++){
+      tcb->signal_handlers[i] = NULL;
+    }
+    tcb->in_signal_handler = false;
+  }
 
   tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
   tcb->my_node->locked = false;
@@ -308,6 +353,7 @@ void kernel_shutdown(void){
     ext2_destroy(&fs);
     ps2_destroy();
     audio_destroy();
+    trap_destroy();
     sd_destroy();
     vmem_global_destroy();
     scheduler_destroy();
@@ -373,17 +419,8 @@ void event_loop(void) {
       continue;
     }
 
-    if (next->pending_signals){
-      // free parent promise
-      if (next->parent_promise != NULL){
-        promise_set(next->parent_promise->child_promise, (void*)-1);
-        __atomic_store_n((int*)&next->parent_promise->child_tcb, NULL);
-
-        if (__atomic_fetch_add(&next->parent_promise->refcount, -1) == 1){
-          promise_free(next->parent_promise->child_promise);
-          free(next->parent_promise);
-        }
-      }
+    if (child_has_termination_signal(next)) {
+      publish_child_exit(next, (unsigned)-1);
 
       // kill this thread
       reap_tcb((void*)next);
@@ -443,6 +480,10 @@ void bootstrap(void){
   tcb->my_node = per_core_data[me].idle_clh_node;
   tcb->my_pred = NULL;
 
+  // idle threads should never enter user mode
+  // so skip setting up signal handling 
+  // (avoids a call to malloc() to create the CLH lock)
+
   core->current_thread = tcb;
 }
 
@@ -479,15 +520,7 @@ void stop(unsigned rc) {
   interrupts_restore(was);
   bool is_idle = (current == &core->idle_thread);
 
-  if (current->parent_promise != NULL){
-    promise_set(current->parent_promise->child_promise, (void*)rc);
-    __atomic_store_n((int*)&current->parent_promise->child_tcb, NULL);
-
-    if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
-      promise_free(current->parent_promise->child_promise);
-      free(current->parent_promise);
-    }
-  }
+  publish_child_exit(current, rc);
 
   was = interrupts_disable();
 

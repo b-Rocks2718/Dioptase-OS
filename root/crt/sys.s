@@ -1519,8 +1519,8 @@ get_spritemap:
 
   ret
 
-  .global kill
-kill:
+  .global signal_child
+signal_child:
   push r20
   push r21
   push r22
@@ -1533,6 +1533,7 @@ kill:
   push bp
   push ra
 
+  mov  r3, r2
   mov  r2, r1
   movi r1, 47
   trap
@@ -1598,6 +1599,70 @@ request_priority:
 
   mov  r2, r1
   movi r1, 49
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global set_foreground_child
+set_foreground_child:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 50
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global signal_foreground
+signal_foreground:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 51
   trap
 
   pop ra

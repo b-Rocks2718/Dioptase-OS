@@ -10,3 +10,4 @@ a.s
 *.debug
 *.out.dir
 root/sbin/*
+debugging/*

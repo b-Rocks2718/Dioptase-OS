@@ -9,4 +9,7 @@
 #define FB_NUM_TILES 4800
 #define SQUARE_TILE 0x7F
 
+#define NUM_SPRITES 16
+#define HIDDEN_SPRITE_COORD 1000
+
 #endif // VGA_H

@@ -40,6 +40,8 @@ struct VME;
 
 struct Node;
 
+#define MAX_SIGNALS 32
+
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
 struct TCB {
@@ -89,7 +91,9 @@ struct TCB {
 
   struct VME* vme_list;
 
-  int pending_signals;
+  unsigned pending_signals; // bitmap of pending signals
+  void* signal_handlers[MAX_SIGNALS];
+  bool in_signal_handler;
 
   struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
   struct CLHNode* my_pred;

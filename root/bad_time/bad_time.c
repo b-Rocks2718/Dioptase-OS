@@ -46,7 +46,7 @@ int main(void){
   }
 
   // kill the child process
-  kill(id);
+  signal_child(id, DIOPTASE_SIGNAL_TERMINATE);
 
   // reset text color
   puts("\x1b[0m");

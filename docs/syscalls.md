@@ -66,8 +66,10 @@ Current implementation-defined bounds:
 | `24` | `execv(path, argc, argv)` | `path`, `argc`, `argv` | Replaces the current user image. Success does not return. Failure returns `-1`. If `argc == 0`, `argv` is ignored and the new image starts with `argc = 0`, `argv = NULL`. |
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
-| `47` | `kill(child_desc)` | `child_desc` | Requests termination of the specified child and returns `0`, or returns `-1` for an invalid child descriptor. Current implementation detail: `wait_child()` currently returns `-1` for a killed child. |
+| `47` | `signal_child(child_desc, signal)` | `child_desc`, `signal` | Records a signal for the specified live child and returns `0`, or returns `-1` for an invalid child descriptor, exited child, or signal outside `0..31`. `DIOPTASE_SIGNAL_TERMINATE = 0` is currently the only delivered signal; it terminates the child and makes `wait_child()` return `-1`. Other valid signal values are pending but have no delivery behavior yet. |
 | `49` | `request_priority(priority)` | `priority` | Requests a static scheduler priority for the current thread. Returns `0` and updates the thread when `priority` is valid, or `-1` for an invalid priority. |
+| `50` | `set_foreground_child(child_desc)` | `child_desc` | Sets the single terminal foreground child to the caller's live child descriptor and returns `0`, or clears it when `child_desc == -1`. Clearing returns `1` if that foreground child used a direct display trap and otherwise returns `0`. An invalid or already-exited descriptor passed while setting returns `-1`. |
+| `51` | `signal_foreground(signal)` | `signal` | Records `signal` for the current foreground child and returns `0`, or returns `-1` if no live foreground child is set or `signal` is outside `0..31`. `DIOPTASE_SIGNAL_TERMINATE = 0` is currently the only delivered signal. |
 
 `request_priority()` currently honors all valid requests without any permission
 checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
@@ -75,6 +77,26 @@ checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
 does not reset the caller's current MLFQ level or remaining quantum; those
 dynamic scheduler fields continue to follow the scheduler rules documented in
 `scheduling.md`.
+
+`signal_child()` replaces the former `kill()` wrapper, and
+`signal_foreground(signal)` replaces `kill_foreground()`. The foreground form
+now takes an explicit signal number, just like `signal_child()`.
+
+The shell sets one foreground child while waiting for an external
+command; the terminal uses
+`signal_foreground(DIOPTASE_SIGNAL_TERMINATE)` to turn Ctrl-C into termination
+of that child instead of delivering byte `0x03` to the input pipe. Ordinary
+keyboard input still reaches the foreground command through the inherited
+`STDIN` pipe.
+
+Each foreground child descriptor records whether its live child used a direct
+display trap. The display traps are codes `4..10`, `36`, `37`, and `43..46`;
+invalid sprite-number requests do not set the claim. Calls made by the terminal,
+shell, or a background child do not set the foreground descriptor's claim.
+`set_text_color()` is console output state and does not count as a direct
+display claim. The claim remains available after child exit until the shell
+clears the foreground slot and receives it as the clear operation's return
+value.
 
 ### Exec
 
@@ -97,7 +119,7 @@ non-ELF regular files return `-1`.
 | Code | Wrapper | Arguments | Result |
 | --- | --- | --- | --- |
 | `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Creates the file if it does not exist. Returns a file descriptor in `0..99`, or `-1` on copy, creation, or descriptor-allocation failure. |
-| `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at EOF, or `-1` on failure. `STDIN` reads block waiting for keyboard input. |
+| `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at EOF, or `-1` on failure. A process whose fd `0` still names the default stdin descriptor blocks waiting for keyboard input; if fd `0` has been replaced with a pipe or file, it follows that descriptor's normal read behavior. |
 | `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. `STDOUT` and `STDERR` write characters to the console. |
 | `17` | `close(fd)` | `fd` | Closes a valid file descriptor and returns `0`, or returns `-1` for an invalid descriptor. |
 | `25` | `play_audio_file(fd)` | `fd` | Starts asynchronous playback of a regular file and returns `0`, or returns `-1` if `fd` is invalid or does not name a regular file. |
