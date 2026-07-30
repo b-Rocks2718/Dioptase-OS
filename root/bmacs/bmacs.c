@@ -155,10 +155,6 @@ static void hide_terminal_cursor(void){
   puts("\x1b[?25l");
 }
 
-static void show_terminal_cursor(void){
-  puts("\x1b[?25h");
-}
-
 static short make_tile_entry(unsigned tile_index, unsigned color){
   return (short)(((color & 0xFFu) << 8) | (tile_index & 0xFFu));
 }
@@ -757,7 +753,6 @@ int main(int argc, char** argv){
 
   hide_terminal_cursor();
   if (!init_editor_display()){
-    show_terminal_cursor();
     free_editor_state(&editor);
     return 1;
   }
@@ -853,14 +848,7 @@ int main(int argc, char** argv){
     sleep(1);
   }
 
-  show_terminal_cursor();
   free_editor_state(&editor);
-
-  // clear the screen
-  puts("\x1b[2J");
-
-  // home cursor
-  puts("\x1b[H");
 
   return 0;
 }

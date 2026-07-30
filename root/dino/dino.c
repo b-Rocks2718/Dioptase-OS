@@ -19,8 +19,6 @@
 #define SKY_ROW_END 25
 #define GROUND_ROW_START 25
 #define GROUND_ROW_END 31
-#define NUM_GAME_SPRITES 6
-#define HIDDEN_SPRITE_COORD 1000
 
 extern short DINORUNSHEET_DATA[42];
 extern short SPRITEMAP_DATA[42];
@@ -87,23 +85,6 @@ static void fill_tile(unsigned tile, short color){
       TILEMAP[tile * 64 + i * TILE_SIZE + j] = color;
     }
   }
-}
-
-static void hide_game_sprites(void){
-  for (unsigned sprite = 0; sprite < NUM_GAME_SPRITES; ++sprite){
-    set_sprite_coords(sprite, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
-  }
-}
-
-static void restore_terminal_video(void){
-  set_hscroll(0);
-  set_vscroll(0);
-  hide_game_sprites();
-  set_tile_scale(0);
-  load_text_tiles();
-  puts("\x1b[2J");
-  puts("\x1b[H");
-  puts("\x1b[?25h");
 }
 
 static void wait_for_next_vblank(void){
@@ -339,7 +320,6 @@ unsigned main(void){
     // input
     unsigned key = read_input_event();
     if (key == 0x71) {
-      restore_terminal_video();
       return 0;
     }
     if (key == 0x20 && !is_jumping){ // spacebar
@@ -368,7 +348,6 @@ unsigned main(void){
         // input
         unsigned key = read_input_event();
         if (key == 'q') {
-          restore_terminal_video();
           return 0;
         }
         if (key != 0) goto start;

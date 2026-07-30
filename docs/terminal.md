@@ -36,7 +36,7 @@
   punctuation before the byte is written to `STDOUT`.
 - Left and right Ctrl translate Ctrl-letter combinations into ASCII control
   bytes.
-- Ctrl-C calls `signal_foreground(DIOPTASE_SIGNAL_TERMINATE)`. If no live
+- Ctrl-C calls `signal_foreground(SIGNAL_TERMINATE)`. If no live
   foreground child is set, Ctrl-C writes ASCII ETX (`0x03`) to `STDOUT` so the
   shell prompt can cancel its current input buffer.
 - Enter writes newline (`\n`).
@@ -131,6 +131,12 @@ Recovery restores the terminal's established startup state:
 The shell does not write VGA registers directly. This keeps the hardware state
 and the terminal's renderer state under the same owner even when a foreground
 program is terminated before it can clean up.
+
+Foreground programs that use direct display traps should configure only the
+state they need while running. They do not need to reload terminal tiles, reset
+scroll or scale registers, hide sprites, clear the framebuffer, or restore the
+terminal cursor before exiting; the terminal performs that recovery after both
+normal exit and signal termination.
 
 ### Supported SGR color codes
 

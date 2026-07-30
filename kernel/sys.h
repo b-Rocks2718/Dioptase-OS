@@ -59,6 +59,10 @@ enum TrapCode {
   TRAP_REQUEST_PRIORITY = 49,
   TRAP_SET_FOREGROUND_CHILD = 50,
   TRAP_SIGNAL_FOREGROUND = 51,
+  TRAP_REGISTER_HANDLER = 52,
+  TRAP_SIGRETURN = 53,
+  TRAP_MASK_SIGNAL = 54,
+  TRAP_UNMASK_SIGNAL = 55,
 };
 
 #define SEEK_SET 0
@@ -75,9 +79,19 @@ enum TrapCode {
 #define SEM_DESCRIPTORS_START 100
 #define CHILD_DESCRIPTORS_START 200
 
-#define DIOPTASE_SIGNAL_TERMINATE 0
-#define DIOPTASE_SIGNAL_FIRST_BIT 1
-#define DIOPTASE_SIGNAL_TERMINATE_MASK 1
+// can register handlers for, or mask
+#define SIGNAL_HELLO 0
+#define SIGNAL_TERMINATE 1
+
+#define MAX_MASKABLE_SIGNAL 15
+
+// can register handlers for, but cannot mask
+#define SIGNAL_SEG 16
+#define SIGNAL_ILL 17
+#define SIGNAL_ALGN 18
+
+// cannot mask or register a handler for
+#define SIGNAL_KILL 31
 
 struct TCB;
 struct Node;

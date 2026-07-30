@@ -93,7 +93,7 @@ the interactive terminal.
 - The shell sets the foreground child to the external command it is about to
   wait for.
 - The terminal sends Ctrl-C to that foreground child with
-  `signal_foreground(DIOPTASE_SIGNAL_TERMINATE)`.
+  `signal_foreground(SIGNAL_TERMINATE)`.
 - Normal keyboard bytes still flow through the terminal input pipe inherited as
   `STDIN`.
 - A foreground child's descriptor records whether that live child used a direct

@@ -12,7 +12,19 @@
 #define DIOPTASE_PRIORITY_NORMAL 1
 #define DIOPTASE_PRIORITY_HIGH 2
 
-#define DIOPTASE_SIGNAL_TERMINATE 0
+// can register handlers for, or mask
+#define SIGNAL_HELLO 0
+#define SIGNAL_TERMINATE 1
+
+#define MAX_MASKABLE_SIGNAL 15
+
+// can register handlers for, but cannot mask
+#define SIGNAL_SEG 16
+#define SIGNAL_ILL 17
+#define SIGNAL_ALGN 18
+
+// cannot mask or register a handler for
+#define SIGNAL_KILL 31
 
 unsigned exit(int status);
 
@@ -83,6 +95,10 @@ int request_priority(int priority);
 int set_foreground_child(int child);
 
 int signal_foreground(int signal);
+
+int register_handler(int signal, void* handler);
+
+void sigreturn(int rc);
 
 void test_syscall_list(int num, int* args);
 

@@ -69,17 +69,5 @@ int main(void){
     }
   }
 
-  // show cursor
-  puts("\x1b[?25h");
-
-  // clear screen before exit
-  puts("\x1b[2J");
-
-  // home cursor
-  puts("\x1b[H");
-
-  // restore tile scale
-  set_tile_scale(0);
-
   return 0;
 }

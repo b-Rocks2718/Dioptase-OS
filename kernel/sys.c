@@ -1118,6 +1118,7 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
   child->pending_signals = 0;
+  child->signal_mask = parent->signal_mask;
   for (int i = 0; i < MAX_SIGNALS; i++){
     child->signal_handlers[i] = parent->signal_handlers[i];
   }
@@ -1140,14 +1141,6 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
     child->cwd_path = malloc(cwd_path_bytes);
     memcpy(child->cwd_path, parent->cwd_path, cwd_path_bytes);
   }
-
-  // ChildDescriptor.state_lock protects delivery because the descriptor owns
-  // the TCB lifetime that signal senders need to inspect.
-  child->pending_signals = 0;
-  for (int i = 0; i < MAX_SIGNALS; i++){
-    child->signal_handlers[i] = NULL;
-  }
-  child->in_signal_handler = false;
 
   // set up vme_list and pid
   vmem_fork(parent, child);
@@ -1286,7 +1279,6 @@ int handle_exec(char* path, int argc, char** argv){
   tlb_flush();
 
   rc = run_user_program(prog, argc, kargv);
-  free_exec_argv(argc, kargv);
   stop(rc);
 
   return -1;
@@ -1615,7 +1607,7 @@ int handle_unlink(char* path){
 void child_descriptor_release(struct ChildDescriptor* descriptor){
   if (descriptor == NULL){
     return;
-  }
+  } 
 
   if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
     return;
@@ -1643,7 +1635,7 @@ static int send_signal_to_child(struct ChildDescriptor* descriptor, int signal){
     return -1;
   }
 
-  child->pending_signals |= DIOPTASE_SIGNAL_FIRST_BIT << signal;
+  child->pending_signals |= 1 << signal;
   clh_lock_release(&descriptor->state_lock);
   return 0;
 }
@@ -1779,6 +1771,33 @@ int handle_request_priority(int priority){
   interrupts_restore(was);
 
   return 0;
+}
+
+int handle_register_handler(int signal, void* handler){ 
+  struct TCB* me = get_current_tcb();
+
+  if (!user_range_ok(me, handler, sizeof(void*), MMAP_READ)){
+    return -1;
+  }
+
+  if (signal < 0 || signal >= MAX_SIGNALS){
+    return -1;
+  }
+
+  me->signal_handlers[signal] = handler;
+  return 0;
+}
+
+int handle_sigreturn(int rc){
+  // TODO
+}
+
+int handle_mask_signal(int signal){
+
+}
+
+int handle_unmask_signal(int signal){
+  
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
@@ -1986,6 +2005,18 @@ int trap_handler(unsigned code,
     case TRAP_SIGNAL_FOREGROUND: {
       return handle_signal_foreground(arg1);
     }
+    case TRAP_REGISTER_HANDLER: {
+      return handle_register_handler(arg1, (void*)arg2);
+    }
+    case TRAP_SIGRETURN: {
+      return handle_sigreturn(arg1);
+    }
+    case TRAP_MASK_SIGNAL: {
+      return handle_mask_signal(arg1);
+    }
+    case TRAP_UNMASK_SIGNAL: {
+      return handle_unmask_signal(arg1);
+    }
     default: {
       // bad syscall, program dies
       *return_to_user = false;
@@ -2035,6 +2066,10 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
 
   int rc = build_exec_argv_on_stack(stack_bottom, stack_top, argv, argc,
     &initial_sp, &user_argv, get_current_tcb());
+
+  // have now copied argv onto user stack
+  free_exec_argv(argc, argv);
+  
   if (rc != 0){
     return -1;
   }

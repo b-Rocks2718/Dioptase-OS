@@ -35,8 +35,8 @@ static int child_main(void){
 int main(void){
   int child = -1;
 
-  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_LOW, DIOPTASE_SIGNAL_TERMINATE));
-  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, DIOPTASE_SIGNAL_TERMINATE));
+  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE));
+  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, SIGNAL_TERMINATE));
 
   child = fork();
   if (child == 0){
@@ -45,10 +45,10 @@ int main(void){
 
   test_syscall(child >= MIN_CHILD_DESCRIPTOR &&
     child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE);
-  test_syscall(signal_child(child, DIOPTASE_SIGNAL_TERMINATE));
+  test_syscall(signal_child(child, SIGNAL_TERMINATE));
   test_syscall(wait_child(child));
   test_syscall(wait_child(child));
-  test_syscall(signal_child(child, DIOPTASE_SIGNAL_TERMINATE));
+  test_syscall(signal_child(child, SIGNAL_TERMINATE));
 
   return 0;
 }

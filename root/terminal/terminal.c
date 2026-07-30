@@ -133,7 +133,7 @@ static void write_terminal_input_char(char c){
 
 static void handle_ctrl_key(short key){
   if (key == 'c'){
-    if (signal_foreground(DIOPTASE_SIGNAL_TERMINATE) != 0){
+    if (signal_foreground(SIGNAL_TERMINATE) != 0){
       write_terminal_input_char(0x03);
     }
     return;

@@ -75,7 +75,7 @@ int main(void) {
 
   wait_child(shell_pid);
 
-  signal_child(terminal_pid, DIOPTASE_SIGNAL_TERMINATE);
+  signal_child(terminal_pid, SIGNAL_TERMINATE);
 
   return 67;
 }

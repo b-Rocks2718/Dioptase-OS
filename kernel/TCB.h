@@ -91,7 +91,8 @@ struct TCB {
 
   struct VME* vme_list;
 
-  unsigned pending_signals; // bitmap of pending signals
+  unsigned pending_signals; // bitmap
+  unsigned signal_mask; // 0 => unmasked, 1 => masked/ignored
   void* signal_handlers[MAX_SIGNALS];
   bool in_signal_handler;
 

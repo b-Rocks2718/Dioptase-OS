@@ -78,17 +78,54 @@ static void publish_child_exit(struct TCB* child, unsigned rc) {
   child_descriptor_release(descriptor);
 }
 
-// The scheduler takes the same lock as signal senders.  A false result can
-// only defer a concurrent signal until a later scheduler pass.
-static bool child_has_termination_signal(struct TCB* child) {
+static bool child_has_unhandled_signal(struct TCB* child) {
   struct ChildDescriptor* descriptor = child->parent_promise;
   if (descriptor == NULL){
     return false;
   }
 
   clh_lock_acquire(&descriptor->state_lock);
-  bool terminate = descriptor->child_tcb == child &&
-    (child->pending_signals & DIOPTASE_SIGNAL_TERMINATE_MASK);
+  bool terminate = false;
+  assert((child->signal_mask & ((1 << MAX_MASKABLE_SIGNAL) - 1)) == child->signal_mask,
+    "child signal mask has bits set beyond MAX_MASKABLE_SIGNAL.\n");
+
+  unsigned current_signals = child->pending_signals & (~child->signal_mask);
+  
+  unsigned maskable_signals = current_signals & ((1 << MAX_MASKABLE_SIGNAL) - 1);
+  unsigned nonmaskable_signals = current_signals & ~((1 << MAX_MASKABLE_SIGNAL) - 1);
+  bool kill_signal = (current_signals & (1 << SIGNAL_KILL)) != 0;
+
+  bool in_signal_handler = child->in_signal_handler;
+
+  if (kill_signal){
+    // cannot mask or handle kill signal
+    terminate = true;
+  } else if (in_signal_handler) {
+    if (nonmaskable_signals != 0){
+      // nonmaskable signals cannot be handled while in a signal handler
+      terminate = true;
+    }
+    // maskable signals can wait until we exit this handler
+  } else {
+    // not in a signal handler
+    if (current_signals != 0){
+      // check for a signal handler to run
+      for (int i = 0; i < MAX_SIGNALS; i++){
+        if ((current_signals & (1 << i))){
+          if (child->signal_handlers[i]) {
+            // found a handler we can use
+
+            // TODO: run the signal handler
+          } else {
+            // no handler and signal is not masked -> terminate
+            terminate = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   clh_lock_release(&descriptor->state_lock);
   return terminate;
 }
@@ -187,6 +224,7 @@ static struct TCB* make_tcb(bool is_daemon){
   // than a TCB-local lock, protects the signal state of user threads.
   if (!is_daemon) {
     tcb->pending_signals = 0;
+    tcb->signal_mask = 0;
     for (int i = 0; i < MAX_SIGNALS; i++){
       tcb->signal_handlers[i] = NULL;
     }
@@ -419,7 +457,7 @@ void event_loop(void) {
       continue;
     }
 
-    if (child_has_termination_signal(next)) {
+    if (child_has_unhandled_signal(next)) {
       publish_child_exit(next, (unsigned)-1);
 
       // kill this thread
