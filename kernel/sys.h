@@ -79,11 +79,11 @@ enum TrapCode {
 #define SEM_DESCRIPTORS_START 100
 #define CHILD_DESCRIPTORS_START 200
 
-// can register handlers for, or mask
+// Signals [0, MAX_MASKABLE_SIGNAL) can register handlers and be masked.
 #define SIGNAL_HELLO 0
 #define SIGNAL_TERMINATE 1
 
-#define MAX_MASKABLE_SIGNAL 15
+#define MAX_MASKABLE_SIGNAL 16
 
 // can register handlers for, but cannot mask
 #define SIGNAL_SEG 16

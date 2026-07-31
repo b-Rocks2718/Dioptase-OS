@@ -12,11 +12,11 @@
 #define DIOPTASE_PRIORITY_NORMAL 1
 #define DIOPTASE_PRIORITY_HIGH 2
 
-// can register handlers for, or mask
+// Signals [0, MAX_MASKABLE_SIGNAL) can register handlers and be masked.
 #define SIGNAL_HELLO 0
 #define SIGNAL_TERMINATE 1
 
-#define MAX_MASKABLE_SIGNAL 15
+#define MAX_MASKABLE_SIGNAL 16
 
 // can register handlers for, but cannot mask
 #define SIGNAL_SEG 16
@@ -98,7 +98,11 @@ int signal_foreground(int signal);
 
 int register_handler(int signal, void* handler);
 
-void sigreturn(int rc);
+int sigreturn(int rc);
+
+int mask_signal(int signal);
+
+int unmask_signal(int signal);
 
 void test_syscall_list(int num, int* args);
 

@@ -638,26 +638,19 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
 
   if (flags != 0){
     if (was_user){
-      if (tcb->signal_handlers[SIGNAL_SEG] && !tcb->in_signal_handler){
-        // check if there is a registered signal handler for SIGNAL_SEG
-        struct TCB* me = get_current_tcb();
-        if (me->signal_handlers[SIGNAL_SEG] && !me->in_signal_handler){
-          // run the signal handler
-          void* handler = me->signal_handlers[SIGNAL_SEG];
-          me->in_signal_handler = true;
-          int rc = jump_to_user((unsigned)handler, me->signal_stack_top, (unsigned)vpn, 0);
-          if (me->in_signal_handler) {
-            // returned without calling sigreturn => terminate
-            stop(rc);
-          }
-        } 
-      } else {
-        // User code touched a mapped page without sufficient permissions. Abort
-        // back to the kernel caller of `jump_to_user(...)`.
-        say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
-        *return_to_user = false;
-        return -1;
+      // The TLB exception wrapper retains the faulting EPC/EFG on the kernel
+      // stack while the handler runs. sigreturn() therefore retries the same
+      // user access; handlers that cannot repair the mapping must exit.
+      if (try_run_current_signal_handler(SIGNAL_SEG, (unsigned)vpn, flags)){
+        return 0;
       }
+
+      // User code touched a mapped page without sufficient permissions. Abort
+      // back to the kernel caller of `jump_to_user(...)`.
+      say("| vmem: user access killed: mapped page lacks required permissions\n",
+        NULL);
+      *return_to_user = false;
+      return -1;
     } else if (tcb->uaccess_active){
       // Kernel uaccess helpers recover by redirecting the faulting instruction
       // stream to their local error path, then resuming kernel mode via rfe.
@@ -681,26 +674,17 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
 
   if (curr == NULL){
     if (was_user) {
-      if (tcb->signal_handlers[SIGNAL_SEG] && !tcb->in_signal_handler){
-        // check if there is a registered signal handler for SIGNAL_SEG
-        struct TCB* me = get_current_tcb();
-        if (me->signal_handlers[SIGNAL_SEG] && !me->in_signal_handler){
-          // run the signal handler
-          void* handler = me->signal_handlers[SIGNAL_SEG];
-          me->in_signal_handler = true;
-          int rc = jump_to_user((unsigned)handler, me->signal_stack_top, (unsigned)vpn, 0);
-          if (me->in_signal_handler) {
-            // returned without calling sigreturn => terminate
-            stop(rc);
-          }
-        } 
-      } else {
-        // User code touched an unmapped address. Abort back to the kernel caller
-        // of `jump_to_user(...)`.
-        say("| User program killed due to access of unmapped address\n", NULL);
-        *return_to_user = false;
-        return -1;
+      if (try_run_current_signal_handler(SIGNAL_SEG, (unsigned)vpn, flags)){
+        return 0;
       }
+
+      // User code touched an unmapped address. Abort back to the kernel caller
+      // of `jump_to_user(...)`.
+      int args[2] = {fault_addr, (int)*epc_ptr};
+      say("| vmem: user access killed: unmapped address=0x%X epc=0x%X\n",
+        args);
+      *return_to_user = false;
+      return -1;
     } else if (tcb->uaccess_active){
       // Kernel uaccess helpers recover by redirecting the faulting instruction
       // stream to their local error path, then resuming kernel mode via rfe.

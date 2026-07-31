@@ -85,6 +85,15 @@ User programs enter the kernel with the single `trap` instruction.
 
 Current trap code assignments are documented in `syscalls.md`.
 
+## Signals
+
+User threads have pending and masked signal bitmaps, registered user handlers,
+and a dedicated signal stack. The scheduler delivers asynchronous signals;
+user-mode memory and instruction exceptions deliver synchronous fault signals.
+
+See `signals.md` for the signal-number assignments, masking rules, handler ABI,
+default actions, and fault-resumption behavior.
+
 ## Terminal Foreground Control
 
 Dioptase-OS currently has one foreground child slot for

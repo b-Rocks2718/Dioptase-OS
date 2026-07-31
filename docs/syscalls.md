@@ -66,10 +66,14 @@ Current implementation-defined bounds:
 | `24` | `execv(path, argc, argv)` | `path`, `argc`, `argv` | Replaces the current user image. Success does not return. Failure returns `-1`. If `argc == 0`, `argv` is ignored and the new image starts with `argc = 0`, `argv = NULL`. |
 | `27` | `wait_child(child_desc)` | `child_desc` | Blocks until the specified child exits, returns that child's exit status, then consumes the child descriptor. Re-waiting the same descriptor returns `-1`. |
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
-| `47` | `signal_child(child_desc, signal)` | `child_desc`, `signal` | Records a signal for the specified live child and returns `0`, or returns `-1` for an invalid child descriptor, exited child, or signal outside `0..31`. `SIGNAL_TERMINATE = 0` is currently the only delivered signal; it terminates the child and makes `wait_child()` return `-1`. Other valid signal values are pending but have no delivery behavior yet. |
+| `47` | `signal_child(child_desc, signal)` | `child_desc`, `signal` | Records `signal` for the specified live child. Returns `0`, or `-1` for an invalid child descriptor, exited child, or signal outside `0..31`. |
 | `49` | `request_priority(priority)` | `priority` | Requests a static scheduler priority for the current thread. Returns `0` and updates the thread when `priority` is valid, or `-1` for an invalid priority. |
 | `50` | `set_foreground_child(child_desc)` | `child_desc` | Sets the single terminal foreground child to the caller's live child descriptor and returns `0`, or clears it when `child_desc == -1`. Clearing returns `1` if that foreground child used a direct display trap and otherwise returns `0`. An invalid or already-exited descriptor passed while setting returns `-1`. |
-| `51` | `signal_foreground(signal)` | `signal` | Records `signal` for the current foreground child and returns `0`, or returns `-1` if no live foreground child is set or `signal` is outside `0..31`. `SIGNAL_TERMINATE = 0` is currently the only delivered signal. |
+| `51` | `signal_foreground(signal)` | `signal` | Records `signal` for the current foreground child. Returns `0`, or `-1` if no live foreground child is set or `signal` is outside `0..31`. |
+| `52` | `register_handler(signal, handler)` | `signal`, `handler` | Registers a four-byte-aligned executable user entry point for signals `0..30`. Returns `0`, or `-1` for an invalid signal, `SIGNAL_KILL`, a misaligned address, or an address outside executable user memory. |
+| `53` | `sigreturn(rc)` | `rc` | From a signal handler, completes that handler and resumes the suspended user context. A valid call does not return to the wrapper. Outside a handler it returns `-1`. |
+| `54` | `mask_signal(signal)` | `signal` | Masks a signal in `0..15`, retaining any pending instance. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
+| `55` | `unmask_signal(signal)` | `signal` | Unmasks a signal in `0..15`. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
 
 `request_priority()` currently honors all valid requests without any permission
 checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
@@ -88,6 +92,9 @@ command; the terminal uses
 of that child instead of delivering byte `0x03` to the input pipe. Ordinary
 keyboard input still reaches the foreground command through the inherited
 `STDIN` pipe.
+
+Signal numbers, delivery order, masking, handler arguments, and synchronous
+fault behavior are specified in `signals.md`.
 
 Each foreground child descriptor records whether its live child used a direct
 display trap. The display traps are codes `4..10`, `36`, `37`, and `43..46`;

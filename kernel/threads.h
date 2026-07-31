@@ -59,6 +59,14 @@ extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *
 // calls the thread's main function and calls stop() when it returns
 void thread_entry(void);
 
+// Attempt to deliver a synchronous signal to the current user thread.
+//
+// Returns false when the signal has no registered handler or a handler is
+// already active. Returns true only after the handler calls sigreturn().
+// A handler that exits, faults, or returns normally terminates the thread, so
+// this function does not return in those cases.
+bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2);
+
 // idle thread loop
 // calls to block() context switch to here, 
 // where we decide which thread to run next and switch to it

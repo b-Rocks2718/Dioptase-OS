@@ -25,6 +25,7 @@
 #define SYSCALL_MAX_IO_BYTES 1024
 #define EXEC_MAX_ARGC 64
 #define EXEC_MAX_ARG_BYTES 256
+#define USER_INSTRUCTION_BYTES 4
 
 #define PIPE_BUFFER_CAPACITY 1024
 #define MAX_GETDENTS_BUFFER_SIZE 1024
@@ -44,7 +45,8 @@ static unsigned trap_test_syscall_handler(int arg){
 // - `tcb` is the current thread whose VME list defines the active user address
 //   space.
 // - `required_flags` contains MMAP_READ for kernel reads from user memory or
-//   MMAP_WRITE for kernel writes to user memory.
+//   MMAP_WRITE for kernel writes to user memory, and/or MMAP_EXEC for a user
+//   address that the kernel will install as a future program counter.
 //
 // Postconditions:
 // - Returns true only if every byte in [user_ptr, user_ptr + n) is in the user
@@ -90,6 +92,10 @@ static bool user_range_ok(struct TCB* tcb, void* user_ptr, unsigned n,
     }
     if ((required_flags & MMAP_WRITE) && !(vme->flags & MMAP_WRITE)){
       // required write permission is not present in this VME
+      return false;
+    }
+    if ((required_flags & MMAP_EXEC) && !(vme->flags & MMAP_EXEC)){
+      // required execute permission is not present in this VME
       return false;
     }
 
@@ -1271,6 +1277,19 @@ int handle_exec(char* path, int argc, char** argv){
     return -1;
   }
 
+  // A successful exec invalidates every handler address from the old image.
+  // Preserve pending signals and the mask, matching fork/exec process state,
+  // but require the new image to register its own handler entry points.
+  //
+  // This TCB is current and cannot execute on another core. Signal senders only
+  // mutate pending_signals under ChildDescriptor.state_lock, so clearing this
+  // current-thread-only handler state requires no cross-core lock. The
+  // architecture memory model is sequentially consistent.
+  for (int i = 0; i < MAX_SIGNALS; i++){
+    tcb->signal_handlers[i] = NULL;
+  }
+  tcb->in_signal_handler = false;
+
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
   tcb->vme_list = NULL;
@@ -1638,7 +1657,7 @@ static int send_signal_to_child(struct ChildDescriptor* descriptor, int signal){
     return -1;
   }
 
-  child->pending_signals |= 1 << signal;
+  child->pending_signals |= 1u << signal;
   clh_lock_release(&descriptor->state_lock);
   return 0;
 }
@@ -1779,11 +1798,15 @@ int handle_request_priority(int priority){
 int handle_register_handler(int signal, void* handler){ 
   struct TCB* me = get_current_tcb();
 
-  if (!user_range_ok(me, handler, sizeof(void*), MMAP_READ)){
+  if (signal < 0 || signal >= MAX_SIGNALS || signal == SIGNAL_KILL){
     return -1;
   }
 
-  if (signal < 0 || signal >= MAX_SIGNALS){
+  // The kernel later uses this value as a user PC. Dioptase instructions are
+  // four-byte aligned and fixed-width, so validate the complete first
+  // instruction before storing the entry point.
+  if (((unsigned)handler & (USER_INSTRUCTION_BYTES - 1)) != 0 ||
+      !user_range_ok(me, handler, USER_INSTRUCTION_BYTES, MMAP_EXEC)){
     return -1;
   }
 
@@ -1792,11 +1815,31 @@ int handle_register_handler(int signal, void* handler){
 }
 
 int handle_mask_signal(int signal){
+  if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
+    return -1;
+  }
 
+  // Only the current TCB changes its mask. It cannot be running on another
+  // core, and scheduler inspection occurs only after this trap returns or the
+  // thread blocks. A PIT preemption may observe the old value before this
+  // syscall completes, which is equivalent to delivery immediately before the
+  // mask operation. Sequential consistency requires no additional ordering.
+  struct TCB* me = get_current_tcb();
+  me->signal_mask |= 1u << signal;
+  return 0;
 }
 
 int handle_unmask_signal(int signal){
-  
+  if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
+    return -1;
+  }
+
+  // Pending signals are intentionally retained while masked. Clearing this bit
+  // makes any coalesced pending instance eligible at the next scheduling
+  // boundary.
+  struct TCB* me = get_current_tcb();
+  me->signal_mask &= ~(1u << signal);
+  return 0;
 }
 
 // Dispatch user-mode trap requests after trap_handler_ has preserved
@@ -2008,9 +2051,16 @@ int trap_handler(unsigned code,
       return handle_register_handler(arg1, (void*)arg2);
     }
     case TRAP_SIGRETURN: {
+      struct TCB* me = get_current_tcb();
+      if (!me->in_signal_handler){
+        // Outside a handler there is no saved nested jump_to_user activation
+        // to resume. Treat this as an ordinary invalid syscall request.
+        return -1;
+      }
+
       // return instead to the kernel thread that called jump_to_user
       *return_to_user = false;
-      get_current_tcb()->in_signal_handler = false;
+      me->in_signal_handler = false;
       return arg1;
     }
     case TRAP_MASK_SIGNAL: {

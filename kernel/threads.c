@@ -78,7 +78,13 @@ static void publish_exit(struct TCB* child, unsigned rc) {
   child_descriptor_release(descriptor);
 }
 
-static bool has_unhandled_signal(struct TCB* child, void** handler) {
+struct SignalDelivery {
+  void* handler;
+  int signal;
+};
+
+static bool has_unhandled_signal(struct TCB* child,
+    struct SignalDelivery* delivery) {
   struct ChildDescriptor* descriptor = child->parent_promise;
   if (descriptor == NULL){
     return false;
@@ -86,14 +92,14 @@ static bool has_unhandled_signal(struct TCB* child, void** handler) {
 
   clh_lock_acquire(&descriptor->state_lock);
   bool terminate = false;
-  assert((child->signal_mask & ((1 << MAX_MASKABLE_SIGNAL) - 1)) == child->signal_mask,
+  assert((child->signal_mask & ((1u << MAX_MASKABLE_SIGNAL) - 1)) == child->signal_mask,
     "child signal mask has bits set beyond MAX_MASKABLE_SIGNAL.\n");
 
   unsigned current_signals = child->pending_signals & (~child->signal_mask);
   
-  unsigned maskable_signals = current_signals & ((1 << MAX_MASKABLE_SIGNAL) - 1);
-  unsigned nonmaskable_signals = current_signals & ~((1 << MAX_MASKABLE_SIGNAL) - 1);
-  bool kill_signal = (current_signals & (1 << SIGNAL_KILL)) != 0;
+  unsigned nonmaskable_signals =
+    current_signals & ~((1u << MAX_MASKABLE_SIGNAL) - 1);
+  bool kill_signal = (current_signals & (1u << SIGNAL_KILL)) != 0;
 
   bool in_signal_handler = child->in_signal_handler;
 
@@ -111,14 +117,16 @@ static bool has_unhandled_signal(struct TCB* child, void** handler) {
     if (current_signals != 0){
       // check for a signal handler to run
       for (int i = 0; i < MAX_SIGNALS; i++){
-        if ((current_signals & (1 << i))){
+        if ((current_signals & (1u << i))){
           if (child->signal_handlers[i]) {
             // found a handler we can use
-            assert(handler != NULL, "has_unhandled_signal: handler pointer is NULL.\n");
-            *handler = child->signal_handlers[i];
+            assert(delivery != NULL,
+              "has_unhandled_signal: delivery pointer is NULL.\n");
+            delivery->handler = child->signal_handlers[i];
+            delivery->signal = i;
 
             // clear the signal from pending_signals so we don't run it again
-            child->pending_signals &= ~(1 << i);
+            child->pending_signals &= ~(1u << i);
 
             break;
           } else {
@@ -374,15 +382,74 @@ void thread_entry(void) {
 // when we don't need to run any callback
 static void nothing(void* unused) {}
 
-static void run_handler(void* handler_ptr) {
-  void* handler = *(void**)handler_ptr;
+// Enter a user signal handler on the thread's dedicated signal stack.
+//
+// Preconditions:
+// - The caller executes in kernel mode on behalf of the currently installed,
+//   non-idle user TCB. That TCB's PID and kernel stack are active on this core.
+// - handler names executable memory in that TCB's user address space.
+// - signal_stack_top names the top of the current image's writable signal
+//   stack and no signal handler is already active.
+//
+// Postconditions:
+// - sigreturn() clears in_signal_handler and resumes this kernel activation,
+//   allowing the interrupted user context to be restored by its trap or
+//   exception wrapper.
+// - exit(), a handler fault, or a normal C return leaves in_signal_handler set;
+//   the current TCB is then published as exited and is never rescheduled.
+//
+// Concurrency and CPU state:
+// - The current TCB cannot execute concurrently on another core. Scheduler
+//   delivery and current-thread exception delivery therefore own
+//   in_signal_handler and signal_handlers without ChildDescriptor.state_lock.
+// - Signals sent from other cores mutate pending_signals under state_lock and
+//   are observed by the scheduler after this handler completes. The
+//   architecture memory model is sequentially consistent.
+// - jump_to_user performs the kernel-to-user transition and preserves the
+//   kernel continuation on the TCB's current kernel stack. Because
+//   jump_to_user replaces architectural r31 with the signal-stack pointer, the
+//   original user r31 is explicitly restored before the suspended context
+//   continues.
+static void run_user_signal_handler(void* handler, unsigned arg1,
+    unsigned arg2) {
   struct TCB* me = get_current_tcb();
+  assert(me != NULL,
+    "signal delivery: current TCB is NULL while entering user handler.\n");
+  assert(!me->in_signal_handler,
+    "signal delivery: attempted nested user signal handler entry.\n");
+
+  unsigned saved_user_sp = get_user_sp();
   me->in_signal_handler = true;
-  int rc = jump_to_user((unsigned)handler, me->signal_stack_top, 0, 0);
+  int rc = jump_to_user((unsigned)handler, me->signal_stack_top, arg1, arg2);
+  set_user_sp(saved_user_sp);
   if (me->in_signal_handler) {
-    // returned without calling sigreturn => terminate
+    // The handler did not call sigreturn(). This includes an explicit exit,
+    // a user exception that aborted its nested jump_to_user(), and a normal
+    // return through an undefined return address on the fresh signal stack.
     stop(rc);
   }
+}
+
+bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2) {
+  if (signal < 0 || signal >= MAX_SIGNALS){
+    return false;
+  }
+
+  struct TCB* me = get_current_tcb();
+  if (me == NULL || me->in_signal_handler ||
+      me->signal_handlers[signal] == NULL){
+    return false;
+  }
+
+  run_user_signal_handler(me->signal_handlers[signal], arg1, arg2);
+  return true;
+}
+
+static void run_pending_signal_handler(void* delivery_ptr) {
+  struct SignalDelivery* delivery = (struct SignalDelivery*)delivery_ptr;
+  assert(delivery != NULL,
+    "signal delivery: pending delivery pointer is NULL.\n");
+  run_user_signal_handler(delivery->handler, delivery->signal, 0);
 }
 
 // cleanup and shutdown the system
@@ -474,8 +541,8 @@ void event_loop(void) {
       continue;
     }
 
-    void* handler = NULL;
-    if (has_unhandled_signal(next, &handler)) {
+    struct SignalDelivery delivery = {NULL, -1};
+    if (has_unhandled_signal(next, &delivery)) {
       // kill this thread
 
       publish_exit(next, (unsigned)-1);
@@ -483,10 +550,11 @@ void event_loop(void) {
       continue;
     }
 
-    if (handler != NULL) {
+    if (delivery.handler != NULL) {
       // run the signal handler
       int was = interrupts_disable();
-      context_switch(me, next, run_handler, &handler, &core->current_thread, was, true);
+      context_switch(me, next, run_pending_signal_handler, &delivery,
+        &core->current_thread, was, true);
       continue;
     }
 
@@ -574,9 +642,26 @@ void sleep(unsigned jiffies){
   block(was, sleep_queue_add, (void*)args, true);
 }
 
-// terminate the current thread and 
-// place it on the reaper queue to eventually free its resources
+// Terminate the current thread and place it on the reaper queue.
+//
+// Preconditions:
+// - This runs in kernel mode in the current non-idle TCB's context.
+// - The current TCB does not hold a spinlock and must never run again.
+//
+// Concurrency and CPU state:
+// - Preemption remains disabled from before exit publication through the final
+//   context switch. Interrupts may still run, but the PIT handler must not put
+//   this terminal TCB back on a ready queue between revoking child_tcb and
+//   blocking it forever.
+// - publish_exit() serializes descriptor and pending-signal state with other
+//   cores through ChildDescriptor.state_lock.
+//
+// Postcondition: this function does not return; the reaper owns current.
 void stop(unsigned rc) {
+  // There is intentionally no matching preemption_restore(): after terminal
+  // state becomes externally visible, this TCB may never be scheduled again.
+  preemption_disable();
+
   unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;

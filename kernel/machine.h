@@ -42,6 +42,12 @@ extern unsigned get_epc(void);
 // Return the exception flags (cr6) value
 extern unsigned get_efg(void);
 
+// Read or replace architectural r31 while in kernel mode. Normal kernel
+// instructions alias r31 to KSP; crmv deliberately bypasses that alias so
+// signal delivery can preserve the suspended user stack pointer.
+extern unsigned get_user_sp(void);
+extern void set_user_sp(unsigned value);
+
 // Return the TLB miss address register (cr7) value
 extern unsigned get_tlb_addr(void);
 

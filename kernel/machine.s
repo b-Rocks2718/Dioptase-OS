@@ -70,6 +70,19 @@ get_efg:
   mov r1, efg
   ret
 
+  # Kernel-mode r31 normally aliases KSP. crmv accesses architectural r31
+  # directly, which is the suspended user stack pointer while handling a user
+  # trap, exception, or scheduling callback.
+  .global get_user_sp
+get_user_sp:
+  crmv r1, sp
+  ret
+
+  .global set_user_sp
+set_user_sp:
+  crmv sp, r1
+  ret
+
   # Return the TLB miss address register (cr7) value
   .global get_tlb_addr
 get_tlb_addr:
