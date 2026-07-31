@@ -20,13 +20,19 @@
 #include "scheduler.h"
 
 #define INITIAL_USER_STACK_SIZE 0x4000
+#define INITIAL_SIGNAL_STACK_SIZE 0x1000
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
 #define EXEC_MAX_ARGC 64
 #define EXEC_MAX_ARG_BYTES 256
+#define USER_INSTRUCTION_BYTES 4
 
 #define PIPE_BUFFER_CAPACITY 1024
 #define MAX_GETDENTS_BUFFER_SIZE 1024
+
+// Single-terminal foreground control state.
+static struct BlockingLock foreground_child_lock;
+static struct ChildDescriptor* foreground_child = NULL;
 
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
@@ -39,7 +45,8 @@ static unsigned trap_test_syscall_handler(int arg){
 // - `tcb` is the current thread whose VME list defines the active user address
 //   space.
 // - `required_flags` contains MMAP_READ for kernel reads from user memory or
-//   MMAP_WRITE for kernel writes to user memory.
+//   MMAP_WRITE for kernel writes to user memory, and/or MMAP_EXEC for a user
+//   address that the kernel will install as a future program counter.
 //
 // Postconditions:
 // - Returns true only if every byte in [user_ptr, user_ptr + n) is in the user
@@ -85,6 +92,10 @@ static bool user_range_ok(struct TCB* tcb, void* user_ptr, unsigned n,
     }
     if ((required_flags & MMAP_WRITE) && !(vme->flags & MMAP_WRITE)){
       // required write permission is not present in this VME
+      return false;
+    }
+    if ((required_flags & MMAP_EXEC) && !(vme->flags & MMAP_EXEC)){
+      // required execute permission is not present in this VME
       return false;
     }
 
@@ -1113,7 +1124,14 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
+  // child inherits signal state/handlers from parent
   child->pending_signals = 0;
+  child->signal_mask = parent->signal_mask;
+  for (int i = 0; i < MAX_SIGNALS; i++){
+    child->signal_handlers[i] = parent->signal_handlers[i];
+  }
+  child->in_signal_handler = false;
+  child->signal_stack_top = parent->signal_stack_top;
 
   child->my_node = malloc(sizeof(struct CLHNode));
   child->my_node->locked = false;
@@ -1170,7 +1188,10 @@ int handle_fork(unsigned pc, unsigned sp){
   }
 
   struct TCB* child = fork_tcb(tcb, child_desc, pc, sp);
-  tcb->child_descriptors[child_desc]->child_tcb = child;
+  struct ChildDescriptor* descriptor = tcb->child_descriptors[child_desc];
+  clh_lock_acquire(&descriptor->state_lock);
+  descriptor->child_tcb = child;
+  clh_lock_release(&descriptor->state_lock);
   
   scheduler_wake_thread(child);
 
@@ -1256,6 +1277,19 @@ int handle_exec(char* path, int argc, char** argv){
     return -1;
   }
 
+  // A successful exec invalidates every handler address from the old image.
+  // Preserve pending signals and the mask, matching fork/exec process state,
+  // but require the new image to register its own handler entry points.
+  //
+  // This TCB is current and cannot execute on another core. Signal senders only
+  // mutate pending_signals under ChildDescriptor.state_lock, so clearing this
+  // current-thread-only handler state requires no cross-core lock. The
+  // architecture memory model is sequentially consistent.
+  for (int i = 0; i < MAX_SIGNALS; i++){
+    tcb->signal_handlers[i] = NULL;
+  }
+  tcb->in_signal_handler = false;
+
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
   tcb->vme_list = NULL;
@@ -1267,7 +1301,6 @@ int handle_exec(char* path, int argc, char** argv){
   tlb_flush();
 
   rc = run_user_program(prog, argc, kargv);
-  free_exec_argv(argc, kargv);
   stop(rc);
 
   return -1;
@@ -1581,7 +1614,140 @@ int handle_unlink(char* path){
   return rc;
 }
 
-int handle_kill(int child_desc){
+// Release one ChildDescriptor reference that was not associated with a
+// descriptor-table slot.
+//
+// Preconditions:
+// - The caller owns exactly one reference to descriptor.
+// - descriptor is not reachable from foreground_child unless the caller has
+//   already removed it from that global slot while holding foreground_child_lock.
+//
+// Postconditions:
+// - The reference is dropped.
+// - If this was the final reference, the child promise and descriptor storage
+//   are destroyed.
+void child_descriptor_release(struct ChildDescriptor* descriptor){
+  if (descriptor == NULL){
+    return;
+  } 
+
+  if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
+    return;
+  }
+
+  if (descriptor->child_promise != NULL){
+    promise_free(descriptor->child_promise);
+  }
+
+  clh_lock_destroy(&descriptor->state_lock);
+  free(descriptor);
+}
+
+// The descriptor owns this lock, so it can safely protect the target TCB's
+// lifetime before a sender dereferences child_tcb.
+static int send_signal_to_child(struct ChildDescriptor* descriptor, int signal){
+  if (descriptor == NULL || signal < 0 || signal >= MAX_SIGNALS){
+    return -1;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  struct TCB* child = descriptor->child_tcb;
+  if (child == NULL){
+    clh_lock_release(&descriptor->state_lock);
+    return -1;
+  }
+
+  child->pending_signals |= 1u << signal;
+  clh_lock_release(&descriptor->state_lock);
+  return 0;
+}
+
+// Record that the current user thread used a direct display trap while it was
+// installed as the interactive foreground child.
+//
+// Concurrency and ordering:
+// - foreground_child_lock stabilizes the descriptor reference and serializes
+//   this operation with foreground replacement/removal.
+// - state_lock serializes display_claimed with child exit and with the shell
+//   reading the completed foreground child's claim.
+// - All paths taking both locks use foreground_child_lock -> state_lock.
+// - The architecture memory model is sequentially consistent; the locks make
+//   the claim update atomic with respect to foreground removal.
+//
+// Postcondition:
+// - display_claimed is set only if the caller is still the live TCB named by
+//   the current foreground descriptor. Calls made by the terminal, shell, or a
+//   background child do not claim foreground display recovery.
+static void claim_foreground_display(void){
+  int was = interrupts_disable();
+  struct TCB* current = get_current_tcb();
+  interrupts_restore(was);
+
+  blocking_lock_acquire(&foreground_child_lock);
+  struct ChildDescriptor* descriptor = foreground_child;
+  if (descriptor != NULL){
+    clh_lock_acquire(&descriptor->state_lock);
+    if (descriptor->child_tcb == current){
+      descriptor->display_claimed = true;
+    }
+    clh_lock_release(&descriptor->state_lock);
+  }
+  blocking_lock_release(&foreground_child_lock);
+}
+
+// Install or clear the single interactive foreground child.
+int handle_set_foreground_child(int child_desc){
+  int was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  interrupts_restore(was);
+
+  struct ChildDescriptor* new_child = NULL;
+  if (child_desc != -1){
+    child_desc -= CHILD_DESCRIPTORS_START;
+    if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+      return -1;
+    }
+
+    new_child = tcb->child_descriptors[child_desc];
+    if (new_child == NULL){
+      return -1;
+    }
+
+    __atomic_fetch_add(&new_child->refcount, 1);
+  }
+
+  blocking_lock_acquire(&foreground_child_lock);
+  if (new_child != NULL){
+    // All users that take both locks use this order.  Exit paths only take
+    // state_lock, so they cannot form an inverse-order dependency.
+    clh_lock_acquire(&new_child->state_lock);
+    if (new_child->child_tcb == NULL){
+      clh_lock_release(&new_child->state_lock);
+      blocking_lock_release(&foreground_child_lock);
+      child_descriptor_release(new_child);
+      return -1;
+    }
+    clh_lock_release(&new_child->state_lock);
+  }
+
+  struct ChildDescriptor* old_child = foreground_child;
+  int old_display_claimed = 0;
+  if (new_child == NULL && old_child != NULL){
+    // The global reference keeps old_child allocated while state_lock
+    // serializes this read with both display claims and child exit.
+    clh_lock_acquire(&old_child->state_lock);
+    old_display_claimed = old_child->display_claimed;
+    clh_lock_release(&old_child->state_lock);
+  }
+
+  foreground_child = new_child;
+  blocking_lock_release(&foreground_child_lock);
+
+  child_descriptor_release(old_child);
+  return old_display_claimed;
+}
+
+int handle_signal_child(int child_desc, int signal){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   interrupts_restore(was);
@@ -1592,13 +1758,16 @@ int handle_kill(int child_desc){
   }
 
   struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
-  if (child == NULL){
-    return -1;
-  }
+  return send_signal_to_child(child, signal);
+}
 
-  child->child_tcb->pending_signals |= 1;
-  
-  return 0;
+int handle_signal_foreground(int signal){
+  blocking_lock_acquire(&foreground_child_lock);
+
+  struct ChildDescriptor* child = foreground_child;
+  int rc = send_signal_to_child(child, signal);
+  blocking_lock_release(&foreground_child_lock);
+  return rc;
 }
 
 static bool is_valid_thread_priority(int priority){
@@ -1626,6 +1795,53 @@ int handle_request_priority(int priority){
   return 0;
 }
 
+int handle_register_handler(int signal, void* handler){ 
+  struct TCB* me = get_current_tcb();
+
+  if (signal < 0 || signal >= MAX_SIGNALS || signal == SIGNAL_KILL){
+    return -1;
+  }
+
+  // The kernel later uses this value as a user PC. Dioptase instructions are
+  // four-byte aligned and fixed-width, so validate the complete first
+  // instruction before storing the entry point.
+  if (((unsigned)handler & (USER_INSTRUCTION_BYTES - 1)) != 0 ||
+      !user_range_ok(me, handler, USER_INSTRUCTION_BYTES, MMAP_EXEC)){
+    return -1;
+  }
+
+  me->signal_handlers[signal] = handler;
+  return 0;
+}
+
+int handle_mask_signal(int signal){
+  if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
+    return -1;
+  }
+
+  // Only the current TCB changes its mask. It cannot be running on another
+  // core, and scheduler inspection occurs only after this trap returns or the
+  // thread blocks. A PIT preemption may observe the old value before this
+  // syscall completes, which is equivalent to delivery immediately before the
+  // mask operation. Sequential consistency requires no additional ordering.
+  struct TCB* me = get_current_tcb();
+  me->signal_mask |= 1u << signal;
+  return 0;
+}
+
+int handle_unmask_signal(int signal){
+  if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
+    return -1;
+  }
+
+  // Pending signals are intentionally retained while masked. Clearing this bit
+  // makes any coalesced pending instance eligible at the next scheduling
+  // boundary.
+  struct TCB* me = get_current_tcb();
+  me->signal_mask &= ~(1u << signal);
+  return 0;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -1637,7 +1853,7 @@ int trap_handler(unsigned code,
 
   switch (code){
     case TRAP_EXIT: {
-      // return instead to the kernel thread that called switch_to_user
+      // return instead to the kernel thread that called jump_to_user
       *return_to_user = false;
       return arg1;
     }
@@ -1651,29 +1867,36 @@ int trap_handler(unsigned code,
       return getkey();
     }
     case TRAP_SET_TILE_SCALE: {
+      claim_foreground_display();
       *TILE_SCALE = arg1;
       return 0;
     }
     case TRAP_SET_VSCROLL: {
+      claim_foreground_display();
       *TILE_VSCROLL = arg1;
       return 0;
     }
     case TRAP_SET_HSCROLL: {
+      claim_foreground_display();
       *TILE_HSCROLL = arg1;
       return 0;
     }
     case TRAP_LOAD_TEXT_TILES: {
+      claim_foreground_display();
       load_text_tiles();
       return 0;
     }
     case TRAP_CLEAR_SCREEN: {
+      claim_foreground_display();
       clear_screen();
       return 0;
     }
     case TRAP_GET_TILEMAP: {
+      claim_foreground_display();
       return (int)mmap_physmem(TILEMAP_SIZE, (unsigned)TILEMAP, MMAP_READ | MMAP_WRITE | MMAP_USER);
     }
     case TRAP_GET_TILE_FB: {
+      claim_foreground_display();
       return (int)mmap_physmem(TILE_FB_SIZE, (unsigned)TILE_FB, MMAP_READ | MMAP_WRITE | MMAP_USER);
     }
     case TRAP_GET_VGA_STATUS: {
@@ -1758,10 +1981,12 @@ int trap_handler(unsigned code,
       return handle_readlink((char*)arg1, (char*)arg2, (unsigned)arg3);
     }
     case TRAP_MOVE_VSCROLL: {
+      claim_foreground_display();
       *TILE_VSCROLL += arg1;
       return 0;
     }
     case TRAP_MOVE_HSCROLL: {
+      claim_foreground_display();
       *TILE_HSCROLL += arg1;
       return 0;
     }
@@ -1784,6 +2009,7 @@ int trap_handler(unsigned code,
       if (arg1 < 0 || arg1 >= NUM_SPRITES){
         return -1;
       }
+      claim_foreground_display();
       SPRITE_SCALES[arg1] = arg2;
       return 0;
     }
@@ -1791,19 +2017,22 @@ int trap_handler(unsigned code,
       if (arg1 < 0 || arg1 >= NUM_SPRITES){
         return -1;
       }
+      claim_foreground_display();
       SPRITE_COORDS[arg1 * 2] = arg2;
       SPRITE_COORDS[arg1 * 2 + 1] = arg3;
       return 0;
     }
     case TRAP_LOAD_TEXT_TILES_COLORED: {
+      claim_foreground_display();
       load_text_tiles_colored(arg1, arg2);
       return 0;
     }
     case TRAP_GET_SPRITEMAP: {
+      claim_foreground_display();
       return (int)mmap_physmem(SPRITEMAP_SIZE, (unsigned)SPRITEMAP, MMAP_READ | MMAP_WRITE | MMAP_USER);
     }
-    case TRAP_KILL: {
-      return handle_kill(arg1);
+    case TRAP_SIGNAL_CHILD: {
+      return handle_signal_child(arg1, arg2);
     }
     case TRAP_GET_SYNTH_AUDIO: {
       return (int)mmap_physmem(SYNTH_AUDIO_SIZE, SYNTH_AUDIO_BASE,
@@ -1811,6 +2040,34 @@ int trap_handler(unsigned code,
     }
     case TRAP_REQUEST_PRIORITY: {
       return handle_request_priority(arg1);
+    }
+    case TRAP_SET_FOREGROUND_CHILD: {
+      return handle_set_foreground_child(arg1);
+    }
+    case TRAP_SIGNAL_FOREGROUND: {
+      return handle_signal_foreground(arg1);
+    }
+    case TRAP_REGISTER_HANDLER: {
+      return handle_register_handler(arg1, (void*)arg2);
+    }
+    case TRAP_SIGRETURN: {
+      struct TCB* me = get_current_tcb();
+      if (!me->in_signal_handler){
+        // Outside a handler there is no saved nested jump_to_user activation
+        // to resume. Treat this as an ordinary invalid syscall request.
+        return -1;
+      }
+
+      // return instead to the kernel thread that called jump_to_user
+      *return_to_user = false;
+      me->in_signal_handler = false;
+      return arg1;
+    }
+    case TRAP_MASK_SIGNAL: {
+      return handle_mask_signal(arg1);
+    }
+    case TRAP_UNMASK_SIGNAL: {
+      return handle_unmask_signal(arg1);
     }
     default: {
       // bad syscall, program dies
@@ -1821,7 +2078,19 @@ int trap_handler(unsigned code,
 }
 
 void trap_init(void) {
+  blocking_lock_init(&foreground_child_lock);
+  foreground_child = NULL;
   register_handler((void*)trap_handler_, (void*)TRAP_IVT_ENTRY);
+}
+
+void trap_destroy(void) {
+  // kernel_shutdown() calls this after every core has entered the shutdown
+  // barrier with interrupts disabled, so no trap can concurrently access the
+  // foreground slot and the blocking lock must not be acquired here.
+  struct ChildDescriptor* old_child = foreground_child;
+  foreground_child = NULL;
+  child_descriptor_release(old_child);
+  blocking_lock_destroy(&foreground_child_lock);
 }
 
 // run a user program given a node representing its ELF file
@@ -1842,13 +2111,22 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
   // user half and enter at the last word in that reservation.
   unsigned* stack = mmap_stack(INITIAL_USER_STACK_SIZE,
     MMAP_READ | MMAP_WRITE | MMAP_USER);
-  unsigned stack_bottom = (unsigned)stack;
+  unsigned* signal_stack = mmap_stack(INITIAL_SIGNAL_STACK_SIZE,
+    MMAP_READ | MMAP_WRITE | MMAP_USER);
   unsigned stack_top = (unsigned)stack + INITIAL_USER_STACK_SIZE;
+  unsigned signal_stack_top = (unsigned)signal_stack + INITIAL_SIGNAL_STACK_SIZE;
   unsigned initial_sp = 0;
   unsigned user_argv = 0;
 
-  int rc = build_exec_argv_on_stack(stack_bottom, stack_top, argv, argc,
-    &initial_sp, &user_argv, get_current_tcb());
+  struct TCB* me = get_current_tcb();
+  me->signal_stack_top = signal_stack_top;
+
+  int rc = build_exec_argv_on_stack((unsigned)stack, stack_top, argv, argc,
+    &initial_sp, &user_argv, me);
+
+  // have now copied argv onto user stack
+  free_exec_argv(argc, argv);
+  
   if (rc != 0){
     return -1;
   }
@@ -1935,6 +2213,8 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
             tcb->child_descriptors[i]->refcount = 1;
             tcb->child_descriptors[i]->child_tcb = NULL;
             tcb->child_descriptors[i]->child_promise = malloc(sizeof(struct Promise));
+            tcb->child_descriptors[i]->display_claimed = false;
+            clh_lock_init(&tcb->child_descriptors[i]->state_lock);
             promise_init(tcb->child_descriptors[i]->child_promise);
           }
           return i;
@@ -2031,18 +2311,7 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
       struct ChildDescriptor* descriptor = tcb->child_descriptors[index];
       tcb->child_descriptors[index] = NULL;
 
-      if (descriptor == NULL)
-        return;
-
-      if (__atomic_fetch_add(&descriptor->refcount, -1) > 1){
-        return;
-      }
-      
-      if (descriptor->child_promise != NULL){
-        promise_free(descriptor->child_promise);
-      }
-
-      free(descriptor);
+      child_descriptor_release(descriptor);
       break;
     }
   }

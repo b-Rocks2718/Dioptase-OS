@@ -1,25 +1,25 @@
-***test_syscall arg = 1
-***test_syscall arg = 5
-***test_syscall arg = 4
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 3
-***test_syscall arg = 65
-***test_syscall arg = 66
-***test_syscall arg = 67
-***test_syscall arg = -1
-***test_syscall arg = 4
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 5
-***test_syscall arg = 65
-***test_syscall arg = 66
-***test_syscall arg = 67
-***test_syscall arg = 0
-***test_syscall arg = 90
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = -1
-***test_syscall arg = 0
+***PASS open shrink fixture: got 1 expected 1
+***PASS write(fd, "ABCDE", 5): got 5 expected 5
+***PASS seek(fd, 4, SEEK_SET): got 4 expected 4
+***PASS truncate(fd, 3): got 0 expected 0
+***PASS read(fd, buf, 1): got 0 expected 0
+***PASS close(fd): got 0 expected 0
+***PASS reopen truncated fixture: got 1 expected 1
+***PASS read(fd, buf, 5): got 3 expected 3
+***PASS truncated byte zero: got 65 expected 65
+***PASS truncated byte one: got 66 expected 66
+***PASS truncated byte two: got 67 expected 67
+***PASS truncate(fd, 4): got -1 expected -1
+***PASS seek(fd, 4, SEEK_SET): got 4 expected 4
+***PASS write(fd, &z, 1): got 1 expected 1
+***PASS seek(fd, 0, SEEK_SET): got 0 expected 0
+***PASS read(fd, buf, 5): got 5 expected 5
+***PASS regrown byte zero: got 65 expected 65
+***PASS regrown byte one: got 66 expected 66
+***PASS regrown byte two: got 67 expected 67
+***PASS zero-filled growth gap: got 0 expected 0
+***PASS regrown final byte: got 90 expected 90
+***PASS close(fd): got 0 expected 0
+***PASS dir_fd >= 0: got 1 expected 1
+***PASS truncate(dir_fd, 0): got -1 expected -1
+***PASS close(dir_fd): got 0 expected 0

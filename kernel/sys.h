@@ -54,9 +54,15 @@ enum TrapCode {
   TRAP_SET_SPRITE_COORDS = 44,
   TRAP_LOAD_TEXT_TILES_COLORED = 45,
   TRAP_GET_SPRITEMAP = 46,
-  TRAP_KILL,
-  TRAP_GET_SYNTH_AUDIO,
-  TRAP_REQUEST_PRIORITY,
+  TRAP_SIGNAL_CHILD = 47,
+  TRAP_GET_SYNTH_AUDIO = 48,
+  TRAP_REQUEST_PRIORITY = 49,
+  TRAP_SET_FOREGROUND_CHILD = 50,
+  TRAP_SIGNAL_FOREGROUND = 51,
+  TRAP_REGISTER_HANDLER = 52,
+  TRAP_SIGRETURN = 53,
+  TRAP_MASK_SIGNAL = 54,
+  TRAP_UNMASK_SIGNAL = 55,
 };
 
 #define SEEK_SET 0
@@ -72,6 +78,20 @@ enum TrapCode {
 #define FILE_DESCRIPTORS_START 0
 #define SEM_DESCRIPTORS_START 100
 #define CHILD_DESCRIPTORS_START 200
+
+// Signals [0, MAX_MASKABLE_SIGNAL) can register handlers and be masked.
+#define SIGNAL_HELLO 0
+#define SIGNAL_TERMINATE 1
+
+#define MAX_MASKABLE_SIGNAL 16
+
+// can register handlers for, but cannot mask
+#define SIGNAL_SEG 16
+#define SIGNAL_ILL 17
+#define SIGNAL_ALGN 18
+
+// cannot mask or register a handler for
+#define SIGNAL_KILL 31
 
 struct TCB;
 struct Node;
@@ -107,10 +127,20 @@ struct SemDescriptor {
 };
 
 struct ChildDescriptor {
+  // A non-NULL child_tcb observed while holding state_lock names a live TCB.
+  // Every exit path clears it under this lock before that TCB reaches reaper.
+  // display_claimed is also protected by state_lock and remains valid after
+  // child_tcb is cleared so the foreground owner can recover the display.
+  struct CLHLock state_lock;
   struct TCB* child_tcb;
   struct Promise* child_promise;
+  bool display_claimed;
   int refcount;
 };
+
+// Drop one descriptor reference.  The caller must not hold state_lock because
+// the final release destroys it.
+void child_descriptor_release(struct ChildDescriptor* descriptor);
 
 struct Pipe {
   struct BlockingRingBuf buf;
@@ -119,6 +149,9 @@ struct Pipe {
 
 // set up IVT with trap handler entry point
 void trap_init(void);
+
+// clean up any resources used by the trap handler
+void trap_destroy(void);
 
 // Enter user mode through rfe
 // can pass in r1, r2 for use as either a return value or argc and argv

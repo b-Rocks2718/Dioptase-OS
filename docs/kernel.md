@@ -11,7 +11,7 @@ See `kernel_init.md` for more details.
 ## Threading
 
 Structure:
-- Allocates a fixed size stack per thread (TODO: use page allocator instead of heap, and use guard pages to detect overflow)
+- Allocates a fixed size stack per thread
 - Per-core and global ready queues with load-balancing
 - Kernel can set threads as `HIGH_PRIORITY`, `NORMAL_PRIORITY`, and `LOW_PRIORITY`. Within each priority, MLFQ is used to schedule threads
 - Preemptive, timer isr context switches to idle threads, idle thread cannot be preempted and finds next ready thread to switch to
@@ -84,3 +84,33 @@ User programs enter the kernel with the single `trap` instruction.
 - IVT entry `0x004`: shared trap vector
 
 Current trap code assignments are documented in `syscalls.md`.
+
+## Signals
+
+User threads have pending and masked signal bitmaps, registered user handlers,
+and a dedicated signal stack. The scheduler delivers asynchronous signals;
+user-mode memory and instruction exceptions deliver synchronous fault signals.
+
+See `signals.md` for the signal-number assignments, masking rules, handler ABI,
+default actions, and fault-resumption behavior.
+
+## Terminal Foreground Control
+
+Dioptase-OS currently has one foreground child slot for
+the interactive terminal.
+
+- The shell sets the foreground child to the external command it is about to
+  wait for.
+- The terminal sends Ctrl-C to that foreground child with
+  `signal_foreground(SIGNAL_TERMINATE)`.
+- Normal keyboard bytes still flow through the terminal input pipe inherited as
+  `STDIN`.
+- A foreground child's descriptor records whether that live child used a direct
+  VGA configuration or mapping trap. The descriptor state lock protects this
+  claim together with the child TCB lifetime.
+- After `wait_child()`, the shell clears the foreground slot.
+  `set_foreground_child(-1)` atomically returns the old descriptor's display
+  claim while the foreground and descriptor locks exclude concurrent claims.
+- If the returned claim is set, the shell queues the terminal-private display
+  recovery sequence before it prints the next prompt. The terminal, rather than
+  the shell, resets VGA and renderer state in pipe order.

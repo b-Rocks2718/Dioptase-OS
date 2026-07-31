@@ -1,11 +1,11 @@
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 78
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 78
-***test_syscall arg = 0
+***PASS create file with missing parent directories: got 1 expected 1
+***PASS write(fd, &out, 1): got 1 expected 1
+***PASS seek(fd, 0, SEEK_SET): got 0 expected 0
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS new nested file byte: got 78 expected 78
+***PASS close(fd): got 0 expected 0
+***PASS chdir(CREATED_DIR_PATH): got 0 expected 0
+***PASS reopen created file by basename: got 1 expected 1
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS reopened nested file byte: got 78 expected 78
+***PASS close(fd): got 0 expected 0

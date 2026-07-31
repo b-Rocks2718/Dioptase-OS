@@ -90,6 +90,24 @@
 #define KEY_QUIT 'q'
 #define KEY_QUIT_ALT 'Q'
 
+static int read_input_event(void) {
+  int available = fd_bytes_available(STDIN);
+
+  if (available > 0) {
+    unsigned char byte;
+    if (read(STDIN, &byte, 1) == 1) {
+      return byte;
+    }
+    return 0;
+  }
+
+  if (available < 0) {
+    return getkey();
+  }
+
+  return 0;
+}
+
 enum Direction {
   DIR_UP = 0,
   DIR_RIGHT = 1,
@@ -732,7 +750,7 @@ static void draw_segment_order(struct SnakeGame* state, int order) {
 
 // Drain stale keypresses before a fresh interactive session begins.
 static void drain_keys(void) {
-  while (getkey() != 0) {
+  while (read_input_event() != 0) {
     // drop any buffered key events from a previous test or shutdown prompt
   }
 }
@@ -848,7 +866,7 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
   int key = 0;
   bool changed = false;
 
-  while ((key = getkey()) != 0) {
+  while ((key = read_input_event()) != 0) {
     int direction;
 
     if ((key & KEY_RELEASE_MASK) != 0) continue;
@@ -941,15 +959,6 @@ int main(void) {
     keep_running = play_round(seed, &seed);
     save_high_score();
   }
-
-  // clear screen and home cursor before exiting
-  puts("\x1b[2J\x1b[H");
-
-  // show terminal cursor again before exiting
-  puts("\x1b[?25h");
-
-  // fix tile scale
-  set_tile_scale(0);
 
   return 0;
 }

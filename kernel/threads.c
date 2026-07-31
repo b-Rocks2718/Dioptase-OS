@@ -56,6 +56,93 @@ static void free_fun(struct Fun* fun) {
   free(fun);
 }
 
+// Publish one child exit and revoke its TCB from every descriptor holder.
+//
+// Atomicity: state_lock serializes child_tcb and pending-signal access across
+// cores.  Once this function clears child_tcb, no sender can obtain the TCB;
+// only then may the caller enqueue it for reaping.
+static void publish_exit(struct TCB* child, unsigned rc) {
+  struct ChildDescriptor* descriptor = child->parent_promise;
+  if (descriptor == NULL){
+    return;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  assert(descriptor->child_tcb == child,
+    "child exit: descriptor does not reference exiting TCB.\n");
+  descriptor->child_tcb = NULL;
+  clh_lock_release(&descriptor->state_lock);
+
+  promise_set(descriptor->child_promise, (void*)rc);
+  child->parent_promise = NULL;
+  child_descriptor_release(descriptor);
+}
+
+struct SignalDelivery {
+  void* handler;
+  int signal;
+};
+
+static bool has_unhandled_signal(struct TCB* child,
+    struct SignalDelivery* delivery) {
+  struct ChildDescriptor* descriptor = child->parent_promise;
+  if (descriptor == NULL){
+    return false;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  bool terminate = false;
+  assert((child->signal_mask & ((1u << MAX_MASKABLE_SIGNAL) - 1)) == child->signal_mask,
+    "child signal mask has bits set beyond MAX_MASKABLE_SIGNAL.\n");
+
+  unsigned current_signals = child->pending_signals & (~child->signal_mask);
+  
+  unsigned nonmaskable_signals =
+    current_signals & ~((1u << MAX_MASKABLE_SIGNAL) - 1);
+  bool kill_signal = (current_signals & (1u << SIGNAL_KILL)) != 0;
+
+  bool in_signal_handler = child->in_signal_handler;
+
+  if (kill_signal){
+    // cannot mask or handle kill signal
+    terminate = true;
+  } else if (in_signal_handler) {
+    if (nonmaskable_signals != 0){
+      // nonmaskable signals cannot be handled while in a signal handler
+      terminate = true;
+    }
+    // maskable signals can wait until we exit this handler
+  } else {
+    // not in a signal handler
+    if (current_signals != 0){
+      // check for a signal handler to run
+      for (int i = 0; i < MAX_SIGNALS; i++){
+        if ((current_signals & (1u << i))){
+          if (child->signal_handlers[i]) {
+            // found a handler we can use
+            assert(delivery != NULL,
+              "has_unhandled_signal: delivery pointer is NULL.\n");
+            delivery->handler = child->signal_handlers[i];
+            delivery->signal = i;
+
+            // clear the signal from pending_signals so we don't run it again
+            child->pending_signals &= ~(1u << i);
+
+            break;
+          } else {
+            // no handler and signal is not masked -> terminate
+            terminate = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  clh_lock_release(&descriptor->state_lock);
+  return terminate;
+}
+
 static void free_tcb(struct TCB* tcb) {
   assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
   assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
@@ -146,7 +233,17 @@ static struct TCB* make_tcb(bool is_daemon){
 
   tcb->parent_promise = NULL;
 
-  tcb->pending_signals = 0;
+  // Daemon threads never enter user mode.  ChildDescriptor.state_lock, rather
+  // than a TCB-local lock, protects the signal state of user threads.
+  if (!is_daemon) {
+    tcb->pending_signals = 0;
+    tcb->signal_mask = 0;
+    for (int i = 0; i < MAX_SIGNALS; i++){
+      tcb->signal_handlers[i] = NULL;
+    }
+    tcb->in_signal_handler = false;
+  }
+  tcb->signal_stack_top = 0;
 
   tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
   tcb->my_node->locked = false;
@@ -285,6 +382,76 @@ void thread_entry(void) {
 // when we don't need to run any callback
 static void nothing(void* unused) {}
 
+// Enter a user signal handler on the thread's dedicated signal stack.
+//
+// Preconditions:
+// - The caller executes in kernel mode on behalf of the currently installed,
+//   non-idle user TCB. That TCB's PID and kernel stack are active on this core.
+// - handler names executable memory in that TCB's user address space.
+// - signal_stack_top names the top of the current image's writable signal
+//   stack and no signal handler is already active.
+//
+// Postconditions:
+// - sigreturn() clears in_signal_handler and resumes this kernel activation,
+//   allowing the interrupted user context to be restored by its trap or
+//   exception wrapper.
+// - exit(), a handler fault, or a normal C return leaves in_signal_handler set;
+//   the current TCB is then published as exited and is never rescheduled.
+//
+// Concurrency and CPU state:
+// - The current TCB cannot execute concurrently on another core. Scheduler
+//   delivery and current-thread exception delivery therefore own
+//   in_signal_handler and signal_handlers without ChildDescriptor.state_lock.
+// - Signals sent from other cores mutate pending_signals under state_lock and
+//   are observed by the scheduler after this handler completes. The
+//   architecture memory model is sequentially consistent.
+// - jump_to_user performs the kernel-to-user transition and preserves the
+//   kernel continuation on the TCB's current kernel stack. Because
+//   jump_to_user replaces architectural r31 with the signal-stack pointer, the
+//   original user r31 is explicitly restored before the suspended context
+//   continues.
+static void run_user_signal_handler(void* handler, unsigned arg1,
+    unsigned arg2) {
+  struct TCB* me = get_current_tcb();
+  assert(me != NULL,
+    "signal delivery: current TCB is NULL while entering user handler.\n");
+  assert(!me->in_signal_handler,
+    "signal delivery: attempted nested user signal handler entry.\n");
+
+  unsigned saved_user_sp = get_user_sp();
+  me->in_signal_handler = true;
+  int rc = jump_to_user((unsigned)handler, me->signal_stack_top, arg1, arg2);
+  set_user_sp(saved_user_sp);
+  if (me->in_signal_handler) {
+    // The handler did not call sigreturn(). This includes an explicit exit,
+    // a user exception that aborted its nested jump_to_user(), and a normal
+    // return through an undefined return address on the fresh signal stack.
+    stop(rc);
+  }
+}
+
+bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2) {
+  if (signal < 0 || signal >= MAX_SIGNALS){
+    return false;
+  }
+
+  struct TCB* me = get_current_tcb();
+  if (me == NULL || me->in_signal_handler ||
+      me->signal_handlers[signal] == NULL){
+    return false;
+  }
+
+  run_user_signal_handler(me->signal_handlers[signal], arg1, arg2);
+  return true;
+}
+
+static void run_pending_signal_handler(void* delivery_ptr) {
+  struct SignalDelivery* delivery = (struct SignalDelivery*)delivery_ptr;
+  assert(delivery != NULL,
+    "signal delivery: pending delivery pointer is NULL.\n");
+  run_user_signal_handler(delivery->handler, delivery->signal, 0);
+}
+
 // cleanup and shutdown the system
 void kernel_shutdown(void){
   interrupts_disable(); // move from interrupt-based keyboard handling to polling
@@ -308,6 +475,7 @@ void kernel_shutdown(void){
     ext2_destroy(&fs);
     ps2_destroy();
     audio_destroy();
+    trap_destroy();
     sd_destroy();
     vmem_global_destroy();
     scheduler_destroy();
@@ -373,21 +541,20 @@ void event_loop(void) {
       continue;
     }
 
-    if (next->pending_signals){
-      // free parent promise
-      if (next->parent_promise != NULL){
-        promise_set(next->parent_promise->child_promise, (void*)-1);
-        __atomic_store_n((int*)&next->parent_promise->child_tcb, NULL);
-
-        if (__atomic_fetch_add(&next->parent_promise->refcount, -1) == 1){
-          promise_free(next->parent_promise->child_promise);
-          free(next->parent_promise);
-        }
-      }
-
+    struct SignalDelivery delivery = {NULL, -1};
+    if (has_unhandled_signal(next, &delivery)) {
       // kill this thread
-      reap_tcb((void*)next);
 
+      publish_exit(next, (unsigned)-1);
+      reap_tcb((void*)next);
+      continue;
+    }
+
+    if (delivery.handler != NULL) {
+      // run the signal handler
+      int was = interrupts_disable();
+      context_switch(me, next, run_pending_signal_handler, &delivery,
+        &core->current_thread, was, true);
       continue;
     }
 
@@ -443,6 +610,11 @@ void bootstrap(void){
   tcb->my_node = per_core_data[me].idle_clh_node;
   tcb->my_pred = NULL;
 
+  // idle threads should never enter user mode
+  // so skip setting up signal handling 
+  // (avoids a call to malloc() to create the CLH lock)
+  tcb->signal_stack_top = 0;
+
   core->current_thread = tcb;
 }
 
@@ -470,24 +642,33 @@ void sleep(unsigned jiffies){
   block(was, sleep_queue_add, (void*)args, true);
 }
 
-// terminate the current thread and 
-// place it on the reaper queue to eventually free its resources
+// Terminate the current thread and place it on the reaper queue.
+//
+// Preconditions:
+// - This runs in kernel mode in the current non-idle TCB's context.
+// - The current TCB does not hold a spinlock and must never run again.
+//
+// Concurrency and CPU state:
+// - Preemption remains disabled from before exit publication through the final
+//   context switch. Interrupts may still run, but the PIT handler must not put
+//   this terminal TCB back on a ready queue between revoking child_tcb and
+//   blocking it forever.
+// - publish_exit() serializes descriptor and pending-signal state with other
+//   cores through ChildDescriptor.state_lock.
+//
+// Postcondition: this function does not return; the reaper owns current.
 void stop(unsigned rc) {
+  // There is intentionally no matching preemption_restore(): after terminal
+  // state becomes externally visible, this TCB may never be scheduled again.
+  preemption_disable();
+
   unsigned was = interrupts_disable();
   struct PerCore* core = get_per_core();
   struct TCB* current = core->current_thread;
   interrupts_restore(was);
   bool is_idle = (current == &core->idle_thread);
 
-  if (current->parent_promise != NULL){
-    promise_set(current->parent_promise->child_promise, (void*)rc);
-    __atomic_store_n((int*)&current->parent_promise->child_tcb, NULL);
-
-    if (__atomic_fetch_add(&current->parent_promise->refcount, -1) == 1){
-      promise_free(current->parent_promise->child_promise);
-      free(current->parent_promise);
-    }
-  }
+  publish_exit(current, rc);
 
   was = interrupts_disable();
 

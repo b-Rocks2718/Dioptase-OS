@@ -1,0 +1,52 @@
+***PASS sigreturn outside a handler: got -1 expected -1
+***PASS reject negative handler signal: got -1 expected -1
+***PASS reject out-of-range handler signal: got -1 expected -1
+***PASS reject handler for SIGNAL_KILL: got -1 expected -1
+***PASS reject non-executable handler address: got -1 expected -1
+***PASS reject misaligned handler address: got -1 expected -1
+***PASS reject negative mask signal: got -1 expected -1
+***PASS reject first nonmaskable signal: got -1 expected -1
+***PASS reject masking SIGNAL_ILL: got -1 expected -1
+***PASS reject masking SIGNAL_KILL: got -1 expected -1
+***PASS reject unmasking SIGNAL_ALGN: got -1 expected -1
+***PASS mask highest maskable signal: got 0 expected 0
+***PASS unmask highest maskable signal: got 0 expected 0
+***PASS mask hello: got 0 expected 0
+***PASS repeat mask hello: got 0 expected 0
+***PASS unmask hello: got 0 expected 0
+***PASS repeat unmask hello: got 0 expected 0
+***PASS register masked hello handler: got 0 expected 0
+***PASS mask hello in child: got 0 expected 0
+***PASS send first masked hello: got 0 expected 0
+***PASS send coalesced masked hello: got 0 expected 0
+***PASS masked hello delivery count before unmask: got 0 expected 0
+***PASS unmask pending hello: got 0 expected 0
+***PASS masked handler signal number: got 0 expected 0
+***PASS coalesced hello delivery count after unmask: got 1 expected 1
+***PASS masked child exit status: got 41 expected 41
+***PASS register terminating hello handler: got 0 expected 0
+***PASS send hello to terminating handler: got 0 expected 0
+***PASS terminating handler signal number: got 0 expected 0
+***PASS terminating handler exit status: got 42 expected 42
+***PASS send unhandled terminate: got 0 expected 0
+***PASS unhandled terminate child status: got -1 expected -1
+***PASS send SIGNAL_KILL: got 0 expected 0
+***PASS SIGNAL_KILL child status: got -1 expected -1
+***PASS register segmentation handler: got 0 expected 0
+***PASS segmentation handler fault VPN: got 74565 expected 74565
+***PASS segmentation handler exit status: got 43 expected 43
+***PASS register invalid-instruction handler: got 0 expected 0
+***PASS illegal-instruction handler PC alignment: got 0 expected 0
+***PASS invalid-instruction handler exit status: got 44 expected 44
+***PASS register privileged-instruction handler: got 0 expected 0
+***PASS illegal-instruction handler PC alignment: got 0 expected 0
+***PASS privileged-instruction handler exit status: got 44 expected 44
+***PASS register misaligned-PC handler: got 0 expected 0
+***PASS misaligned-PC handler PC remainder: got 2 expected 2
+***PASS misaligned-PC handler exit status: got 45 expected 45
+***PASS unhandled invalid-instruction status: got -1 expected -1
+***PASS unhandled privileged-instruction status: got -1 expected -1
+***PASS unhandled misaligned-PC status: got -1 expected -1
+***PASS register pre-exec hello handler: got 0 expected 0
+***PASS send hello after exec: got 0 expected 0
+***PASS exec cleared inherited handler: got -1 expected -1

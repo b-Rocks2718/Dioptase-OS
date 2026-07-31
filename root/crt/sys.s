@@ -1519,8 +1519,8 @@ get_spritemap:
 
   ret
 
-  .global kill
-kill:
+  .global signal_child
+signal_child:
   push r20
   push r21
   push r22
@@ -1533,6 +1533,7 @@ kill:
   push bp
   push ra
 
+  mov  r3, r2
   mov  r2, r1
   movi r1, 47
   trap
@@ -1598,6 +1599,186 @@ request_priority:
 
   mov  r2, r1
   movi r1, 49
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global set_foreground_child
+set_foreground_child:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 50
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global signal_foreground
+signal_foreground:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 51
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global register_handler
+register_handler:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 52
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global sigreturn
+sigreturn:
+  # A valid sigreturn does not resume this wrapper, but an invalid call made
+  # outside a handler returns -1 through the ordinary trap path. Keep the
+  # wrapper's return address in one trap-callee-saved register. Only that
+  # register needs a stack save: a valid sigreturn abandons this user stack,
+  # while the invalid path restores both r20 and ra before returning.
+  push r20
+  mov  r20, ra
+
+  mov  r2, r1
+  movi r1, 53
+  trap
+
+  mov ra, r20
+  pop r20
+
+  ret # only returns with -1 when called outside a signal handler
+
+  .global mask_signal
+mask_signal:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 54
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global unmask_signal
+unmask_signal:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 55
   trap
 
   pop ra

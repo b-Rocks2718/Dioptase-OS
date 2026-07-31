@@ -1,5 +1,5 @@
-***test_syscall arg = 273
-***test_syscall arg = 546
-***test_syscall arg = 257
-***test_syscall arg = 514
-***test_syscall arg = 1
+***PASS tilemap first-page sentinel: got 273 expected 273
+***PASS tilemap second-page sentinel: got 546 expected 546
+***PASS tile framebuffer first-page sentinel: got 257 expected 257
+***PASS tile framebuffer second-page sentinel: got 514 expected 514
+***PASS independent physical pages retain sentinels: got 1 expected 1

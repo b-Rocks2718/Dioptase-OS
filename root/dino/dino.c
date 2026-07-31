@@ -19,8 +19,6 @@
 #define SKY_ROW_END 25
 #define GROUND_ROW_START 25
 #define GROUND_ROW_END 31
-#define NUM_GAME_SPRITES 6
-#define HIDDEN_SPRITE_COORD 1000
 
 extern short DINORUNSHEET_DATA[42];
 extern short SPRITEMAP_DATA[42];
@@ -49,6 +47,24 @@ unsigned frame;
 unsigned frame2;
 unsigned ground_scroll_screen_px;
 
+static int read_input_event(void){
+  int available = fd_bytes_available(STDIN);
+
+  if (available > 0){
+    unsigned char byte;
+    if (read(STDIN, &byte, 1) == 1){
+      return byte;
+    }
+    return 0;
+  }
+
+  if (available < 0){
+    return getkey();
+  }
+
+  return 0;
+}
+
 void draw_tile(unsigned x, unsigned y, short tile){
   TILE_FB[x + TILE_ROW_WIDTH * y] = tile;
 }
@@ -69,23 +85,6 @@ static void fill_tile(unsigned tile, short color){
       TILEMAP[tile * 64 + i * TILE_SIZE + j] = color;
     }
   }
-}
-
-static void hide_game_sprites(void){
-  for (unsigned sprite = 0; sprite < NUM_GAME_SPRITES; ++sprite){
-    set_sprite_coords(sprite, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
-  }
-}
-
-static void restore_terminal_video(void){
-  set_hscroll(0);
-  set_vscroll(0);
-  hide_game_sprites();
-  set_tile_scale(0);
-  load_text_tiles();
-  puts("\x1b[2J");
-  puts("\x1b[H");
-  puts("\x1b[?25h");
 }
 
 static void wait_for_next_vblank(void){
@@ -319,9 +318,8 @@ unsigned main(void){
     update_positions();
 
     // input
-    unsigned key = getkey();
+    unsigned key = read_input_event();
     if (key == 0x71) {
-      restore_terminal_video();
       return 0;
     }
     if (key == 0x20 && !is_jumping){ // spacebar
@@ -345,12 +343,11 @@ unsigned main(void){
 
       // wait a bit, then drain key buffer
       sleep(10);
-      while (getkey() != 0);
+      while (read_input_event() != 0);
       while (1){
         // input
-        unsigned key = getkey();
+        unsigned key = read_input_event();
         if (key == 'q') {
-          restore_terminal_video();
           return 0;
         }
         if (key != 0) goto start;

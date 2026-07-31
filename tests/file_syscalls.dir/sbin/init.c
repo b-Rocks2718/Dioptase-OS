@@ -1,5 +1,3 @@
-#include "../../../root/crt/sys.h"
-
 /*
  * file_syscalls guest:
  * - validate relative chdir/open/read/write/close behavior through the user
@@ -12,65 +10,68 @@
  *   the final file
  */
 
+#include "../../../root/crt/sys.h"
+#include "../../user_test.h"
+
 int main(void){
   char buf[8];
   char y = 'Y';
 
-  test_syscall(chdir("./files"));
+  user_test_expect_eq("chdir(\"./files\")", chdir("./files"), 0);
 
   int fd = open("hello.txt");
-  test_syscall(fd >= 0);
-  test_syscall(chdir("hello.txt"));
+  user_test_expect_eq("open hello.txt", fd >= 0, 1);
+  user_test_expect_eq("chdir(\"hello.txt\")", chdir("hello.txt"), -1);
 
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("hello.txt first byte", buf[0], 'H');
 
   int dupfd = dup(fd);
-  test_syscall(dupfd >= 0);
+  user_test_expect_eq("dupfd >= 0", dupfd >= 0, 1);
 
-  test_syscall(read(dupfd, buf, 1));
-  test_syscall(buf[0]);
+  user_test_expect_eq("read(dupfd, buf, 1)", read(dupfd, buf, 1), 1);
+  user_test_expect_eq("shared-offset next byte", buf[0], 'e');
 
-  test_syscall(seek(dupfd, -2, SEEK_END));
-  test_syscall(read(fd, buf, 2));
-  test_syscall(buf[0]);
-  test_syscall(buf[1]);
+  user_test_expect_eq("seek(dupfd, -2, SEEK_END)", seek(dupfd, -2, SEEK_END), 5);
+  user_test_expect_eq("read(fd, buf, 2)", read(fd, buf, 2), 2);
+  user_test_expect_eq("hello.txt penultimate byte", buf[0], '!');
+  user_test_expect_eq("hello.txt final newline", buf[1], '\n');
 
-  test_syscall(seek(fd, -8, SEEK_CUR));
-  test_syscall(seek(fd, 0, SEEK_CUR));
+  user_test_expect_eq("seek(fd, -8, SEEK_CUR)", seek(fd, -8, SEEK_CUR), -1);
+  user_test_expect_eq("seek(fd, 0, SEEK_CUR)", seek(fd, 0, SEEK_CUR), 7);
 
-  test_syscall(close(fd));
-  test_syscall(read(dupfd, buf, 1));
-  test_syscall(close(dupfd));
+  user_test_expect_eq("close(fd)", close(fd), 0);
+  user_test_expect_eq("read(dupfd, buf, 1)", read(dupfd, buf, 1), 0);
+  user_test_expect_eq("close(dupfd)", close(dupfd), 0);
 
   fd = open("hello.txt");
-  test_syscall(fd >= 0);
-  test_syscall(write(fd, &y, 1));
-  test_syscall(seek(fd, 0, SEEK_SET));
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
+  user_test_expect_eq("reopen hello.txt", fd >= 0, 1);
+  user_test_expect_eq("write(fd, &y, 1)", write(fd, &y, 1), 1);
+  user_test_expect_eq("seek(fd, 0, SEEK_SET)", seek(fd, 0, SEEK_SET), 0);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("updated hello.txt first byte", buf[0], 'Y');
 
-  test_syscall(play_audio_file(STDOUT));
-  test_syscall(close(fd));
-  test_syscall(close(fd));
+  user_test_expect_eq("play_audio_file(STDOUT)", play_audio_file(STDOUT), -1);
+  user_test_expect_eq("close(fd)", close(fd), 0);
+  user_test_expect_eq("close(fd)", close(fd), -1);
 
   fd = open("generated/./deep/../deep/note.txt");
-  test_syscall(fd >= 0);
-  test_syscall(write(fd, &y, 1));
-  test_syscall(seek(fd, 0, SEEK_SET));
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
-  test_syscall(close(fd));
+  user_test_expect_eq("create nested generated note", fd >= 0, 1);
+  user_test_expect_eq("write(fd, &y, 1)", write(fd, &y, 1), 1);
+  user_test_expect_eq("seek(fd, 0, SEEK_SET)", seek(fd, 0, SEEK_SET), 0);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("nested note written byte", buf[0], 'Y');
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
-  test_syscall(chdir("generated/deep"));
+  user_test_expect_eq("chdir(\"generated/deep\")", chdir("generated/deep"), 0);
   fd = open("note.txt");
-  test_syscall(fd >= 0);
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
-  test_syscall(close(fd));
+  user_test_expect_eq("reopen nested note by basename", fd >= 0, 1);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("reopened nested note byte", buf[0], 'Y');
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
   yield();
-  test_syscall(1);
+  user_test_expect_eq("yield resumed the current process", 1, 1);
 
   return 0;
 }

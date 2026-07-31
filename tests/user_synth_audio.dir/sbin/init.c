@@ -10,6 +10,7 @@
 #include "../../../root/crt/synth_audio.h"
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/unistd.h"
+#include "../../user_test.h"
 
 #define TEST_DSYN_EVENTS 8u
 #define TEST_DSYN_BYTES 128u
@@ -18,6 +19,7 @@
 #define TEST_SQUARE_TIMER 10u
 #define TEST_SQUARE_LENGTH 20u
 #define TEST_SQUARE_CTRL 35u
+#define TEST_TOTAL_SAMPLES 5u
 
 static void write_u32_le(char* bytes, unsigned value){
   bytes[0] = value & 0xFF;
@@ -79,29 +81,42 @@ int main(void){
     SYNTH_AUDIO_REG_BYTES;
   int fd;
 
-  test_syscall((int)regs != 0 && (int)regs != -1);
-  test_syscall(regs[SYNTH_AUDIO_VERSION_OFFSET / SYNTH_AUDIO_REG_BYTES]);
-  test_syscall(regs[SYNTH_AUDIO_SAMPLE_RATE_HZ_OFFSET / SYNTH_AUDIO_REG_BYTES]);
+  user_test_expect_eq("map synth audio registers",
+    (int)regs != 0 && (int)regs != -1, 1);
+  user_test_expect_eq("synth command-ring version",
+    regs[SYNTH_AUDIO_VERSION_OFFSET / SYNTH_AUDIO_REG_BYTES],
+    SYNTH_AUDIO_COMMAND_RING_VERSION);
+  user_test_expect_eq("synth sample rate",
+    regs[SYNTH_AUDIO_SAMPLE_RATE_HZ_OFFSET / SYNTH_AUDIO_REG_BYTES],
+    SYNTH_AUDIO_SAMPLE_RATE_HZ);
 
   fill_test_dsyn(dsyn);
 
   fd = open("tiny.dsyn");
-  test_syscall(fd >= 0);
-  test_syscall(write(fd, dsyn, TEST_DSYN_BYTES));
-  test_syscall(seek(fd, 0, SEEK_SET));
-  test_syscall(synth_audio_play_dsyn_fd(fd));
-  test_syscall(close(fd));
+  user_test_expect_eq("create DSYN fixture", fd >= 0, 1);
+  user_test_expect_eq("write complete DSYN fixture",
+    write(fd, dsyn, TEST_DSYN_BYTES), TEST_DSYN_BYTES);
+  user_test_expect_eq("seek(fd, 0, SEEK_SET)", seek(fd, 0, SEEK_SET), 0);
+  user_test_expect_eq("synth_audio_play_dsyn_fd(fd)", synth_audio_play_dsyn_fd(fd), 0);
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
-  test_syscall(regs[SYNTH_AUDIO_MASTER_VOLUME_OFFSET / SYNTH_AUDIO_REG_BYTES]);
-  test_syscall(regs[square_volume_index]);
+  user_test_expect_eq("playback master volume register",
+    regs[SYNTH_AUDIO_MASTER_VOLUME_OFFSET / SYNTH_AUDIO_REG_BYTES],
+    TEST_MASTER_VOLUME);
+  user_test_expect_eq("playback square volume register",
+    regs[square_volume_index], TEST_SQUARE_VOLUME);
 
   fd = open("tiny.dsyn");
-  test_syscall(fd >= 0);
-  test_syscall(synth_audio_scan_dsyn_fd(fd, &stats));
-  test_syscall(stats.header.event_count);
-  test_syscall(stats.max_reg_offset);
-  test_syscall(stats.total_samples);
-  test_syscall(close(fd));
+  user_test_expect_eq("reopen DSYN fixture for scan", fd >= 0, 1);
+  user_test_expect_eq("synth_audio_scan_dsyn_fd(fd, &stats)", synth_audio_scan_dsyn_fd(fd, &stats), 0);
+  user_test_expect_eq("scanned DSYN event count", stats.header.event_count,
+    TEST_DSYN_EVENTS);
+  user_test_expect_eq("scanned DSYN maximum register offset",
+    stats.max_reg_offset,
+    SYNTH_AUDIO_SQUARE0_OFFSET + SYNTH_AUDIO_CH_TRIGGER_OFFSET);
+  user_test_expect_eq("scanned DSYN total samples", stats.total_samples,
+    TEST_TOTAL_SAMPLES);
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
   return 0;
 }

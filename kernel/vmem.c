@@ -10,6 +10,7 @@
 #include "page_cache.h"
 #include "string.h"
 #include "ivt.h"
+#include "threads.h"
 
 struct PageCache page_cache;
 
@@ -637,9 +638,17 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
 
   if (flags != 0){
     if (was_user){
+      // The TLB exception wrapper retains the faulting EPC/EFG on the kernel
+      // stack while the handler runs. sigreturn() therefore retries the same
+      // user access; handlers that cannot repair the mapping must exit.
+      if (try_run_current_signal_handler(SIGNAL_SEG, (unsigned)vpn, flags)){
+        return 0;
+      }
+
       // User code touched a mapped page without sufficient permissions. Abort
       // back to the kernel caller of `jump_to_user(...)`.
-      say("| User program killed due to access of mapped page without sufficient permissions\n", NULL);
+      say("| vmem: user access killed: mapped page lacks required permissions\n",
+        NULL);
       *return_to_user = false;
       return -1;
     } else if (tcb->uaccess_active){
@@ -665,9 +674,15 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
 
   if (curr == NULL){
     if (was_user) {
+      if (try_run_current_signal_handler(SIGNAL_SEG, (unsigned)vpn, flags)){
+        return 0;
+      }
+
       // User code touched an unmapped address. Abort back to the kernel caller
       // of `jump_to_user(...)`.
-      say("| User program killed due to access of unmapped address\n", NULL);
+      int args[2] = {fault_addr, (int)*epc_ptr};
+      say("| vmem: user access killed: unmapped address=0x%X epc=0x%X\n",
+        args);
       *return_to_user = false;
       return -1;
     } else if (tcb->uaccess_active){

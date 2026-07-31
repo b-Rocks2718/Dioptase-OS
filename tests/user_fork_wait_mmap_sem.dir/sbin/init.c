@@ -27,6 +27,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define PRIVATE_FILE_NAME "private.txt"
 #define SHARED_FILE_NAME "shared.txt"
@@ -123,14 +124,14 @@ int main(void){
 
   int pipe_rc = pipe(pipe_fds);
 
-  test_syscall(sem >= 0);
-  test_syscall(private_fd >= 0);
-  test_syscall(shared_fd >= 0);
-  test_syscall(mapping_ok(private_map));
-  test_syscall(mapping_ok(shared_map));
-  test_syscall(pipe_rc);
-  test_syscall(pipe_fds[0] >= 0);
-  test_syscall(pipe_fds[1] >= 0);
+  user_test_expect_eq("open inherited semaphore", sem >= 0, 1);
+  user_test_expect_eq("open private-mapping fixture", private_fd >= 0, 1);
+  user_test_expect_eq("open shared-mapping fixture", shared_fd >= 0, 1);
+  user_test_expect_eq("create private mapping", mapping_ok(private_map), 1);
+  user_test_expect_eq("create shared mapping", mapping_ok(shared_map), 1);
+  user_test_expect_eq("create inherited pipe", pipe_rc, 0);
+  user_test_expect_eq("pipe read descriptor valid", pipe_fds[0] >= 0, 1);
+  user_test_expect_eq("pipe write descriptor valid", pipe_fds[1] >= 0, 1);
 
   if (sem < 0 || private_fd < 0 || shared_fd < 0 ||
       !mapping_ok(private_map) || !mapping_ok(shared_map) ||
@@ -143,20 +144,27 @@ int main(void){
     return child_main(private_map, shared_map, sem, pipe_fds[0], pipe_fds[1]);
   }
 
-  test_syscall(close(pipe_fds[1]));
-  test_syscall(sem_down(sem));
-  test_syscall(read(pipe_fds[0], &pipe_byte, 1));
-  test_syscall((unsigned char)pipe_byte);
-  test_syscall((unsigned char)private_map[0]);
-  test_syscall((unsigned char)shared_map[0]);
-  test_syscall(read_first_byte(PRIVATE_FILE_NAME));
-  test_syscall(read_first_byte(SHARED_FILE_NAME));
-  test_syscall(wait_child(child));
-  test_syscall(wait_child(child));
-  test_syscall(sem_close(sem));
-  test_syscall(close(pipe_fds[0]));
-  test_syscall(close(private_fd));
-  test_syscall(close(shared_fd));
+  user_test_expect_eq("close(pipe_fds[1])", close(pipe_fds[1]), 0);
+  user_test_expect_eq("sem_down(sem)", sem_down(sem), 0);
+  user_test_expect_eq("read(pipe_fds[0], &pipe_byte, 1)", read(pipe_fds[0], &pipe_byte, 1), 1);
+  user_test_expect_eq("pipe byte written by child", (unsigned char)pipe_byte,
+    PIPE_CHILD_BYTE);
+  user_test_expect_eq("parent private mapping stayed private",
+    (unsigned char)private_map[0], PRIVATE_FILE_INITIAL);
+  user_test_expect_eq("parent shared mapping saw child write",
+    (unsigned char)shared_map[0], SHARED_CHILD_BYTE);
+  user_test_expect_eq("private backing file stayed unchanged",
+    read_first_byte(PRIVATE_FILE_NAME), PRIVATE_FILE_INITIAL);
+  user_test_expect_eq("shared backing file saw child write",
+    read_first_byte(SHARED_FILE_NAME), SHARED_CHILD_BYTE);
+  user_test_expect_eq("fork child exit status", wait_child(child),
+    CHILD_STATUS_OK);
+  user_test_expect_eq("second wait rejects consumed child descriptor",
+    wait_child(child), -1);
+  user_test_expect_eq("sem_close(sem)", sem_close(sem), 0);
+  user_test_expect_eq("close(pipe_fds[0])", close(pipe_fds[0]), 0);
+  user_test_expect_eq("close(private_fd)", close(private_fd), 0);
+  user_test_expect_eq("close(shared_fd)", close(shared_fd), 0);
 
   return 0;
 }

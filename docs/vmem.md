@@ -28,8 +28,10 @@ field stores the physical address of that page directory, and the same value is
 loaded into the hardware PID register when that thread's address space becomes
 active.
 
-There is currently no address-space inheritance or cloning during thread
-creation. A newly created thread starts with an empty `vme_list`.
+Kernel thread creation does not inherit an address space: `thread_()` gives the
+new thread an empty page directory and `vme_list`. Process creation through
+`fork()` is different; `vmem_fork()` clones the parent's user VMEs and resident
+user mappings into a new child address space.
 
 ### PDE / PTE Format
 
@@ -244,6 +246,22 @@ For a tlb miss, it:
 
 If no containing VME exists, the kernel panics.
 
+### Address-Space Cloning During `fork()`
+
+`fork()` calls `vmem_fork()` before making the child runnable. The clone path:
+
+- copies the parent's VME metadata into a separately owned child VME list
+- allocates a new page directory and page tables for the child
+- leaves nonresident pages nonresident so either process can fault them in later
+- acquires another page-cache reference for each resident shared file-backed
+  page and maps the same cache page in both processes
+- allocates and copies a new physical page for each resident private user page
+
+The parent and child therefore have independent page tables and private mapping
+contents, while shared file-backed mappings continue to refer to the same page
+cache entries. Private pages are currently copied eagerly during `fork()`;
+copy-on-write cloning is not implemented.
+
 ### Address-Space Teardown
 
 Thread teardown calls `vmem_destroy_address_space()` and then frees the VME
@@ -286,11 +304,12 @@ so user VM remains lightly exercised.
 
 The API flag combination exists, but the fault and unmap paths still reject it.
 
-#### No Address-Space Inheritance
+#### No Shared Address Spaces Between Threads
 
-Thread creation always allocates a fresh page directory and starts with an empty
-VME list. There is no `fork()`-style address-space clone and no way to make a
-new thread automatically observe an existing anonymous mapping.
+Kernel thread creation still allocates a fresh page directory and starts with an
+empty VME list. `fork()` clones a snapshot into a distinct child address space;
+there is no thread-creation operation that makes multiple threads concurrently
+use the same page tables or `vme_list`.
 
 #### No Partial `munmap()`
 
@@ -300,8 +319,9 @@ trim, split, or punch holes inside an existing mapping.
 #### No Copy-On-Write
 
 Private file-backed mappings eagerly copy the cached file page on first fault.
-The kernel does not yet share clean private pages and break sharing later on
-write.
+In addition, `fork()` eagerly copies every resident private user page into a new
+child frame. The kernel does not yet share either kind of clean private page and
+break sharing later on write.
 
 #### Local-Core-Only TLB Invalidation
 

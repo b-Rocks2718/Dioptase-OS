@@ -1,22 +1,21 @@
 #include "../crt/print.h"
 #include "../crt/sys.h"
 #include "../crt/stdbool.h"
-#include "../crt/ctype.h"
 #include "../crt/string.h"
 #include "../crt/stdlib.h"
 #include "../crt/fcntl.h"
 #include "../crt/unistd.h"
-#include "../crt/ps2.h"
 #include "../crt/sys/wait.h"
+#include "../crt/terminal.h"
 
 #include "dirs.h"
 
 #define CMD_BUF_SIZE 2048
 #define MAX_ARGV 16
+#define FOREGROUND_START_GATE_CLOSED 0
 
 char cmd_buf[CMD_BUF_SIZE];
 unsigned cmd_buf_len = 0;
-bool shift_held = false;
 
 void print_line_prefix(void){
   // machine name in green
@@ -42,61 +41,6 @@ void print_line_prefix(void){
 void print_cmd_buf(void){
   cmd_buf[cmd_buf_len] = '\0';
   puts(cmd_buf);
-}
-
-static char apply_shift_to_char(char c){
-  if (isalpha(c)){
-    if (c >= 'a' && c <= 'z'){
-      return c - 'a' + 'A';
-    }
-    return c;
-  }
-
-  if (c == '0'){
-    return ')';
-  } else if (c == '1'){
-    return '!';
-  } else if (c == '2'){
-    return '@';
-  } else if (c == '3'){
-    return '#';
-  } else if (c == '4'){
-    return '$';
-  } else if (c == '5'){
-    return '%';
-  } else if (c == '6'){
-    return '^';
-  } else if (c == '7'){
-    return '&';
-  } else if (c == '8'){
-    return '*';
-  } else if (c == '9'){
-    return '(';
-  } else if (c == '-'){
-    return '_';
-  } else if (c == '='){
-    return '+';
-  } else if (c == '['){
-    return '{';
-  } else if (c == ']'){
-    return '}';
-  } else if (c == '\\'){
-    return '|';
-  } else if (c == ';'){
-    return ':';
-  } else if (c == '\''){
-    return '"';
-  } else if (c == ','){
-    return '<';
-  } else if (c == '.'){
-    return '>';
-  } else if (c == '/'){
-    return '?';
-  } else if (c == '`'){
-    return '~';
-  }
-
-  return c;
 }
 
 void parse_command(unsigned* argc_out, char*** argv_out){
@@ -298,36 +242,73 @@ void handle_command(void){
     }
   } else if (streq(argv[0], "help")){
     puts("built-in commands:\n");
-    puts("cd [path] - change current directory\n");
-    puts("ls - list entries in current directory\n");
-    puts("cat [file] - print contents of file to terminal\n");
-    puts("cp [source] [dest] - copy file from source to dest\n");
-    puts("mv [source] [dest] - move file from source to dest\n");
-    puts("rm [file] - remove file\n");
-    puts("mkdir [path] - create directory at path\n");
-    puts("rmdir [path] - remove directory at path (must be empty)\n");
-    puts("clear - clear the terminal screen\n");
-    puts("exit - exit the shell\n");
+    puts("  cd [path] - change current directory\n");
+    puts("  ls - list entries in current directory\n");
+    puts("  cat [file] - print contents of file to terminal\n");
+    puts("  cp [source] [dest] - copy file from source to dest\n");
+    puts("  mv [source] [dest] - move file from source to dest\n");
+    puts("  rm [file] - remove file\n");
+    puts("  mkdir [path] - create directory at path\n");
+    puts("  rmdir [path] - remove directory at path (must be empty)\n");
+    puts("  clear - clear the terminal screen\n");
+    puts("  exit - exit the shell\n");
+    puts("  help - print this help message\n");
+    puts("  ^C - cancel current command\n");
   } else {
-    // exec other command
-    int pid = fork();
-    if (pid < 0){
-      puts("failed to fork process\n");
-    } else if (pid == 0){
-      // look for argv[0] in /sbin/ first, then in current directory
-      char* path_buf = malloc(MAX_PATH);
-      memcpy(path_buf, "/sbin/", 6);
-      memcpy(path_buf + 6, argv[0], strlen(argv[0]) + 1);
-      if (execv(path_buf, argc, argv) != 0){
-        // exec failed, try current directory
-        if (execv(argv[0], argc, argv) != 0){
-          puts("failed to exec command\n");
+    // Keep the child from entering a program that can touch VGA until the
+    // parent has installed the corresponding foreground descriptor. Without
+    // this gate, the child can win the post-fork scheduling race and its first
+    // display trap cannot yet be attributed to the foreground job.
+    int start_gate = sem_open(FOREGROUND_START_GATE_CLOSED);
+    if (start_gate < 0){
+      puts("shell: failed to create foreground-command start gate\n");
+    } else {
+      // exec other command
+      int pid = fork();
+      if (pid < 0){
+        puts("shell: failed to fork external command\n");
+        sem_close(start_gate);
+      } else if (pid == 0){
+        if (sem_down(start_gate) != 0){
+          puts("shell child: failed to wait for foreground installation\n");
+          exit(1);
+        }
+        sem_close(start_gate);
+
+        // look for argv[0] in /sbin/ first, then in current directory
+        char* path_buf = malloc(MAX_PATH);
+        memcpy(path_buf, "/sbin/", 6);
+        memcpy(path_buf + 6, argv[0], strlen(argv[0]) + 1);
+        if (execv(path_buf, argc, argv) != 0){
+          // exec failed, try current directory
+          if (execv(argv[0], argc, argv) != 0){
+            puts("shell child: failed to exec external command\n");
+          }
+        }
+        free(path_buf);
+        exit(1);
+      } else {
+        int foreground_set = set_foreground_child(pid);
+        if (foreground_set != 0){
+          puts("shell: failed to install external command as foreground child\n");
+        }
+
+        // The child owns another reference to the semaphore descriptor, so it
+        // remains valid after the parent releases the gate and closes its copy.
+        sem_up(start_gate);
+        sem_close(start_gate);
+        wait_child(pid);
+
+        if (foreground_set == 0){
+          // Clearing the foreground slot returns whether that child used a
+          // direct display trap. Queue recovery through the terminal pipe so
+          // the terminal resets both VGA hardware and its renderer state
+          // before the next prompt.
+          if (set_foreground_child(-1) > 0){
+            puts(TERMINAL_RESET_DISPLAY_SEQUENCE);
+          }
         }
       }
-      free(path_buf);
-      exit(1);
-    } else {
-      wait_child(pid);
     }
   }
 
@@ -340,12 +321,9 @@ int main(void){
     print_line_prefix();
 
     while (true){
-      short key = getkey();
-      if (key & 0xFF00){
-        key = key & 0xFF;
-        if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
-          shift_held = false;
-        }
+      char key;
+      if (read(STDIN, &key, 1) != 1){
+        sleep(1);
         continue;
       }
 
@@ -479,23 +457,19 @@ int main(void){
           cmd_buf_len--;
           puts("\b \b");
         }
-      } else if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
-        shift_held = true;
+      } else if (key == 0x03) {
+        // Cancel current command.
+        puts("^C\n");
+        cmd_buf_len = 0;
+        break;
       } else if (key >= 32 && key < 127){
         // printable character
         if (cmd_buf_len < CMD_BUF_SIZE - 1){
-          char typed = key;
-          if (shift_held){
-            typed = apply_shift_to_char(typed);
-          }
-
-          cmd_buf[cmd_buf_len++] = typed;
-          char str[2] = {typed, '\0'};
+          cmd_buf[cmd_buf_len++] = key;
+          char str[2] = {key, '\0'};
           puts(str);
         }
       }
-
-      sleep(5);
     }
   }
 

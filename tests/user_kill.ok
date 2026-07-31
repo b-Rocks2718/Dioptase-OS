@@ -1,7 +1,7 @@
-***test_syscall arg = -1
-***test_syscall arg = -1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = -1
-***test_syscall arg = -1
+***PASS signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE): got -1 expected -1
+***PASS signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, SIGNAL_TERMINATE): got -1 expected -1
+***PASS child >= MIN_CHILD_DESCRIPTOR && child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE: got 1 expected 1
+***PASS signal_child(child, SIGNAL_TERMINATE): got 0 expected 0
+***PASS wait_child(child): got -1 expected -1
+***PASS wait_child(child): got -1 expected -1
+***PASS signal_child(child, SIGNAL_TERMINATE): got -1 expected -1

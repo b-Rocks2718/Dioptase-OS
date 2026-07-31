@@ -18,6 +18,7 @@
 
 #include "../../../root/crt/print.h"
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define BAD_LOW_PTR ((char*)0x1000)
 #define MADE_DIR "made"
@@ -72,63 +73,63 @@ int main(void){
   char byte = 0;
 
   puts("***mkdir bad path pointer\n");
-  test_syscall(mkdir(BAD_LOW_PTR));
+  user_test_expect_eq("mkdir(BAD_LOW_PTR)", mkdir(BAD_LOW_PTR), -1);
 
   puts("***rmdir bad path pointer\n");
-  test_syscall(rmdir(BAD_LOW_PTR));
+  user_test_expect_eq("rmdir(BAD_LOW_PTR)", rmdir(BAD_LOW_PTR), -1);
 
   puts("***unlink bad path pointer\n");
-  test_syscall(unlink(BAD_LOW_PTR));
+  user_test_expect_eq("unlink(BAD_LOW_PTR)", unlink(BAD_LOW_PTR), -1);
 
   puts("***slash path rejection\n");
-  test_syscall(mkdir("a/b"));
-  test_syscall(rmdir("a/b"));
-  test_syscall(unlink("a/b"));
+  user_test_expect_eq("mkdir(\"a/b\")", mkdir("a/b"), -1);
+  user_test_expect_eq("rmdir(\"a/b\")", rmdir("a/b"), -1);
+  user_test_expect_eq("unlink(\"a/b\")", unlink("a/b"), -1);
 
   puts("***mkdir create and traverse\n");
-  test_syscall(mkdir(MADE_DIR));
-  test_syscall(chdir(MADE_DIR));
-  test_syscall(chdir(".."));
+  user_test_expect_eq("mkdir(MADE_DIR)", mkdir(MADE_DIR), 0);
+  user_test_expect_eq("chdir(MADE_DIR)", chdir(MADE_DIR), 0);
+  user_test_expect_eq("chdir(\"..\")", chdir(".."), 0);
 
   puts("***mkdir duplicate\n");
-  test_syscall(mkdir(MADE_DIR));
+  user_test_expect_eq("mkdir(MADE_DIR)", mkdir(MADE_DIR), -1);
 
   puts("***unlink regular file\n");
-  test_syscall(write_one_byte_file(VICTIM_FILE, VICTIM_BYTE));
-  test_syscall(read_one_byte_file(VICTIM_FILE, &byte));
-  test_syscall(byte);
-  test_syscall(unlink(VICTIM_FILE));
-  test_syscall(read_one_byte_file(VICTIM_FILE, &byte));
-  test_syscall(unlink(VICTIM_FILE));
+  user_test_expect_eq("write_one_byte_file(VICTIM_FILE, VICTIM_BYTE)", write_one_byte_file(VICTIM_FILE, VICTIM_BYTE), 0);
+  user_test_expect_eq("read_one_byte_file(VICTIM_FILE, &byte)", read_one_byte_file(VICTIM_FILE, &byte), 1);
+  user_test_expect_eq("victim file byte before unlink", byte, VICTIM_BYTE);
+  user_test_expect_eq("unlink(VICTIM_FILE)", unlink(VICTIM_FILE), 0);
+  user_test_expect_eq("read_one_byte_file(VICTIM_FILE, &byte)", read_one_byte_file(VICTIM_FILE, &byte), 0);
+  user_test_expect_eq("unlink(VICTIM_FILE)", unlink(VICTIM_FILE), 0);
 
   puts("***unlink rejects directory\n");
-  test_syscall(mkdir(UNLINK_DIR));
-  test_syscall(unlink(UNLINK_DIR));
-  test_syscall(chdir(UNLINK_DIR));
-  test_syscall(chdir(".."));
-  test_syscall(rmdir(UNLINK_DIR));
+  user_test_expect_eq("mkdir(UNLINK_DIR)", mkdir(UNLINK_DIR), 0);
+  user_test_expect_eq("unlink(UNLINK_DIR)", unlink(UNLINK_DIR), -1);
+  user_test_expect_eq("chdir(UNLINK_DIR)", chdir(UNLINK_DIR), 0);
+  user_test_expect_eq("chdir(\"..\")", chdir(".."), 0);
+  user_test_expect_eq("rmdir(UNLINK_DIR)", rmdir(UNLINK_DIR), 0);
 
   puts("***rmdir rejects file\n");
-  test_syscall(write_one_byte_file(FILE_TARGET, FILE_TARGET_BYTE));
-  test_syscall(rmdir(FILE_TARGET));
-  test_syscall(unlink(FILE_TARGET));
+  user_test_expect_eq("write_one_byte_file(FILE_TARGET, FILE_TARGET_BYTE)", write_one_byte_file(FILE_TARGET, FILE_TARGET_BYTE), 0);
+  user_test_expect_eq("rmdir(FILE_TARGET)", rmdir(FILE_TARGET), -1);
+  user_test_expect_eq("unlink(FILE_TARGET)", unlink(FILE_TARGET), 0);
 
   puts("***rmdir rejects non-empty directory\n");
-  test_syscall(mkdir(NONEMPTY_DIR));
-  test_syscall(chdir(NONEMPTY_DIR));
-  test_syscall(write_one_byte_file(NESTED_FILE, NESTED_BYTE));
-  test_syscall(chdir(".."));
-  test_syscall(rmdir(NONEMPTY_DIR));
-  test_syscall(chdir(NONEMPTY_DIR));
-  test_syscall(unlink(NESTED_FILE));
-  test_syscall(chdir(".."));
-  test_syscall(rmdir(NONEMPTY_DIR));
+  user_test_expect_eq("mkdir(NONEMPTY_DIR)", mkdir(NONEMPTY_DIR), 0);
+  user_test_expect_eq("chdir(NONEMPTY_DIR)", chdir(NONEMPTY_DIR), 0);
+  user_test_expect_eq("write_one_byte_file(NESTED_FILE, NESTED_BYTE)", write_one_byte_file(NESTED_FILE, NESTED_BYTE), 0);
+  user_test_expect_eq("chdir(\"..\")", chdir(".."), 0);
+  user_test_expect_eq("rmdir(NONEMPTY_DIR)", rmdir(NONEMPTY_DIR), -1);
+  user_test_expect_eq("chdir(NONEMPTY_DIR)", chdir(NONEMPTY_DIR), 0);
+  user_test_expect_eq("unlink(NESTED_FILE)", unlink(NESTED_FILE), 0);
+  user_test_expect_eq("chdir(\"..\")", chdir(".."), 0);
+  user_test_expect_eq("rmdir(NONEMPTY_DIR)", rmdir(NONEMPTY_DIR), 0);
 
   puts("***rmdir empty directory\n");
-  test_syscall(rmdir(MADE_DIR));
-  test_syscall(chdir(MADE_DIR));
-  test_syscall(mkdir(MADE_DIR));
-  test_syscall(rmdir(MADE_DIR));
+  user_test_expect_eq("rmdir(MADE_DIR)", rmdir(MADE_DIR), 0);
+  user_test_expect_eq("chdir(MADE_DIR)", chdir(MADE_DIR), -1);
+  user_test_expect_eq("mkdir(MADE_DIR)", mkdir(MADE_DIR), 0);
+  user_test_expect_eq("rmdir(MADE_DIR)", rmdir(MADE_DIR), 0);
 
   return 0;
 }

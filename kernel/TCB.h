@@ -40,9 +40,12 @@ struct VME;
 
 struct Node;
 
+#define MAX_SIGNALS 32
+
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
 struct TCB {
+  // callee-saved registers
   unsigned r20; // offset 0
   unsigned r21; // offset 4
   unsigned r22; // offset 8
@@ -53,11 +56,13 @@ struct TCB {
   unsigned r27; // offset 28
   unsigned r28; // offset 32
 
+  // function state registers
   unsigned sp;  // offset 36
   unsigned bp;  // offset 40
-  unsigned ra; // offset 44
-
-  unsigned flags; // offset 48
+  unsigned ra;  // offset 44
+  
+  // control registers
+  unsigned flags;    // offset 48
   unsigned psr;      // offset 52
   unsigned imr;      // offset 56
   unsigned pid;      // offset 60
@@ -65,7 +70,8 @@ struct TCB {
   unsigned fault_flags; // offset 68
   unsigned ksp; // offset 72
 
-  unsigned uaccess_active; // offset 76
+  // other thread state
+  unsigned uaccess_active;   // offset 76
   unsigned uaccess_err_addr; // offset 80
 
   unsigned* stack;
@@ -89,7 +95,21 @@ struct TCB {
 
   struct VME* vme_list;
 
-  int pending_signals;
+  // Cross-core senders and scheduler delivery serialize this bitmap through
+  // parent_promise->state_lock while child_tcb is live.
+  unsigned pending_signals;
+
+  // A set bit defers the corresponding maskable signal; it does not discard a
+  // pending instance. Only the running thread mutates this field, and the
+  // scheduler reads it while that thread is unscheduled.
+  unsigned signal_mask;
+
+  // Only the running thread registers handlers. The scheduler and synchronous
+  // exception paths read these entries while executing on behalf of that same
+  // TCB, so the TCB cannot be active concurrently on another core.
+  void* signal_handlers[MAX_SIGNALS];
+  bool in_signal_handler;
+  unsigned signal_stack_top;
 
   struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
   struct CLHNode* my_pred;
