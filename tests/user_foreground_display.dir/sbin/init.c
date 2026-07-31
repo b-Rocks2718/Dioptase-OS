@@ -17,6 +17,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define INVALID_SIGNAL 32
 #define TERMINAL_TILE_SCALE 0
@@ -41,16 +42,16 @@ static void test_non_child_display_use(void){
     exit(wait_for_parent(gate));
   }
 
-  test_syscall(set_foreground_child(child));
-  test_syscall(signal_foreground(INVALID_SIGNAL));
+  user_test_expect_eq("set_foreground_child(child)", set_foreground_child(child), 0);
+  user_test_expect_eq("signal_foreground(INVALID_SIGNAL)", signal_foreground(INVALID_SIGNAL), -1);
 
   // The parent is not the TCB named by the foreground descriptor, so this
   // direct display trap must not claim recovery on behalf of the child.
   set_tile_scale(TERMINAL_TILE_SCALE);
 
   sem_up(gate);
-  test_syscall(wait_child(child));
-  test_syscall(set_foreground_child(-1));
+  user_test_expect_eq("wait_child(child)", wait_child(child), 0);
+  user_test_expect_eq("set_foreground_child(-1)", set_foreground_child(-1), 0);
   sem_close(gate);
 }
 
@@ -67,10 +68,10 @@ static void test_foreground_child_display_use(void){
     exit(0);
   }
 
-  test_syscall(set_foreground_child(child));
+  user_test_expect_eq("set_foreground_child(child)", set_foreground_child(child), 0);
   sem_up(gate);
-  test_syscall(wait_child(child));
-  test_syscall(set_foreground_child(-1));
+  user_test_expect_eq("wait_child(child)", wait_child(child), 0);
+  user_test_expect_eq("set_foreground_child(-1)", set_foreground_child(-1), 1);
   sem_close(gate);
 }
 

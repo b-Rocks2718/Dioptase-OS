@@ -16,6 +16,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define CHILD_READY_STATUS 41
 #define ASYNC_EXIT_STATUS 42
@@ -27,6 +28,8 @@
 #define DECIMAL_HUNDREDS 100
 #define DECIMAL_TENS 10
 #define HIGHEST_MASKABLE_SIGNAL 15
+#define SEG_FAULT_ADDRESS 0x12345678
+#define EXPECTED_SEG_FAULT_VPN 0x12345
 
 extern void trigger_invalid_instruction(void);
 extern void trigger_privileged_instruction(void);
@@ -38,45 +41,49 @@ static int child_continue_sem = -1;
 
 static int masked_hello_handler(int signal){
   masked_hello_count += 1;
-  test_syscall(signal);
+  user_test_expect_eq("masked handler signal number", signal, SIGNAL_HELLO);
   sigreturn(0);
 }
 
 static int async_exit_handler(int signal){
-  test_syscall(signal);
+  user_test_expect_eq("terminating handler signal number", signal,
+    SIGNAL_HELLO);
   exit(ASYNC_EXIT_STATUS);
 }
 
 static int seg_handler(void* vpn){
-  test_syscall((int)vpn);
+  user_test_expect_eq("segmentation handler fault VPN", (int)vpn,
+    EXPECTED_SEG_FAULT_VPN);
   exit(SEG_EXIT_STATUS);
 }
 
 static int ill_handler(unsigned pc){
-  test_syscall(pc & 3);
+  user_test_expect_eq("illegal-instruction handler PC alignment", pc & 3, 0);
   exit(ILL_EXIT_STATUS);
 }
 
 static int algn_handler(unsigned pc){
-  test_syscall(pc & 3);
+  user_test_expect_eq("misaligned-PC handler PC remainder", pc & 3, 2);
   exit(ALGN_EXIT_STATUS);
 }
 
 static int masked_child(void){
-  test_syscall(register_handler(SIGNAL_HELLO,
-    (void*)masked_hello_handler));
-  test_syscall(mask_signal(SIGNAL_HELLO));
+  user_test_expect_eq("register masked hello handler",
+    register_handler(SIGNAL_HELLO, (void*)masked_hello_handler), 0);
+  user_test_expect_eq("mask hello in child", mask_signal(SIGNAL_HELLO), 0);
   sem_up(child_ready_sem);
   sem_down(child_continue_sem);
 
   // Both parent sends happened while masked, so the handler must not have run.
-  test_syscall(masked_hello_count);
-  test_syscall(unmask_signal(SIGNAL_HELLO));
+  user_test_expect_eq("masked hello delivery count before unmask",
+    masked_hello_count, 0);
+  user_test_expect_eq("unmask pending hello", unmask_signal(SIGNAL_HELLO), 0);
 
   // Delivery happens at a scheduling boundary. The pending bitmap coalesces
   // both sends into one handler invocation.
   yield();
-  test_syscall(masked_hello_count);
+  user_test_expect_eq("coalesced hello delivery count after unmask",
+    masked_hello_count, 1);
   return CHILD_READY_STATUS;
 }
 
@@ -111,25 +118,35 @@ int main(int argc, char** argv){
 
   // API validation, including executable handler-address checking and the
   // distinction between maskable and nonmaskable signals.
-  test_syscall(sigreturn(0));
-  test_syscall(register_handler(-1, (void*)masked_hello_handler));
-  test_syscall(register_handler(32, (void*)masked_hello_handler));
-  test_syscall(register_handler(SIGNAL_KILL,
-    (void*)masked_hello_handler));
-  test_syscall(register_handler(SIGNAL_HELLO, (void*)&nonexec_handler));
-  test_syscall(register_handler(SIGNAL_HELLO,
-    (void*)((unsigned)masked_hello_handler + 2)));
-  test_syscall(mask_signal(-1));
-  test_syscall(mask_signal(MAX_MASKABLE_SIGNAL));
-  test_syscall(mask_signal(SIGNAL_ILL));
-  test_syscall(mask_signal(SIGNAL_KILL));
-  test_syscall(unmask_signal(SIGNAL_ALGN));
-  test_syscall(mask_signal(HIGHEST_MASKABLE_SIGNAL));
-  test_syscall(unmask_signal(HIGHEST_MASKABLE_SIGNAL));
-  test_syscall(mask_signal(SIGNAL_HELLO));
-  test_syscall(mask_signal(SIGNAL_HELLO));
-  test_syscall(unmask_signal(SIGNAL_HELLO));
-  test_syscall(unmask_signal(SIGNAL_HELLO));
+  user_test_expect_eq("sigreturn outside a handler", sigreturn(0), -1);
+  user_test_expect_eq("reject negative handler signal",
+    register_handler(-1, (void*)masked_hello_handler), -1);
+  user_test_expect_eq("reject out-of-range handler signal",
+    register_handler(32, (void*)masked_hello_handler), -1);
+  user_test_expect_eq("reject handler for SIGNAL_KILL",
+    register_handler(SIGNAL_KILL, (void*)masked_hello_handler), -1);
+  user_test_expect_eq("reject non-executable handler address",
+    register_handler(SIGNAL_HELLO, (void*)&nonexec_handler), -1);
+  user_test_expect_eq("reject misaligned handler address",
+    register_handler(SIGNAL_HELLO,
+      (void*)((unsigned)masked_hello_handler + 2)), -1);
+  user_test_expect_eq("reject negative mask signal", mask_signal(-1), -1);
+  user_test_expect_eq("reject first nonmaskable signal",
+    mask_signal(MAX_MASKABLE_SIGNAL), -1);
+  user_test_expect_eq("reject masking SIGNAL_ILL",
+    mask_signal(SIGNAL_ILL), -1);
+  user_test_expect_eq("reject masking SIGNAL_KILL",
+    mask_signal(SIGNAL_KILL), -1);
+  user_test_expect_eq("reject unmasking SIGNAL_ALGN",
+    unmask_signal(SIGNAL_ALGN), -1);
+  user_test_expect_eq("mask highest maskable signal",
+    mask_signal(HIGHEST_MASKABLE_SIGNAL), 0);
+  user_test_expect_eq("unmask highest maskable signal",
+    unmask_signal(HIGHEST_MASKABLE_SIGNAL), 0);
+  user_test_expect_eq("mask hello", mask_signal(SIGNAL_HELLO), 0);
+  user_test_expect_eq("repeat mask hello", mask_signal(SIGNAL_HELLO), 0);
+  user_test_expect_eq("unmask hello", unmask_signal(SIGNAL_HELLO), 0);
+  user_test_expect_eq("repeat unmask hello", unmask_signal(SIGNAL_HELLO), 0);
 
   child_ready_sem = sem_open(0);
   child_continue_sem = sem_open(0);
@@ -139,20 +156,25 @@ int main(int argc, char** argv){
     return masked_child();
   }
   sem_down(child_ready_sem);
-  test_syscall(signal_child(child, SIGNAL_HELLO));
-  test_syscall(signal_child(child, SIGNAL_HELLO));
+  user_test_expect_eq("send first masked hello",
+    signal_child(child, SIGNAL_HELLO), 0);
+  user_test_expect_eq("send coalesced masked hello",
+    signal_child(child, SIGNAL_HELLO), 0);
   sem_up(child_continue_sem);
-  test_syscall(wait_child(child));
+  user_test_expect_eq("masked child exit status", wait_child(child),
+    CHILD_READY_STATUS);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_HELLO,
-      (void*)async_exit_handler));
+    user_test_expect_eq("register terminating hello handler",
+      register_handler(SIGNAL_HELLO, (void*)async_exit_handler), 0);
     return waiting_child();
   }
   sem_down(child_ready_sem);
-  test_syscall(signal_child(child, SIGNAL_HELLO));
-  test_syscall(wait_child(child));
+  user_test_expect_eq("send hello to terminating handler",
+    signal_child(child, SIGNAL_HELLO), 0);
+  user_test_expect_eq("terminating handler exit status", wait_child(child),
+    ASYNC_EXIT_STATUS);
 
   // An unhandled, unmasked asynchronous signal uses the default termination
   // action and reports -1 to wait_child().
@@ -161,8 +183,10 @@ int main(int argc, char** argv){
     return waiting_child();
   }
   sem_down(child_ready_sem);
-  test_syscall(signal_child(child, SIGNAL_TERMINATE));
-  test_syscall(wait_child(child));
+  user_test_expect_eq("send unhandled terminate",
+    signal_child(child, SIGNAL_TERMINATE), 0);
+  user_test_expect_eq("unhandled terminate child status", wait_child(child),
+    -1);
 
   // SIGNAL_KILL takes the same default termination action and cannot be
   // intercepted, regardless of the target's other registered handlers.
@@ -171,67 +195,77 @@ int main(int argc, char** argv){
     return waiting_child();
   }
   sem_down(child_ready_sem);
-  test_syscall(signal_child(child, SIGNAL_KILL));
-  test_syscall(wait_child(child));
+  user_test_expect_eq("send SIGNAL_KILL", signal_child(child, SIGNAL_KILL), 0);
+  user_test_expect_eq("SIGNAL_KILL child status", wait_child(child), -1);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_SEG, (void*)seg_handler));
-    int* bad_ptr = (int*)0x12345678;
+    user_test_expect_eq("register segmentation handler",
+      register_handler(SIGNAL_SEG, (void*)seg_handler), 0);
+    int* bad_ptr = (int*)SEG_FAULT_ADDRESS;
     *bad_ptr = 42;
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("segmentation handler exit status", wait_child(child),
+    SEG_EXIT_STATUS);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_ILL, (void*)ill_handler));
+    user_test_expect_eq("register invalid-instruction handler",
+      register_handler(SIGNAL_ILL, (void*)ill_handler), 0);
     trigger_invalid_instruction();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("invalid-instruction handler exit status",
+    wait_child(child), ILL_EXIT_STATUS);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_ILL, (void*)ill_handler));
+    user_test_expect_eq("register privileged-instruction handler",
+      register_handler(SIGNAL_ILL, (void*)ill_handler), 0);
     trigger_privileged_instruction();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("privileged-instruction handler exit status",
+    wait_child(child), ILL_EXIT_STATUS);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_ALGN, (void*)algn_handler));
+    user_test_expect_eq("register misaligned-PC handler",
+      register_handler(SIGNAL_ALGN, (void*)algn_handler), 0);
     trigger_misaligned_pc();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("misaligned-PC handler exit status", wait_child(child),
+    ALGN_EXIT_STATUS);
 
   child = fork();
   if (child == 0){
     trigger_invalid_instruction();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("unhandled invalid-instruction status",
+    wait_child(child), -1);
 
   child = fork();
   if (child == 0){
     trigger_privileged_instruction();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("unhandled privileged-instruction status",
+    wait_child(child), -1);
 
   child = fork();
   if (child == 0){
     trigger_misaligned_pc();
     return -1;
   }
-  test_syscall(wait_child(child));
+  user_test_expect_eq("unhandled misaligned-PC status", wait_child(child), -1);
 
   child = fork();
   if (child == 0){
-    test_syscall(register_handler(SIGNAL_HELLO,
-      (void*)async_exit_handler));
+    user_test_expect_eq("register pre-exec hello handler",
+      register_handler(SIGNAL_HELLO, (void*)async_exit_handler), 0);
 
     // Semaphore descriptors occupy 100..199, so every valid value has exactly
     // three decimal digits. Pass the inherited descriptor to the replacement
@@ -253,8 +287,9 @@ int main(int argc, char** argv){
     return EXEC_UNEXPECTED_RETURN_STATUS;
   }
   sem_down(child_ready_sem);
-  test_syscall(signal_child(child, SIGNAL_HELLO));
-  test_syscall(wait_child(child));
+  user_test_expect_eq("send hello after exec",
+    signal_child(child, SIGNAL_HELLO), 0);
+  user_test_expect_eq("exec cleared inherited handler", wait_child(child), -1);
 
   sem_close(child_ready_sem);
   sem_close(child_continue_sem);

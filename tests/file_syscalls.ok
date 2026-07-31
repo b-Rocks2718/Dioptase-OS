@@ -1,37 +1,37 @@
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = -1
-***test_syscall arg = 1
-***test_syscall arg = 72
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 101
-***test_syscall arg = 5
-***test_syscall arg = 2
-***test_syscall arg = 33
-***test_syscall arg = 10
-***test_syscall arg = -1
-***test_syscall arg = 7
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 89
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 89
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 89
-***test_syscall arg = 0
-***test_syscall arg = 1
+***PASS chdir("./files"): got 0 expected 0
+***PASS open hello.txt: got 1 expected 1
+***PASS chdir("hello.txt"): got -1 expected -1
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS hello.txt first byte: got 72 expected 72
+***PASS dupfd >= 0: got 1 expected 1
+***PASS read(dupfd, buf, 1): got 1 expected 1
+***PASS shared-offset next byte: got 101 expected 101
+***PASS seek(dupfd, -2, SEEK_END): got 5 expected 5
+***PASS read(fd, buf, 2): got 2 expected 2
+***PASS hello.txt penultimate byte: got 33 expected 33
+***PASS hello.txt final newline: got 10 expected 10
+***PASS seek(fd, -8, SEEK_CUR): got -1 expected -1
+***PASS seek(fd, 0, SEEK_CUR): got 7 expected 7
+***PASS close(fd): got 0 expected 0
+***PASS read(dupfd, buf, 1): got 0 expected 0
+***PASS close(dupfd): got 0 expected 0
+***PASS reopen hello.txt: got 1 expected 1
+***PASS write(fd, &y, 1): got 1 expected 1
+***PASS seek(fd, 0, SEEK_SET): got 0 expected 0
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS updated hello.txt first byte: got 89 expected 89
+***PASS play_audio_file(STDOUT): got -1 expected -1
+***PASS close(fd): got 0 expected 0
+***PASS close(fd): got -1 expected -1
+***PASS create nested generated note: got 1 expected 1
+***PASS write(fd, &y, 1): got 1 expected 1
+***PASS seek(fd, 0, SEEK_SET): got 0 expected 0
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS nested note written byte: got 89 expected 89
+***PASS close(fd): got 0 expected 0
+***PASS chdir("generated/deep"): got 0 expected 0
+***PASS reopen nested note by basename: got 1 expected 1
+***PASS read(fd, buf, 1): got 1 expected 1
+***PASS reopened nested note byte: got 89 expected 89
+***PASS close(fd): got 0 expected 0
+***PASS yield resumed the current process: got 1 expected 1

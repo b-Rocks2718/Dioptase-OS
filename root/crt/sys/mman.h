@@ -17,6 +17,18 @@
 #define MAP_ANON      -1
 #define MAP_ANONYMOUS MAP_ANON
 
+/*
+ * Dioptase's documented syscall API uses MMAP_* names. Keep the conventional
+ * aliases above for source compatibility, while exposing the canonical names
+ * expected by existing user programs and docs/syscalls.md.
+ */
+#define MMAP_READ    0x04
+#define MMAP_WRITE   0x08
+#define MMAP_EXEC    0x10
+#define MMAP_PRIVATE 0x00
+#define MMAP_SHARED  0x01
+#define MMAP_ANON    -1
+
 void* mmap(unsigned size, int fd, unsigned offset, unsigned flags);
 
 #endif // SYS_MMAN_H

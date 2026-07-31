@@ -1,7 +1,7 @@
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
+***PASS set_foreground_child(child): got 0 expected 0
+***PASS signal_foreground(INVALID_SIGNAL): got -1 expected -1
+***PASS wait_child(child): got 0 expected 0
+***PASS set_foreground_child(-1): got 0 expected 0
+***PASS set_foreground_child(child): got 0 expected 0
+***PASS wait_child(child): got 0 expected 0
+***PASS set_foreground_child(-1): got 1 expected 1

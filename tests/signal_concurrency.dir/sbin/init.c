@@ -24,6 +24,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 /*
  * Each run uses both scheduling shapes in test_send_exit_race(): four races
@@ -298,10 +299,10 @@ static int test_send_exit_race(void){
 }
 
 int main(void){
-  test_syscall(test_pending_order());
-  test_syscall(test_nonmaskable_during_handler());
-  test_syscall(test_fault_during_handler());
-  test_syscall(test_mask_send_race());
-  test_syscall(test_send_exit_race());
+  user_test_expect_eq("test_pending_order()", test_pending_order(), 0);
+  user_test_expect_eq("test_nonmaskable_during_handler()", test_nonmaskable_during_handler(), 0);
+  user_test_expect_eq("test_fault_during_handler()", test_fault_during_handler(), 0);
+  user_test_expect_eq("test_mask_send_race()", test_mask_send_race(), 0);
+  user_test_expect_eq("test_send_exit_race()", test_send_exit_race(), 0);
   return 0;
 }

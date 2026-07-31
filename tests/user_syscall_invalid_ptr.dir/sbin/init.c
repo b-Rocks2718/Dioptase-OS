@@ -4,6 +4,7 @@
  * - a failed read must not advance the file descriptor offset
  */
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define BAD_LOW_PTR ((void*)0x1000)
 
@@ -12,26 +13,26 @@ int main(void){
   char out = 'Z';
 
   int fd = open("data.txt");
-  test_syscall(fd >= 0);
+  user_test_expect_eq("open invalid-pointer read fixture", fd >= 0, 1);
 
-  test_syscall(read(fd, BAD_LOW_PTR, 1));
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
+  user_test_expect_eq("read(fd, BAD_LOW_PTR, 1)", read(fd, BAD_LOW_PTR, 1), -1);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("failed read preserved file offset", buf[0], 'a');
 
   close(fd);
 
   fd = open("data.txt");
-  test_syscall(write(fd, BAD_LOW_PTR, 1));
-  test_syscall(write(fd, &out, 1));
+  user_test_expect_eq("write(fd, BAD_LOW_PTR, 1)", write(fd, BAD_LOW_PTR, 1), -1);
+  user_test_expect_eq("write(fd, &out, 1)", write(fd, &out, 1), 1);
   close(fd);
 
   fd = open("data.txt");
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("valid write after rejected write", buf[0], out);
   close(fd);
 
-  test_syscall(open((char*)BAD_LOW_PTR));
-  test_syscall(pipe((int*)BAD_LOW_PTR));
+  user_test_expect_eq("open((char*)BAD_LOW_PTR)", open((char*)BAD_LOW_PTR), -1);
+  user_test_expect_eq("pipe((int*)BAD_LOW_PTR)", pipe((int*)BAD_LOW_PTR), -1);
 
   return 0;
 }

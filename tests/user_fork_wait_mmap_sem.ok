@@ -1,22 +1,22 @@
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 1
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 81
-***test_syscall arg = 112
-***test_syscall arg = 83
-***test_syscall arg = 112
-***test_syscall arg = 83
-***test_syscall arg = 41
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS open inherited semaphore: got 1 expected 1
+***PASS open private-mapping fixture: got 1 expected 1
+***PASS open shared-mapping fixture: got 1 expected 1
+***PASS create private mapping: got 1 expected 1
+***PASS create shared mapping: got 1 expected 1
+***PASS create inherited pipe: got 0 expected 0
+***PASS pipe read descriptor valid: got 1 expected 1
+***PASS pipe write descriptor valid: got 1 expected 1
+***PASS close(pipe_fds[1]): got 0 expected 0
+***PASS sem_down(sem): got 0 expected 0
+***PASS read(pipe_fds[0], &pipe_byte, 1): got 1 expected 1
+***PASS pipe byte written by child: got 81 expected 81
+***PASS parent private mapping stayed private: got 112 expected 112
+***PASS parent shared mapping saw child write: got 83 expected 83
+***PASS private backing file stayed unchanged: got 112 expected 112
+***PASS shared backing file saw child write: got 83 expected 83
+***PASS fork child exit status: got 41 expected 41
+***PASS second wait rejects consumed child descriptor: got -1 expected -1
+***PASS sem_close(sem): got 0 expected 0
+***PASS close(pipe_fds[0]): got 0 expected 0
+***PASS close(private_fd): got 0 expected 0
+***PASS close(shared_fd): got 0 expected 0

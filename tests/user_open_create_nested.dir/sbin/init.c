@@ -13,6 +13,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define CREATED_FILE_PATH "created/by/open/note.txt"
 #define CREATED_DIR_PATH "created/by/open"
@@ -24,19 +25,20 @@ int main(void){
   char out = CREATED_FILE_BYTE;
 
   int fd = open(CREATED_FILE_PATH);
-  test_syscall(fd >= 0);
-  test_syscall(write(fd, &out, 1));
-  test_syscall(seek(fd, 0, SEEK_SET));
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
-  test_syscall(close(fd));
+  user_test_expect_eq("create file with missing parent directories",
+    fd >= 0, 1);
+  user_test_expect_eq("write(fd, &out, 1)", write(fd, &out, 1), 1);
+  user_test_expect_eq("seek(fd, 0, SEEK_SET)", seek(fd, 0, SEEK_SET), 0);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("new nested file byte", buf[0], CREATED_FILE_BYTE);
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
-  test_syscall(chdir(CREATED_DIR_PATH));
+  user_test_expect_eq("chdir(CREATED_DIR_PATH)", chdir(CREATED_DIR_PATH), 0);
   fd = open(CREATED_FILE_BASENAME);
-  test_syscall(fd >= 0);
-  test_syscall(read(fd, buf, 1));
-  test_syscall(buf[0]);
-  test_syscall(close(fd));
+  user_test_expect_eq("reopen created file by basename", fd >= 0, 1);
+  user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
+  user_test_expect_eq("reopened nested file byte", buf[0], CREATED_FILE_BYTE);
+  user_test_expect_eq("close(fd)", close(fd), 0);
 
   return 0;
 }

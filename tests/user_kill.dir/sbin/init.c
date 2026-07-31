@@ -15,6 +15,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define MIN_CHILD_DESCRIPTOR 200
 #define MAX_CHILD_DESCRIPTOR_EXCLUSIVE 300
@@ -35,20 +36,19 @@ static int child_main(void){
 int main(void){
   int child = -1;
 
-  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE));
-  test_syscall(signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, SIGNAL_TERMINATE));
+  user_test_expect_eq("signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE)", signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE), -1);
+  user_test_expect_eq("signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, SIGNAL_TERMINATE)", signal_child(INVALID_CHILD_DESCRIPTOR_HIGH, SIGNAL_TERMINATE), -1);
 
   child = fork();
   if (child == 0){
     return child_main();
   }
 
-  test_syscall(child >= MIN_CHILD_DESCRIPTOR &&
-    child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE);
-  test_syscall(signal_child(child, SIGNAL_TERMINATE));
-  test_syscall(wait_child(child));
-  test_syscall(wait_child(child));
-  test_syscall(signal_child(child, SIGNAL_TERMINATE));
+  user_test_expect_eq("child >= MIN_CHILD_DESCRIPTOR && child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE", child >= MIN_CHILD_DESCRIPTOR && child < MAX_CHILD_DESCRIPTOR_EXCLUSIVE, 1);
+  user_test_expect_eq("signal_child(child, SIGNAL_TERMINATE)", signal_child(child, SIGNAL_TERMINATE), 0);
+  user_test_expect_eq("wait_child(child)", wait_child(child), -1);
+  user_test_expect_eq("wait_child(child)", wait_child(child), -1);
+  user_test_expect_eq("signal_child(child, SIGNAL_TERMINATE)", signal_child(child, SIGNAL_TERMINATE), -1);
 
   return 0;
 }

@@ -9,6 +9,7 @@
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../user_test.h"
 
 #define TEST_WAV_BYTES 46
 #define TEST_WAV_PCM_FORMAT 1U
@@ -70,29 +71,29 @@ int main(void){
 
   fill_test_wav(wav_bytes);
 
-  test_syscall(getkey());
+  user_test_expect_eq("getkey()", getkey(), 0);
 
   unsigned start = get_current_jiffies();
   sleep(3);
-  test_syscall(get_current_jiffies() - start >= 3);
+  user_test_expect_eq("get_current_jiffies() - start >= 3", get_current_jiffies() - start >= 3, 1);
 
   yield();
-  test_syscall(1);
+  user_test_expect_eq("yield resumed the current process", 1, 1);
 
-  test_syscall(request_priority(-1));
-  test_syscall(request_priority(DIOPTASE_PRIORITY_LOW));
-  test_syscall(request_priority(DIOPTASE_PRIORITY_HIGH));
-  test_syscall(request_priority(DIOPTASE_PRIORITY_HIGH + 1));
-  test_syscall(request_priority(DIOPTASE_PRIORITY_NORMAL));
+  user_test_expect_eq("request_priority(-1)", request_priority(-1), -1);
+  user_test_expect_eq("request_priority(DIOPTASE_PRIORITY_LOW)", request_priority(DIOPTASE_PRIORITY_LOW), 0);
+  user_test_expect_eq("request_priority(DIOPTASE_PRIORITY_HIGH)", request_priority(DIOPTASE_PRIORITY_HIGH), 0);
+  user_test_expect_eq("request_priority(DIOPTASE_PRIORITY_HIGH + 1)", request_priority(DIOPTASE_PRIORITY_HIGH + 1), -1);
+  user_test_expect_eq("request_priority(DIOPTASE_PRIORITY_NORMAL)", request_priority(DIOPTASE_PRIORITY_NORMAL), 0);
 
-  test_syscall(sem_open(-1));
+  user_test_expect_eq("sem_open(-1)", sem_open(-1), -1);
 
   sem = sem_open(1);
-  test_syscall(sem >= 100);
-  test_syscall(sem_down(sem));
-  test_syscall(sem_up(sem));
-  test_syscall(sem_close(sem));
-  test_syscall(sem_close(sem));
+  user_test_expect_eq("open semaphore descriptor", sem >= 100, 1);
+  user_test_expect_eq("sem_down(sem)", sem_down(sem), 0);
+  user_test_expect_eq("sem_up(sem)", sem_up(sem), 0);
+  user_test_expect_eq("sem_close(sem)", sem_close(sem), 0);
+  user_test_expect_eq("sem_close(sem)", sem_close(sem), -1);
 
   int all_open = 1;
   for (int i = 0; i < 100; ++i){
@@ -101,8 +102,8 @@ int main(void){
       all_open = 0;
     }
   }
-  test_syscall(all_open);
-  test_syscall(sem_open(0));
+  user_test_expect_eq("all_open", all_open, 1);
+  user_test_expect_eq("sem_open(0)", sem_open(0), -1);
 
   for (int i = 0; i < 100; ++i){
     if (sems[i] >= 100){
@@ -111,33 +112,34 @@ int main(void){
   }
 
   sem = sem_open(0);
-  test_syscall(sem >= 100);
-  test_syscall(sem_close(sem));
+  user_test_expect_eq("reuse semaphore descriptor after exhaustion",
+    sem >= 100, 1);
+  user_test_expect_eq("sem_close(sem)", sem_close(sem), 0);
 
   anon = mmap(sizeof(unsigned) * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
-  test_syscall((int)anon != 0 && (int)anon != -1);
+  user_test_expect_eq("(int)anon != 0 && (int)anon != -1", (int)anon != 0 && (int)anon != -1, 1);
   anon[0] = 123;
   anon[1] = 456;
-  test_syscall(anon[0]);
-  test_syscall(anon[1]);
+  user_test_expect_eq("anonymous mapping first word", anon[0], 123);
+  user_test_expect_eq("anonymous mapping second word", anon[1], 456);
 
   int data_fd = open("data.txt");
-  test_syscall(data_fd >= 0);
+  user_test_expect_eq("data_fd >= 0", data_fd >= 0, 1);
   file_map = mmap(4, data_fd, 0, MMAP_READ);
-  test_syscall((int)file_map != 0 && (int)file_map != -1);
-  test_syscall(file_map[0]);
-  test_syscall(file_map[3]);
-  test_syscall((int)mmap(4, 99, 0, MMAP_READ));
-  test_syscall(close(data_fd));
+  user_test_expect_eq("(int)file_map != 0 && (int)file_map != -1", (int)file_map != 0 && (int)file_map != -1, 1);
+  user_test_expect_eq("file mapping first byte", file_map[0], 77);
+  user_test_expect_eq("file mapping fourth byte", file_map[3], 33);
+  user_test_expect_eq("(int)mmap(4, 99, 0, MMAP_READ)", (int)mmap(4, 99, 0, MMAP_READ), -1);
+  user_test_expect_eq("close(data_fd)", close(data_fd), 0);
 
   int audio_fd = open("test.wav");
-  test_syscall(audio_fd >= 0);
-  test_syscall(write(audio_fd, wav_bytes, TEST_WAV_BYTES));
-  test_syscall(seek(audio_fd, 0, SEEK_SET));
-  test_syscall(play_audio_file(STDOUT));
-  test_syscall(play_audio_file(audio_fd));
+  user_test_expect_eq("audio_fd >= 0", audio_fd >= 0, 1);
+  user_test_expect_eq("write(audio_fd, wav_bytes, TEST_WAV_BYTES)", write(audio_fd, wav_bytes, TEST_WAV_BYTES), 46);
+  user_test_expect_eq("seek(audio_fd, 0, SEEK_SET)", seek(audio_fd, 0, SEEK_SET), 0);
+  user_test_expect_eq("play_audio_file(STDOUT)", play_audio_file(STDOUT), -1);
+  user_test_expect_eq("play_audio_file(audio_fd)", play_audio_file(audio_fd), 0);
   sleep(1);
-  test_syscall(close(audio_fd));
+  user_test_expect_eq("close(audio_fd)", close(audio_fd), 0);
 
   return 0;
 }
