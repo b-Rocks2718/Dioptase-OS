@@ -20,6 +20,7 @@
 #include "scheduler.h"
 
 #define INITIAL_USER_STACK_SIZE 0x4000
+#define INITIAL_SIGNAL_STACK_SIZE 0x1000
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
 #define EXEC_MAX_ARGC 64
@@ -1117,12 +1118,14 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
+  // child inherits signal state/handlers from parent
   child->pending_signals = 0;
   child->signal_mask = parent->signal_mask;
   for (int i = 0; i < MAX_SIGNALS; i++){
     child->signal_handlers[i] = parent->signal_handlers[i];
   }
   child->in_signal_handler = false;
+  child->signal_stack_top = parent->signal_stack_top;
 
   child->my_node = malloc(sizeof(struct CLHNode));
   child->my_node->locked = false;
@@ -1788,10 +1791,6 @@ int handle_register_handler(int signal, void* handler){
   return 0;
 }
 
-int handle_sigreturn(int rc){
-  // TODO
-}
-
 int handle_mask_signal(int signal){
 
 }
@@ -1811,7 +1810,7 @@ int trap_handler(unsigned code,
 
   switch (code){
     case TRAP_EXIT: {
-      // return instead to the kernel thread that called switch_to_user
+      // return instead to the kernel thread that called jump_to_user
       *return_to_user = false;
       return arg1;
     }
@@ -2009,7 +2008,10 @@ int trap_handler(unsigned code,
       return handle_register_handler(arg1, (void*)arg2);
     }
     case TRAP_SIGRETURN: {
-      return handle_sigreturn(arg1);
+      // return instead to the kernel thread that called jump_to_user
+      *return_to_user = false;
+      get_current_tcb()->in_signal_handler = false;
+      return arg1;
     }
     case TRAP_MASK_SIGNAL: {
       return handle_mask_signal(arg1);
@@ -2059,13 +2061,18 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
   // user half and enter at the last word in that reservation.
   unsigned* stack = mmap_stack(INITIAL_USER_STACK_SIZE,
     MMAP_READ | MMAP_WRITE | MMAP_USER);
-  unsigned stack_bottom = (unsigned)stack;
+  unsigned* signal_stack = mmap_stack(INITIAL_SIGNAL_STACK_SIZE,
+    MMAP_READ | MMAP_WRITE | MMAP_USER);
   unsigned stack_top = (unsigned)stack + INITIAL_USER_STACK_SIZE;
+  unsigned signal_stack_top = (unsigned)signal_stack + INITIAL_SIGNAL_STACK_SIZE;
   unsigned initial_sp = 0;
   unsigned user_argv = 0;
 
-  int rc = build_exec_argv_on_stack(stack_bottom, stack_top, argv, argc,
-    &initial_sp, &user_argv, get_current_tcb());
+  struct TCB* me = get_current_tcb();
+  me->signal_stack_top = signal_stack_top;
+
+  int rc = build_exec_argv_on_stack((unsigned)stack, stack_top, argv, argc,
+    &initial_sp, &user_argv, me);
 
   // have now copied argv onto user stack
   free_exec_argv(argc, argv);

@@ -45,6 +45,7 @@ struct Node;
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
 struct TCB {
+  // callee-saved registers
   unsigned r20; // offset 0
   unsigned r21; // offset 4
   unsigned r22; // offset 8
@@ -55,11 +56,13 @@ struct TCB {
   unsigned r27; // offset 28
   unsigned r28; // offset 32
 
+  // function state registers
   unsigned sp;  // offset 36
   unsigned bp;  // offset 40
-  unsigned ra; // offset 44
-
-  unsigned flags; // offset 48
+  unsigned ra;  // offset 44
+  
+  // control registers
+  unsigned flags;    // offset 48
   unsigned psr;      // offset 52
   unsigned imr;      // offset 56
   unsigned pid;      // offset 60
@@ -67,7 +70,8 @@ struct TCB {
   unsigned fault_flags; // offset 68
   unsigned ksp; // offset 72
 
-  unsigned uaccess_active; // offset 76
+  // other thread state
+  unsigned uaccess_active;   // offset 76
   unsigned uaccess_err_addr; // offset 80
 
   unsigned* stack;
@@ -95,6 +99,7 @@ struct TCB {
   unsigned signal_mask; // 0 => unmasked, 1 => masked/ignored
   void* signal_handlers[MAX_SIGNALS];
   bool in_signal_handler;
+  unsigned signal_stack_top;
 
   struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
   struct CLHNode* my_pred;

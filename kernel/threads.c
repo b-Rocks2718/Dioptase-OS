@@ -61,7 +61,7 @@ static void free_fun(struct Fun* fun) {
 // Atomicity: state_lock serializes child_tcb and pending-signal access across
 // cores.  Once this function clears child_tcb, no sender can obtain the TCB;
 // only then may the caller enqueue it for reaping.
-static void publish_child_exit(struct TCB* child, unsigned rc) {
+static void publish_exit(struct TCB* child, unsigned rc) {
   struct ChildDescriptor* descriptor = child->parent_promise;
   if (descriptor == NULL){
     return;
@@ -78,7 +78,7 @@ static void publish_child_exit(struct TCB* child, unsigned rc) {
   child_descriptor_release(descriptor);
 }
 
-static bool child_has_unhandled_signal(struct TCB* child) {
+static bool has_unhandled_signal(struct TCB* child, void** handler) {
   struct ChildDescriptor* descriptor = child->parent_promise;
   if (descriptor == NULL){
     return false;
@@ -114,8 +114,13 @@ static bool child_has_unhandled_signal(struct TCB* child) {
         if ((current_signals & (1 << i))){
           if (child->signal_handlers[i]) {
             // found a handler we can use
+            assert(handler != NULL, "has_unhandled_signal: handler pointer is NULL.\n");
+            *handler = child->signal_handlers[i];
 
-            // TODO: run the signal handler
+            // clear the signal from pending_signals so we don't run it again
+            child->pending_signals &= ~(1 << i);
+
+            break;
           } else {
             // no handler and signal is not masked -> terminate
             terminate = true;
@@ -230,6 +235,7 @@ static struct TCB* make_tcb(bool is_daemon){
     }
     tcb->in_signal_handler = false;
   }
+  tcb->signal_stack_top = 0;
 
   tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
   tcb->my_node->locked = false;
@@ -368,6 +374,17 @@ void thread_entry(void) {
 // when we don't need to run any callback
 static void nothing(void* unused) {}
 
+static void run_handler(void* handler_ptr) {
+  void* handler = *(void**)handler_ptr;
+  struct TCB* me = get_current_tcb();
+  me->in_signal_handler = true;
+  int rc = jump_to_user((unsigned)handler, me->signal_stack_top, 0, 0);
+  if (me->in_signal_handler) {
+    // returned without calling sigreturn => terminate
+    stop(rc);
+  }
+}
+
 // cleanup and shutdown the system
 void kernel_shutdown(void){
   interrupts_disable(); // move from interrupt-based keyboard handling to polling
@@ -457,12 +474,19 @@ void event_loop(void) {
       continue;
     }
 
-    if (child_has_unhandled_signal(next)) {
-      publish_child_exit(next, (unsigned)-1);
-
+    void* handler = NULL;
+    if (has_unhandled_signal(next, &handler)) {
       // kill this thread
-      reap_tcb((void*)next);
 
+      publish_exit(next, (unsigned)-1);
+      reap_tcb((void*)next);
+      continue;
+    }
+
+    if (handler != NULL) {
+      // run the signal handler
+      int was = interrupts_disable();
+      context_switch(me, next, run_handler, &handler, &core->current_thread, was, true);
       continue;
     }
 
@@ -521,6 +545,7 @@ void bootstrap(void){
   // idle threads should never enter user mode
   // so skip setting up signal handling 
   // (avoids a call to malloc() to create the CLH lock)
+  tcb->signal_stack_top = 0;
 
   core->current_thread = tcb;
 }
@@ -558,7 +583,7 @@ void stop(unsigned rc) {
   interrupts_restore(was);
   bool is_idle = (current == &core->idle_thread);
 
-  publish_child_exit(current, rc);
+  publish_exit(current, rc);
 
   was = interrupts_disable();
 
