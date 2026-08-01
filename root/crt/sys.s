@@ -1552,37 +1552,6 @@ signal_child:
 
   ret
 
-  .global get_synth_audio
-get_synth_audio:
-  push r20
-  push r21
-  push r22
-  push r23
-  push r24
-  push r25
-  push r26
-  push r27
-  push r28
-  push bp
-  push ra
-
-  movi r1, 48
-  trap
-
-  pop ra
-  pop bp
-  pop r28
-  pop r27
-  pop r26
-  pop r25
-  pop r24
-  pop r23
-  pop r22
-  pop r21
-  pop r20
-
-  ret
-
   .global request_priority
 request_priority:
   push r20

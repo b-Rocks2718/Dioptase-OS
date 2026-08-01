@@ -166,10 +166,6 @@ Additional file-descriptor notes:
   and returns immediately. The worker currently expects a supported PCM WAV
   file; malformed WAV contents currently panic the kernel instead of returning
   `-1`.
-- The register-driven synth audio path is separate from `play_audio_file()`.
-  User programs map the synth MMIO page with `get_synth_audio()` and can use
-  the DSYN helpers documented in `synth_audio.md`.
-
 ### Synchronization and Virtual Memory
 
 | Code | Wrapper | Arguments | Result |
@@ -189,7 +185,7 @@ Additional file-descriptor notes:
 - file-backed mappings require a valid file descriptor and a non-negative offset
 - see `vmem.md` for full mapping, unmapping, sharing, and file-offset rules
 
-### Console, Keyboard, VGA, and Synth Helpers
+### Console, Keyboard, and VGA Helpers
 
 These traps expose device-oriented helpers rather than POSIX-style syscalls.
 MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
@@ -213,4 +209,3 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `44` | `set_sprite_coords(sprite_num, x, y)` | `sprite_num`, `x`, `y` | Writes one sprite coordinate pair and returns `0`, or returns `-1` for an invalid sprite number. |
 | `45` | `load_text_tiles_colored(fg_color, bg_color)` | `fg_color`, `bg_color` | Loads the built-in text tileset with explicit colors, clears the display, and returns `0`. |
 | `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer. |
-| `48` | `get_synth_audio()` | none | Maps the synth audio MMIO page `0x7FBC000..0x7FBCFFF` into user space with read/write permission and returns the user pointer. The kernel does not serialize synth register ownership between processes. |

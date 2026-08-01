@@ -13,7 +13,6 @@
 #include "per_core.h"
 #include "promise.h"
 #include "audio.h"
-#include "synth_audio.h"
 #include "heap.h"
 #include "ext.h"
 #include "string.h"
@@ -2033,10 +2032,6 @@ int trap_handler(unsigned code,
     }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);
-    }
-    case TRAP_GET_SYNTH_AUDIO: {
-      return (int)mmap_physmem(SYNTH_AUDIO_SIZE, SYNTH_AUDIO_BASE,
-          MMAP_READ | MMAP_WRITE | MMAP_USER);
     }
     case TRAP_REQUEST_PRIORITY: {
       return handle_request_priority(arg1);

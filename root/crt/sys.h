@@ -88,8 +88,6 @@ short* get_spritemap(void);
 
 int signal_child(int child, int signal);
 
-unsigned* get_synth_audio(void);
-
 int request_priority(int priority);
 
 int set_foreground_child(int child);
