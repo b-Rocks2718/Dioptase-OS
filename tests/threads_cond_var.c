@@ -12,6 +12,7 @@
  * - first hand out one ticket and call signal
  * - then hand out the remaining tickets and call broadcast
  * - use the shared critical-section flag and waiter count to detect bad wakes
+ * - wait for every worker to release the external lock before destroying it
  */
 
 #include "../kernel/cond_var.h"
@@ -29,6 +30,7 @@ static struct BlockingLock lock;
 
 static int ready = 0;
 static int done = 0;
+static int finished = 0;
 static int tickets = 0;
 static int in_critical = 0;
 
@@ -65,6 +67,13 @@ static void waiter_thread(void* arg) {
   in_critical = 0;
 
   blocking_lock_release(&lock);
+
+  // Publishing done above proves that the protected work completed, but it
+  // does not prove that this thread has stopped using lock. Publish finished
+  // only after release returns so kernel_main cannot destroy the lock while a
+  // waiter is between those two operations. Sequentially consistent atomics
+  // make the completion visible to every core before teardown proceeds.
+  __atomic_fetch_add(&finished, 1);
 }
 
 // Drive the signal-then-broadcast sequence and verify the wakeup counts.
@@ -136,6 +145,13 @@ void kernel_main(void) {
     int args[2] = { (int)cond_var_waiter_count(), 0 };
     say("***cond_var FAIL waiters=%d expected=%d\n", args);
     panic("cond_var test: waiter count mismatch after broadcast\n");
+  }
+
+  // No waiter may retain or release either synchronization object after this
+  // point. In particular, done alone is insufficient because it is published
+  // while the final waiter still owns the external blocking lock.
+  while (__atomic_load_n(&finished) != NUM_WAITERS) {
+    yield();
   }
 
   cond_var_destroy(&cv);

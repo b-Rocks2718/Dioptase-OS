@@ -32,6 +32,10 @@
 #include "physmem.h"
 #include "sd_driver.h"
 
+// jump_to_user executes one rfe, so this is the only PSR depth from which a
+// user signal handler can be entered in user mode.
+#define USER_RETURNABLE_PSR_DEPTH 1
+
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
@@ -410,6 +414,9 @@ static void nothing(void* unused) {}
 //   jump_to_user replaces architectural r31 with the signal-stack pointer, the
 //   original user r31 is explicitly restored before the suspended context
 //   continues.
+// - PSR must be exactly 1. jump_to_user executes one rfe, so a larger nesting
+//   depth would leave the handler in kernel mode, where r31 aliases KSP rather
+//   than the user signal-stack pointer.
 static void run_user_signal_handler(void* handler, unsigned arg1,
     unsigned arg2) {
   struct TCB* me = get_current_tcb();
@@ -420,6 +427,8 @@ static void run_user_signal_handler(void* handler, unsigned arg1,
 
   unsigned saved_user_sp = get_user_sp();
   me->in_signal_handler = true;
+  assert(get_cr0() == USER_RETURNABLE_PSR_DEPTH,
+    "signal delivery: user handler entry requires PSR depth 1.\n");
   int rc = jump_to_user((unsigned)handler, me->signal_stack_top, arg1, arg2);
   set_user_sp(saved_user_sp);
   if (me->in_signal_handler) {
@@ -541,21 +550,34 @@ void event_loop(void) {
       continue;
     }
 
-    struct SignalDelivery delivery = {NULL, -1};
-    if (has_unhandled_signal(next, &delivery)) {
-      // kill this thread
+    // context_switch restores next->psr before its callback. A signal handler
+    // enters user mode through one rfe, so only depth 1 is user-returnable.
+    // Depths above 1 mean an interrupt preempted an existing kernel activation
+    // (for example, an interruptible syscall). Resume that activation without
+    // inspecting or consuming its pending signals; after the nested interrupt
+    // unwinds, a later scheduling boundary can process them at depth 1.
+    //
+    // Scheduler ownership makes next->psr stable here: next has been removed
+    // from its ready queue and cannot execute on another core. Deferring all
+    // signal processing also preserves pending-signal priority and avoids
+    // abandoning a nested kernel continuation for a default termination.
+    if (next->psr == USER_RETURNABLE_PSR_DEPTH) {
+      struct SignalDelivery delivery = {NULL, -1};
+      if (has_unhandled_signal(next, &delivery)) {
+        // kill this thread
 
-      publish_exit(next, (unsigned)-1);
-      reap_tcb((void*)next);
-      continue;
-    }
+        publish_exit(next, (unsigned)-1);
+        reap_tcb((void*)next);
+        continue;
+      }
 
-    if (delivery.handler != NULL) {
-      // run the signal handler
-      int was = interrupts_disable();
-      context_switch(me, next, run_pending_signal_handler, &delivery,
-        &core->current_thread, was, true);
-      continue;
+      if (delivery.handler != NULL) {
+        // run the signal handler
+        int was = interrupts_disable();
+        context_switch(me, next, run_pending_signal_handler, &delivery,
+          &core->current_thread, was, true);
+        continue;
+      }
     }
 
     int was = interrupts_disable();

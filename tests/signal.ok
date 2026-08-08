@@ -20,13 +20,13 @@
 ***PASS send first masked hello: got 0 expected 0
 ***PASS send coalesced masked hello: got 0 expected 0
 ***PASS masked hello delivery count before unmask: got 0 expected 0
-***PASS unmask pending hello: got 0 expected 0
 ***PASS masked handler signal number: got 0 expected 0
+***PASS unmask pending hello: got 0 expected 0
 ***PASS coalesced hello delivery count after unmask: got 1 expected 1
 ***PASS masked child exit status: got 41 expected 41
 ***PASS register terminating hello handler: got 0 expected 0
-***PASS send hello to terminating handler: got 0 expected 0
 ***PASS terminating handler signal number: got 0 expected 0
+***PASS send hello to terminating handler: got 0 expected 0
 ***PASS terminating handler exit status: got 42 expected 42
 ***PASS send unhandled terminate: got 0 expected 0
 ***PASS unhandled terminate child status: got -1 expected -1

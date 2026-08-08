@@ -8,6 +8,7 @@
 #include "per_core.h"
 #include "scheduler.h"
 #include "ivt.h"
+#include "interrupt_waiter.h"
 
 struct KeyElement {
   struct GenericQueueElement link;
@@ -15,25 +16,32 @@ struct KeyElement {
 };
 
 struct BlockingQueue ps2_queue;
-struct TCB* ps2_worker_thread;
+static struct InterruptWaiter ps2_worker_waiter;
+static int ps2_dropped_events;
 
 // PS/2 MMIO address for keyboard input
 static short* ps2_in = (short*)0x7FE5800;
 
 static void ps2_worker_block(void* arg){
   struct TCB* tcb = (struct TCB*)arg;
-  __atomic_store_n((int*)&ps2_worker_thread, (int)tcb);
+  struct TCB* wakeup = interrupt_waiter_publish(&ps2_worker_waiter, tcb);
+
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
 }
 
-bool keys_pending = false;
-
-// ps2 worker thread to fill ps2 queue
+// PS/2 worker thread to fill ps2_queue from bounded per-core ISR buffers.
 static void ps2_worker(void){
   while (true){
-    // check each core's keybuf for new keys, and add them to the blocking queue
-    // this is fine without locks because these are SPSC queues
-    // each core is the single producer, this thread is the single consumer
-    __atomic_store_n(&keys_pending, false);
+    /*
+     * Clear stale notification state before draining. Each key buffer is SPSC:
+     * its core's ISR is the sole producer and this worker is the sole consumer.
+     * An IRQ racing with this pass either leaves a buffered key to drain or
+     * leaves event_pending set so the block callback immediately requeues us.
+     */
+    interrupt_waiter_prepare(&ps2_worker_waiter);
+
     for (int i = 0; i < MAX_CORES; ++i){
       short key = 0;
       while ((key = keybuf_remove(&per_core_data[i].keybuf)) != 0){
@@ -43,17 +51,9 @@ static void ps2_worker(void){
       }
     }
 
-    if (!__atomic_load_n(&keys_pending)) {
-      // there is a small race where if an interrupt happens here we drop the key
-      // this is probably super rare because ps2 interrupts are rare
-      // to be safe, the pit handler occasionally wakes the ps2 worker 
-      // so it can catch dropped keys
-
-      // no keys pending, go back to sleep
-      int was = interrupts_disable();
-      struct TCB* me = get_current_tcb();
-      block(was, ps2_worker_block, me, true);
-    }
+    int was = interrupts_disable();
+    struct TCB* me = get_current_tcb();
+    block(was, ps2_worker_block, me, false);
   }
   panic("PS/2 worker thread exited unexpectedly");
 }
@@ -66,7 +66,8 @@ void ps2_init(void){
     keybuf_init(&per_core_data[i].keybuf);
   }
 
-  ps2_worker_thread = NULL;
+  interrupt_waiter_init(&ps2_worker_waiter);
+  __atomic_store_n(&ps2_dropped_events, 0);
 
   // init ps2 worker thread
   struct Fun* ps2_worker_fun = leak(sizeof(struct Fun));
@@ -81,8 +82,12 @@ void ps2_init(void){
 // to be called only from kernel_shutdown
 void ps2_destroy(void){
   blocking_queue_destroy(&ps2_queue);
-  ps2_worker_thread = NULL;
-  keys_pending = false;
+  interrupt_waiter_init(&ps2_worker_waiter);
+  __atomic_store_n(&ps2_dropped_events, 0);
+}
+
+unsigned ps2_dropped_event_count(void){
+  return (unsigned)__atomic_load_n(&ps2_dropped_events);
 }
 
 // read a key from the PS/2 keyboard
@@ -139,25 +144,27 @@ short waitkey_raw(void){
 }
 
 void ps2_handler(void){
-  mark_ps2_handled();
-
   struct PerCore* pc = get_per_core();
   struct KeyBuf* kb = &pc->keybuf;
+  short key = *ps2_in;
 
-  // add key to per core queue, worker thread will remove it
-  // and add it to a blocking queue
-  keybuf_add(kb, *ps2_in);
+  /*
+   * Capture the single hardware event before acknowledging the interrupt. The
+   * fixed-size per-core SPSC buffer keeps this path allocation- and lock-free.
+   */
+  bool queued = keybuf_add(kb, key);
+  mark_ps2_handled();
 
-  // if core queue somehow fills, we lose the key
-  // ps2 events should be infrequent enough that this does not happen
+  if (key == 0){
+    return;
+  }
 
-  // decide if we need to wake ps2 worker thread
-  // atomic exchange prevents a double wakeup
-  struct TCB* worker = (struct TCB*)__atomic_exchange_n((int*)&ps2_worker_thread, NULL);
+  if (!queued){
+    __atomic_fetch_add(&ps2_dropped_events, 1);
+  }
 
-  if (worker != NULL) {
+  struct TCB* worker = interrupt_waiter_signal(&ps2_worker_waiter);
+  if (worker != NULL){
     scheduler_wake_thread_from_interrupt(worker);
-  } else {
-    __atomic_store_n(&keys_pending, true);
   }
 }

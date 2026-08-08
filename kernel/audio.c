@@ -11,11 +11,11 @@
 #include "interrupts.h"
 #include "per_core.h"
 #include "heap.h"
+#include "interrupt_waiter.h"
 
 struct BlockingLock audio_lock;
 
-struct TCB* audio_wait_thread = NULL;
-struct SpinLock audio_wait_thread_lock;
+static struct InterruptWaiter audio_waiter;
 
 static char* AUDIO_RING = (char*)AUDIO_RING_BASE;
 static unsigned* AUDIO_CTRL = (unsigned*)AUDIO_CTRL_ADDR;
@@ -39,13 +39,13 @@ void audio_init(void){
   register_handler(audio_handler_, (void*)AUDIO_IVT_ENTRY);
   audio_output_reset(AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES);
   blocking_lock_init(&audio_lock);
-  spin_lock_init(&audio_wait_thread_lock);
+  interrupt_waiter_init(&audio_waiter);
 }
 
 // to be called only from kernel_shutdown
 void audio_destroy(void){
   audio_output_disable();
-  audio_wait_thread = NULL;
+  interrupt_waiter_init(&audio_waiter);
   blocking_lock_destroy(&audio_lock);
 }
 
@@ -348,11 +348,12 @@ unsigned audio_wav_num_samples(struct AudioWav* wav){
 }
 
 void audio_block_thread(void* arg){
-  int* args = (int*)arg;
-  struct TCB* tcb = (struct TCB*)args[0];
-  audio_wait_thread = tcb;
+  struct TCB* tcb = (struct TCB*)arg;
+  struct TCB* wakeup = interrupt_waiter_publish(&audio_waiter, tcb);
 
-  spin_lock_release(&audio_wait_thread_lock);
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
 }
 
 void audio_wav_play(struct AudioWav* wav){
@@ -368,18 +369,19 @@ void audio_wav_play(struct AudioWav* wav){
   audio_output_enable();
 
   while (next_data_bytes < wav->data_size){
-
-    // TODO: ensure O(1) critical sections
-    // for now im okay with this because there shouldnt be much contention
-    // on this lock
     int was = interrupts_disable();
-    spin_lock_acquire(&audio_wait_thread_lock);
+
+    /*
+     * Clear stale edges before checking persistent LOW_WATER status. If an
+     * audio edge races with this store, LOW_WATER is already visible or the
+     * ISR leaves event_pending set for the post-switch callback.
+     */
+    interrupt_waiter_prepare(&audio_waiter);
+
     if (!audio_output_low_water()){
       struct TCB* current_tcb = get_current_tcb();
-      int args[1] = { (int)current_tcb };
-      block(was, audio_block_thread, (void*)(args), false);
+      block(was, audio_block_thread, current_tcb, false);
     } else {
-      spin_lock_release(&audio_wait_thread_lock);
       interrupts_restore(was);
     }
 
@@ -404,12 +406,7 @@ void audio_wav_play(struct AudioWav* wav){
 void audio_handler(void){
   mark_audio_handled();
 
-  spin_lock_acquire(&audio_wait_thread_lock);
-
-  struct TCB* tcb = audio_wait_thread;
-  audio_wait_thread = NULL;
-
-  spin_lock_release(&audio_wait_thread_lock);
+  struct TCB* tcb = interrupt_waiter_signal(&audio_waiter);
 
   if (tcb != NULL){
     scheduler_wake_thread_from_interrupt(tcb);

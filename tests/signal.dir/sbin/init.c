@@ -77,11 +77,18 @@ static int masked_child(void){
   // Both parent sends happened while masked, so the handler must not have run.
   user_test_expect_eq("masked hello delivery count before unmask",
     masked_hello_count, 0);
-  user_test_expect_eq("unmask pending hello", unmask_signal(SIGNAL_HELLO), 0);
+
+  // Preserve the result without printing it yet. Once the signal is unmasked,
+  // a scheduling interrupt may enter the pending handler between any two
+  // writes made by user_test_expect_eq(), even though both reports belong to
+  // this thread.
+  int unmask_rc = unmask_signal(SIGNAL_HELLO);
 
   // Delivery happens at a scheduling boundary. The pending bitmap coalesces
-  // both sends into one handler invocation.
+  // both sends into one handler invocation. Once yield returns, the handler's
+  // report is complete and the remaining reports cannot interleave with it.
   yield();
+  user_test_expect_eq("unmask pending hello", unmask_rc, 0);
   user_test_expect_eq("coalesced hello delivery count after unmask",
     masked_hello_count, 1);
   return CHILD_READY_STATUS;
@@ -171,9 +178,16 @@ int main(int argc, char** argv){
     return waiting_child();
   }
   sem_down(child_ready_sem);
-  user_test_expect_eq("send hello to terminating handler",
-    signal_child(child, SIGNAL_HELLO), 0);
-  user_test_expect_eq("terminating handler exit status", wait_child(child),
+
+  // The child handler and this parent can run on different cores. User-space
+  // printf emits one report through several writes, so reporting the send
+  // result here could interleave with the handler's report. Preserve both
+  // results, wait until the handler has printed and exited, and only then
+  // emit the parent reports.
+  int send_hello_rc = signal_child(child, SIGNAL_HELLO);
+  int terminating_wait_rc = wait_child(child);
+  user_test_expect_eq("send hello to terminating handler", send_hello_rc, 0);
+  user_test_expect_eq("terminating handler exit status", terminating_wait_rc,
     ASYNC_EXIT_STATUS);
 
   // An unhandled, unmasked asynchronous signal uses the default termination

@@ -34,14 +34,23 @@ described below.
 
 Asynchronous sends set one bit in the target's pending bitmap. Multiple sends
 of the same signal before delivery coalesce into one pending instance. Pending
-signals are inspected at scheduling boundaries, and the lowest-numbered
-eligible signal is selected first.
+signals are inspected at user-returnable scheduling boundaries, and the
+lowest-numbered eligible signal is selected first. A saved TCB is
+user-returnable when its PSR depth is exactly 1, because signal-handler entry
+uses one `rfe` to reach user mode. If an interrupt preempted an existing kernel
+activation and saved a greater PSR depth, all asynchronous signal processing
+is deferred: the TCB resumes normally, the pending bitmap is left unchanged,
+and signals are reconsidered after the nested kernel context unwinds to a later
+user-returnable scheduling boundary. This deferral also applies to default
+actions and `SIGNAL_KILL`; kill remains unmaskable and unhandleable but does not
+abandon a nested kernel continuation.
 
 Masking a signal prevents delivery but does not clear its pending bit.
-Unmasking makes a retained pending instance eligible at the next scheduling
-boundary. Both masking operations are idempotent. The mask itself is changed
-only by the running thread; cross-core senders update the pending bitmap while
-holding the target child descriptor's state lock. Locks and the
+Unmasking makes a retained pending instance eligible at the next
+user-returnable scheduling boundary. Both masking operations are idempotent.
+The mask itself is changed only by the running thread; cross-core senders
+update the pending bitmap while holding the target child descriptor's state
+lock. Locks and the
 sequentially-consistent architecture memory model provide the required
 atomicity and ordering.
 
