@@ -1,3 +1,7 @@
+***PASS malloc(UINT_MAX) fails safely: got 1 expected 1
+***PASS realloc(UINT_MAX) fails safely: got 1 expected 1
+***PASS failed realloc preserves original allocation: got 82 expected 82
+***PASS raw trap preserves r29: got 1 expected 1
 ***PASS getkey(): got 0 expected 0
 ***PASS get_current_jiffies() - start >= 3: got 1 expected 1
 ***PASS yield resumed the current process: got 1 expected 1

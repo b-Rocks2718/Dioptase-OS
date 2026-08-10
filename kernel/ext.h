@@ -177,9 +177,10 @@ void node_free(struct Node* node);
 // Returns the current logical size of the inode in bytes.
 unsigned node_size_in_bytes(struct Node* node);
 
-// Reads one already-allocated logical block from `node` into `dest`. Callers
-// must only request block numbers that actually exist in the inode's current
-// data-block tree; `node_read_all(...)` is the safe API for EOF-clamped reads.
+// Reads one logical block from `node` into `dest`. A sparse hole, including a
+// missing indirect metadata subtree, produces one zero-filled filesystem block.
+// This low-level API is not EOF-clamped; `node_read_all(...)` is the normal
+// byte-range API when the inode's logical size must bound the result.
 void node_read_block(struct Node* node, unsigned block_num, char* dest);
 
 // Reads up to `size` bytes starting at `offset`. The read shortens at EOF and

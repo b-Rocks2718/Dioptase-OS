@@ -6,6 +6,8 @@
  *   preserve the expected file contents and inode size
  * - file growth across block boundaries and into the single-indirect range
  *   allocates blocks correctly and zero-fills unwritten gaps
+ * - reopening an inode with an interior sparse direct slot preserves the later
+ *   live block when a subsequent write appends beyond it
  * - concurrent writers updating the same inode do not lose disjoint full-block
  *   or same-block partial writes
  *
@@ -13,6 +15,8 @@
  * - overwrite an existing file, reopen it, and then grow it past its old size
  * - create fresh files for zero-gap, cross-block, and single-indirect growth
  *   cases and verify the resulting bytes directly
+ * - create a sparse direct layout by writing only slot 2, evict the inode cache
+ *   entry, then write slot 1 and append slot 3 without disturbing slot 2
  * - start concurrent writer groups behind barriers so they rewrite distinct
  *   regions of one shared file at the same time
  */
@@ -28,6 +32,15 @@
 #define CONCURRENT_ROUNDS 3
 #define CONCURRENT_FILE_NAME "shared-concurrent.bin"
 #define PARTIAL_CONCURRENT_FILE_NAME "shared-partial-concurrent.bin"
+#define SPARSE_HIGH_WATER_FILE_NAME "sparse-high-water.bin"
+#define SPARSE_HOLE_SLOT 1
+#define SPARSE_PRESERVED_SLOT 2
+#define SPARSE_APPEND_SLOT 3
+#define SPARSE_PRESERVED_BYTE 'Q'
+#define SPARSE_HOLE_WRITE_OFFSET 5
+#define SPARSE_HOLE_TEXT "HOLE"
+#define SINGLE_INDIRECT_TEST_SLOT 13
+#define SINGLE_INDIRECT_PAYLOAD_OFFSET 3
 
 struct ConcurrentWriteArgs {
   unsigned block_size;
@@ -335,6 +348,102 @@ static void check_cross_block_growth(struct Node* root, unsigned block_size) {
   say("***Cross-block growth: ok\n", NULL);
 }
 
+/*
+ * Regression for cache-miss reconstruction of data_block_count. The count is
+ * the next append slot, so it must be one past the highest live pointer rather
+ * than the number of packed pointers before the first hole. Otherwise reopening
+ * this inode yields count zero even though slot 2 remains live.
+ *
+ * The first write starts directly in slot 2, exercising indexed sparse
+ * allocation without test-only inode mutation. Dropping the final wrapper then
+ * forces a fresh icache_get() scan. Writing into slot 1 proves an interior hole
+ * is materialized instead of reaching the lower-level block-0 assertion, and a
+ * final slot-3 append proves the preserved slot-2 pointer and bytes survive.
+ */
+static void check_sparse_high_water_append(struct Node* root,
+    unsigned block_size) {
+  unsigned sectors_per_block = block_size / SD_SECTOR_SIZE_BYTES;
+  struct Node* sparse = node_make_file(root, SPARSE_HIGH_WATER_FILE_NAME);
+  assert(sparse != NULL,
+    "ext_write: failed to create the sparse high-water test file.\n");
+  assert(sparse->cached->inode.file_acl == 0,
+    "ext_write: a newly created inode must zero unsupported file_acl metadata.\n");
+
+  char* initial = alloc_filled_bytes(block_size, SPARSE_PRESERVED_BYTE,
+    "ext_write: failed to allocate the sparse preserved-block payload.\n");
+  unsigned cnt = node_write_all(sparse, SPARSE_PRESERVED_SLOT * block_size,
+    block_size, initial);
+  assert(cnt == block_size,
+    "ext_write: failed to bootstrap the sparse high-water test file.\n");
+  free(initial);
+
+  unsigned preserved_block = sparse->cached->inode.block[SPARSE_PRESERVED_SLOT];
+  assert(sparse->cached->inode.block[0] == 0 &&
+      sparse->cached->inode.block[SPARSE_HOLE_SLOT] == 0 &&
+      preserved_block != 0,
+    "ext_write: indexed sparse bootstrap materialized an untouched gap block.\n");
+  assert(sparse->cached->inode.blocks == sectors_per_block,
+    "ext_write: sparse bootstrap i_blocks should count only its one live data block.\n");
+  node_free(sparse);
+
+  // Reopening evicts the old derived count and reconstructs it from disk.
+  sparse = node_find(root, SPARSE_HIGH_WATER_FILE_NAME);
+  assert(sparse != NULL,
+    "ext_write: failed to reopen the sparse high-water test file.\n");
+  assert(sparse->cached->data_block_count == SPARSE_APPEND_SLOT,
+    "ext_write: sparse inode scan did not preserve the highest live logical slot.\n");
+
+  unsigned hole_text_size = strlen(SPARSE_HOLE_TEXT);
+  unsigned hole_write = SPARSE_HOLE_SLOT * block_size +
+    SPARSE_HOLE_WRITE_OFFSET;
+  cnt = node_write_all(sparse, hole_write, hole_text_size,
+    SPARSE_HOLE_TEXT);
+  assert(cnt == hole_text_size,
+    "ext_write: writing into an interior sparse hole returned the wrong byte count.\n");
+  assert(sparse->cached->inode.block[SPARSE_HOLE_SLOT] != 0,
+    "ext_write: writing into an interior sparse hole did not allocate its data block.\n");
+  assert(sparse->cached->inode.block[SPARSE_PRESERVED_SLOT] == preserved_block,
+    "ext_write: materializing an interior sparse hole changed a later live pointer.\n");
+  assert(sparse->cached->data_block_count == SPARSE_APPEND_SLOT,
+    "ext_write: filling an interior sparse hole changed the inode high-water slot.\n");
+  assert(sparse->cached->inode.blocks == 2 * sectors_per_block,
+    "ext_write: filling a direct sparse hole did not add exactly one data block to i_blocks.\n");
+
+  char* hole = malloc(block_size);
+  assert(hole != NULL,
+    "ext_write: failed to allocate the sparse-hole read buffer.\n");
+  node_read_block(sparse, SPARSE_HOLE_SLOT, hole);
+  assert_region_is_byte(hole, 0, SPARSE_HOLE_WRITE_OFFSET, 0,
+    "ext_write: materialized sparse block did not preserve zeroes before the write.\n");
+  assert_text_at(hole, SPARSE_HOLE_WRITE_OFFSET, SPARSE_HOLE_TEXT,
+    "ext_write: materialized sparse block lost the requested payload.\n");
+  assert_region_is_byte(hole, SPARSE_HOLE_WRITE_OFFSET + hole_text_size,
+    block_size - SPARSE_HOLE_WRITE_OFFSET - hole_text_size, 0,
+    "ext_write: materialized sparse block did not preserve zeroes after the write.\n");
+  free(hole);
+
+  cnt = node_write_all(sparse, SPARSE_APPEND_SLOT * block_size, 1, "A");
+  assert(cnt == 1,
+    "ext_write: append after an interior sparse slot returned the wrong byte count.\n");
+  assert(sparse->cached->inode.block[SPARSE_PRESERVED_SLOT] == preserved_block,
+    "ext_write: append after an interior sparse slot overwrote a later live block pointer.\n");
+  assert(sparse->cached->data_block_count == SPARSE_APPEND_SLOT + 1,
+    "ext_write: sparse append did not advance the inode high-water slot.\n");
+  assert(sparse->cached->inode.blocks == 3 * sectors_per_block,
+    "ext_write: sparse append did not add exactly one data block to i_blocks.\n");
+
+  char* preserved = malloc(block_size);
+  assert(preserved != NULL,
+    "ext_write: failed to allocate the sparse preserved-block read buffer.\n");
+  node_read_block(sparse, SPARSE_PRESERVED_SLOT, preserved);
+  assert_region_is_byte(preserved, 0, block_size, SPARSE_PRESERVED_BYTE,
+    "ext_write: sparse append corrupted the data beyond an interior hole.\n");
+  free(preserved);
+  node_free(sparse);
+
+  say("***Sparse high-water append: ok\n", NULL);
+}
+
 // Covers the lightweight truncate helper that only reduces the inode size. The
 // new EOF must persist across reopen, but the already-allocated tail blocks are
 // intentionally retained, so regrowth into that preserved range should expose
@@ -405,7 +514,8 @@ static void check_single_indirect_growth(struct Node* root, unsigned block_size)
   struct Node* indirect = node_make_file(root, "indirect.bin");
   assert(indirect != NULL, "ext_write: failed to create indirect.bin.\n");
 
-  unsigned offset = block_size * 13 + 3;
+  unsigned offset = block_size * SINGLE_INDIRECT_TEST_SLOT +
+    SINGLE_INDIRECT_PAYLOAD_OFFSET;
   unsigned cnt = node_write_all(indirect, offset, 8, "INDIRECT");
   assert(cnt == 8, "ext_write: single-indirect growth returned the wrong byte count.\n");
   assert(node_size_in_bytes(indirect) == offset + 8,
@@ -414,14 +524,20 @@ static void check_single_indirect_growth(struct Node* root, unsigned block_size)
 
   indirect = node_find(root, "indirect.bin");
   assert(indirect != NULL, "ext_write: failed to reopen indirect.bin.\n");
+  assert(indirect->cached->data_block_count == SINGLE_INDIRECT_TEST_SLOT + 1,
+    "ext_write: sparse single-indirect scan lost the highest live leaf slot.\n");
+  assert(indirect->cached->inode.blocks ==
+      2 * (block_size / SD_SECTOR_SIZE_BYTES),
+    "ext_write: sparse single-indirect write should reserve one pointer block and one data block.\n");
 
   char* window = malloc(11);
   assert(window != NULL, "ext_write: failed to allocate the indirect read window.\n");
-  cnt = node_read_all(indirect, offset - 3, 11, window);
+  cnt = node_read_all(indirect, offset - SINGLE_INDIRECT_PAYLOAD_OFFSET,
+    11, window);
   assert(cnt == 11, "ext_write: failed to read back the indirect write window.\n");
-  assert_region_is_byte(window, 0, 3, 0,
+  assert_region_is_byte(window, 0, SINGLE_INDIRECT_PAYLOAD_OFFSET, 0,
     "ext_write: bytes before the single-indirect payload were not zero-filled.\n");
-  assert_text_at(window, 3, "INDIRECT",
+  assert_text_at(window, SINGLE_INDIRECT_PAYLOAD_OFFSET, "INDIRECT",
     "ext_write: single-indirect growth did not persist the expected payload.\n");
   free(window);
   node_free(indirect);
@@ -495,6 +611,7 @@ int kernel_main(void) {
   check_concurrent_same_block_partial_writes(root, block_size);
   check_gap_zero_fill(root);
   check_cross_block_growth(root, block_size);
+  check_sparse_high_water_append(root, block_size);
   check_shrink_without_reclaim(root, block_size);
   check_single_indirect_growth(root, block_size);
 

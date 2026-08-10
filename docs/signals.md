@@ -33,21 +33,33 @@ described below.
 ## Pending signals and masking
 
 Asynchronous sends set one bit in the target's pending bitmap. Multiple sends
-of the same signal before delivery coalesce into one pending instance. Pending
-signals are inspected at user-returnable scheduling boundaries, and the
-lowest-numbered eligible signal is selected first. A saved TCB is
-user-returnable when its PSR depth is exactly 1, because signal-handler entry
-uses one `rfe` to reach user mode. If an interrupt preempted an existing kernel
-activation and saved a greater PSR depth, all asynchronous signal processing
-is deferred: the TCB resumes normally, the pending bitmap is left unchanged,
-and signals are reconsidered after the nested kernel context unwinds to a later
-user-returnable scheduling boundary. This deferral also applies to default
-actions and `SIGNAL_KILL`; kill remains unmaskable and unhandleable but does not
-abandon a nested kernel continuation.
+of the same signal before delivery coalesce into one pending instance. At most
+one lowest-numbered eligible signal is selected at each explicit final
+kernel-to-user transition:
+
+- after a syscall continuation has returned to its trap wrapper;
+- after a user TLB-fault or synchronous-exception continuation has completed;
+- after a PIT interrupt that originated in user mode has completed; or
+- immediately before initial/fork/exec entry into a user frame.
+
+The transition must still own the saved user frame, and the ISA PSR depth must
+be exactly 1 because signal-handler entry uses one `rfe` to reach user mode.
+The scheduler never consumes a pending signal based only on a saved TCB's PSR:
+a just-woken thread may still be suspended inside a blocking syscall or page
+fault, after synchronization ownership has been handed to it but before its C
+continuation has accepted that handoff and released outer resources.
+
+If a target is blocked, pending signals remain pending until its wait completes
+normally and the enclosing kernel continuation reaches a final user return.
+The current implementation does not cancel or detach waits. This deferral also
+applies to default actions and `SIGNAL_KILL`; kill remains unmaskable and
+unhandleable but never abandons a suspended kernel continuation or its resource
+ownership. Prompt cancellation would require each blocking primitive to define
+and implement an explicit ownership-unwind protocol.
 
 Masking a signal prevents delivery but does not clear its pending bit.
-Unmasking makes a retained pending instance eligible at the next
-user-returnable scheduling boundary. Both masking operations are idempotent.
+Unmasking makes a retained pending instance eligible at the next final
+kernel-to-user transition. Both masking operations are idempotent.
 The mask itself is changed only by the running thread; cross-core senders
 update the pending bitmap while holding the target child descriptor's state
 lock. Locks and the
@@ -56,7 +68,10 @@ atomicity and ordering.
 
 `SIGNAL_KILL` always terminates the target. While a handler is active, maskable
 signals remain pending, but any pending nonmaskable signal terminates the
-thread. Handlers are never nested.
+thread. `sigreturn()` clears the active-handler state while holding the same
+child-state lock used by cross-core senders, so a nonmaskable send ordered
+before that transition cannot escape termination through a race with handler
+completion. Handlers are never nested.
 
 ## Registration and handler ABI
 
@@ -66,7 +81,11 @@ user memory. `SIGNAL_KILL` cannot have a handler.
 
 Handlers run in user mode on a private 4 KiB writable signal stack. The kernel
 preserves the suspended kernel activation and the original architectural user
-stack pointer while the handler runs.
+stack pointer while the handler runs. Handler entry also preserves the lower
+per-device IMR enable bits from the final-return path: the kernel keeps the
+global bit clear while publishing handler state, and the handler-entry `rfe`
+reenables global delivery as specified by the ISA. A handler therefore remains
+PIT-preemptible and can make interrupt-driven device progress.
 
 The first function argument is passed in `r1`:
 
@@ -83,8 +102,8 @@ either `sigreturn(rc)` or `exit(status)`. Returning normally, faulting while a
 handler is active, or receiving an unhandled nonmaskable signal terminates the
 thread.
 
-For an asynchronous handler, `sigreturn()` resumes the context that was
-suspended at the scheduling boundary. For a synchronous fault handler, it
+For an asynchronous handler, `sigreturn()` resumes the user context retained by
+the final-return wrapper. For a synchronous fault handler, it
 restores the exception wrapper's saved EPC, flags, registers, and stack pointer.
 The faulting instruction is retried; the kernel does not advance EPC.
 Consequently a `SIGNAL_SEG` handler may repair a mapping and retry, while

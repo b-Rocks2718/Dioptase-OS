@@ -11,6 +11,13 @@ struct Ext2 fs;
 #define EXT2_SUPERBLOCK_SECTORS 2
 #define EXT2_DIR_ENTRY_HEADER_SIZE 8
 #define EXT2_DIR_ENTRY_ALIGN_SIZE 4
+#define EXT2_DIRECT_BLOCK_COUNT 12
+#define EXT2_SINGLE_INDIRECT_INDEX 12
+#define EXT2_DOUBLE_INDIRECT_INDEX 13
+#define EXT2_TRIPLE_INDIRECT_INDEX 14
+#define EXT2_SINGLE_INDIRECT_LEVELS 1
+#define EXT2_DOUBLE_INDIRECT_LEVELS 2
+#define EXT2_TRIPLE_INDIRECT_LEVELS 3
 
 // EXT2_S_IFREG | EXT2_S_IRUSR | EXT2_S_IWUSR | EXT2_S_IRGRP | EXT2_S_IROTH
 #define EXT2_DEFAULT_FILE_MODE 0x81A4
@@ -137,22 +144,64 @@ static void node_sync_inode(struct Node* node){
   icache_set(&node->filesystem->icache, node->cached);
 }
 
-// Count contiguous non-zero block pointers in one indirect block. Ext2 files in
-// this implementation only grow by appending blocks, so the first zero entry
-// terminates the logical data-block span.
-static unsigned ext2_count_indirect_entries(unsigned* block, unsigned entries_per_block){
-  unsigned count = 0;
+/*
+ * Return the one-based index of the highest populated data slot below one
+ * indirect pointer block, or zero when the whole subtree is empty.
+ *
+ * `levels` is one for a single-indirect leaf, two for a double-indirect root,
+ * and three for a triple-indirect root. The caller owns an unpublished cache
+ * entry, so its inode cannot change while this walk performs blocking cache
+ * reads. Under the sequentially-consistent memory model, no extra ordering is
+ * needed until icache_get() publishes the derived high-water value.
+ *
+ * Scan from high slots to low slots and return on the first live data pointer.
+ * Empty metadata subtrees are ignored: merely allocating an indirect pointer
+ * block does not make any logical data slot populated.
+ */
+static unsigned ext2_highest_indirect_data_slot(struct Ext2* fs,
+    unsigned pointer_block_num, unsigned levels, unsigned entries_per_block){
+  assert(levels >= EXT2_SINGLE_INDIRECT_LEVELS &&
+      levels <= EXT2_TRIPLE_INDIRECT_LEVELS,
+    "ext2_highest_indirect_data_slot: levels must be in the range 1..3.\n");
 
-  while (count < entries_per_block && block[count] != 0){
-    count += 1;
+  if (pointer_block_num == 0){
+    return 0;
   }
 
-  return count;
+  unsigned block_size = ext2_get_block_size(fs);
+  unsigned* pointers = malloc(block_size);
+  bcache_get(&fs->bcache, pointer_block_num, (char*)pointers);
+
+  unsigned child_span = 1;
+  for (unsigned level = 1; level < levels; ++level){
+    child_span *= entries_per_block;
+  }
+
+  for (unsigned slot = entries_per_block; slot > 0; --slot){
+    unsigned pointer = pointers[slot - 1];
+    if (pointer == 0){
+      continue;
+    }
+
+    if (levels == 1){
+      free(pointers);
+      return slot;
+    }
+
+    unsigned child_high = ext2_highest_indirect_data_slot(fs, pointer,
+      levels - 1, entries_per_block);
+    if (child_high != 0){
+      free(pointers);
+      return (slot - 1) * child_span + child_high;
+    }
+  }
+
+  free(pointers);
+  return 0;
 }
 
-// Clear a newly allocated pointer block before publishing it. That guarantees
-// later scans stop at the first unused entry instead of reading heap garbage as
-// block numbers.
+// Clear a newly allocated pointer block before publishing it so later scans do
+// not interpret heap garbage as live data or metadata block numbers.
 static void ext2_zero_pointer_block(unsigned* block, unsigned entries_per_block){
   memset(block, 0, entries_per_block * sizeof(unsigned));
 }
@@ -163,100 +212,58 @@ static void ext2_zero_pointer_block(unsigned* block, unsigned entries_per_block)
 // metadata blocks such as indirect pointer blocks.
 static unsigned node_scan_data_block_count(struct Node* node){
   unsigned block_size = ext2_get_block_size(node->filesystem);
-  unsigned entries_per_block = block_size / 4;
-  unsigned count = 0;
-  unsigned single_count = 0;
-  unsigned* single_indirect = NULL;
-  unsigned* double_indirect = NULL;
-  unsigned* triple_indirect = NULL;
+  unsigned entries_per_block = block_size / sizeof(unsigned);
+  unsigned double_span = entries_per_block * entries_per_block;
+  unsigned single_base = EXT2_DIRECT_BLOCK_COUNT;
+  unsigned double_base = single_base + entries_per_block;
+  unsigned triple_base = double_base + double_span;
 
-  // ext2 files in this implementation only grow by appending blocks, so each
-  // addressing tier is packed from the front. That lets us count blocks by
-  // stopping at the first zero pointer in each tier.
-  while (count < 12 && node->cached->inode.block[count] != 0){
-    count += 1;
+  // Fast symlinks store target bytes inline in inode.block[]. Those bytes are
+  // not ext2 block numbers and must never be interpreted as an allocated
+  // direct-block prefix while initializing the cached derived count.
+  if ((node->cached->inode.mode & EXT2_S_MASK) == EXT2_S_IFLNK &&
+      node->cached->inode.size <= sizeof(node->cached->inode.block)){
+    return 0;
   }
 
-  // A short direct run means the file never reached any indirect tier.
-  if (count < 12 || node->cached->inode.block[12] == 0){
-    return count;
+  /*
+   * data_block_count is a high-water mark, not a population count: node_add_block()
+   * uses it as the next logical slot. Host-built ext2 images may contain sparse
+   * holes, so stopping at the first zero would allow a later append to overwrite
+   * a live pointer beyond that hole. Search higher addressing tiers first, then
+   * return the highest populated logical slot plus one.
+   */
+  unsigned high = ext2_highest_indirect_data_slot(node->filesystem,
+    node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX],
+    EXT2_TRIPLE_INDIRECT_LEVELS,
+    entries_per_block);
+  if (high != 0){
+    return triple_base + high;
   }
 
-  single_indirect = malloc(block_size);
-  // Count the single-indirect leaf. If it is not full, the append-only layout
-  // guarantees there cannot be any live blocks in deeper tiers yet.
-  bcache_get(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect);
-  single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
-  count += single_count;
-  if (single_count < entries_per_block || node->cached->inode.block[13] == 0){
-    free(single_indirect);
-    return count;
+  high = ext2_highest_indirect_data_slot(node->filesystem,
+    node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX],
+    EXT2_DOUBLE_INDIRECT_LEVELS,
+    entries_per_block);
+  if (high != 0){
+    return double_base + high;
   }
 
-  double_indirect = malloc(block_size);
-  bcache_get(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect);
-  // Each live entry in the double-indirect root points at one single-indirect
-  // leaf. Stop when we reach an unused root slot or a partially-filled leaf.
-  for (unsigned outer = 0; outer < entries_per_block; ++outer){
-    if (double_indirect[outer] == 0){
-      free(double_indirect);
-      free(single_indirect);
-      return count;
-    }
-
-    bcache_get(&node->filesystem->bcache, double_indirect[outer], (char*)single_indirect);
-    single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
-    count += single_count;
-    if (single_count < entries_per_block){
-      free(double_indirect);
-      free(single_indirect);
-      return count;
-    }
+  high = ext2_highest_indirect_data_slot(node->filesystem,
+    node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX],
+    EXT2_SINGLE_INDIRECT_LEVELS,
+    entries_per_block);
+  if (high != 0){
+    return single_base + high;
   }
 
-  if (node->cached->inode.block[14] == 0){
-    free(double_indirect);
-    free(single_indirect);
-    return count;
-  }
-
-  triple_indirect = malloc(block_size);
-  bcache_get(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect);
-  // The triple-indirect walk follows the same packed layout one tier deeper:
-  // stop at the first unused outer pointer or the first partially-filled leaf.
-  for (unsigned outer = 0; outer < entries_per_block; ++outer){
-    if (triple_indirect[outer] == 0){
-      free(triple_indirect);
-      free(double_indirect);
-      free(single_indirect);
-      return count;
-    }
-
-    bcache_get(&node->filesystem->bcache, triple_indirect[outer], (char*)double_indirect);
-    for (unsigned middle = 0; middle < entries_per_block; ++middle){
-      if (double_indirect[middle] == 0){
-        free(triple_indirect);
-        free(double_indirect);
-        free(single_indirect);
-        return count;
-      }
-
-      bcache_get(&node->filesystem->bcache, double_indirect[middle], (char*)single_indirect);
-      single_count = ext2_count_indirect_entries(single_indirect, entries_per_block);
-      count += single_count;
-      if (single_count < entries_per_block){
-        free(triple_indirect);
-        free(double_indirect);
-        free(single_indirect);
-        return count;
-      }
+  for (unsigned slot = EXT2_DIRECT_BLOCK_COUNT; slot > 0; --slot){
+    if (node->cached->inode.block[slot - 1] != 0){
+      return slot;
     }
   }
 
-  free(triple_indirect);
-  free(double_indirect);
-  free(single_indirect);
-  return count;
+  return 0;
 }
 
 void ext2_init(struct Ext2* fs){
@@ -879,33 +886,157 @@ struct CachedInode* make_inode(short mode, unsigned inumber){
   struct CachedInode* cached = malloc(sizeof(struct CachedInode));
   cached_inode_init(cached, inumber);
 
+  /*
+   * New rev-0 inodes start from a deterministic all-zero disk image. This
+   * initializes size, timestamps, uid/gid, i_blocks, flags, ACL fields
+   * (including file_acl), block pointers, and OS-specific fields together, so
+   * no heap residue can be persisted as unsupported ext2 metadata.
+   */
+  memset(&cached->inode, 0, sizeof(cached->inode));
   cached->inode.mode = mode;
-  cached->inode.uid = 0; // TODO: support non-root users
-  cached->inode.size = 0; // new file has no data blocks
-  cached->inode.atime = 0; // not supported
-  cached->inode.ctime = 0; // not supported
-  cached->inode.mtime = 0; // not supported
-  cached->inode.dtime = 0; // not supported
-  cached->inode.gid = 0; // TODO: support non-root groups
-  cached->inode.links_count = (mode & EXT2_S_MASK) == EXT2_S_IFDIR ? 2 : 1; // directory has extra link for ".", file has 1 link
-  cached->inode.blocks = 0; // no data blocks yet
-  cached->inode.flags = 0; // not supported
-  cached->inode.osd1 = 0; // not used
-  memset(cached->inode.block, 0, sizeof(cached->inode.block));
-
-  cached->inode.generation = 0; // not supported
-  cached->inode.dir_acl = 0; // rev 0 requires this to be 0
-  cached->inode.faddr = 0; // not supported
-  memset(cached->inode.osd2, 0, sizeof(cached->inode.osd2));
+  // A directory begins with links from its parent and its own "." entry.
+  cached->inode.links_count =
+    (mode & EXT2_S_MASK) == EXT2_S_IFDIR ? 2 : 1;
 
   return cached;
+}
+
+/*
+ * Materialize one data slot below an indirect root, allocating any missing
+ * metadata blocks along that exact path. `relative_index` is relative to the
+ * logical span covered by `root_pointer`, and `levels` is one, two, or three.
+ *
+ * Precondition: the caller holds the cached-inode lock, so no other core may
+ * change this inode's block tree. alloc_block() returns zeroed blocks, and child
+ * pointer blocks are written before their parent entry is published. The
+ * sequentially-consistent memory model plus the inode lock therefore makes the
+ * complete path visible as one per-inode mutation. The inode record itself is
+ * written later by node_write_all() after all requested slots exist.
+ *
+ * Return the number of filesystem blocks allocated, including both pointer and
+ * data blocks. A zero return means the requested data slot already existed.
+ */
+static unsigned ext2_materialize_indirect_data_slot(struct Node* node,
+    unsigned* root_pointer, unsigned levels, unsigned relative_index){
+  unsigned block_size = ext2_get_block_size(node->filesystem);
+  unsigned entries_per_block = block_size / sizeof(unsigned);
+  unsigned child_span = 1;
+  unsigned allocated_blocks = 0;
+  bool new_pointer_block = false;
+
+  assert(levels >= EXT2_SINGLE_INDIRECT_LEVELS &&
+      levels <= EXT2_TRIPLE_INDIRECT_LEVELS,
+    "ext2_materialize_indirect_data_slot: levels must be in the range 1..3.\n");
+
+  for (unsigned level = 1; level < levels; ++level){
+    child_span *= entries_per_block;
+  }
+
+  unsigned slot = relative_index / child_span;
+  unsigned child_index = relative_index % child_span;
+  assert(slot < entries_per_block,
+    "ext2_materialize_indirect_data_slot: relative logical index exceeds the pointer-block span.\n");
+
+  if (*root_pointer == 0){
+    *root_pointer = alloc_block(node->filesystem);
+    allocated_blocks += 1;
+    new_pointer_block = true;
+  }
+
+  unsigned* pointers = malloc(block_size);
+  if (new_pointer_block){
+    // alloc_block() already cleared the on-disk/cache image. Initialize the
+    // scratch copy explicitly before installing the first child pointer.
+    ext2_zero_pointer_block(pointers, entries_per_block);
+  } else {
+    bcache_get(&node->filesystem->bcache, *root_pointer, (char*)pointers);
+  }
+
+  if (levels == EXT2_SINGLE_INDIRECT_LEVELS){
+    if (pointers[slot] == 0){
+      pointers[slot] = alloc_block(node->filesystem);
+      allocated_blocks += 1;
+    }
+  } else {
+    allocated_blocks += ext2_materialize_indirect_data_slot(node,
+      &pointers[slot], levels - 1, child_index);
+  }
+
+  if (allocated_blocks != 0){
+    // A recursive child has already persisted its pointer block. Publish this
+    // parent after it so every reachable path ends in an initialized block.
+    bcache_set(&node->filesystem->bcache, *root_pointer, (char*)pointers,
+      0, block_size);
+  }
+
+  free(pointers);
+  return allocated_blocks;
+}
+
+/*
+ * Ensure one arbitrary logical data block exists without disturbing populated
+ * slots on either side of a sparse hole.
+ *
+ * Precondition: kernel mode, a regular-file or block-backed-symlink inode, and
+ * node->cached->lock held by this thread. Postcondition on success: the exact
+ * logical slot resolves to a zero-initialized data block if it was previously a
+ * hole; i_blocks includes every newly reserved data/metadata block; and
+ * data_block_count remains one past the highest populated logical slot. This
+ * helper does not write the inode record, allowing node_write_all() to batch one
+ * writeback after materializing its complete requested range.
+ */
+static bool node_materialize_block_locked(struct Node* node,
+    unsigned logical_block){
+  unsigned block_size = ext2_get_block_size(node->filesystem);
+  unsigned entries_per_block = block_size / sizeof(unsigned);
+  unsigned sectors_per_block = ext2_sectors_per_block(node->filesystem);
+  unsigned single_base = EXT2_DIRECT_BLOCK_COUNT;
+  unsigned double_span = entries_per_block * entries_per_block;
+  unsigned double_base = single_base + entries_per_block;
+  unsigned triple_span = double_span * entries_per_block;
+  unsigned triple_base = double_base + double_span;
+  unsigned logical_limit = triple_base + triple_span;
+  unsigned allocated_blocks = 0;
+
+  assert(node->cached->lock.is_held,
+    "node_materialize_block_locked: caller must hold the inode lock.\n");
+
+  if (logical_block >= logical_limit){
+    return false;
+  }
+
+  if (logical_block < single_base){
+    if (node->cached->inode.block[logical_block] == 0){
+      node->cached->inode.block[logical_block] = alloc_block(node->filesystem);
+      allocated_blocks = 1;
+    }
+  } else if (logical_block < double_base){
+    allocated_blocks = ext2_materialize_indirect_data_slot(node,
+      &node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX],
+      EXT2_SINGLE_INDIRECT_LEVELS, logical_block - single_base);
+  } else if (logical_block < triple_base){
+    allocated_blocks = ext2_materialize_indirect_data_slot(node,
+      &node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX],
+      EXT2_DOUBLE_INDIRECT_LEVELS, logical_block - double_base);
+  } else {
+    allocated_blocks = ext2_materialize_indirect_data_slot(node,
+      &node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX],
+      EXT2_TRIPLE_INDIRECT_LEVELS, logical_block - triple_base);
+  }
+
+  node->cached->inode.blocks += allocated_blocks * sectors_per_block;
+  if (logical_block >= node->cached->data_block_count){
+    node->cached->data_block_count = logical_block + 1;
+  }
+
+  return true;
 }
 
 bool node_add_block(struct Node* node, unsigned block_num){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned sectors_per_block = ext2_sectors_per_block(node->filesystem);
-  unsigned entries_per_block = block_size / 4;
-  unsigned single_limit = 12 + entries_per_block;
+  unsigned entries_per_block = block_size / sizeof(unsigned);
+  unsigned single_limit = EXT2_DIRECT_BLOCK_COUNT + entries_per_block;
   unsigned double_span = entries_per_block * entries_per_block;
   unsigned double_limit = single_limit + double_span;
   unsigned triple_span = double_span * entries_per_block;
@@ -915,35 +1046,50 @@ bool node_add_block(struct Node* node, unsigned block_num){
   // the new data block plus any newly-allocated pointer blocks.
   unsigned reserved_blocks = 1;
 
-  // This helper only appends at EOF. `logical_block` is therefore the next
-  // empty data slot, and each branch allocates whatever metadata blocks are
-  // needed to make that slot reachable before storing `block_num`.
-  if (logical_block < 12){
+  /*
+   * Preconditions: the caller holds this inode's lock, `block_num` names an
+   * allocated zeroed data block, and data_block_count is the logical high-water
+   * mark. The per-inode lock serializes all pointer-tree changes across cores.
+   * Existing but empty metadata roots/leaves are reused rather than replaced,
+   * so a host-built sparse tree cannot leak an allocated pointer block when an
+   * append first reaches its span.
+   */
+  assert(node->cached->lock.is_held,
+    "node_add_block: caller must hold the inode lock.\n");
+
+  if (logical_block < EXT2_DIRECT_BLOCK_COUNT){
     // Direct region: inode.block[0..11] points straight at data blocks.
+    assert(node->cached->inode.block[logical_block] == 0,
+      "node_add_block: next direct logical slot is already populated.\n");
     node->cached->inode.block[logical_block] = block_num;
     node->cached->inode.blocks += reserved_blocks * sectors_per_block;
     node->cached->data_block_count += 1;
     return true;
   } else if (logical_block < single_limit){
     unsigned* single_indirect = malloc(block_size);
-    // The first append past the direct region also needs the single-indirect
-    // pointer block itself.
-    if (logical_block == 12){
+    if (node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX] == 0){
       unsigned new_block = alloc_block(node->filesystem);
       if (new_block == -1){
         free(single_indirect);
         return false;
       }
-      node->cached->inode.block[12] = new_block;
+      node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX] = new_block;
       ext2_zero_pointer_block(single_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect);
+      bcache_get(&node->filesystem->bcache,
+        node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX],
+        (char*)single_indirect);
     }
 
     // Store the new data block in the next free slot of the single-indirect leaf.
-    single_indirect[logical_block - 12] = block_num;
-    bcache_set(&node->filesystem->bcache, node->cached->inode.block[12], (char*)single_indirect, 0, block_size);
+    unsigned direct_index = logical_block - EXT2_DIRECT_BLOCK_COUNT;
+    assert(single_indirect[direct_index] == 0,
+      "node_add_block: next single-indirect logical slot is already populated.\n");
+    single_indirect[direct_index] = block_num;
+    bcache_set(&node->filesystem->bcache,
+      node->cached->inode.block[EXT2_SINGLE_INDIRECT_INDEX],
+      (char*)single_indirect, 0, block_size);
     node->cached->inode.blocks += reserved_blocks * sectors_per_block;
     node->cached->data_block_count += 1;
     free(single_indirect);
@@ -957,25 +1103,25 @@ bool node_add_block(struct Node* node, unsigned block_num){
     unsigned* double_indirect = malloc(block_size);
     unsigned* single_indirect = malloc(block_size);
 
-    // Double-indirect growth may need two metadata allocations: the top-level
-    // double-indirect block, and a leaf single-indirect block for this span.
-    if (logical_block == single_limit){
+    // Reuse host-created empty metadata blocks when present; allocate only the
+    // missing portion of the path to this exact append slot.
+    if (node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX] == 0){
       unsigned new_double_block = alloc_block(node->filesystem);
       if (new_double_block == -1){
         free(double_indirect);
         free(single_indirect);
         return false;
       }
-      node->cached->inode.block[13] = new_double_block;
+      node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX] = new_double_block;
       ext2_zero_pointer_block(double_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect);
+      bcache_get(&node->filesystem->bcache,
+        node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX],
+        (char*)double_indirect);
     }
 
-    // A leaf slot of 0 means this append is the first entry in a new
-    // single-indirect leaf under the double-indirect root.
-    if (direct_index == 0){
+    if (double_indirect[indirect_index] == 0){
       unsigned new_block = alloc_block(node->filesystem);
       if (new_block == -1){
         free(double_indirect);
@@ -985,13 +1131,17 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
       double_indirect[indirect_index] = new_block;
       reserved_blocks += 1;
-      bcache_set(&node->filesystem->bcache, node->cached->inode.block[13], (char*)double_indirect, 0, block_size);
+      bcache_set(&node->filesystem->bcache,
+        node->cached->inode.block[EXT2_DOUBLE_INDIRECT_INDEX],
+        (char*)double_indirect, 0, block_size);
       ext2_zero_pointer_block(single_indirect, entries_per_block);
     } else {
       bcache_get(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect);
     }
 
     // Once the metadata path exists, the final write is just one leaf update.
+    assert(single_indirect[direct_index] == 0,
+      "node_add_block: next double-indirect logical slot is already populated.\n");
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[indirect_index], (char*)single_indirect, 0, block_size);
     node->cached->inode.blocks += reserved_blocks * sectors_per_block;
@@ -1010,8 +1160,9 @@ bool node_add_block(struct Node* node, unsigned block_num){
     unsigned* double_indirect = malloc(block_size);
     unsigned* single_indirect = malloc(block_size);
 
-    // Triple-indirect growth follows the same pattern one level deeper.
-    if (logical_block == double_limit){
+    // Triple-indirect growth follows the same pointer-presence rule one level
+    // deeper, preserving any allocated-but-empty host metadata subtree.
+    if (node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX] == 0){
       unsigned new_triple_block = alloc_block(node->filesystem);
       if (new_triple_block == -1){
         free(triple_indirect);
@@ -1019,16 +1170,16 @@ bool node_add_block(struct Node* node, unsigned block_num){
         free(single_indirect);
         return false;
       }
-      node->cached->inode.block[14] = new_triple_block;
+      node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX] = new_triple_block;
       ext2_zero_pointer_block(triple_indirect, entries_per_block);
       reserved_blocks += 1;
     } else {
-      bcache_get(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect);
+      bcache_get(&node->filesystem->bcache,
+        node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX],
+        (char*)triple_indirect);
     }
 
-    // Every multiple of one full double-span starts a new double-indirect node
-    // hanging from the triple-indirect root.
-    if (triple_index % double_span == 0){
+    if (triple_indirect[outer_index] == 0){
       unsigned new_block = alloc_block(node->filesystem);
       if (new_block == -1){
         free(triple_indirect);
@@ -1039,15 +1190,15 @@ bool node_add_block(struct Node* node, unsigned block_num){
 
       triple_indirect[outer_index] = new_block;
       reserved_blocks += 1;
-      bcache_set(&node->filesystem->bcache, node->cached->inode.block[14], (char*)triple_indirect, 0, block_size);
+      bcache_set(&node->filesystem->bcache,
+        node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX],
+        (char*)triple_indirect, 0, block_size);
       ext2_zero_pointer_block(double_indirect, entries_per_block);
     } else {
       bcache_get(&node->filesystem->bcache, triple_indirect[outer_index], (char*)double_indirect);
     }
 
-    // Every 0 leaf offset starts a new single-indirect node under that
-    // double-indirect subtree.
-    if (direct_index == 0){
+    if (double_indirect[middle_index] == 0){
       unsigned new_block = alloc_block(node->filesystem);
       if (new_block == -1){
         free(triple_indirect);
@@ -1065,6 +1216,8 @@ bool node_add_block(struct Node* node, unsigned block_num){
     }
 
     // After the metadata chain is present, publish the new data block in the leaf.
+    assert(single_indirect[direct_index] == 0,
+      "node_add_block: next triple-indirect logical slot is already populated.\n");
     single_indirect[direct_index] = block_num;
     bcache_set(&node->filesystem->bcache, double_indirect[middle_index], (char*)single_indirect, 0, block_size);
     node->cached->inode.blocks += reserved_blocks * sectors_per_block;
@@ -1466,6 +1619,9 @@ static void dealloc_inode(struct Node* node){
 
 static void cached_inode_init(struct CachedInode* cached, unsigned inumber){
   cached->inumber = inumber;
+  // This derived value is initialized before valid_gate opens. New inodes keep
+  // zero, while cache misses replace it with a scan of the on-disk block tree.
+  cached->data_block_count = 0;
   cached->refcount = 1;
   cached->valid = false; // invalid until the inode data is read in from disk
   cached->delete_pending = false;
@@ -1555,12 +1711,22 @@ struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber){
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
   assert(rc == 0, "icache_get: failed to read inode table block.\n");
 
-  blocking_lock_acquire(&cache->lock);
-
-  // Copy the inode into the published placeholder, then mark it valid and wake
-  // every waiter that raced on the same miss.
+  // This thread owns the initial reference, and every concurrent getter is
+  // blocked on valid_gate, so it is the only thread allowed to initialize the
+  // placeholder's inode and derived block count. Do the potentially blocking
+  // pointer-tree scan without cache->lock; no initialized state is visible
+  // until valid is published and the gate is opened below.
   memcpy(&new_cache_entry->inode, (struct Inode*)(inode_table_buf + inode_offset), sizeof(struct Inode));
+  struct Node initializing_node;
+  initializing_node.cached = new_cache_entry;
+  initializing_node.parent_inumber = EXT2_BAD_INO;
+  initializing_node.filesystem = cache->fs;
+  new_cache_entry->data_block_count = node_scan_data_block_count(&initializing_node);
 
+  blocking_lock_acquire(&cache->lock);
+  // Under the documented sequentially-consistent memory model, publishing
+  // valid while holding the inode-cache lock and then signaling valid_gate
+  // makes both the inode bytes and data_block_count visible to every waiter.
   new_cache_entry->valid = true;
   blocking_lock_release(&cache->lock);
 
@@ -1575,6 +1741,16 @@ void icache_insert(struct InodeCache* cache, struct CachedInode* cached){
   blocking_lock_acquire(&cache->lock);
   struct CachedInode* old = hash_map_try_insert(&cache->cache, cached->inumber, cached);
   assert(old == NULL, "icache_insert: attempted to insert duplicate cache entry.\n");
+  /*
+   * Cache validity means the inode record and derived data_block_count are safe
+   * for wrappers to observe; publish those fields before waking a getter that
+   * raced with insertion. It does not mean a higher-level create transaction is
+   * complete. alloc_inode() currently links new directories and symlinks before
+   * node_make_dir()/node_make_symlink() initializes their namespace contents or
+   * target bytes. That separate namespace-publication ordering issue remains
+   * unresolved here.
+   */
+  cached->valid = true;
   blocking_lock_release(&cache->lock);
 
   gate_signal(&cached->valid_gate);
@@ -1666,8 +1842,10 @@ void bcache_init(struct BlockCache* cache, unsigned block_size){
   }
 }
 
-// On a miss, drop the cache lock for SD IO and then install the fetched block
-// back into the cache before returning the data to the caller.
+// The block-cache lock covers lookup, miss IO, installation, and copying to the
+// caller. It is a BlockingLock, so the owner may sleep in the SD driver while
+// retaining logical ownership; other cores block rather than installing a
+// duplicate line or letting a stale miss overwrite a newer bcache_set().
 void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
   blocking_lock_acquire(&cache->lock);
   bool found = false;
@@ -1697,18 +1875,16 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
     return;
   } 
 
-  // was not in cache, need to read in block
-
-  // can't read from sd while holding the lock since it's a blocking call
-  blocking_lock_release(&cache->lock);
-
+  // A miss remains serialized with write-through updates for this entire SD
+  // read. Preconditions: kernel mode, valid full-block destination, and an
+  // initialized cache. Postcondition: exactly one coherent line with this tag
+  // is installed before another cache operation may proceed on any core.
   int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, dest);
   assert(rc == 0, "bcache_get: failed to read filesystem block.\n");
 
-  // Reinstall the fetched block into the oldest cache line now that the IO is
-  // complete and the cache lock can be held again.
-  blocking_lock_acquire(&cache->lock);
+  // Install the fetched block into the oldest cache line while still holding
+  // the same lock acquisition used for the initial miss lookup.
   for (unsigned i = 0; i < BCACHE_SIZE; ++i){
     cache->ages[i]++;
     if (cache->ages[i] == BCACHE_SIZE) result = i;
@@ -1810,14 +1986,16 @@ void bcache_destroy(struct BlockCache* cache){
 }
 
 void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_inumber, struct Ext2* fs){
+  assert(cached->valid,
+    "node_init: cached inode record and derived state must be published before creating a wrapper.\n");
   node->cached = cached;
   // Default to "self" so root nodes and reconstructed directory nodes remain
   // valid even when the caller has no better parent information available.
   node->parent_inumber = parent_inumber;
   node->filesystem = fs;
-  // Seed the cache once when the wrapper is created. Later block-growth paths
-  // update it incrementally so steady-state writes avoid pointer-tree scans.
-  node->cached->data_block_count = node_scan_data_block_count(node);
+  // Wrapper creation never mutates shared inode state. data_block_count was
+  // initialized exactly once before valid_gate opened and is thereafter
+  // changed only by block-growth/reclamation paths under cached->lock.
 }
 
 struct Node* node_clone(struct Node* node){
@@ -1829,9 +2007,19 @@ struct Node* node_clone(struct Node* node){
 
   *clone = *node;
 
-  // dont need to acquire lock, we know that refcount will stay > 1 
-  // for the duration of this call, as the caller holds a reference to the node
-  __atomic_fetch_add((int*)&node->cached->refcount, 1);
+  // Preconditions: kernel mode and a live source wrapper owned by the caller.
+  // The caller's reference prevents the count from reaching zero while this
+  // function waits. Every transition, including icache_get/release, uses the
+  // inode-cache BlockingLock, so the sequentially-consistent increment cannot
+  // be lost against a concurrent final release on another core. On return the
+  // clone owns one independent cached-inode reference; acquiring this lock may
+  // block and disables preemption only for the bounded count update.
+  struct InodeCache* cache = &node->filesystem->icache;
+  blocking_lock_acquire(&cache->lock);
+  assert(node->cached->refcount > 0,
+    "node_clone: source wrapper references an inode with refcount zero.\n");
+  node->cached->refcount += 1;
+  blocking_lock_release(&cache->lock);
 
   return clone;
 }
@@ -1933,17 +2121,11 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
     return node;
   }
 
-  // node_write_all expects every logical block to already exist, so allocate
-  // the backing blocks for long symlink targets before copying the bytes.
-  unsigned block_size = ext2_get_block_size(node->filesystem);
-  unsigned block_count = (target_size + block_size - 1) / block_size;
-  for (unsigned i = 0; i < block_count; ++i){
-    bool added = node_add_block(node, alloc_block(node->filesystem));
-    assert(added, "node_make_symlink: failed to allocate a data block for the symlink target.\n");
-  }
-
-  node->cached->inode.size = target_size;
-  node_write_all(node, 0, target_size, target);
+  // Long targets use the ordinary block tree. node_write_all() materializes the
+  // exact covered slots under the inode lock and persists the final size/tree.
+  unsigned written = node_write_all(node, 0, target_size, target);
+  assert(written == target_size,
+    "node_make_symlink: failed to write the complete block-backed target.\n");
 
   return node;
 }
@@ -2433,12 +2615,16 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
 
   assert(node_is_file(node) || node_is_symlink(node), "node_write_all: can only write to regular files or symlinks.\n");
 
-  // Host-built ext2 images may encode a trailing run of all-zero file blocks as
-  // sparse holes with zero block pointers. Materialize that missing tail before
-  // any write so the lower-level block writers never fall through to block 0.
-  while (end_block >= node->cached->data_block_count){
-    bool added = node_add_block(node, alloc_block(node->filesystem));
-    assert(added, "node_write_all: failed to allocate a new block for the file data.\n");
+  /*
+   * Materialize only the logical blocks touched by this write. That handles
+   * both host-built interior holes and writes starting beyond EOF without
+   * overwriting later live pointers or sending a block-0 write to the device.
+   * Untouched gaps remain sparse and read back as zero through the read helpers.
+   */
+  for (unsigned i = start_block; i <= end_block; ++i){
+    bool materialized = node_materialize_block_locked(node, i);
+    assert(materialized,
+      "node_write_all: requested logical block exceeds ext2 inode addressing capacity.\n");
   }
 
   // Update the file size if we are going to write past the previous end of the file.

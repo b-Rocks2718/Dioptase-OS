@@ -14,13 +14,25 @@ The public API revolves around `struct Node`, which is one wrapper around a shar
 The inode cache is shared across the whole filesystem instance. Cache entries are reference-counted so multiple `Node` wrappers can share the same inode. Cache misses publish a placeholder entry first, then concurrent missers wait on a gate until the inode contents have been read from disk and marked valid.
 
 #### Block Cache
-The block cache is a small write-through cache keyed by ext2 logical block number. It currently has 12 cache lines and uses a simple LRU age scheme. Reads populate the cache on miss, and writes update the cached block image and disk together.
+The block cache is a 32-line write-through cache keyed by ext2 logical block
+number and uses a simple LRU age scheme. Reads populate the cache on miss, and
+writes update the cached block image and disk together.
+
+#### VM Page Cache
+File-backed virtual mappings use the separate VM page cache in `page_cache.c`.
+It keys resident physical pages by inode and page index so mappings of the same
+file page can share the loaded data. This cache is distinct from the ext2
+logical-block cache above.
 
 #### Path Lookup
 `node_find()` resolves a pathname starting from a directory or symlink node. Absolute paths restart from the ext2 root. An empty path returns the starting inode as a fresh heap-owned wrapper. Multi-component traversal is supported, symlinks are expanded during traversal, relative symlink targets are resolved relative to the symlink's containing directory, and lookup aborts after 100 symlink expansions to avoid infinite loops.
 
 #### Regular File Reads
-Reads are EOF-clamped and may start and end at arbitrary byte offsets. Logical block lookup supports direct, single-indirect, double-indirect, and triple-indirect addressing. `node_read_block()` assumes the requested logical block already exists, while `node_read_all()` is the safe high-level API for normal reads.
+Reads are EOF-clamped and may start and end at arbitrary byte offsets. Logical
+block lookup supports direct, single-indirect, double-indirect, and
+triple-indirect addressing. Sparse holes at any level read as zero-filled
+blocks. `node_read_block()` reads one complete logical block without applying
+EOF, while `node_read_all()` is the normal EOF-clamped byte-range API.
 
 #### Regular File Writes
 `node_write_all()` writes arbitrary byte ranges and grows the file as needed. File growth allocates data blocks before issuing writes, updates inode size, and preserves zero-filled gaps because newly allocated blocks are cleared before use. The write path is serialized per inode, so concurrent writers to the same file do not race the block tree or inode writeback.
@@ -62,7 +74,7 @@ The filesystem uses several lock layers:
 - rwx permission enforcement
 - uid / gid
 - atime / mtime / ctime updates
-- VFS layer or page cache
+- VFS layer
 
 ### Tests
 - `ext_read.c`

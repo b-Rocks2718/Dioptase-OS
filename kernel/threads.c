@@ -33,7 +33,7 @@
 #include "sd_driver.h"
 
 // jump_to_user executes one rfe, so this is the only PSR depth from which a
-// user signal handler can be entered in user mode.
+// final kernel-return path can enter a user signal handler in user mode.
 #define USER_RETURNABLE_PSR_DEPTH 1
 
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
@@ -403,11 +403,12 @@ static void nothing(void* unused) {}
 //   the current TCB is then published as exited and is never rescheduled.
 //
 // Concurrency and CPU state:
-// - The current TCB cannot execute concurrently on another core. Scheduler
+// - The current TCB cannot execute concurrently on another core. Final-return
 //   delivery and current-thread exception delivery therefore own
 //   in_signal_handler and signal_handlers without ChildDescriptor.state_lock.
 // - Signals sent from other cores mutate pending_signals under state_lock and
-//   are observed by the scheduler after this handler completes. The
+//   are observed by a later final user-return path after this handler
+//   completes. The
 //   architecture memory model is sequentially consistent.
 // - jump_to_user performs the kernel-to-user transition and preserves the
 //   kernel continuation on the TCB's current kernel stack. Because
@@ -425,12 +426,34 @@ static void run_user_signal_handler(void* handler, unsigned arg1,
   assert(!me->in_signal_handler,
     "signal delivery: attempted nested user signal handler entry.\n");
 
+  // Make handler activation atomic with respect to PIT return processing. If
+  // interrupts remained enabled between selecting a signal and setting
+  // in_signal_handler, a PIT could select a second signal in that window and
+  // create a nested handler despite the no-nesting contract.
+  unsigned caller_imr = interrupts_disable();
   unsigned saved_user_sp = get_user_sp();
   me->in_signal_handler = true;
   assert(get_cr0() == USER_RETURNABLE_PSR_DEPTH,
     "signal delivery: user handler entry requires PSR depth 1.\n");
+
+  /*
+   * interrupts_disable() clears the complete IMR, including every individual
+   * device-enable bit. Restore the caller's lower mask bits before rfe, but
+   * keep IMR[31] clear so no interrupt can enter between publishing
+   * in_signal_handler and jump_to_user saving its kernel continuation. Per the
+   * ISA, rfe sets the global-enable bit while retaining these lower bits.
+   */
+  interrupts_restore(caller_imr & ~GLOBAL_INT_ENABLE);
   int rc = jump_to_user((unsigned)handler, me->signal_stack_top, arg1, arg2);
+
+  // A handler returns here through a nested sigreturn trap. That trap's
+  // return-to-kernel path leaves interrupts enabled, but the suspended outer
+  // wrapper may have entered with interrupts disabled (notably PIT). Prevent
+  // another interrupt from observing the handler's user SP, restore the
+  // suspended user SP, then re-establish the caller's exact IMR.
+  interrupts_disable();
   set_user_sp(saved_user_sp);
+  interrupts_restore(caller_imr);
   if (me->in_signal_handler) {
     // The handler did not call sigreturn(). This includes an explicit exit,
     // a user exception that aborted its nested jump_to_user(), and a normal
@@ -454,11 +477,111 @@ bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2) {
   return true;
 }
 
-static void run_pending_signal_handler(void* delivery_ptr) {
-  struct SignalDelivery* delivery = (struct SignalDelivery*)delivery_ptr;
-  assert(delivery != NULL,
-    "signal delivery: pending delivery pointer is NULL.\n");
-  run_user_signal_handler(delivery->handler, delivery->signal, 0);
+// Linearize sigreturn with cross-core signal publication.
+//
+// Preconditions:
+// - The current non-idle user TCB is executing the TRAP_SIGRETURN continuation
+//   in kernel mode, and in_signal_handler is true.
+// - No spinlock is held on entry. Interrupts may be enabled by trap entry.
+//
+// Postconditions:
+// - If a nonmaskable signal was published before state_lock is acquired, the
+//   current TCB terminates through stop() and this function does not return.
+// - Otherwise in_signal_handler becomes false while holding the same
+//   state_lock used by cross-core senders. A sender ordered after that clear is
+//   a post-handler send and leaves its bit pending for a later final return.
+// - The caller's exact IMR is restored on the returning path.
+void finish_current_signal_handler(void) {
+  unsigned caller_imr = interrupts_disable();
+  struct TCB* me = get_current_tcb();
+  assert(me != NULL,
+    "signal return: current TCB is NULL while completing sigreturn.\n");
+  assert(me->in_signal_handler,
+    "signal return: sigreturn completion requires an active handler.\n");
+
+  bool terminate = false;
+  struct ChildDescriptor* descriptor = me->parent_promise;
+  if (descriptor != NULL) {
+    clh_lock_acquire(&descriptor->state_lock);
+    unsigned eligible = me->pending_signals & ~me->signal_mask;
+    unsigned maskable_bits = (1u << MAX_MASKABLE_SIGNAL) - 1;
+    terminate = (eligible & ~maskable_bits) != 0;
+    if (!terminate) {
+      me->in_signal_handler = false;
+    }
+    clh_lock_release(&descriptor->state_lock);
+  } else {
+    // The initial process has no parent descriptor and therefore no external
+    // signal sender. It still uses the same interrupt-atomic state transition.
+    me->in_signal_handler = false;
+  }
+
+  if (terminate) {
+    stop((unsigned)-1);
+  }
+
+  interrupts_restore(caller_imr);
+}
+
+// Consume at most one asynchronous signal at a true final kernel-to-user
+// boundary.
+//
+// Preconditions:
+// - The current thread's syscall/fault/interrupt continuation has completed;
+//   it holds no spinlock, has accepted every wakeup handoff, and is
+//   preemptible.
+// - The wrapper still owns the saved user register/EPC/EFG frame and will
+//   restore it only after this function returns.
+// - cr0 is exactly 1, so jump_to_user's one rfe enters user mode.
+//
+// Postconditions:
+// - No eligible signal: the pending bitmap is unchanged.
+// - Handled signal: one lowest-numbered pending bit is consumed and the
+//   handler has completed through sigreturn before this function returns.
+// - Default action or SIGNAL_KILL: stop() publishes exit and this function
+//   never returns.
+//
+// Ordering: ChildDescriptor.state_lock serializes the pending bitmap with
+// cross-core senders. The current TCB exclusively owns its mask, handler table,
+// and in_signal_handler state under the sequentially-consistent memory model.
+void process_pending_signals_before_user_return(void) {
+  assert(get_cr0() == USER_RETURNABLE_PSR_DEPTH,
+    "signal return: final user return requires PSR depth 1.\n");
+
+  // Keep interrupts disabled from pending-bit selection through either
+  // handler activation or the no-delivery decision. This closes the interval
+  // in which a PIT return could otherwise select a second signal before
+  // in_signal_handler becomes visible.
+  unsigned caller_imr = interrupts_disable();
+  struct PerCore* core = get_per_core();
+  struct TCB* me = core->current_thread;
+
+  assert(me != NULL,
+    "signal return: current TCB is NULL at final user return.\n");
+  assert(me != &core->idle_thread,
+    "signal return: idle thread cannot return to user mode.\n");
+  assert(me->can_preempt,
+    "signal return: final user return reached with preemption disabled.\n");
+  assert(me->my_node != NULL && !me->my_node->locked,
+    "signal return: final user return reached while holding a spinlock.\n");
+
+  struct SignalDelivery delivery = {NULL, -1};
+  if (has_unhandled_signal(me, &delivery)) {
+    stop((unsigned)-1);
+  }
+
+  if (delivery.handler != NULL) {
+    /*
+     * has_unhandled_signal() ran with the complete IMR cleared. Reinstall the
+     * final-return caller's device mask with global delivery still disabled so
+     * run_user_signal_handler() can carry those bits through its own atomic
+     * activation window and into rfe.
+     */
+    interrupts_restore(caller_imr & ~GLOBAL_INT_ENABLE);
+    run_user_signal_handler(delivery.handler, delivery.signal, 0);
+  }
+
+  interrupts_restore(caller_imr);
 }
 
 // cleanup and shutdown the system
@@ -550,36 +673,11 @@ void event_loop(void) {
       continue;
     }
 
-    // context_switch restores next->psr before its callback. A signal handler
-    // enters user mode through one rfe, so only depth 1 is user-returnable.
-    // Depths above 1 mean an interrupt preempted an existing kernel activation
-    // (for example, an interruptible syscall). Resume that activation without
-    // inspecting or consuming its pending signals; after the nested interrupt
-    // unwinds, a later scheduling boundary can process them at depth 1.
-    //
-    // Scheduler ownership makes next->psr stable here: next has been removed
-    // from its ready queue and cannot execute on another core. Deferring all
-    // signal processing also preserves pending-signal priority and avoids
-    // abandoning a nested kernel continuation for a default termination.
-    if (next->psr == USER_RETURNABLE_PSR_DEPTH) {
-      struct SignalDelivery delivery = {NULL, -1};
-      if (has_unhandled_signal(next, &delivery)) {
-        // kill this thread
-
-        publish_exit(next, (unsigned)-1);
-        reap_tcb((void*)next);
-        continue;
-      }
-
-      if (delivery.handler != NULL) {
-        // run the signal handler
-        int was = interrupts_disable();
-        context_switch(me, next, run_pending_signal_handler, &delivery,
-          &core->current_thread, was, true);
-        continue;
-      }
-    }
-
+    // The scheduler cannot infer a safe user-return boundary from saved PSR.
+    // A just-woken TCB may still be suspended inside a syscall/fault after a
+    // semaphore or lock handoff. Resume its kernel continuation unchanged;
+    // the final trap/interrupt/exception epilogue processes pending signals
+    // only after that continuation has released its resources.
     int was = interrupts_disable();
     context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
   }

@@ -127,7 +127,7 @@ non-ELF regular files return `-1`.
 | --- | --- | --- | --- |
 | `14` | `open(path)` | `path` | Resolves `path` from the current cwd unless the path is absolute. Creates the file if it does not exist. Returns a file descriptor in `0..99`, or `-1` on copy, creation, or descriptor-allocation failure. |
 | `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at EOF, or `-1` on failure. A process whose fd `0` still names the default stdin descriptor blocks waiting for keyboard input; if fd `0` has been replaced with a pipe or file, it follows that descriptor's normal read behavior. |
-| `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. `STDOUT` and `STDERR` write characters to the console. |
+| `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. `STDOUT` and `STDERR` write characters to the console; each clamped write is one serialized console transaction and cannot interleave with an independently owned transaction on another core. A same-core interrupt diagnostic may nest without deadlocking; while a VGA transaction is interrupted, its diagnostic bytes are routed to UART instead of touching VGA state. |
 | `17` | `close(fd)` | `fd` | Closes a valid file descriptor and returns `0`, or returns `-1` for an invalid descriptor. |
 | `25` | `play_audio_file(fd)` | `fd` | Starts asynchronous playback of a regular file and returns `0`, or returns `-1` if `fd` is invalid or does not name a regular file. |
 | `28` | `chdir(path)` | `path` | Resolves `path` relative to the current cwd unless absolute, requires the result to be a directory, updates the cwd, and returns `0`. Returns `-1` on copy or lookup failure, or if the target is not a directory. |
@@ -143,6 +143,12 @@ non-ELF regular files return `-1`.
 | `42` | `unlink(path)` | `path` | Removes one non-directory entry from the current cwd and returns `0`, or returns `-1` if the target is missing, is a directory, or the name is invalid. |
 
 Additional file-descriptor notes:
+- Console serialization covers kernel-managed output and text state. A process
+  using a direct tilemap/framebuffer mapping bypasses that lock and must define
+  its own coordination with console output.
+- The tile scale and horizontal/vertical scroll set/move traps use that same
+  serialization. In particular, a move is one locked MMIO read/modify/write and
+  cannot lose an update to console scrolling on another core.
 - `dup()` shares the same underlying descriptor object, so offset changes are
   visible through both the original descriptor and the duplicate.
 - `seek()` uses `SEEK_SET = 0`, `SEEK_CUR = 1`, and `SEEK_END = 2`.

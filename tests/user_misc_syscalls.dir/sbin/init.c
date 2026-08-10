@@ -4,11 +4,18 @@
  *   mmap, request_priority, and play_audio_file
  * - ensure semaphore exhaustion returns -1 instead of dereferencing an invalid
  *   descriptor slot
+ * - ensure near-maximum CRT allocation/growth requests fail instead of
+ *   wrapping to tiny successful allocations, and that failed realloc keeps
+ *   the original allocation valid
+ * - issue a raw trap and verify the trap ABI preserves the user's r29 return
+ *   address even though the kernel wrapper makes nested C calls
  * - generate a tiny valid WAV file in-place so play_audio_file can take a real
  *   success path without needing a checked-in binary fixture
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../../root/crt/limits.h"
+#include "../../../root/crt/stdlib.h"
 #include "../../user_test.h"
 
 #define TEST_WAV_BYTES 46
@@ -19,6 +26,8 @@
 #define TEST_WAV_BLOCK_ALIGN 2U
 #define TEST_WAV_BITS_PER_SAMPLE 16U
 #define TEST_WAV_DATA_BYTES 2U
+
+extern int raw_trap_preserves_ra(void);
 
 static void write_u16_le(char* bytes, unsigned value){
   bytes[0] = value & 0xFF;
@@ -71,6 +80,16 @@ int main(void){
 
   fill_test_wav(wav_bytes);
 
+  user_test_expect_eq("malloc(UINT_MAX) fails safely",
+    malloc(UINT_MAX) == (void*)0, 1);
+  char* realloc_original = malloc(4);
+  realloc_original[0] = 'R';
+  user_test_expect_eq("realloc(UINT_MAX) fails safely",
+    realloc(realloc_original, UINT_MAX) == (void*)0, 1);
+  user_test_expect_eq("failed realloc preserves original allocation",
+    realloc_original[0], 'R');
+  free(realloc_original);
+  user_test_expect_eq("raw trap preserves r29", raw_trap_preserves_ra(), 1);
   user_test_expect_eq("getkey()", getkey(), 0);
 
   unsigned start = get_current_jiffies();

@@ -10,8 +10,8 @@
  *   stale TCB and produces only outcomes allowed by descriptor publication
  *
  * Why this exists:
- * Signal senders, scheduler delivery, user handlers, and child exit execute on
- * different kernel activations and may run on different cores. Functional
+ * Signal senders, final-return delivery, user handlers, and child exit execute
+ * on different kernel activations and may run on different cores. Functional
  * tests with fully ordered semaphore handshakes do not exercise the lifetime
  * and state-transition windows between those operations.
  *

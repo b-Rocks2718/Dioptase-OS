@@ -426,6 +426,11 @@ $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 physmem_test.test physmem_test.fail physmem_test.summary-test: TIMEOUT_SECONDS=180
 physmem_test.fail physmem_test.summary-test: override TEST_RUNS=2
 
+# Stretch each SD word transfer so signal_return_safety can reliably publish a
+# pending signal while its child is blocked in a file-backed TLB continuation.
+# The test validates a scheduler/VM interleaving, not device throughput.
+signal_return_safety.test signal_return_safety.fail signal_return_safety.summary-test: override SD_DMA_TICKS=64
+
 %.summary-test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_test_emulator_cmd) \
 	runs=$(TEST_RUNS); \

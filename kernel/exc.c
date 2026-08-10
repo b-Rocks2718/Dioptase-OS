@@ -13,6 +13,11 @@ void exc_init(void){
 }
 
 int invalid_instr_handler(bool* return_to_user, unsigned epc){
+  // The assembly wrapper initializes this out-parameter's stack slot to zero.
+  // A handled user exception must explicitly select rfe so sigreturn retries
+  // the retained faulting frame; only an unhandled user fault overrides this
+  // below and unwinds to the kernel caller of jump_to_user().
+  *return_to_user = true;
   bool was_user = (get_cr0() == 1);
 
   if (was_user){
@@ -34,6 +39,10 @@ int invalid_instr_handler(bool* return_to_user, unsigned epc){
 }
 
 int priv_instr_handler(bool* return_to_user, unsigned epc){
+  // See invalid_instr_handler(): successful sigreturn resumes the exact saved
+  // user frame through rfe, while an unhandled fault returns to the enclosing
+  // kernel jump_to_user() activation.
+  *return_to_user = true;
   bool was_user = (get_cr0() == 1);
 
   if (was_user){
@@ -55,6 +64,9 @@ int priv_instr_handler(bool* return_to_user, unsigned epc){
 }
 
 int misaligned_pc_handler(bool* return_to_user, unsigned epc){
+  // A handled alignment exception must retry the saved EPC through rfe. The
+  // unhandled user path below changes this to false before returning.
+  *return_to_user = true;
   bool was_user = (get_cr0() == 1);
 
   if (was_user){

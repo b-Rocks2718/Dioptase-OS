@@ -48,6 +48,17 @@ pit_handler_:
 
   call pit_handler
 
+  # pit_handler may have blocked and later resumed this exact interrupt
+  # continuation. Only now, after its scheduling/resource work has unwound,
+  # may an interrupt that originated in user mode enter an asynchronous signal
+  # handler. The helper preserves the caller's disabled IMR and returns without
+  # action for a nested kernel-mode PIT interrupt.
+  mov  r1, cr0
+  cmp  r1, 1
+  bnz  pit_signal_return_done
+  call process_pending_signals_before_user_return
+pit_signal_return_done:
+
   pop  ra
   pop  bp
 

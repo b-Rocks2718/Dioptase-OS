@@ -649,9 +649,14 @@ int handle_write(int fd, char* buf, unsigned count){
     free(kbuf);
     return -1;
   } else if (type == FILE_DESCRIPTOR_STDOUT || type == FILE_DESCRIPTOR_STDERR){
-    for (unsigned i = 0; i < count; i++){
-      putchar(kbuf[i]);
-    }
+    /*
+     * The trap entry runs in kernel mode and may have re-enabled interrupts.
+     * console_write() owns the global cursor/color/MMIO state for this entire
+     * copied buffer, so writes from other cores cannot corrupt the cursor or
+     * interleave inside one syscall. It restores this TCB's prior interrupt
+     * and preemption state before returning.
+     */
+    console_write(kbuf, count);
     free(kbuf);
     return count;
   } else if (type == FILE_DESCRIPTOR_PIPE_WRITE){
@@ -1098,7 +1103,11 @@ int handle_mmap(int size, int fd, int offset, int flags){
 int child_thread(unsigned* arg){
   unsigned pc = arg[0];
   unsigned sp = arg[1];
-  
+
+  // This new child has finished its kernel-side fork trampoline. Process any
+  // asynchronous notification that arrived after fork publication only now,
+  // at the final transition into its saved user frame.
+  process_pending_signals_before_user_return();
   return jump_to_user(pc, sp, 0, 0);
 }
 
@@ -1819,10 +1828,11 @@ int handle_mask_signal(int signal){
   }
 
   // Only the current TCB changes its mask. It cannot be running on another
-  // core, and scheduler inspection occurs only after this trap returns or the
-  // thread blocks. A PIT preemption may observe the old value before this
-  // syscall completes, which is equivalent to delivery immediately before the
-  // mask operation. Sequential consistency requires no additional ordering.
+  // core, and pending-signal inspection occurs only at a final user-return
+  // path after this trap continuation completes. A PIT preemption may observe
+  // the old value before this syscall completes, which is equivalent to
+  // delivery immediately before the mask operation. Sequential consistency
+  // requires no additional ordering.
   struct TCB* me = get_current_tcb();
   me->signal_mask |= 1u << signal;
   return 0;
@@ -1834,8 +1844,8 @@ int handle_unmask_signal(int signal){
   }
 
   // Pending signals are intentionally retained while masked. Clearing this bit
-  // makes any coalesced pending instance eligible at the next scheduling
-  // boundary.
+  // makes any coalesced pending instance eligible at the next final
+  // kernel-to-user transition.
   struct TCB* me = get_current_tcb();
   me->signal_mask &= ~(1u << signal);
   return 0;
@@ -1867,17 +1877,17 @@ int trap_handler(unsigned code,
     }
     case TRAP_SET_TILE_SCALE: {
       claim_foreground_display();
-      *TILE_SCALE = arg1;
+      console_set_tile_scale(arg1);
       return 0;
     }
     case TRAP_SET_VSCROLL: {
       claim_foreground_display();
-      *TILE_VSCROLL = arg1;
+      console_set_tile_vscroll(arg1);
       return 0;
     }
     case TRAP_SET_HSCROLL: {
       claim_foreground_display();
-      *TILE_HSCROLL = arg1;
+      console_set_tile_hscroll(arg1);
       return 0;
     }
     case TRAP_LOAD_TEXT_TILES: {
@@ -1946,9 +1956,7 @@ int trap_handler(unsigned code,
     }
     case TRAP_SET_TEXT_COLOR: {
       int color = arg1;
-      preempt_spin_lock_acquire(&print_lock);
-      text_color = color;
-      preempt_spin_lock_release(&print_lock);
+      console_set_text_color(color);
       return 0;
     }
     case TRAP_WAIT_CHILD: {
@@ -1981,12 +1989,12 @@ int trap_handler(unsigned code,
     }
     case TRAP_MOVE_VSCROLL: {
       claim_foreground_display();
-      *TILE_VSCROLL += arg1;
+      console_move_tile_vscroll(arg1);
       return 0;
     }
     case TRAP_MOVE_HSCROLL: {
       claim_foreground_display();
-      *TILE_HSCROLL += arg1;
+      console_move_tile_hscroll(arg1);
       return 0;
     }
     case TRAP_FD_BYTES_AVAILABLE: {
@@ -2055,7 +2063,7 @@ int trap_handler(unsigned code,
 
       // return instead to the kernel thread that called jump_to_user
       *return_to_user = false;
-      me->in_signal_handler = false;
+      finish_current_signal_handler();
       return arg1;
     }
     case TRAP_MASK_SIGNAL: {
@@ -2126,6 +2134,10 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
     return -1;
   }
 
+  // ELF loading, stack construction, and all filesystem/VM locks have
+  // unwound. This is the final transition for initial entry and successful
+  // exec, so pending asynchronous signals are safe to process here.
+  process_pending_signals_before_user_return();
   return jump_to_user(entry, initial_sp, argc, user_argv);
 }
 

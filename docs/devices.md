@@ -6,13 +6,38 @@
 
 The display hardware exposes separate tile and pixel framebuffers plus tile scroll/scale, pixel scale, status, and sprite registers. `vga.h` exports the tile and pixel framebuffer pointers directly, helper routines load the text tileset and clear the screen, and `make_tiles_transparent()` can blank the tile layer so pixel output shows through underneath.
 
-Most visible VGA behavior comes from `print.c`. When `CONFIG.use_vga` is true, `putchar_color()` writes ASCII tiles into `TILE_FB`, advances a software cursor, and implements scrolling by moving `TILE_VSCROLL` in 8-pixel rows. When `CONFIG.use_vga` is false, the same formatted-print APIs fall back to UART instead of touching the VGA hardware.
+Most visible VGA behavior comes from `print.c`. When `CONFIG.use_vga` is true,
+`putchar_color()` writes ASCII tiles into `TILE_FB`, advances a software cursor,
+and implements scrolling by moving `TILE_VSCROLL` in 8-pixel rows. The same
+console lock serializes the kernel-managed tile scale and horizontal/vertical
+scroll setters, including the complete read/modify/write used by the move
+traps. `make_tiles_transparent()` uses a locked bulk transaction when handing
+visibility to the pixel layer. Direct framebuffer/tilemap mappings still bypass
+this ownership.
+
+The console owner is pinned by disabled preemption, but long counted output,
+framebuffer clears, transparency fills, and tileset loads run with the caller's
+original interrupt mask. Only atomic acquisition plus owner publication and
+release briefly mask interrupts. A diagnostic that interrupts a console owner
+on the same core enters recursively instead of deadlocking. If the interrupted
+owner is using VGA, every nested diagnostic byte is sent to UART so it cannot
+touch a cursor or framebuffer transaction at an intermediate point. Display
+mutators are ordinary kernel/trap-context APIs, not interrupt-context APIs.
+When `CONFIG.use_vga` is false, the formatted console APIs use UART without
+touching VGA state.
 
 Exercised whenever a test is run with `EMU_VGA=yes`.
 
 ### UART Console
 
-The hardware exposes one UART transmit register and one receive register, but the kernel currently wraps only transmit. `putchar_uart()`, `puts_uart()`, `printf_uart()`, and `say_uart()` write bytes directly to the UART TX MMIO register, and the higher-level `say()` / `say_color()` APIs serialize console output with `print_lock` so concurrent threads do not interleave characters.
+The hardware exposes one UART transmit register and one receive register, but
+the kernel currently wraps only transmit. `putchar_uart()`, `puts_uart()`, and
+the numeric `*_uart()` helpers deliberately bypass serialization for fatal
+diagnostics. `printf_uart()` and `say_uart()` serialize their complete formatted
+messages with the same console lock used by `printf()`, `say()`, `say_color()`,
+and user stdout/stderr writes. Cross-core transactions therefore cannot
+interleave. A same-core interrupt diagnostic may nest, and the panic path may
+bypass the lock entirely so a failing owner can still report why it halted.
 
 There is no line discipline or input driver for UART RX right now. Headless test output uses this path whenever `CONFIG.use_vga` is false. Panic messages go to UART TX regardless of `CONFIG.use_vga`.
 

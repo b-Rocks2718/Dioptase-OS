@@ -95,18 +95,20 @@ struct TCB {
 
   struct VME* vme_list;
 
-  // Cross-core senders and scheduler delivery serialize this bitmap through
-  // parent_promise->state_lock while child_tcb is live.
+  // Cross-core senders and the current thread's final user-return path
+  // serialize this bitmap through parent_promise->state_lock while child_tcb
+  // is live. The scheduler must not consume pending signals: a runnable TCB
+  // may still have a suspended kernel continuation that owns resources.
   unsigned pending_signals;
 
   // A set bit defers the corresponding maskable signal; it does not discard a
   // pending instance. Only the running thread mutates this field, and the
-  // scheduler reads it while that thread is unscheduled.
+  // final user-return path reads it while executing on behalf of that thread.
   unsigned signal_mask;
 
-  // Only the running thread registers handlers. The scheduler and synchronous
-  // exception paths read these entries while executing on behalf of that same
-  // TCB, so the TCB cannot be active concurrently on another core.
+  // Only the running thread registers handlers. Final user-return paths and
+  // synchronous exception paths read these entries while executing on behalf
+  // of that same TCB, so the TCB cannot be active concurrently on another core.
   void* signal_handlers[MAX_SIGNALS];
   bool in_signal_handler;
   unsigned signal_stack_top;

@@ -67,6 +67,22 @@ void thread_entry(void);
 // this function does not return in those cases.
 bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2);
 
+// Complete sigreturn for the current handler. This atomically orders handler
+// completion with cross-core signal sends: a nonmaskable signal published
+// before completion terminates the thread, while later sends remain pending
+// for a subsequent final user-return boundary.
+void finish_current_signal_handler(void);
+
+// Process at most one asynchronous signal immediately before the current
+// kernel activation performs its final rfe into user mode.
+//
+// This is deliberately not a scheduler operation. A runnable thread may have
+// been awakened in the middle of a blocking syscall or page fault, before its
+// C continuation has accepted a synchronization handoff and released outer
+// resources. The trap/interrupt/exception wrapper calls this only after that
+// continuation returns and before restoring the saved user frame.
+void process_pending_signals_before_user_return(void);
+
 // idle thread loop
 // calls to block() context switch to here, 
 // where we decide which thread to run next and switch to it

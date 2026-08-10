@@ -32,12 +32,16 @@
 ***PASS unhandled terminate child status: got -1 expected -1
 ***PASS send SIGNAL_KILL: got 0 expected 0
 ***PASS SIGNAL_KILL child status: got -1 expected -1
+***PASS send hello to spinning handler: got 0 expected 0
+***PASS send KILL to spinning handler: got 0 expected 0
+***PASS PIT terminates syscall-free handler: got -1 expected -1
 ***PASS register segmentation handler: got 0 expected 0
 ***PASS segmentation handler fault VPN: got 74565 expected 74565
 ***PASS segmentation handler exit status: got 43 expected 43
 ***PASS register invalid-instruction handler: got 0 expected 0
 ***PASS illegal-instruction handler PC alignment: got 0 expected 0
 ***PASS invalid-instruction handler exit status: got 44 expected 44
+***PASS invalid-instruction sigreturn retries saved fault: got 47 expected 47
 ***PASS register privileged-instruction handler: got 0 expected 0
 ***PASS illegal-instruction handler PC alignment: got 0 expected 0
 ***PASS privileged-instruction handler exit status: got 44 expected 44

@@ -4,9 +4,13 @@
  * - verifies maskable asynchronous signals remain pending, coalesce while
  *   masked, receive their signal number, and resume after sigreturn()
  * - verifies an asynchronous handler can terminate with an explicit status
+ * - verifies handler entry preserves PIT delivery so a syscall-free handler
+ *   remains preemptible by an asynchronously sent nonmaskable signal
  * - verifies SIGNAL_SEG, SIGNAL_ILL, and SIGNAL_ALGN are delivered with their
  *   documented fault arguments, including both invalid and privileged
  *   instruction causes for SIGNAL_ILL
+ * - verifies sigreturn from a synchronous handler retries the retained fault
+ *   frame instead of unwinding the interrupted user program
  * - verifies unhandled asynchronous and synchronous signals terminate a child
  * - verifies exec clears handler addresses inherited from the replaced image
  *
@@ -24,6 +28,7 @@
 #define ILL_EXIT_STATUS 44
 #define ALGN_EXIT_STATUS 45
 #define EXEC_UNEXPECTED_RETURN_STATUS 46
+#define ILL_RETRY_EXIT_STATUS 47
 
 #define DECIMAL_HUNDREDS 100
 #define DECIMAL_TENS 10
@@ -36,6 +41,7 @@ extern void trigger_privileged_instruction(void);
 extern void trigger_misaligned_pc(void);
 
 static int masked_hello_count = 0;
+static int ill_retry_count = 0;
 static int child_ready_sem = -1;
 static int child_continue_sem = -1;
 
@@ -51,6 +57,18 @@ static int async_exit_handler(int signal){
   exit(ASYNC_EXIT_STATUS);
 }
 
+static int spinning_handler(int signal){
+  if (signal != SIGNAL_HELLO){
+    exit(-1);
+  }
+
+  // Publish that the handler itself is active, then make no further syscall.
+  // Only a PIT final-return boundary can observe the later SIGNAL_KILL. If
+  // handler entry loses the lower IMR device bits, this loop never terminates.
+  sem_up(child_ready_sem);
+  while (1){ }
+}
+
 static int seg_handler(void* vpn){
   user_test_expect_eq("segmentation handler fault VPN", (int)vpn,
     EXPECTED_SEG_FAULT_VPN);
@@ -60,6 +78,21 @@ static int seg_handler(void* vpn){
 static int ill_handler(unsigned pc){
   user_test_expect_eq("illegal-instruction handler PC alignment", pc & 3, 0);
   exit(ILL_EXIT_STATUS);
+}
+
+static int ill_retry_handler(unsigned pc){
+  if ((pc & 3) != 0){
+    exit(-1);
+  }
+
+  ill_retry_count += 1;
+  if (ill_retry_count == 1){
+    // The invalid instruction remains unchanged. A correct sigreturn restores
+    // the exception wrapper's saved frame and faults at the same EPC again.
+    sigreturn(0);
+  }
+
+  exit(ill_retry_count == 2 ? ILL_RETRY_EXIT_STATUS : -1);
 }
 
 static int algn_handler(unsigned pc){
@@ -79,14 +112,15 @@ static int masked_child(void){
     masked_hello_count, 0);
 
   // Preserve the result without printing it yet. Once the signal is unmasked,
-  // a scheduling interrupt may enter the pending handler between any two
+  // a PIT final-return boundary may enter the pending handler between any two
   // writes made by user_test_expect_eq(), even though both reports belong to
   // this thread.
   int unmask_rc = unmask_signal(SIGNAL_HELLO);
 
-  // Delivery happens at a scheduling boundary. The pending bitmap coalesces
-  // both sends into one handler invocation. Once yield returns, the handler's
-  // report is complete and the remaining reports cannot interleave with it.
+  // Delivery happens at an explicit final kernel-to-user return boundary. The
+  // pending bitmap coalesces both sends into one handler invocation. Once
+  // yield returns, the handler's report is complete and the remaining reports
+  // cannot interleave with it.
   yield();
   user_test_expect_eq("unmask pending hello", unmask_rc, 0);
   user_test_expect_eq("coalesced hello delivery count after unmask",
@@ -212,6 +246,27 @@ int main(int argc, char** argv){
   user_test_expect_eq("send SIGNAL_KILL", signal_child(child, SIGNAL_KILL), 0);
   user_test_expect_eq("SIGNAL_KILL child status", wait_child(child), -1);
 
+  // Handler entry must carry the lower per-device IMR enables through rfe.
+  // After the second semaphore handoff, sleep one PIT period so the child has
+  // returned from sem_up() and entered its syscall-free loop before KILL is
+  // sent. Termination then depends on a later PIT final-return hook.
+  child = fork();
+  if (child == 0){
+    if (register_handler(SIGNAL_HELLO, (void*)spinning_handler) != 0){
+      return -1;
+    }
+    return waiting_child();
+  }
+  sem_down(child_ready_sem);
+  user_test_expect_eq("send hello to spinning handler",
+    signal_child(child, SIGNAL_HELLO), 0);
+  sem_down(child_ready_sem);
+  sleep(1);
+  user_test_expect_eq("send KILL to spinning handler",
+    signal_child(child, SIGNAL_KILL), 0);
+  user_test_expect_eq("PIT terminates syscall-free handler",
+    wait_child(child), -1);
+
   child = fork();
   if (child == 0){
     user_test_expect_eq("register segmentation handler",
@@ -232,6 +287,17 @@ int main(int argc, char** argv){
   }
   user_test_expect_eq("invalid-instruction handler exit status",
     wait_child(child), ILL_EXIT_STATUS);
+
+  child = fork();
+  if (child == 0){
+    if (register_handler(SIGNAL_ILL, (void*)ill_retry_handler) != 0){
+      return -1;
+    }
+    trigger_invalid_instruction();
+    return -1;
+  }
+  user_test_expect_eq("invalid-instruction sigreturn retries saved fault",
+    wait_child(child), ILL_RETRY_EXIT_STATUS);
 
   child = fork();
   if (child == 0){

@@ -52,6 +52,10 @@ invalid_instr_exc_handler_:
   cmp  r2, r0
   bz   return_to_kernel
 
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
+
   # disable interrupts
   movi r1, 0x7FFFFFFF
   mov  r2, imr
@@ -141,6 +145,10 @@ priv_exc_handler_:
   cmp  r2, r0
   bz   return_to_kernel
 
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
+
   # disable interrupts
   movi r1, 0x7FFFFFFF
   mov  r2, imr
@@ -227,6 +235,10 @@ misaligned_pc_exc_handler_:
   pop  r2
   cmp  r2, r0
   bz   return_to_kernel
+
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
