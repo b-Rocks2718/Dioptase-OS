@@ -7,9 +7,11 @@
  * - verify the values they expose stay within the documented hardware contract
  * - stress whole-buffer console serialization across four worker threads and
  *   across the software framebuffer-wrap boundary
+ * - verify a full screen of continuous text scrolls before reusing the top row
  * - verify console ownership preserves an already-disabled IMR and preemption
  *   state exactly
- * - smoke-test trap sleep/yield on the current kernel thread
+ * - smoke-test trap sleep/yield on the current kernel thread and ensure a
+ *   duration outside the modular half-range is rejected without blocking
  */
 
 #include "../kernel/config.h"
@@ -35,11 +37,18 @@
 #define CONSOLE_STRESS_FINAL_CURSOR 1344 // 6,144 bytes modulo 4,800 framebuffer entries.
 #define CONSOLE_STRESS_FIRST_VISIBLE_RUN 192 // The first transaction's visible tail.
 #define TILE_INDEX_MASK 0xFFu // Tile framebuffer entries store the tile index in the low byte.
+#define TILE_ROW_HEIGHT_PIXELS 8
+// BCC currently requires one literal token for this file-scope array bound.
+// 4,801 is the documented 4,800-tile framebuffer plus the first reused tile.
+#define CONTINUOUS_WRAP_BYTES 4801
+#define CONTINUOUS_WRAP_OLD_TILE 'W'
+#define CONTINUOUS_WRAP_NEW_TILE 'X'
 
 static struct Semaphore console_stress_start;
 static struct Semaphore console_stress_done;
 static char console_stress_buffers[CONSOLE_STRESS_WORKERS]
   [CONSOLE_STRESS_BYTES_PER_WORKER];
+static char continuous_wrap_buffer[CONTINUOUS_WRAP_BYTES];
 
 struct ConsoleStressArg {
   int worker;
@@ -194,6 +203,39 @@ static int run_console_stress(void){
 }
 
 /*
+ * Fill the circular text framebuffer without any newline, then emit one more
+ * character. The extra character must enter a cleared top row and move the
+ * signed vertical-scroll register by one 8-pixel text row. Before the repair,
+ * only a newline armed this transition, so the extra byte overwrote TILE_FB[0]
+ * while the rest of the old top row stayed visible and VSCROLL did not move.
+ */
+static int console_continuous_wrap_scrolls(void){
+  bool saved_use_vga = CONFIG.use_vga;
+  short saved_vscroll = *TILE_VSCROLL;
+  CONFIG.use_vga = true;
+
+  clear_screen();
+  console_set_tile_vscroll(0);
+  for (int i = 0; i < FB_NUM_TILES; ++i){
+    continuous_wrap_buffer[i] = CONTINUOUS_WRAP_OLD_TILE;
+  }
+  continuous_wrap_buffer[FB_NUM_TILES] = CONTINUOUS_WRAP_NEW_TILE;
+  console_write(continuous_wrap_buffer, CONTINUOUS_WRAP_BYTES);
+
+  int valid = *TILE_VSCROLL == -TILE_ROW_HEIGHT_PIXELS &&
+    (((unsigned short)TILE_FB[0]) & TILE_INDEX_MASK) ==
+      CONTINUOUS_WRAP_NEW_TILE &&
+    TILE_FB[1] == 0 && TILE_FB[TILE_ROW_WIDTH - 1] == 0 &&
+    (((unsigned short)TILE_FB[TILE_ROW_WIDTH]) & TILE_INDEX_MASK) ==
+      CONTINUOUS_WRAP_OLD_TILE;
+
+  clear_screen();
+  console_set_tile_vscroll(saved_vscroll);
+  CONFIG.use_vga = saved_use_vga;
+  return valid;
+}
+
+/*
  * Exercise the reentrant lock's outer path with both scheduling mechanisms
  * already disabled. The console call must restore the exact device-bit mask,
  * not merely the global interrupt-enable bit, and must leave can_preempt false.
@@ -227,6 +269,8 @@ int kernel_main(void){
 
   emit_result("getkey", call_trap(TRAP_GET_KEY, 0, 0, 0, 0, 0, 0, 0));
 
+  emit_result("sleep_rejects_high_bit_duration",
+    call_trap(TRAP_SLEEP, -1, 0, 0, 0, 0, 0, 0));
   call_trap(TRAP_SLEEP, 1, 0, 0, 0, 0, 0, 0);
   emit_result("sleep_elapsed",
     call_trap(TRAP_GET_CURRENT_JIFFIES, 0, 0, 0, 0, 0, 0, 0) >=
@@ -277,6 +321,8 @@ int kernel_main(void){
   emit_result("console_preserves_disabled_state",
     console_preserves_disabled_cpu_state());
   emit_result("console_multicore_wrap", run_console_stress());
+  emit_result("console_continuous_wrap_scrolls",
+    console_continuous_wrap_scrolls());
 
   emit_result("vga_status_valid",
     (call_trap(TRAP_GET_VGA_STATUS, 0, 0, 0, 0, 0, 0, 0) & ~0x3) == 0);

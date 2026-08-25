@@ -1,8 +1,26 @@
-***writing to pipe
-***reading from pipe
-***hello from init
-***duplicated write end of pipe
-***duplicated read end of pipe
-***reading from pipe again
-***hello again from init
-***done
+***PASS create delivery pipe: got 0 expected 0
+***PASS duplicate delivery writer is valid: got 1 expected 1
+***PASS write delivery payload: got 3 expected 3
+***PASS invalid pipe read destination: got -1 expected -1
+***PASS invalid destination preserved all queued bytes: got 3 expected 3
+***PASS close original delivery writer: got 0 expected 0
+***PASS duplicate kept delivery writer open: got 3 expected 3
+***PASS close final delivery writer: got 0 expected 0
+***PASS drain buffered bytes after final writer close: got 3 expected 3
+***PASS drained payload matches: got 1 expected 1
+***PASS read EOF after buffered bytes drain: got 0 expected 0
+***PASS close drained read endpoint: got 0 expected 0
+***PASS create broken-reader pipe: got 0 expected 0
+***PASS close only broken-reader endpoint: got 0 expected 0
+***PASS write with no readers: got -1 expected -1
+***PASS close broken-reader writer: got 0 expected 0
+***PASS create blocked-writer pipe: got 0 expected 0
+***PASS preload all but one pipe slot: got 1023 expected 1023
+***PASS open blocked-writer ready semaphore: got 1 expected 1
+***PASS blocked-writer child descriptor is valid: got 1 expected 1
+***PASS close parent blocked-writer reference: got 0 expected 0
+***PASS blocked-writer child reached write: got 0 expected 0
+***PASS blocked writer committed first byte: got 1024 expected 1024
+***PASS close final reader wakes blocked writer: got 0 expected 0
+***PASS blocked writer returned committed prefix: got 61 expected 61
+***PASS close blocked-writer ready semaphore: got 0 expected 0

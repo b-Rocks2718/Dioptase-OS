@@ -8,13 +8,20 @@
  *   offset
  * - verify open() can create missing intermediate directories before creating
  *   the final file
+ * - canonicalize a valid path with more than 16 components without corrupting
+ *   the kernel heap, and retain the completed cwd after a later failed chdir
  */
 
 #include "../../../root/crt/sys.h"
+#include "../../../root/crt/string.h"
 #include "../../user_test.h"
+
+#define DEEP_DIRECTORY_PATH "/d00/d01/d02/d03/d04/d05/d06/d07/d08/d09/d10/d11/d12/d13/d14/d15/d16/d17/d18/d19"
+#define DEEP_FILE_PATH "/d00/d01/d02/d03/d04/d05/d06/d07/d08/d09/d10/d11/d12/d13/d14/d15/d16/d17/d18/d19/marker"
 
 int main(void){
   char buf[8];
+  char deep_cwd[128];
   char y = 'Y';
 
   user_test_expect_eq("chdir(\"./files\")", chdir("./files"), 0);
@@ -69,6 +76,24 @@ int main(void){
   user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
   user_test_expect_eq("reopened nested note byte", buf[0], 'Y');
   user_test_expect_eq("close(fd)", close(fd), 0);
+
+  // `open` creates this missing hierarchy. The subsequent chdir forces cwd
+  // canonicalization to retain 20 live components, directly exceeding the
+  // old fixed 16-pointer scratch array.
+  fd = open(DEEP_FILE_PATH);
+  user_test_expect_eq("create deep marker", fd >= 0, 1);
+  user_test_expect_eq("close deep marker", close(fd), 0);
+  user_test_expect_eq("chdir deep path", chdir(DEEP_DIRECTORY_PATH), 0);
+  user_test_expect_eq("getcwd deep path",
+    (int)getcwd(deep_cwd, sizeof(deep_cwd)) != -1, 1);
+  user_test_expect_eq("deep cwd canonical path",
+    strcmp(deep_cwd, DEEP_DIRECTORY_PATH), 0);
+  user_test_expect_eq("failed chdir from deep cwd",
+    chdir("definitely_missing"), -1);
+  user_test_expect_eq("getcwd retained after failed chdir",
+    (int)getcwd(deep_cwd, sizeof(deep_cwd)) != -1, 1);
+  user_test_expect_eq("failed chdir kept cwd pair",
+    strcmp(deep_cwd, DEEP_DIRECTORY_PATH), 0);
 
   yield();
   user_test_expect_eq("yield resumed the current process", 1, 1);

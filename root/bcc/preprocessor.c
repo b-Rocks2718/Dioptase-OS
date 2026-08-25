@@ -48,6 +48,20 @@ static char kBuiltinLineMacro[9] = "__LINE__";
 #define LINE_NUMBER_BUFFER_CAP 11
 #define FILE_TABLE_INITIAL_CAP 8
 #define SYSTEM_INCLUDE_ROOT "/crt"
+// One extra slot holds the root translation unit, which is not part of the
+// public nested-include count.
+#define PREPROCESSOR_ACTIVE_FILE_CAP 33
+
+// Purpose: Bound recursive include processing and identify ordinary cycles.
+// Inputs/Outputs: The public entrypoint installs the root file. Each include
+//                 pushes its resolved path only for the recursive call.
+// Invariants/Assumptions: count is at least one and never exceeds
+//                         PREPROCESSOR_ACTIVE_FILE_CAP. Path storage is owned
+//                         by the root caller or the active include frame.
+struct IncludeStack {
+  char* paths[PREPROCESSOR_ACTIVE_FILE_CAP];
+  size_t count;
+};
 
 // Purpose: Store preprocessed output and source mapping together.
 // Inputs/Outputs: Filled by preprocess_buffer and consumed by callers.
@@ -860,7 +874,22 @@ static bool parse_define_line(char* line, char* line_end,
 // Invariants/Assumptions: The macros list is owned by the caller.
 static bool preprocess_buffer(char* prog, char* filename,
                               struct Macro** macros, struct FileTable* files,
+                              struct IncludeStack* include_stack,
                               struct PreprocessOutput* out);
+
+// Purpose: Test whether a resolved include spelling is already being expanded.
+// Inputs: include_stack describes the complete active root-to-leaf chain.
+// Outputs: Returns true on an exact resolved-path match.
+// Invariants/Assumptions: The independent depth bound remains authoritative
+//                         for aliases such as `a.h` and `./a.h` that may name
+//                         the same inode with different strings.
+static bool include_stack_contains(struct IncludeStack* include_stack,
+                                   char* path) {
+  for (size_t i = 0; i < include_stack->count; ++i) {
+    if (strcmp(include_stack->paths[i], path) == 0) return true;
+  }
+  return false;
+}
 
 // Purpose: Handle #include "path" and #include <path> by preprocessing the
 //          included file in place.
@@ -870,6 +899,7 @@ static bool preprocess_buffer(char* prog, char* filename,
 //                         angle-bracket includes resolve under /crt.
 static bool handle_include_line(char* line, char* line_end, char* filename,
                                 size_t line_no, struct Macro** macros, struct FileTable* files,
+                                struct IncludeStack* include_stack,
                                 struct Buffer* out, struct SourceMappingEntry newline_loc,
                                 bool add_newline) {
   char* p = line;
@@ -906,6 +936,27 @@ static bool handle_include_line(char* line, char* line_end, char* filename,
     return false;
   }
 
+  if (include_stack_contains(include_stack, include_path)) {
+    preprocessor_error1_str(
+      filename, line_no,
+      "Preprocessor error at %s:%zu: include cycle through active file: %s\n",
+      include_path);
+    free(include_path);
+    return false;
+  }
+
+  // count includes the root file, so a count above the public include-depth
+  // limit means PREPROCESSOR_MAX_INCLUDE_DEPTH nested includes are already
+  // active and another recursive frame would exceed the contract.
+  if (include_stack->count > PREPROCESSOR_MAX_INCLUDE_DEPTH) {
+    preprocessor_error1_str(
+      filename, line_no,
+      "Preprocessor error at %s:%zu: include nesting limit exceeded by: %s\n",
+      include_path);
+    free(include_path);
+    return false;
+  }
+
   char* include_source = read_file(include_path, filename, line_no);
   if (include_source == NULL) {
     free(include_path);
@@ -913,7 +964,11 @@ static bool handle_include_line(char* line, char* line_end, char* filename,
   }
 
   struct PreprocessOutput include_output = {0};
-  if (!preprocess_buffer(include_source, include_path, macros, files, &include_output)) {
+  include_stack->paths[include_stack->count++] = include_path;
+  bool include_ok = preprocess_buffer(include_source, include_path, macros,
+                                      files, include_stack, &include_output);
+  include_stack->count--;
+  if (!include_ok) {
     free(include_source);
     free(include_path);
     return false;
@@ -1059,6 +1114,7 @@ static bool preprocess_directive(
     char* filename,
     struct Macro** macros,
     struct FileTable* files,
+    struct IncludeStack* include_stack,
     struct Buffer* out,
     struct IfStack* if_stack) {
   char* p = line_start;
@@ -1077,7 +1133,7 @@ static bool preprocess_directive(
   if (word_len == 7 && strncmp(word_start, "include", 7) == 0) {
     if (!is_active) return true;
     return handle_include_line(p, line_end, filename, line_no, macros, files,
-                               out, newline_loc, has_newline);
+                               include_stack, out, newline_loc, has_newline);
   }
 
   if (word_len == 6 && strncmp(word_start, "define", 6) == 0) {
@@ -1170,6 +1226,7 @@ static bool preprocess_directive(
 // Invariants/Assumptions: Conditional blocks only use #ifdef/#ifndef/#else/#endif.
 static bool preprocess_buffer(char* prog, char* filename,
                               struct Macro** macros, struct FileTable* files,
+                              struct IncludeStack* include_stack,
                               struct PreprocessOutput* out) {
   struct Buffer no_comments;
   size_t initial_cap = strlen(prog) + 1;
@@ -1222,7 +1279,8 @@ static bool preprocess_buffer(char* prog, char* filename,
     // Directive lines are recognized even when indented.
     if (p < line_end && *p == '#') {
       if (!preprocess_directive(p + 1, line_end, newline_loc, has_newline, line_no,
-                                filename, macros, files, &output, &if_stack)) {
+                                filename, macros, files, include_stack, &output,
+                                &if_stack)) {
         free(no_comments.data);
         free(no_comments.map);
         free(output.data);
@@ -1305,7 +1363,11 @@ bool preprocess(char * prog, char* filename, int num_defines,
   }
 
   struct PreprocessOutput output = {0};
-  if (!preprocess_buffer(prog, filename, &macros, &result->file_table, &output)) {
+  struct IncludeStack include_stack;
+  include_stack.paths[0] = filename;
+  include_stack.count = 1;
+  if (!preprocess_buffer(prog, filename, &macros, &result->file_table,
+                         &include_stack, &output)) {
     destroy_macros(macros);
     file_table_destroy(&result->file_table);
     return false;

@@ -9,3 +9,9 @@
 ***PASS read(fd, buf, 1): got 1 expected 1
 ***PASS reopened nested file byte: got 78 expected 78
 ***PASS close(fd): got 0 expected 0
+***PASS open accepts 255-byte basename: got 1 expected 1
+***PASS close 255-byte basename: got 0 expected 0
+***PASS unlink 255-byte basename: got 0 expected 0
+***PASS open rejects 256-byte basename: got -1 expected -1
+***PASS open rejects nested 256-byte component: got -1 expected -1
+***PASS overlong nested open creates no parent: got -1 expected -1

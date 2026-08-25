@@ -85,17 +85,58 @@ void scheduler_init(void){
   global_admission_iters = 0;
 }
 
-// to be called only from kernel_shutdown
+// Detach a queue-owned list during globally quiescent shutdown.
+//
+// Normal TCBs keep n_active nonzero until the reaper has freed them, so every
+// residual scheduler entry after all idle cores reach the shutdown barrier
+// must be a setup_thread() daemon. Validate this, and discard pointers
+// to TCBs that will not be freed.
+static void scheduler_detach_daemon_list(struct TCB* list){
+  while (list != NULL){
+    struct TCB* next = list->next;
+    list->next = NULL;
+    if (!list->is_daemon){
+      int args[2] = {(int)list, (int)list->pid};
+      say("| scheduler shutdown rejected queued non-daemon tcb=0x%X pid=%d\n",
+        args);
+      panic("scheduler_destroy: normal TCB remained runnable after n_active reached zero.\n");
+    }
+    list = next;
+  }
+}
+
+// To be called only from kernel_shutdown after every core has disabled
+// interrupts and crossed shutdown_barrier. No scheduler producer or consumer
+// can run concurrently; core 0 may therefore drain the single-owner queues of
+// other cores as well as the locked shared queues.
 void scheduler_destroy(void){
+  // n_active reaches zero only after reaper_queue ownership has been consumed.
+  // Keep this queue strict: a residual terminal TCB indicates a lifecycle bug,
+  // not an allowed daemon shutdown state.
   spin_queue_destroy(&reaper_queue);
 
   for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
     for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
+      scheduler_detach_daemon_list(
+        spin_queue_remove_all(&global_ready_queue[priority][level]));
       spin_queue_destroy(&global_ready_queue[priority][level]);
     }
   }
 
   for (int i = 0; i < MAX_CORES; i++) {
+    for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
+      for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
+        scheduler_detach_daemon_list(
+          queue_remove_all(&per_core_data[i].ready_queue[priority][level]));
+      }
+    }
+
+    scheduler_detach_daemon_list(
+      queue_remove_all(&per_core_data[i].deferred_interrupt_wake_queue));
+    scheduler_detach_daemon_list(
+      sleep_queue_remove_all(&per_core_data[i].sleep_queue));
+    scheduler_detach_daemon_list(
+      spin_queue_remove_all(&per_core_data[i].pinned_queue));
     spin_queue_destroy(&per_core_data[i].pinned_queue);
   }
 }

@@ -8,3 +8,4 @@
 ***Sparse high-water append: ok
 ***Shrink without reclaim: ok
 ***Single-indirect growth: ok
+***Overflowing write range: ok

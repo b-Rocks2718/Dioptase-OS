@@ -34,7 +34,6 @@ Supported Sync Primatives:
 - barrier
 - gate (implements wait(), signal(), and reset(); signal unblocks waiters, and calls to wait() after signal will not block)
 - event (like gate, except it does not remain open after call to signal(). Therefore does not need a reset() method)
-- shared pointers
 
 See `sync.md` for more details.
 
@@ -88,8 +87,10 @@ Current trap code assignments are documented in `syscalls.md`.
 ## Signals
 
 User threads have pending and masked signal bitmaps, registered user handlers,
-and a dedicated signal stack. The scheduler delivers asynchronous signals;
-user-mode memory and instruction exceptions deliver synchronous fault signals.
+and a dedicated signal stack. Explicit final kernel-to-user return paths deliver
+asynchronous signals only after the current syscall, fault, or PIT continuation
+has unwound; the scheduler itself never consumes pending signals. User-mode
+memory and instruction exceptions deliver synchronous fault signals.
 
 See `signals.md` for the signal-number assignments, masking rules, handler ABI,
 default actions, and fault-resumption behavior.
@@ -114,3 +115,38 @@ the interactive terminal.
 - If the returned claim is set, the shell queues the terminal-private display
   recovery sequence before it prints the next prompt. The terminal, rather than
   the shell, resets VGA and renderer state in pipe order.
+
+## Asserts and release builds
+
+Kernel and user CRT share two assertion helpers:
+
+| Form | Use when |
+|---|---|
+| `assert(condition, msg)` | Soft check. Kernel programming or API-contract bug. In the default build it panics when false; when `OS_RELEASE=yes` the function body is a no-op. Skipping in release may crash later or hang, but must not silently leave durable or globally shared state corrupted. |
+| `assert_always(condition, msg)` | Hard check. Always panics on failure, including release builds. Use when continuing would silently corrupt kernel/FS/device/sync state, break a boot-critical dependency, or violate an interrupt/hardware contract with no safe recovery. |
+| Neither (error return) | User- or capacity-triggerable condition. Prefer ordinary failure returns; do not promote these to `assert_always`. |
+
+Existing direct `panic()` sites are already always-on and stay as-is.
+
+Soft by default examples: NULL `this`/argument checks on internal helpers, “caller must hold X lock”, trusted-caller parameter ranges, scheduler affinity preconditions.
+
+Always-on examples: allocator double-free / poison UAF, FS metadata writeback mid-update, detected on-disk directory corruption, boot-critical physmem leak exhaustion, PIT/bootstrap IMR and current-TCB contracts, pipe endpoint table corruption, sync wrong-owner / double-release / acquire-while-holding.
+
+`VERSION` in the Makefile selects the host toolchain flavor (`bcc` / `basm` /
+emulator). OS assert policy is independent and controlled by `OS_RELEASE`
+(default `no`). bcc has no function-like macros, so soft asserts remain real
+calls: release only empties the `assert` body; call-site conditions and message
+strings are still evaluated and may remain in the image.
+
+Recommended shipping build:
+
+```sh
+make run OS_RELEASE=yes HEAP_DEBUG=no
+```
+
+`HEAP_DEBUG` stays independent; turn it off explicitly for a release image.
+Toggling `OS_RELEASE` or `HEAP_DEBUG` updates `build/kernel-test-config.stamp`
+so kernel and test assembly rebuild with the matching `-D` flags. Root and
+guest program Makefiles accept `OS_BCC_DEFINES` from the top-level so CRT
+`assert` matches the kernel.
+

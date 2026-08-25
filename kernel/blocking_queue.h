@@ -4,8 +4,6 @@
 #include "queue.h"
 #include "semaphore.h"
 
-// port of Gheith kernel implementation
-
 // Queue that blocks on remove when empty
 struct BlockingQueue {
   struct GenericSpinQueue queue;
@@ -15,7 +13,8 @@ struct BlockingQueue {
 // initialize an empty blocking queue
 void blocking_queue_init(struct BlockingQueue* b);
 
-// destroy queue synchronization state after all producers/consumers stop
+// Destroy queue synchronization after all producers/consumers stop and the
+// owner has drained every payload. A nonempty destroy panics.
 void blocking_queue_destroy(struct BlockingQueue* b);
 
 // append an element and wake one blocked remover

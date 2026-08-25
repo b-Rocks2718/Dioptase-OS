@@ -7,6 +7,10 @@ int main(void){
   puts("Compiling...\n");
   
   int id = fork();
+  if (id < 0){
+    puts("Compilation failed: fork failed\n");
+    return -1;
+  }
   if (id == 0){
     // exec compiler
     char* argv[5] = {"/sbin/bcc", "-s", "hello.c", "-o", "hello.s"};
@@ -17,14 +21,18 @@ int main(void){
   } 
 
   int rc = wait_child(id);
-  if (rc < 0){
-    puts("Compilation failed\n");
+  if (rc != 0){
+    puts("Compilation failed: bcc returned a nonzero status\n");
     return -1;
   }
 
   puts("Assembling...\n");
   
   id = fork();
+  if (id < 0){
+    puts("Assembly failed: fork failed\n");
+    return -1;
+  }
   if (id == 0){
     // exec assembler
     char* argv[8] = {"/sbin/basm", "-bin", "crt0.s", "arithmetic.s", "stdio.s", "hello.s", "-o", "hello"};
@@ -34,5 +42,11 @@ int main(void){
     return -1;
   }
 
-  wait_child(id);
+  rc = wait_child(id);
+  if (rc != 0){
+    puts("Assembly failed: basm returned a nonzero status\n");
+    return -1;
+  }
+
+  return 0;
 }

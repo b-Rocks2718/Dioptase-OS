@@ -48,7 +48,7 @@ unsigned frame_index_from_address(unsigned phys_addr);
 unsigned address_from_frame_index(unsigned frame_index);
 
 // allocate a physical page of given order
-// Panics if no free frames remain
+// Returns NULL if no free frames remain
 void* physmem_alloc_order(int order);
 
 // free a physical page of given order
@@ -59,7 +59,7 @@ void* physmem_leak_order(int order);
 void* physmem_leak(void);
 
 // allocate a physical page
-// Panics if no free frames remain
+// Returns NULL if no free frames remain
 void* physmem_alloc(void);
 
 // free a physical page

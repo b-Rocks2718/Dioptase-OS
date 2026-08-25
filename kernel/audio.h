@@ -41,6 +41,7 @@ void audio_destroy(void);
  * Lifetime:
  * - `bytes` points to the `mmap(...)` region that contains the whole WAV file.
  * - `data_offset` / `data_size` identify the `data` chunk inside that mapping.
+ * - `source_inumber` identifies the retained source in failure diagnostics.
  *
  * Format contract:
  * - The loader accepts only the exact audio device format documented in
@@ -51,7 +52,15 @@ struct AudioWav {
   unsigned file_size;
   unsigned data_offset;
   unsigned data_size;
+  unsigned source_inumber;
 };
+
+/*
+ * Opaque admission request shared briefly by one syscall activation and its
+ * playback worker. The worker owns and ultimately frees the request; callers
+ * must not access it after audio_request_wait_until_ready() returns.
+ */
+struct AudioRequest;
 
 // The device reports buffered bytes modulo the ring size via read/write indices.
 unsigned audio_output_buffered_bytes(unsigned write_idx, unsigned read_idx);
@@ -114,21 +123,25 @@ bool audio_output_empty(void);
 unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes);
 
 /*
- * Load one WAV file from the ext2 root directory, map it into kernel memory,
- * and validate that it matches the fixed MMIO audio device format.
+ * Map one already-open WAV Node into kernel memory and validate that it
+ * matches the fixed MMIO audio device format.
  *
  * Preconditions:
- * - `path` names one file reachable from the ext2 root directory
+ * - Kernel mode in the TCB that should own the new private VME; interrupts may
+ *   be enabled and demand paging may block this thread
+ * - `node` is a live regular-file wrapper owned by the caller
  * - `wav_out` points to writable kernel memory
  *
  * Postconditions:
  * - `wav_out->bytes` points at the mapped WAV bytes
  * - `wav_out->data_offset` / `wav_out->data_size` identify the validated
  *   `data` chunk payload
- * - On any lookup, mapping, or format error this helper prints a detailed
- *   audio-specific message and panics
+ * - Returns true with a live mapping on success
+ * - Mapping failure or an unsupported/malformed WAV prints an actionable
+ *   audio/inode/size diagnostic and returns false
+ * - A parse failure releases the mapping before returning false
  */
-void audio_wav_load(struct Node* node, struct AudioWav* wav_out);
+bool audio_wav_load(struct Node* node, struct AudioWav* wav_out);
 
 // Return the number of 16-bit PCM samples contained in the validated WAV data.
 unsigned audio_wav_num_samples(struct AudioWav* wav);
@@ -136,11 +149,52 @@ unsigned audio_wav_num_samples(struct AudioWav* wav);
 // Read one signed 16-bit sample from the validated WAV data payload.
 int audio_wav_read_sample_s16le(struct AudioWav* wav, unsigned sample_idx);
 
-// Stream the WAV payload into the MMIO audio ring and block until playback has
-// drained the ring
-void audio_wav_play(struct AudioWav* wav);
+/*
+ * Stream a validated WAV payload into the MMIO audio ring.
+ *
+ * Preconditions:
+ * - Kernel mode; interrupts may be enabled and this counted worker may block,
+ *   be preempted, or migrate between cores.
+ * - `wav` describes a live private mapping owned by the current TCB and its
+ *   nonempty data range contains complete 16-bit samples.
+ *
+ * Postconditions:
+ * - Returns only after the ring drains, or after a refill cannot consume any
+ *   validated source bytes.
+ * - On every return, the device is disabled and audio_lock is released.
+ */
+bool audio_wav_play(struct AudioWav* wav);
 
-void audio_worker(void* audio_node);
+/*
+ * Clone a live regular-file Node into a heap request for the persistent audio
+ * daemon. The returned request owns that clone and two initialized handoff
+ * semaphores. Runs in kernel mode and may block while cloning the shared inode
+ * wrapper. Returns NULL only if allocation/cloning fails.
+ */
+struct AudioRequest* audio_request_create(struct Node* node);
+
+/*
+ * Enqueue one request for the boot-lifetime audio daemon. Returns false when
+ * the implementation-defined outstanding-request limit (queued plus playing)
+ * is already reached; the caller must then destroy the unsubmitted request
+ * without waiting.
+ */
+bool audio_request_submit(struct AudioRequest* request);
+
+/*
+ * Destroy a request that was created but never successfully submitted. Safe
+ * only while no other owner exists.
+ */
+void audio_request_destroy_unsubmitted(struct AudioRequest* request);
+
+/*
+ * Block the current kernel-mode syscall activation until the audio daemon has
+ * mapped and validated the exact private VME it will retain for playback.
+ * Returns the published validation result. After return, the caller has
+ * acknowledged the result and must never access `request` again; ownership is
+ * exclusively the daemon's.
+ */
+bool audio_request_wait_until_ready(struct AudioRequest* request);
 
 extern void audio_handler_(void);
 extern void mark_audio_handled(void);

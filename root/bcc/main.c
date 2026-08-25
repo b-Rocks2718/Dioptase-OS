@@ -181,7 +181,7 @@ static char** load_asm_paths_from_dir(char* dir_path, char* startup_path,
   int cap;
   bool saw_startup;
 
-  dir_fd = open(dir_path);
+  dir_fd = open_existing(dir_path);
   if (dir_fd < 0) {
     print_path_error("failed to open assembly directory", dir_path);
     return NULL;
@@ -467,7 +467,7 @@ static char* load_source_file(char* file_path) {
   unsigned copied;
   char* bytes;
 
-  fd = open(file_path);
+  fd = open_existing(file_path);
   if (fd < 0) {
     print_path_error("failed to open source file", file_path);
     return NULL;

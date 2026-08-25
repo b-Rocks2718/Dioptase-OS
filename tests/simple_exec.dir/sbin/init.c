@@ -1,3 +1,10 @@
+/*
+ * Exec source image:
+ * - forks so the parent can observe the replacement image's exit status
+ * - passes two arguments through execv for copied-string and NULL-sentinel
+ *   validation in /test/init
+ */
+
 #include "../../../root/crt/print.h"
 #include "../../../root/crt/sys.h"
 

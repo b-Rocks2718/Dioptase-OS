@@ -1,16 +1,3 @@
-/* Copyright (C) 2025 Ahmed Gheith and contributors.
- *
- * Use restricted to classroom projects.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 #include "atomic.h"
 #include "machine.h"
 #include "TCB.h"
@@ -36,11 +23,26 @@
 // final kernel-return path can enter a user signal handler in user mode.
 #define USER_RETURNABLE_PSR_DEPTH 1
 
+/*
+ * Reserve one speculative fetch-add slot per hardware core. At most MAX_CORES
+ * callers can enter begin concurrently, so even when every caller rejects and
+ * rolls back at this threshold, the signed counter cannot overflow. The
+ * bootstrap compiler requires a literal global constant; threads_init()
+ * verifies this remains INT_MAX - MAX_CORES.
+ */
+#define KERNEL_ASYNC_WORK_LIMIT 0x7FFFFFFB
+
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
 int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
+/*
+ * Work accepted by a normal TCB but completed by a persistent daemon. Unlike
+ * n_active_others, this counts finite resource-owning operations rather than
+ * the boot-lifetime daemon TCBs themselves.
+ */
+static int kernel_async_work_count = 0;
 bool bootstrapping = true;
 
 int shutdown_barrier = 0;
@@ -254,6 +256,7 @@ static struct TCB* make_tcb(bool is_daemon){
   tcb->my_node->interrupt_state = 0;
   tcb->my_pred = NULL;
 
+  tcb->is_daemon = is_daemon;
   tcb->next = NULL;
 
   return tcb;
@@ -289,6 +292,8 @@ void thread_(struct Fun* thread_fun,
   tcb->mlfq_level = LEVEL_ZERO;
   tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
   tcb->pid = create_page_directory();
+  assert(tcb->pid != 0,
+    "thread: failed to allocate a page directory for a new kernel thread.\n");
 
   scheduler_wake_thread(tcb);
 }
@@ -320,8 +325,47 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   scheduler_wake_thread(tcb);
 }
 
+void kernel_async_work_begin(void){
+  struct TCB* current = get_current_tcb();
+  int active_threads = __atomic_load_n(&n_active);
+
+  if (current == NULL || current->is_daemon || active_threads <= 0){
+    int args[3] = {(int)current,
+      current == NULL ? -1 : current->is_daemon,
+      active_threads};
+    say("| async work begin rejected tcb=0x%X daemon=%d n_active=%d\n",
+      args);
+    panic("async work begin: first publication must be owned by a live normal thread.\n");
+  }
+
+  int previous = __atomic_fetch_add(&kernel_async_work_count, 1);
+  if (previous < 0 || previous >= KERNEL_ASYNC_WORK_LIMIT){
+    __atomic_fetch_add(&kernel_async_work_count, -1);
+    int args[2] = {previous, KERNEL_ASYNC_WORK_LIMIT};
+    say("| async work begin rejected previous=%d limit=%d\n", args);
+    panic("async work begin: outstanding-work count is invalid or exhausted.\n");
+  }
+}
+
+void kernel_async_work_finish(void){
+  int previous = __atomic_fetch_add(&kernel_async_work_count, -1);
+  if (previous <= 0){
+    __atomic_fetch_add(&kernel_async_work_count, 1);
+    int args[1] = {previous};
+    say("| async work finish rejected previous=%d\n", args);
+    panic("async work finish: no outstanding work reference exists.\n");
+  }
+}
+
 // initialize thread structures; should only be called once on one core
 void threads_init(void){
+  if (KERNEL_ASYNC_WORK_LIMIT != INT_MAX - MAX_CORES){
+    int args[3] = {KERNEL_ASYNC_WORK_LIMIT, INT_MAX, MAX_CORES};
+    say("| threads init rejected async_limit=%d int_max=%d max_cores=%d\n",
+      args);
+    panic("threads init: asynchronous-work limit must reserve one RMW slot per core.\n");
+  }
+
   scheduler_init();
 
   shutdown_barrier = CONFIG.num_cores;
@@ -345,9 +389,9 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   struct TCB* me = core->current_thread;
   struct TCB* idle = &core->idle_thread;
 
-  assert(me->my_node->locked == false, "threads block: thread tried to block while holding a spinlock.\n");
+  assert_always(me->my_node->locked == false, "threads block: thread tried to block while holding a spinlock.\n");
 
-  assert(me != idle, "threads block: idle thread attempted to block.\n");
+  assert_always(me != idle, "threads block: idle thread attempted to block.\n");
 
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
 }
@@ -562,7 +606,7 @@ void process_pending_signals_before_user_return(void) {
     "signal return: idle thread cannot return to user mode.\n");
   assert(me->can_preempt,
     "signal return: final user return reached with preemption disabled.\n");
-  assert(me->my_node != NULL && !me->my_node->locked,
+  assert_always(me->my_node != NULL && !me->my_node->locked,
     "signal return: final user return reached while holding a spinlock.\n");
 
   struct SignalDelivery delivery = {NULL, -1};
@@ -594,16 +638,6 @@ void kernel_shutdown(void){
   // Core 0 will print results and shut down the system, 
   // other cores will wait for this to happen
   if (get_core_id() == 0) {
-
-    // all cores are now in shutdown, so heap operations should not block
-    struct GenericQueueElement* keys = blocking_queue_remove_all(&ps2_queue);
-    while (keys != NULL){
-      // free existing keyboard events
-      struct GenericQueueElement* next = keys->next;
-      free(keys);
-      keys = next;
-    }
-
     ext2_destroy(&fs);
     ps2_destroy();
     audio_destroy();
@@ -653,11 +687,13 @@ void kernel_shutdown(void){
 // where we decide which thread to run next and switch to it
 void event_loop(void) {
   /* only the idle thread can enter this function */
-  while (__atomic_load_n(&bootstrapping) || (__atomic_load_n(&n_active) > 0)) {
+  while (__atomic_load_n(&bootstrapping) ||
+      (__atomic_load_n(&n_active) > 0) ||
+      (__atomic_load_n(&kernel_async_work_count) > 0)) {
     // on each iteration, try to find a thread to switch to
 
     struct PerCore* core = get_per_core();
-    assert(core != NULL, "per-core data is NULL.\n");
+    assert_always(core != NULL, "per-core data is NULL.\n");
     if (core->current_thread != &core->idle_thread) {
       int args[2] = {get_core_id(), (int)core->current_thread};
       say("core %d current thread: 0x%X\n", args);
@@ -688,7 +724,7 @@ void event_loop(void) {
 // set up thread context for the first thread on this core (which is now the idle thread)
 void bootstrap(void){
   int imr = get_imr();
-  assert((imr & GLOBAL_INT_ENABLE) == 0, 
+  assert_always((imr & GLOBAL_INT_ENABLE) == 0,
     "interrupts should be disabled when bootstrapping thread context.\n");
 
   int me = get_core_id();
@@ -708,6 +744,7 @@ void bootstrap(void){
   tcb->r28 = 0;
   
   tcb->next = NULL;
+  tcb->is_daemon = true;
   tcb->can_preempt = false;
   tcb->core_affinity = me;
   tcb->priority = NORMAL_PRIORITY;
@@ -725,8 +762,8 @@ void bootstrap(void){
 
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 
-  assert(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
-  assert(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
+  assert_always(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
+  assert_always(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
   tcb->my_node = per_core_data[me].idle_clh_node;
   tcb->my_pred = NULL;
 
@@ -747,16 +784,38 @@ void yield(void){
 }
 
 // add a thread to the reaper queue to have its resources freed by the reaper thread
-void reap_tcb(void* tcb){
-  spin_queue_add(&reaper_queue, (struct TCB*)tcb);
+static void reap_tcb(void* tcb){
+  struct TCB* terminal = (struct TCB*)tcb;
+  assert(terminal != NULL, "thread reap: terminal TCB is NULL.\n");
+
+  /*
+   * Preconditions: this callback runs after stop() has disabled preemption,
+   * published the child result, revoked ChildDescriptor.child_tcb, and
+   * context-switched permanently away from terminal. No other subsystem may
+   * manufacture a terminal transition by placing a blocked TCB here.
+   *
+   * Postcondition: reaper_queue is the sole owner responsible for freeing the
+   * TCB. parent_promise == NULL is the locally checkable proof that any child
+   * descriptor and wait_child() promise were handled before publication.
+   */
+  assert(terminal->parent_promise == NULL,
+    "thread reap: TCB still has a parent descriptor; termination bypassed stop()/exit publication.\n");
+  spin_queue_add(&reaper_queue, terminal);
 }
 
-// block the current thread until a target jiffy count is reached
+// Block the current thread until a target jiffy count is reached.
+//
+// Preconditions: kernel mode in a non-idle TCB; jiffies is at most INT_MAX.
+// The half-range limit makes modular deadline ordering unambiguous even when
+// current_jiffies + jiffies wraps through zero. User trap arguments are checked
+// before entering this kernel primitive.
 void sleep(unsigned jiffies){
+  assert(jiffies <= INT_MAX,
+    "sleep: duration exceeds the supported INT_MAX-jiffy horizon.\n");
   unsigned was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
   struct PerCore* core = get_per_core();
-  assert(tcb != &core->idle_thread, "sleep: idle thread cannot sleep.\n");
+  assert_always(tcb != &core->idle_thread, "sleep: idle thread cannot sleep.\n");
   tcb->wakeup_jiffies = current_jiffies + jiffies;
   int args[2] = {(int)&core->sleep_queue, (int)tcb};
   block(was, sleep_queue_add, (void*)args, true);

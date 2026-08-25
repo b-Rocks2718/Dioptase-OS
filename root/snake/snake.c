@@ -898,7 +898,7 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
 }
 
 void load_high_score(void) {
-  int fd = open("/snake/high_score.txt");
+  int fd = open_existing("/snake/high_score.txt");
   snake_high_score = 0;
   if (fd >= 0) {
     char buf[15];

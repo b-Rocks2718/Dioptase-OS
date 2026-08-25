@@ -204,6 +204,23 @@ void kernel_main(void) {
     }
   }
 
+  // Every release publishes its completion before the worker's done flag.
+  // Verify teardown sees neither a holder nor a suspended acquire/release
+  // continuation before exercising the quiescent destroy path.
+  clh_lock_acquire(&rwlock.lock);
+  int active_operations =
+    __atomic_load_n(&rwlock.active_operations);
+  int active_holders = rwlock.readers + (rwlock.writer_active ? 1 : 0);
+  int queued_waiters =
+    rwlock.waiting_readers.size + rwlock.waiting_writers.size;
+  clh_lock_release(&rwlock.lock);
+  if (active_operations != 0 || active_holders != 0 || queued_waiters != 0) {
+    int args[3] = { active_operations, active_holders, queued_waiters };
+    say("***rw_lock FAIL teardown active=%d holders=%d waiters=%d expected=0/0/0\n",
+      args);
+    panic("rw_lock test: completed workers left live lock state before destruction\n");
+  }
+
   sem_destroy(&release_sem);
   rw_lock_destroy(&rwlock);
 

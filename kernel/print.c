@@ -31,7 +31,7 @@ static char* UART_PADDR = (char*)UART_TX_ADDR;
  * Console ownership and concurrency contract
  * ------------------------------------------
  * `print_lock` owns every access in this module to current_text_color,
- * vga_index, scrolling, was_newline, TILE_FB, TILEMAP, TILE_SCALE,
+ * vga_index, scrolling, pending_row_entry, TILE_FB, TILEMAP, TILE_SCALE,
  * TILE_HSCROLL, and TILE_VSCROLL. These objects are global across all cores. An
  * unlocked helper may therefore be called only by a caller that holds
  * print_lock.
@@ -63,7 +63,9 @@ static char* UART_PADDR = (char*)UART_TX_ADDR;
 static int current_text_color = DEFAULT_TEXT_COLOR;
 static int vga_index = 0;
 static bool scrolling = false;
-static bool was_newline = false;
+// True after either an explicit newline or a circular-buffer wrap moves the
+// cursor to the start of a row. The next character consumes this transition.
+static bool pending_row_entry = false;
 
 /*
  * These fields are read by every core before it owns print_lock, so all access
@@ -196,14 +198,18 @@ static void putchar_color_unlocked(char c, int color){
       return;
     }
 
-    if (was_newline && scrolling){
-      // clear the new line we're about to write on if we just scrolled
-      for (int i = 0; i < TILE_ROW_WIDTH; ++i){
-        TILE_FB[vga_index + i] = 0;
+    if (pending_row_entry){
+      if (scrolling){
+        // Entering a reused circular-buffer row must clear its old tiles and
+        // advance the hardware viewport exactly once. A full final row can
+        // reach this state without a newline, so wrap and newline share this
+        // pending transition.
+        for (int i = 0; i < TILE_ROW_WIDTH; ++i){
+          TILE_FB[vga_index + i] = 0;
+        }
+        *TILE_VSCROLL = *TILE_VSCROLL - TILE_HEIGHT_PIXELS;
       }
-      // scroll up by one line
-      *TILE_VSCROLL = *TILE_VSCROLL - TILE_HEIGHT_PIXELS;
-      was_newline = false;
+      pending_row_entry = false;
     }
 
     if (c == '\n'){
@@ -211,7 +217,7 @@ static void putchar_color_unlocked(char c, int color){
       // round up to next row
       vga_index = ((vga_index + TILE_ROW_WIDTH - 1) / TILE_ROW_WIDTH) * TILE_ROW_WIDTH;
 
-      was_newline = true;
+      pending_row_entry = true;
     } else {
       unsigned entry =
         (((unsigned)color & TILE_ENTRY_BYTE_MASK) << TILE_COLOR_SHIFT)
@@ -220,9 +226,11 @@ static void putchar_color_unlocked(char c, int color){
     }
 
     if (vga_index >= FB_NUM_TILES) {
-      // screen is full, scroll up by one line
+      // The circular cursor reached the top row. Defer clearing and viewport
+      // movement until a following character actually enters that row.
       vga_index -= FB_NUM_TILES;
       scrolling = true;
+      pending_row_entry = true;
     }
 
   } else {
@@ -713,7 +721,7 @@ static void clear_screen_unlocked(void){
   // them even though the caller's original IMR remains installed.
   vga_index = 0;
   scrolling = false;
-  was_newline = false;
+  pending_row_entry = false;
 }
 
 // clear the screen of all text characters and reset scroll/cursor state

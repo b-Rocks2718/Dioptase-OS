@@ -1,54 +1,84 @@
 #include "print.h"
+#include "limits.h"
 #include "unistd.h"
 
 #define DECIMAL_BASE 10u
 #define HEX_BASE 16u
-#define MAX_INT_DEC_DIGITS 10 
+#define MAX_INT_DEC_DIGITS 10
 #define MAX_SIGNED_DEC_CHARS 11
-#define MAX_UNSIGNED_HEX_DIGITS 8 
 
-// write() may complete only part of the requested block, so keep issuing calls
-// until the full buffer has been consumed or the kernel reports failure.
-static void write_fd_all(int fd, char* buf, unsigned count){
+/*
+ * Purpose: Commit one complete byte span to a Dioptase descriptor.
+ * Inputs: fd is the destination and buf owns at least count readable bytes.
+ * Outputs: true only after all count bytes have been accepted by write().
+ * Invariants/Assumptions: A positive short write commits that prefix, so the
+ * next call starts immediately after it. A zero or negative result means no
+ * forward progress and terminates the operation. The syscall contract never
+ * returns more bytes than requested; reject such a result defensively rather
+ * than underflowing count if that kernel invariant is ever broken.
+ */
+static bool write_fd_all(int fd, char* buf, unsigned count){
   int written;
 
   while (count != 0){
     written = write(fd, buf, count);
-    if (written <= 0){
-      return;
+    if (written <= 0 || (unsigned)written > count){
+      return false;
     }
 
     buf += (unsigned)written;
     count -= (unsigned)written;
   }
+  return true;
 }
 
-void putchar(char c){
-  write_fd_all(STDOUT, &c, 1);
+int putchar(char c){
+  if (!write_fd_all(STDOUT, &c, 1)){
+    return -1;
+  }
+  return (unsigned char)c;
 }
 
-unsigned puts(char* str){
+int puts(char* str){
   return fdputs(STDOUT, str);
 }
 
-unsigned fdputs(int fd, char* str){
-  char* start = str;
-  unsigned count = 0;
-  while(*str){
-    ++str;
+int fdputs(int fd, char* str){
+  int count = 0;
+
+  if (str == NULL){
+    return -1;
+  }
+  while (str[count] != '\0'){
+    if (count == INT_MAX){
+      return -1;
+    }
     ++count;
   }
-  write_fd_all(fd, start, count);
+  if (!write_fd_all(fd, str, (unsigned)count)){
+    return -1;
+  }
   return count;
 }
 
-unsigned printf(char* fmt, void* arr){
+int printf(char* fmt, void* arr){
   return fdprintf(STDOUT, fmt, arr);
 }
 
-static unsigned string_length(char* str){
-  unsigned len = 0;
-  while (str[len] != '\0') ++len;
+// Formatting results use int so every public routine has one failure sentinel.
+// Refuse an unrepresentable byte count instead of wrapping it to a success.
+static int string_output_length(char* str){
+  int len = 0;
+
+  if (str == NULL){
+    return -1;
+  }
+  while (str[len] != '\0'){
+    if (len == INT_MAX){
+      return -1;
+    }
+    ++len;
+  }
   return len;
 }
 
@@ -57,28 +87,47 @@ static unsigned min_unsigned(unsigned a, unsigned b){
   return b;
 }
 
-static unsigned emit_padding(int fd, char pad, unsigned count){
-  unsigned emitted = 0;
+static bool add_emitted_count(int* total, int emitted){
+  if (emitted < 0 || *total > INT_MAX - emitted){
+    return false;
+  }
+  *total += emitted;
+  return true;
+}
+
+static int emit_padding(int fd, char pad, unsigned count){
+  int emitted = 0;
+
+  if (count > (unsigned)INT_MAX){
+    return -1;
+  }
   while (count != 0){
-    write_fd_all(fd, &pad, 1);
+    if (!write_fd_all(fd, &pad, 1)){
+      return -1;
+    }
     ++emitted;
     --count;
   }
   return emitted;
 }
 
-static unsigned emit_span(int fd, char* start, unsigned len){
-  write_fd_all(fd, start, len);
-  return len;
+static int emit_span(int fd, char* start, unsigned len){
+  if (len > (unsigned)INT_MAX || !write_fd_all(fd, start, len)){
+    return -1;
+  }
+  return (int)len;
 }
 
-static unsigned emit_unsigned_base(int fd, unsigned value, unsigned base, bool uppercase,
-                                   unsigned min_width, bool zero_pad){
+static int emit_unsigned_base(int fd, unsigned value, unsigned base,
+                              bool uppercase, unsigned min_width,
+                              bool zero_pad){
   char digits[MAX_INT_DEC_DIGITS];
   unsigned len = sizeof(digits);
   unsigned digit_count;
   unsigned digit;
   char pad_char = zero_pad ? '0' : ' ';
+  int emitted;
+  int result;
 
   if (value == 0){
     digits[--len] = '0';
@@ -96,17 +145,28 @@ static unsigned emit_unsigned_base(int fd, unsigned value, unsigned base, bool u
 
   digit_count = (unsigned)sizeof(digits) - len;
   if (min_width > digit_count){
-    return emit_padding(fd, pad_char, min_width - digit_count) + emit_span(fd, &digits[len], digit_count);
+    emitted = emit_padding(fd, pad_char, min_width - digit_count);
+    if (emitted < 0){
+      return -1;
+    }
+    result = emit_span(fd, &digits[len], digit_count);
+    if (result < 0){
+      return -1;
+    }
+    return emitted + result;
   }
   return emit_span(fd, &digits[len], digit_count);
 }
 
-static unsigned emit_signed_base10(int fd, int value, unsigned min_width, bool zero_pad){
+static int emit_signed_base10(int fd, int value, unsigned min_width,
+                              bool zero_pad){
   char digits[MAX_SIGNED_DEC_CHARS];
   unsigned magnitude;
   unsigned len = MAX_SIGNED_DEC_CHARS;
   unsigned digit_count;
   char pad_char = zero_pad ? '0' : ' ';
+  int emitted;
+  int result;
 
   if (value == 0){
     digits[--len] = '0';
@@ -130,21 +190,44 @@ static unsigned emit_signed_base10(int fd, int value, unsigned min_width, bool z
   digit_count = MAX_SIGNED_DEC_CHARS - len;
   if (min_width > digit_count){
     if (zero_pad && digits[len] == '-'){
-      emit_span(fd, &digits[len], 1);
-      return 1 + emit_padding(fd, '0', min_width - digit_count)
-        + emit_span(fd, &digits[len + 1], digit_count - 1);
+      if (emit_span(fd, &digits[len], 1) < 0){
+        return -1;
+      }
+      emitted = emit_padding(fd, '0', min_width - digit_count);
+      if (emitted < 0){
+        return -1;
+      }
+      result = emit_span(fd, &digits[len + 1], digit_count - 1);
+      if (result < 0){
+        return -1;
+      }
+      return 1 + emitted + result;
     }
-    return emit_padding(fd, pad_char, min_width - digit_count) + emit_span(fd, &digits[len], digit_count);
+
+    emitted = emit_padding(fd, pad_char, min_width - digit_count);
+    if (emitted < 0){
+      return -1;
+    }
+    result = emit_span(fd, &digits[len], digit_count);
+    if (result < 0){
+      return -1;
+    }
+    return emitted + result;
   }
   return emit_span(fd, &digits[len], digit_count);
 }
 
-unsigned fdprintf(int fd, char* fmt, void* arr){
-  unsigned count = 0;
+int fdprintf(int fd, char* fmt, void* arr){
+  int count = 0;
   unsigned i = 0;
   char* literal_start;
   unsigned literal_len;
   unsigned* values = (unsigned*)arr;
+  int emitted;
+
+  if (fmt == NULL){
+    return -1;
+  }
 
   while (*fmt != '\0'){
     if (*fmt == '%'){
@@ -153,19 +236,25 @@ unsigned fdprintf(int fd, char* fmt, void* arr){
       bool has_precision = false;
       unsigned precision = 0;
 
-      ++count;
       ++fmt;
       if (*fmt == '0'){
         zero_pad = true;
         ++fmt;
       }
       while (*fmt >= '0' && *fmt <= '9'){
-        min_width = (min_width * 10u) + (unsigned)(*fmt - '0');
+        unsigned digit = (unsigned)(*fmt - '0');
+        if (min_width > ((unsigned)INT_MAX - digit) / DECIMAL_BASE){
+          return -1;
+        }
+        min_width = (min_width * DECIMAL_BASE) + digit;
         ++fmt;
       }
       if (*fmt == '.'){
         ++fmt;
         if (*fmt == '*'){
+          if (values == NULL){
+            return -1;
+          }
           has_precision = true;
           precision = values[i++];
           ++fmt;
@@ -176,47 +265,97 @@ unsigned fdprintf(int fd, char* fmt, void* arr){
       }
 
       if (*fmt == 'd'){
-        count += emit_signed_base10(fd, ((int*)values)[i++], min_width, zero_pad);
+        if (values == NULL){
+          return -1;
+        }
+        emitted = emit_signed_base10(fd, ((int*)values)[i++], min_width,
+                                     zero_pad);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == 'u'){
-        count += emit_unsigned_base(fd, values[i++], DECIMAL_BASE, false, min_width, zero_pad);
+        if (values == NULL){
+          return -1;
+        }
+        emitted = emit_unsigned_base(fd, values[i++], DECIMAL_BASE, false,
+                                     min_width, zero_pad);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == 'x'){
-        count += emit_unsigned_base(fd, values[i++], HEX_BASE, false, min_width, zero_pad);
+        if (values == NULL){
+          return -1;
+        }
+        emitted = emit_unsigned_base(fd, values[i++], HEX_BASE, false,
+                                     min_width, zero_pad);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == 'X'){
-        count += emit_unsigned_base(fd, values[i++], HEX_BASE, true, min_width, zero_pad);
+        if (values == NULL){
+          return -1;
+        }
+        emitted = emit_unsigned_base(fd, values[i++], HEX_BASE, true,
+                                     min_width, zero_pad);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == 's'){
+        int string_len;
+        unsigned len;
+
+        if (values == NULL){
+          return -1;
+        }
         char* str = (char*)values[i++];
-        unsigned len = string_length(str);
+        string_len = string_output_length(str);
+        if (string_len < 0){
+          return -1;
+        }
+        len = (unsigned)string_len;
         if (has_precision){
           len = min_unsigned(len, precision);
         }
-        count += emit_span(fd, str, len);
+        emitted = emit_span(fd, str, len);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == 'c'){
+        if (values == NULL){
+          return -1;
+        }
         char c = (char)values[i++];
-        write_fd_all(fd, &c, 1);
-        ++count;
+        emitted = emit_span(fd, &c, 1);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       } else if (*fmt == '%'){
-        write_fd_all(fd, "%", 1);
-        ++count;
+        emitted = emit_span(fd, "%", 1);
+        if (!add_emitted_count(&count, emitted)){
+          return -1;
+        }
         ++fmt;
         continue;
       }
 
       // Unsupported format specifier: emit '%' literally and retry the current
       // character through the normal literal path on the next loop.
-      write_fd_all(fd, "%", 1);
-      ++count;
+      emitted = emit_span(fd, "%", 1);
+      if (!add_emitted_count(&count, emitted)){
+        return -1;
+      }
       continue;
     }
 
@@ -228,87 +367,22 @@ unsigned fdprintf(int fd, char* fmt, void* arr){
       ++literal_len;
     }
 
-    write_fd_all(fd, literal_start, literal_len);
-    count += literal_len;
-  }
-  return count;
-}
-
-unsigned print_signed(int n){
-  char digits[MAX_SIGNED_DEC_CHARS];
-  unsigned magnitude;
-  unsigned len = MAX_SIGNED_DEC_CHARS;
-  unsigned count;
-
-  if(n == 0){
-    putchar('0');
-    return 1;
-  }
-
-  if(n < 0){
-    magnitude = 0u - (unsigned)n;
-  } else {
-    magnitude = (unsigned)n;
-  }
-
-  while (magnitude != 0){
-    digits[--len] = (char)('0' + (magnitude % DECIMAL_BASE));
-    magnitude /= DECIMAL_BASE;
-  }
-
-  if (n < 0){
-    digits[--len] = '-';
-  }
-
-  count = MAX_SIGNED_DEC_CHARS - len;
-  write_fd_all(STDOUT, &digits[len], count);
-  return count;
-}
-
-unsigned print_unsigned(unsigned n){
-  char digits[MAX_INT_DEC_DIGITS];
-  unsigned len = MAX_INT_DEC_DIGITS;
-  unsigned count;
-
-  if(n == 0){
-    putchar('0');
-    return 1;
-  }
-
-  while (n != 0){
-    digits[--len] = (char)('0' + (n % DECIMAL_BASE));
-    n /= DECIMAL_BASE;
-  }
-
-  count = MAX_INT_DEC_DIGITS - len;
-  write_fd_all(STDOUT, &digits[len], count);
-  return count;
-}
-
-unsigned print_hex(unsigned n, bool uppercase){
-  char digits[MAX_UNSIGNED_HEX_DIGITS];
-  unsigned len = MAX_UNSIGNED_HEX_DIGITS;
-  unsigned digit;
-  unsigned count;
-
-  if(n == 0){
-    putchar('0');
-    return 1;
-  }
-
-  while (n != 0){
-    digit = n % HEX_BASE;
-
-    if (digit < DECIMAL_BASE){
-      digits[--len] = (char)('0' + digit);
-    } else {
-      digits[--len] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
+    emitted = emit_span(fd, literal_start, literal_len);
+    if (!add_emitted_count(&count, emitted)){
+      return -1;
     }
-
-    n /= HEX_BASE;
   }
-
-  count = MAX_UNSIGNED_HEX_DIGITS - len;
-  write_fd_all(STDOUT, &digits[len], count);
   return count;
+}
+
+int print_signed(int n){
+  return emit_signed_base10(STDOUT, n, 0, false);
+}
+
+int print_unsigned(unsigned n){
+  return emit_unsigned_base(STDOUT, n, DECIMAL_BASE, false, 0, false);
+}
+
+int print_hex(unsigned n, bool uppercase){
+  return emit_unsigned_base(STDOUT, n, HEX_BASE, uppercase, 0, false);
 }

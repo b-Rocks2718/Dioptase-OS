@@ -75,7 +75,10 @@ requested order. If it finds a larger block, it repeatedly splits that block,
 keeps the left half, and returns the right half of each split to the next lower
 order free list until the requested order is reached.
 
-Allocation currently panics on exhaustion instead of returning `NULL`.
+Allocation returns `NULL` on exhaustion instead of panicking. Boot-critical
+`physmem_leak*()` helpers still assert that a page was obtained. Public VM and
+syscall paths must translate `NULL` into a normal failure; remaining unchecked
+internal kernel `malloc` sites are outside the physmem release-blocker scope.
 
 #### Order-Based Free / Coalescing
 

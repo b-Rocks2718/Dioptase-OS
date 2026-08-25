@@ -1,3 +1,9 @@
+/*
+ * Exec destination image:
+ * - verifies argc and every copied argument after the old address space dies
+ * - verifies the kernel-created C argv vector includes argv[argc] == NULL
+ */
+
 #include "../../../root/crt/print.h"
 #include "../../../root/crt/sys.h"
 
@@ -13,5 +19,8 @@ int main(int argc, char** argv) {
     puts(argv[i]);
     puts("\n");
   }
+  puts("***argv[argc] is NULL = ");
+  print_signed(argv[argc] == (char*)0);
+  puts("\n");
   return 42;
 }

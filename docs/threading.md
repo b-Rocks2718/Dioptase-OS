@@ -22,9 +22,37 @@ this call the scheduler does some work, such as load balancing. To avoid reentra
 ### Freeing threads
 When a thread finishes running, it is placed in a reaper queue. Because freeing threads requires acquiring the heap's blocking lock, idle threads cannot free threads that have finished running. Instead a reaper thread is created on boot, which runs with low priority and frees any threads in the reaper queue.  
 
+`stop()` is the only producer of terminal TCBs. Before its context-switch
+callback appends a TCB to the reaper queue, it disables preemption, revokes the
+live TCB pointer from the child descriptor, publishes the exit result, and
+releases the child's internal descriptor reference. The callback asserts that
+`parent_promise` is already clear. Synchronization-object destruction never
+places blocked threads on the reaper queue; owners must wake and join waiters
+before quiescent destruction.
+
+`setup_thread()` creates persistent kernel daemons which deliberately do not
+contribute to the normal-thread shutdown count. Each such TCB carries an
+explicit daemon marker. After every core has disabled interrupts and crossed
+the shutdown barrier, core 0 detaches only marked daemons from residual global,
+per-core, deferred-interrupt, pinned, and sleep queues before destroying the
+scheduler's queue locks. A normal TCB in any of those queues is a lifecycle
+violation and produces a diagnostic panic. Suspended daemon storage remains a
+documented boot-lifetime allocation; shutdown does not try to resume or free a
+kernel continuation retained by a device waiter.
+
+Finite asynchronous work accepted by a normal TCB is counted separately from
+both normal TCBs and persistent daemon TCBs. The accepting TCB calls
+`kernel_async_work_begin()` before publishing the work; the daemon calls
+`kernel_async_work_finish()` only after releasing every resource owned by that
+work item. `event_loop()` remains live while either `n_active` or this
+sequentially-consistent work count is nonzero. Consequently an asynchronous
+syscall may return without letting filesystem, VM, device, or heap teardown
+overtake the daemon that retained its resources. The first work reference must
+come from a live normal TCB, closing the zero-to-one transition against
+shutdown; persistent daemons themselves remain boot-lifetime objects.
+
 
 ### Tests
 - threads_yield.c
 - threads_preempt.c
 - threads_sleep.c
-  

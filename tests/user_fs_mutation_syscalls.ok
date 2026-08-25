@@ -8,6 +8,10 @@
 ***PASS mkdir("a/b"): got -1 expected -1
 ***PASS rmdir("a/b"): got -1 expected -1
 ***PASS unlink("a/b"): got -1 expected -1
+***mkdir basename length boundary
+***PASS mkdir accepts 255-byte basename: got 0 expected 0
+***PASS rmdir removes 255-byte basename: got 0 expected 0
+***PASS mkdir rejects 256-byte basename: got -1 expected -1
 ***mkdir create and traverse
 ***PASS mkdir(MADE_DIR): got 0 expected 0
 ***PASS chdir(MADE_DIR): got 0 expected 0

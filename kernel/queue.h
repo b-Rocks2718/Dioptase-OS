@@ -23,10 +23,11 @@ struct Queue {
 };
 
 // SleepQueue is a single-owner queue of threads sleeping until wakeup_jiffies.
-// Invariant: entries are sorted by increasing wakeup_jiffies, and equal
-// deadlines retain FIFO order. There is no internal lock; production callers
-// rely on the per-core sleep queue ownership and interrupt discipline described
-// by the scheduler, while tests may call the explicit-time helper directly.
+// Invariant: entries are ordered by 32-bit modular time within the supported
+// INT_MAX-tick horizon, and equal deadlines retain FIFO order. There is no
+// internal lock; production callers rely on the per-core sleep queue ownership
+// and interrupt discipline described by the scheduler, while tests may call
+// the explicit-time helper directly.
 struct SleepQueue {
   struct TCB* head;
   int size;
@@ -50,6 +51,9 @@ struct GenericSpinQueue {
   struct GenericQueueElement* tail;
   struct CLHLock spinlock;
   int size;
+  // Diagnostic lifetime reference spanning every public operation from before
+  // its first CLH exchange through its final queue access/unlock.
+  int active_operations;
 };
 
 // Circular buffer that leaves one slot empty to distinguish full from empty
@@ -73,7 +77,8 @@ struct KeyBuf {
 // initialize an empty spin-locked FIFO queue
 void spin_queue_init(struct SpinQueue* queue);
 
-// destroy the internal spin lock after all users of the queue have stopped
+// Destroy an empty queue's internal spin lock after all users have stopped.
+// Panics rather than silently abandoning queued TCB ownership.
 void spin_queue_destroy(struct SpinQueue* queue);
 
 // append a TCB to the tail of the spin queue
@@ -114,13 +119,15 @@ struct TCB* queue_peek(struct Queue* queue);
 // initialize an empty sleep queue
 void sleep_queue_init(struct SleepQueue* queue);
 
-// insert a sleeping thread, keeping the queue sorted by wakeup_jiffies.
+// Insert a sleeping thread, keeping the queue sorted across 32-bit jiffy wrap.
+// All live deadlines must remain within INT_MAX ticks of the comparison epoch.
 // Precondition: caller owns this queue or otherwise excludes concurrent
 // sleep_queue_add/remove operations on the same SleepQueue.
 // Postcondition: data is linked into the queue with stale next linkage cleared.
 void sleep_queue_add(void* args);
 
-// remove the head thread if its wakeup time has arrived at the provided time.
+// Remove the head thread if its wakeup time has arrived at the provided modular
+// time. The provided time and every live deadline must differ by < 2^31 ticks.
 // Precondition: caller owns this queue or otherwise excludes concurrent
 // sleep_queue_add/remove operations on the same SleepQueue.
 // Postcondition: if non-NULL is returned, that node is detached and next=NULL;
@@ -130,6 +137,10 @@ struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies
 // remove the head thread if its wakeup time has arrived according to current_jiffies.
 // Same ownership and postconditions as sleep_queue_remove_at().
 struct TCB* sleep_queue_remove(struct SleepQueue* queue);
+
+// Detach every sleeper from an externally quiescent single-owner queue.
+// Returned nodes retain their list linkage; the queue becomes empty.
+struct TCB* sleep_queue_remove_all(struct SleepQueue* queue);
 
 // return the current number of sleeping threads
 unsigned sleep_queue_size(struct SleepQueue* queue);
@@ -154,7 +165,16 @@ unsigned generic_queue_size(struct GenericQueue* queue);
 // initialize an empty spin-locked generic queue
 void generic_spin_queue_init(struct GenericSpinQueue* queue);
 
-// destroy the internal spin lock after all users of the queue have stopped
+// Non-mutating teardown preflight for queue operations/CLH ownership. This
+// deliberately does not inspect payload links, allowing composite owners to
+// emit their richer size/permit/capacity diagnostics before any destruction.
+void generic_spin_queue_assert_quiescent(struct GenericSpinQueue* queue);
+
+// Non-mutating payload preflight for an externally quiescent queue.
+void generic_spin_queue_assert_empty(struct GenericSpinQueue* queue);
+
+// Destroy an empty queue's internal spin lock after all users have stopped.
+// Panics rather than silently abandoning caller-owned payloads.
 void generic_spin_queue_destroy(struct GenericSpinQueue* queue);
 
 // append an element to the tail of the spin-locked generic queue

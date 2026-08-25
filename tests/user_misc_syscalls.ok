@@ -16,6 +16,11 @@
 ***PASS sem_up(sem): got 0 expected 0
 ***PASS sem_close(sem): got 0 expected 0
 ***PASS sem_close(sem): got -1 expected -1
+***PASS open INT_MAX semaphore: got 1 expected 1
+***PASS sem_up rejects INT_MAX overflow: got -1 expected -1
+***PASS failed sem_up preserves INT_MAX permit: got 0 expected 0
+***PASS sem_up succeeds after one sem_down: got 0 expected 0
+***PASS sem_close INT_MAX semaphore: got 0 expected 0
 ***PASS all_open: got 1 expected 1
 ***PASS sem_open(0): got -1 expected -1
 ***PASS reuse semaphore descriptor after exhaustion: got 1 expected 1
@@ -23,12 +28,63 @@
 ***PASS (int)anon != 0 && (int)anon != -1: got 1 expected 1
 ***PASS anonymous mapping first word: got 123 expected 123
 ***PASS anonymous mapping second word: got 456 expected 456
+***PASS mmap rejects zero size: got -1 expected -1
+***PASS mmap rejects high-bit size: got -1 expected -1
+***PASS mmap rejects non-sentinel negative fd: got -1 expected -1
+***PASS mmap rejects anonymous offset: got -1 expected -1
+***PASS mmap rejects unknown flag: got -1 expected -1
+***PASS mmap rejects shared anonymous mapping: got -1 expected -1
+***PASS mmap reports user range exhaustion: got -1 expected -1
 ***PASS data_fd >= 0: got 1 expected 1
 ***PASS (int)file_map != 0 && (int)file_map != -1: got 1 expected 1
 ***PASS file mapping first byte: got 77 expected 77
 ***PASS file mapping fourth byte: got 33 expected 33
 ***PASS (int)mmap(4, 99, 0, MMAP_READ): got -1 expected -1
+***PASS mmap rejects unaligned file offset: got -1 expected -1
 ***PASS close(data_fd): got 0 expected 0
+***PASS directory_fd >= 0: got 1 expected 1
+***PASS mmap rejects directory descriptor: got -1 expected -1
+***PASS close(directory_fd): got 0 expected 0
+***PASS pipe(pipe_fds): got 0 expected 0
+***PASS mmap rejects pipe read descriptor: got -1 expected -1
+***PASS mmap rejects pipe write descriptor: got -1 expected -1
+***PASS seek rejects pipe read descriptor: got -1 expected -1
+***PASS seek rejects pipe write descriptor: got -1 expected -1
+***PASS audio rejects pipe read descriptor: got -1 expected -1
+***PASS audio rejects pipe write descriptor: got -1 expected -1
+***PASS close pipe read descriptor: got 0 expected 0
+***PASS close pipe write descriptor: got 0 expected 0
+***PASS empty_audio_fd >= 0: got 1 expected 1
+***PASS audio rejects empty regular file: got -1 expected -1
+***PASS close(empty_audio_fd): got 0 expected 0
+***PASS short_audio_fd >= 0: got 1 expected 1
+***PASS write truncated RIFF header: got 11 expected 11
+***PASS audio rejects truncated RIFF header: got -1 expected -1
+***PASS close(short_audio_fd): got 0 expected 0
+***PASS truncated_fmt_fd >= 0: got 1 expected 1
+***PASS write truncated fmt chunk: got 24 expected 24
+***PASS audio rejects truncated fmt chunk: got -1 expected -1
+***PASS close(truncated_fmt_fd): got 0 expected 0
+***PASS stereo_audio_fd >= 0: got 1 expected 1
+***PASS write unsupported stereo WAV: got 46 expected 46
+***PASS audio rejects unsupported stereo WAV: got -1 expected -1
+***PASS close(stereo_audio_fd): got 0 expected 0
+***PASS sample_rate_fd >= 0: got 1 expected 1
+***PASS write unsupported sample-rate WAV: got 46 expected 46
+***PASS audio rejects unsupported sample-rate WAV: got -1 expected -1
+***PASS close(sample_rate_fd): got 0 expected 0
+***PASS sample_width_fd >= 0: got 1 expected 1
+***PASS write unsupported sample-width WAV: got 46 expected 46
+***PASS audio rejects unsupported sample-width WAV: got -1 expected -1
+***PASS close(sample_width_fd): got 0 expected 0
+***PASS empty_data_fd >= 0: got 1 expected 1
+***PASS write zero-data WAV: got 46 expected 46
+***PASS audio rejects zero-data WAV: got -1 expected -1
+***PASS close(empty_data_fd): got 0 expected 0
+***PASS odd_data_fd >= 0: got 1 expected 1
+***PASS write odd-data WAV: got 46 expected 46
+***PASS audio rejects odd-data WAV: got -1 expected -1
+***PASS close(odd_data_fd): got 0 expected 0
 ***PASS audio_fd >= 0: got 1 expected 1
 ***PASS write(audio_fd, wav_bytes, TEST_WAV_BYTES): got 46 expected 46
 ***PASS seek(audio_fd, 0, SEEK_SET): got 0 expected 0

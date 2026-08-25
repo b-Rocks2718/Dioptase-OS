@@ -13,8 +13,9 @@ void print_dramatically(char* str, unsigned delay){
 }
 
 #define DELAY 12
+#define LYRICS_BUFFER_BYTES 2048
 
-char lyrics[2048];
+char lyrics[LYRICS_BUFFER_BYTES];
 
 int main(void){
   // clear the screen
@@ -26,12 +27,42 @@ int main(void){
   // home cursor
   puts("\x1b[H");
 
-  int lyrics_fd = open("/still_alive/lyrics.txt");
-  read(lyrics_fd, lyrics, sizeof(lyrics));
-  close(lyrics_fd);
+  int lyrics_fd = open_existing("/still_alive/lyrics.txt");
+  if (lyrics_fd < 0){
+    puts("still_alive: could not open /still_alive/lyrics.txt\n");
+    return -1;
+  }
 
-  int music_fd = open("/still_alive/still_alive.wav");
-  play_audio_file(music_fd);
+  // Reserve one byte for the terminator consumed by print_dramatically().
+  // read() returns raw bytes and does not append a terminator when the file
+  // fills the caller's buffer.
+  int lyrics_bytes = read(lyrics_fd, lyrics, sizeof(lyrics) - 1);
+  if (lyrics_bytes < 0){
+    close(lyrics_fd);
+    puts("still_alive: could not read /still_alive/lyrics.txt\n");
+    return -1;
+  }
+  lyrics[lyrics_bytes] = '\0';
+
+  if (close(lyrics_fd) < 0){
+    puts("still_alive: could not close /still_alive/lyrics.txt\n");
+    return -1;
+  }
+
+  int music_fd = open_existing("/still_alive/still_alive.wav");
+  if (music_fd < 0){
+    puts("still_alive: could not open /still_alive/still_alive.wav\n");
+    return -1;
+  }
+  if (play_audio_file(music_fd) < 0){
+    close(music_fd);
+    puts("still_alive: could not start /still_alive/still_alive.wav\n");
+    return -1;
+  }
+  if (close(music_fd) < 0){
+    puts("still_alive: could not close /still_alive/still_alive.wav\n");
+    return -1;
+  }
 
   print_dramatically("Initializing GLaDOS", DELAY);
   sleep(50);

@@ -8,6 +8,8 @@
  *   allocates blocks correctly and zero-fills unwritten gaps
  * - reopening an inode with an interior sparse direct slot preserves the later
  *   live block when a subsequent write appends beyond it
+ * - an overflowing offset-plus-size range is rejected before allocating a
+ *   block or changing the inode size
  * - concurrent writers updating the same inode do not lose disjoint full-block
  *   or same-block partial writes
  *
@@ -41,6 +43,11 @@
 #define SPARSE_HOLE_TEXT "HOLE"
 #define SINGLE_INDIRECT_TEST_SLOT 13
 #define SINGLE_INDIRECT_PAYLOAD_OFFSET 3
+#define OVERFLOW_WRITE_FILE_NAME "overflow-write.bin"
+// The current preprocessor does not recursively expand UINT_MAX inside another
+// object-like macro; this is UINT_MAX - 1 written as its 32-bit value.
+#define OVERFLOW_WRITE_OFFSET 0xFFFFFFFE
+#define OVERFLOW_WRITE_BYTES 4
 
 struct ConcurrentWriteArgs {
   unsigned block_size;
@@ -54,6 +61,24 @@ static int partial_concurrent_finished = 0;
 
 static void concurrent_writer_thread(void* arg);
 static void partial_concurrent_writer_thread(void* arg);
+
+// Reject an unrepresentable exclusive end before block-index arithmetic can
+// wrap and redirect the write into a low logical block.
+static void check_overflowing_write_range(struct Node* root){
+  struct Node* file = node_make_file(root, OVERFLOW_WRITE_FILE_NAME);
+  assert(file != NULL,
+    "ext_write: failed to create overflow-range fixture.\n");
+
+  unsigned cnt = node_write_all(file, OVERFLOW_WRITE_OFFSET,
+    OVERFLOW_WRITE_BYTES, "bad!");
+  assert(cnt == 0,
+    "ext_write: overflowing write range did not report failure.\n");
+  assert(node_size_in_bytes(file) == 0,
+    "ext_write: overflowing write range changed the inode size.\n");
+
+  node_free(file);
+  say("***Overflowing write range: ok\n", NULL);
+}
 
 // Allocates a raw byte buffer and fills every byte with the same pattern.
 // The write tests use this for file bootstrap images and per-thread payloads so
@@ -614,6 +639,7 @@ int kernel_main(void) {
   check_sparse_high_water_append(root, block_size);
   check_shrink_without_reclaim(root, block_size);
   check_single_indirect_growth(root, block_size);
+  check_overflowing_write_range(root);
 
   return 0;
 }

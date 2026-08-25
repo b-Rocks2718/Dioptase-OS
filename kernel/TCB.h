@@ -116,6 +116,12 @@ struct TCB {
   struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
   struct CLHNode* my_pred;
 
+  // setup_thread() TCBs are boot-lifetime daemons. Normal completion ignores
+  // them when deciding to shut down, so scheduler teardown may detach only
+  // TCBs carrying this explicit ownership marker from residual ready/sleep
+  // queues. This field is after all assembly-addressed context members.
+  bool is_daemon;
+
   struct TCB* next;
 };
 

@@ -20,3 +20,15 @@
 ***PASS close(pipe_fds[0]): got 0 expected 0
 ***PASS close(private_fd): got 0 expected 0
 ***PASS close(shared_fd): got 0 expected 0
+***PASS open descriptor-lifetime target semaphore: got 1 expected 1
+***PASS open descriptor-lifetime ready semaphore: got 1 expected 1
+***PASS open descriptor-lifetime trigger semaphore: got 1 expected 1
+***PASS descriptor-lifetime waiter child valid: got 1 expected 1
+***PASS descriptor-lifetime waker child valid: got 1 expected 1
+***PASS waiter reached descriptor-lifetime semaphore: got 0 expected 0
+***PASS parent closes active inherited semaphore: got 0 expected 0
+***PASS release inherited semaphore waker: got 0 expected 0
+***PASS descriptor-lifetime waiter exit status: got 51 expected 51
+***PASS descriptor-lifetime waker exit status: got 54 expected 54
+***PASS close descriptor-lifetime ready semaphore: got 0 expected 0
+***PASS close descriptor-lifetime trigger semaphore: got 0 expected 0

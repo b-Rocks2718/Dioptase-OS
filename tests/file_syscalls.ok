@@ -34,4 +34,12 @@
 ***PASS read(fd, buf, 1): got 1 expected 1
 ***PASS reopened nested note byte: got 89 expected 89
 ***PASS close(fd): got 0 expected 0
+***PASS create deep marker: got 1 expected 1
+***PASS close deep marker: got 0 expected 0
+***PASS chdir deep path: got 0 expected 0
+***PASS getcwd deep path: got 1 expected 1
+***PASS deep cwd canonical path: got 0 expected 0
+***PASS failed chdir from deep cwd: got -1 expected -1
+***PASS getcwd retained after failed chdir: got 1 expected 1
+***PASS failed chdir kept cwd pair: got 0 expected 0
 ***PASS yield resumed the current process: got 1 expected 1

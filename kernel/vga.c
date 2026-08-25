@@ -3,7 +3,6 @@
 #include "constants.h"
 #include "print.h"
 #include "ivt.h"
-#include "debug.h"
 
 // MMIO addresses for VGA text mode
 
@@ -37,7 +36,8 @@ void make_tiles_transparent(void){
 }
 
 void vga_vblank_handler(void){
+  // VBLANK remains masked by default and has no display-refresh consumer yet.
+  // If a caller enables the source anyway, acknowledge the edge and return so
+  // enabling the interrupt cannot escalate into a kernel panic by itself.
   mark_vblank_handled();
-
-  panic("| VGA VBLANK handler unexpectedly called\n");
 }

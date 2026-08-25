@@ -1,0 +1,3 @@
+semaphore destroy rejected
+active=1 waiters=0
+sem_destroy: owner must stop new operations and wake/join every waiter before destruction.

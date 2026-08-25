@@ -478,6 +478,42 @@ open:
 
   ret
 
+  .global open_existing
+open_existing:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  # The C ABI supplies pathname in r1. Move it to the trap ABI's first
+  # argument register before selecting Dioptase-OS trap code 56. `trap` enters
+  # kernel mode; its ordinary return restores user mode and leaves the fd/-1
+  # result in r1.
+  mov  r2, r1
+  movi r1, 56
+  trap
+
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
   .global read
 read:
   push r20

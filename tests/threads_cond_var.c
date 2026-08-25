@@ -154,6 +154,16 @@ void kernel_main(void) {
     yield();
   }
 
+  clh_lock_acquire(&cv.lock);
+  int active_cv_operations =
+    __atomic_load_n(&cv.active_operations);
+  clh_lock_release(&cv.lock);
+  if (active_cv_operations != 0) {
+    int args[2] = { active_cv_operations, 0 };
+    say("***cond_var FAIL active_operations=%d expected=%d\n", args);
+    panic("cond_var test: completed waiters left a live condition-variable operation\n");
+  }
+
   cond_var_destroy(&cv);
   blocking_lock_destroy(&lock);
 

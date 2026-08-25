@@ -1,0 +1,26 @@
+***PASS open formatted-output file: got 1 expected 1
+***PASS fdprintf reports exact mixed-format byte count: got 43 expected 43
+***PASS rewind formatted-output file: got 0 expected 0
+***PASS read exact mixed-format byte count: got 43 expected 43
+***PASS fdprintf emitted exact mixed-format bytes: got 1 expected 1
+***PASS fwrite rejects wrapped item extent: got 0 expected 0
+***PASS rejected wrapped fwrite preserves file offset: got 43 expected 43
+***PASS fread rejects wrapped item extent: got 0 expected 0
+***PASS rejected wrapped fread preserves file offset: got 43 expected 43
+***PASS rewind after wrapped stdio requests: got 0 expected 0
+***PASS read bytes after wrapped stdio requests: got 43 expected 43
+***PASS wrapped stdio requests preserve file contents: got 1 expected 1
+***PASS oversized format width is rejected: got -1 expected -1
+***PASS close formatted-output file: got 0 expected 0
+***PASS fdprintf rejects invalid descriptor: got -1 expected -1
+***PASS open closed-output file: got 1 expected 1
+***PASS close closed-output descriptor: got 0 expected 0
+***PASS fdputs rejects already-closed descriptor: got -1 expected -1
+***PASS create output-failure pipe: got 0 expected 0
+***PASS close final output-failure pipe reader: got 0 expected 0
+***PASS fputs propagates readerless-pipe failure: got -1 expected -1
+***PASS fwrite reports zero complete readerless-pipe items: got 0 expected 0
+***PASS close output-failure pipe writer: got 0 expected 0
+***PASS printf reports exact output count: got 5 expected 5
+***PASS puts reports exact output count: got 6 expected 6
+***PASS closed-stdout helpers report write failure: got 71 expected 71

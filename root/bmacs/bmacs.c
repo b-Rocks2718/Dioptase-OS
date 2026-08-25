@@ -380,6 +380,8 @@ static bool write_all_file_bytes(int fd, char* bytes, unsigned length){
 }
 
 static bool save_text_buffer_to_file(struct TextBuffer* buffer, char* filename){
+  // Saving is an intentional publication point: retain creating open() so a
+  // file removed after load can be recreated before its new contents commit.
   int fd = open(filename);
   bool ok = true;
 
@@ -734,7 +736,10 @@ int main(int argc, char** argv){
   }
 
   char* filename = argv[1];
-  int fd = open(filename);
+  // Loading must not create an empty entry merely because the requested
+  // document is missing. The current ABI has no errno/stat distinction, so
+  // every lookup failure remains an explicit editor error below.
+  int fd = open_existing(filename);
   if (fd < 0){
     print_bmacs_file_error("failed to open file", filename);
     return 1;

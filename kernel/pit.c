@@ -23,7 +23,7 @@ void pit_handler(void){
   int me = get_core_id();
 
   int imr = get_imr();
-  assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
+  assert_always((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   if (me == 0){
     // core 0 is responsible for incrementing jiffies
@@ -49,7 +49,7 @@ void pit_handler(void){
   struct PerCore* per_core = get_per_core();
 
   struct TCB* tcb = per_core->current_thread;
-  assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
+  assert_always(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
   if (tcb != &per_core->idle_thread){
     tcb->remaining_quantum--;
@@ -73,12 +73,12 @@ void pit_handler(void){
   }
 
   imr = get_imr();
-  assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
+  assert_always((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   per_core = get_per_core();
-  assert(per_core->current_thread == tcb, "current thread changed unexpectedly in PIT handler.\n");
+  assert_always(per_core->current_thread == tcb, "current thread changed unexpectedly in PIT handler.\n");
 
-  assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
+  assert_always(tcb != NULL, "current thread is NULL in PIT handler.\n");
 }
 
 // Initialize the PIT to generate interrupts at the specified frequency in hertz

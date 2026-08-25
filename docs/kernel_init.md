@@ -61,8 +61,10 @@ Core 0 initializes subsystems in this order:
 
 During this phase, `bootstrapping` is still true. Kernel daemon threads created
 with `setup_thread()` do not end bootstrapping and do not count as active user
-work. SD waits are allowed to busy-wait during this phase because normal thread
-blocking and interrupt-driven wakeups are not fully live yet.
+work. SD waits poll during this phase because normal thread blocking and
+interrupt-driven wakeups are not fully live yet. The poll is bounded by the
+implementation-defined operation budget documented in `devices.md`; it cannot
+spin forever if a controller stops progressing.
 
 ### First Runnable Thread
 

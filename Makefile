@@ -16,9 +16,13 @@ SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 
 # memory map
 TEXT_LOAD_ADDR := 0x10000
-DATA_LOAD_ADDR := 0x90000
-RODATA_LOAD_ADDR := 0xD0000
-BSS_LOAD_ADDR := 0xE0000
+# Keep the boot-time text/data split aligned to 64 KiB. The BIOS receives these
+# addresses through the MBR segment table. 0xB0000 leaves 640 KiB for kernel
+# text; data keeps 192 KiB through 0xE0000, with rodata/bss sharing the final
+# 64 KiB before the per-core stacks.
+DATA_LOAD_ADDR := 0xB0000
+RODATA_LOAD_ADDR := 0xE0000
+BSS_LOAD_ADDR := 0xE8000
 KERNEL_STACKS_BOTTOM := 0xF0000
 
 # ext2 filesystem config
@@ -29,6 +33,10 @@ TEST_RUNS ?= 10
 TIMEOUT_SECONDS ?= 360
 VERSION ?= release
 HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
+# Soft asserts become no-ops when yes. Independent of VERSION (toolchain flavor).
+# A shipping image typically also sets HEAP_DEBUG=no, e.g.:
+#   make run OS_RELEASE=yes HEAP_DEBUG=no
+OS_RELEASE ?= no
 
 # ------------------------------------------------------------------------------------------ #
 
@@ -41,6 +49,7 @@ EMU_AUDIO_FAST_STRIPPED := $(strip $(EMU_AUDIO_FAST))
 SCHEDULER_STRIPPED := $(strip $(SCHEDULER))
 TRACE_INTS_STRIPPED := $(strip $(TRACE_INTS))
 HEAP_DEBUG_STRIPPED := $(strip $(HEAP_DEBUG))
+OS_RELEASE_STRIPPED := $(strip $(OS_RELEASE))
 
 EMU_FLAGS := --cores $(NUM_CORES) --sched $(SCHEDULER_STRIPPED)
 
@@ -69,6 +78,11 @@ KERNEL_TEST_BCC_DEFINES :=
 ifeq ($(HEAP_DEBUG_STRIPPED),yes)
 KERNEL_TEST_BCC_DEFINES += -DHEAP_DEBUG=1
 endif
+ifeq ($(OS_RELEASE_STRIPPED),yes)
+KERNEL_TEST_BCC_DEFINES += -DOS_RELEASE=1
+endif
+# Passed into root/ and tests/*/sbin submakes so CRT assert policy matches the kernel.
+OS_BCC_DEFINES := $(KERNEL_TEST_BCC_DEFINES)
 KERNEL_TEST_CONFIG_STAMP := build/kernel-test-config.stamp
 
 SHELL := /bin/sh
@@ -131,10 +145,22 @@ TEST_PANIC_FILES := $(wildcard tests/*.panic)
 TEST_PANIC_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_PANIC_FILES))))
 HEAP_PANIC_NAMES := $(filter heap_%,$(TEST_PANIC_NAMES))
 ALL_TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
+FOUR_CORE_ONLY_TEST_NAMES := semaphore_destroy_pre_enqueue
+MULTICORE_ONLY_TEST_NAMES := blocking_lock_release_nonowner
 ifeq ($(HEAP_DEBUG_STRIPPED),yes)
 TEST_CHECK_NAMES := $(ALL_TEST_CHECK_NAMES)
 else
 TEST_CHECK_NAMES := $(filter-out $(HEAP_PANIC_NAMES),$(ALL_TEST_CHECK_NAMES))
+endif
+# The pre-enqueue race keeps a controller plus three IRQ-disabled CLH
+# participants simultaneously runnable on distinct cores. Preserve it as an
+# explicit target for any configuration, but do not make aggregate suites with
+# fewer than four cores fail its setup assertion instead of testing the kernel.
+ifneq ($(strip $(NUM_CORES)),4)
+TEST_CHECK_NAMES := $(filter-out $(FOUR_CORE_ONLY_TEST_NAMES),$(TEST_CHECK_NAMES))
+endif
+ifeq ($(strip $(NUM_CORES)),1)
+TEST_CHECK_NAMES := $(filter-out $(MULTICORE_ONLY_TEST_NAMES),$(TEST_CHECK_NAMES))
 endif
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
@@ -167,11 +193,13 @@ DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
 # Generated kernel/test assembly depends on configuration flags passed to bcc.
 # Keep one stamp outside the generated assembly dependency files so switching
-# HEAP_DEBUG cannot silently reuse assembly built with the opposite setting.
+# HEAP_DEBUG or OS_RELEASE cannot silently reuse assembly built with the
+# opposite setting.
 $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	@tmp="$@.tmp"; \
 	{ \
 	  echo "HEAP_DEBUG=$(HEAP_DEBUG_STRIPPED)"; \
+	  echo "OS_RELEASE=$(OS_RELEASE_STRIPPED)"; \
 	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
 	} > "$$tmp"; \
 	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
@@ -330,21 +358,23 @@ $(LABEL_TARGETS): %.labels: $(BUILD_DIR)/%.labels
 # Refresh guest /sbin payloads for tests that provide tests/<name>.dir/sbin.
 # Pass the selected OS toolchain explicitly so nested guest-user builds do not
 # depend on ambient PATH contents.
-$(TEST_SBIN_TARGETS): test-sbin-%:
+$(TEST_SBIN_TARGETS): test-sbin-%: | $(BCC) $(BASM)
 	@if [ -f "tests/$*.dir/sbin/Makefile" ]; then \
 	  "$(MAKE)" -C "tests/$*.dir/sbin" \
 	    CC="$(abspath $(BCC))" \
-	    BASM="$(abspath $(BASM))" || exit $$?; \
+	    BASM="$(abspath $(BASM))" \
+	    OS_BCC_DEFINES="$(OS_BCC_DEFINES)" || exit $$?; \
 	fi
 
 # Refresh every repo-local root program under root/*/Makefile so each one drops
 # its executable into root/sbin/ before `make run` packages the filesystem.
-root-sbin:
+root-sbin: | $(BCC) $(BASM)
 	@mkdir -p "$(ROOTFS_DIR)/sbin"
 	@for program_dir in $(ROOT_PROGRAM_DIRS); do \
 	  "$(MAKE)" -C "$$program_dir" \
 	    CC="$(abspath $(BCC))" \
-	    BASM="$(abspath $(BASM))" || exit $$?; \
+	    BASM="$(abspath $(BASM))" \
+	    OS_BCC_DEFINES="$(OS_BCC_DEFINES)" || exit $$?; \
 	done
 
 # Run the default kernel image with root/ packaged as SD1. Like persistent

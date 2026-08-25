@@ -1,8 +1,6 @@
 #include "promise.h"
 #include "heap.h"
 
-// port of Gheith kernel implementation
-
 // initialize the promise in the unset state
 void promise_init(struct Promise* promise){
   sem_init(&promise->sem, 0);

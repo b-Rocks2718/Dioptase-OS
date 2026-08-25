@@ -15,7 +15,8 @@ struct BoundedBuffer {
 // initialize an empty bounded buffer with the given capacity
 void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity);
 
-// destroy queue/semaphore synchronization state after all users have stopped
+// Destroy synchronization after all users have stopped and the owner has
+// drained every queued payload. A nonempty destroy panics.
 void bounded_buffer_destroy(struct BoundedBuffer* b);
 
 // destroy the bounded buffer and free the struct itself

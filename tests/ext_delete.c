@@ -11,6 +11,8 @@
  *   wrapper releases the target inode
  * - an already-open directory wrapper cannot recreate namespace state after the
  *   directory has been unlinked
+ * - typed deletion rejects a regular file passed to rmdir semantics and a
+ *   directory passed to unlink semantics without removing either pathname
  *
  * How:
  * - hold an extra wrapper on one file while another thread unlinks it, then
@@ -21,6 +23,8 @@
  *   reclamation waits for the wrapper release
  * - delete the fixed fixture entries from tests/ext_delete.dir and confirm they
  *   disappear from lookup results
+ * - exercise the syscall-facing typed delete API against regular-file,
+ *   symlink, empty-directory, and non-empty-directory targets
  * - build a scratch directory and walk through short symlink, long symlink,
  *   single-indirect file, and delete-then-recreate coverage while checking the
  *   free block and free inode counters after each step
@@ -47,6 +51,11 @@
 #define DELETE_TEST_BUSY_FILE_ROUNDS 4
 #define DELETE_TEST_BUSY_DIR_NAME "busy-dir"
 #define DELETE_TEST_BUSY_DIR_CHILD_NAME "late.txt"
+#define DELETE_TEST_FIXTURE_RECLAIMED_INODES 3
+#define DELETE_TEST_TYPED_FILE_NAME "typed-file"
+#define DELETE_TEST_TYPED_LINK_NAME "typed-link"
+#define DELETE_TEST_TYPED_DIR_NAME "typed-dir"
+#define DELETE_TEST_TYPED_CHILD_NAME "typed-child"
 
 struct ConcurrentDeleteFileArgs {
   struct Barrier* start;
@@ -70,6 +79,80 @@ static char* alloc_filled_bytes(unsigned size, char byte, char* failure_message)
   assert(size == 0 || buf != NULL, failure_message);
   memset(buf, byte, size);
   return buf;
+}
+
+/*
+ * Verify that target-kind checks are part of the delete transaction rather
+ * than a caller-side lookup. These checks are sequential because deterministically
+ * pausing the former syscall between lookup and delete would require a
+ * production-only hook; the existing busy-target tests below supply multicore
+ * lock/lifetime stress for the same typed implementation.
+ */
+static void check_typed_delete_coverage(struct Node* root) {
+  unsigned baseline_blocks = root->filesystem->superblock.free_blocks_count;
+  unsigned baseline_inodes = root->filesystem->superblock.free_inodes_count;
+  unsigned baseline_entries = node_entry_count(root);
+  unsigned baseline_links = node_get_num_links(root);
+  struct Node* node;
+  struct Node* child;
+
+  node = node_make_file(root, DELETE_TEST_TYPED_FILE_NAME);
+  assert(node != NULL,
+    "ext_delete: failed to create typed-delete regular-file target.\n");
+  node_free(node);
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_FILE_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == -1,
+    "node_delete_typed: directory deletion accepted a regular file.\n");
+  node = node_find(root, DELETE_TEST_TYPED_FILE_NAME);
+  assert(node != NULL && node_is_file(node),
+    "node_delete_typed: failed kind check removed the regular-file pathname.\n");
+  node_free(node);
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_FILE_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == 0,
+    "node_delete_typed: unlink deletion rejected a regular file.\n");
+
+  node = node_make_symlink(root, DELETE_TEST_TYPED_LINK_NAME, "target");
+  assert(node != NULL,
+    "ext_delete: failed to create typed-delete symlink target.\n");
+  node_free(node);
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_LINK_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == -1,
+    "node_delete_typed: directory deletion accepted a symlink.\n");
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_LINK_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == 0,
+    "node_delete_typed: unlink deletion rejected a symlink.\n");
+
+  node = node_make_dir(root, DELETE_TEST_TYPED_DIR_NAME);
+  assert(node != NULL,
+    "ext_delete: failed to create typed-delete directory target.\n");
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_DIR_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == -1,
+    "node_delete_typed: unlink deletion accepted a directory.\n");
+  child = node_make_file(node, DELETE_TEST_TYPED_CHILD_NAME);
+  assert(child != NULL,
+    "ext_delete: failed to create typed-delete non-empty child.\n");
+  node_free(child);
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_DIR_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == -1,
+    "node_delete_typed: directory deletion accepted a non-empty directory.\n");
+  assert(node_delete_typed(node, DELETE_TEST_TYPED_CHILD_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == 0,
+    "node_delete_typed: failed to remove the typed-delete child.\n");
+  node_free(node);
+  assert(node_delete_typed(root, DELETE_TEST_TYPED_DIR_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == 0,
+    "node_delete_typed: rejected an empty directory.\n");
+
+  assert(root->filesystem->superblock.free_blocks_count == baseline_blocks,
+    "node_delete_typed: type coverage leaked filesystem blocks.\n");
+  assert(root->filesystem->superblock.free_inodes_count == baseline_inodes,
+    "node_delete_typed: type coverage leaked filesystem inodes.\n");
+  assert(node_entry_count(root) == baseline_entries,
+    "node_delete_typed: type coverage changed root entry count.\n");
+  assert(node_get_num_links(root) == baseline_links,
+    "node_delete_typed: type coverage changed root link count.\n");
+
+  say("***Typed delete kinds: ok\n", NULL);
 }
 
 // Keep one unlinked file inode alive through an extra wrapper while the main
@@ -152,6 +235,7 @@ static void concurrent_delete_dir_worker(void* arg) {
 
 // Delete the fixed fixture entries and confirm they disappear from lookup.
 static void check_fixture_delete(struct Node* root) {
+  unsigned initial_free_inodes = root->filesystem->superblock.free_inodes_count;
   struct Node* file_to_delete = node_find(root, "delete_me.txt");
   struct Node* dir_to_delete = node_find(root, "dir");
   struct Node* orphan;
@@ -169,8 +253,16 @@ static void check_fixture_delete(struct Node* root) {
   assert(orphan != NULL, "node_find: failed to find the nested file to delete.\n");
   node_free(orphan);
 
-  node_delete(root, "delete_me.txt");
-  node_delete(dir_to_delete, "orphan.txt");
+  // A failed non-empty-directory delete used to leak the temporary Node from
+  // its lookup. The final free-inode assertion below proves that this failed
+  // path releases its reference before later successful deletion.
+  assert(node_delete(root, "dir") == -1,
+    "node_delete: non-empty directory delete should fail with -1.\n");
+
+  assert(node_delete(root, "delete_me.txt") == 0,
+    "node_delete: successful regular-file delete should return 0.\n");
+  assert(node_delete(dir_to_delete, "orphan.txt") == 0,
+    "node_delete: successful nested-file delete should return 0.\n");
 
   orphan = node_find(dir_to_delete, "orphan.txt");
   assert(orphan == NULL, "node_find: found the nested file that was supposed to be deleted.\n");
@@ -178,13 +270,17 @@ static void check_fixture_delete(struct Node* root) {
     "ext_delete: dir should be empty except for '.' and '..' before deleting it.\n");
   node_free(dir_to_delete);
 
-  node_delete(root, "dir");
+  assert(node_delete(root, "dir") == 0,
+    "node_delete: successful empty-directory delete should return 0.\n");
 
   deleted = node_find(root, "delete_me.txt");
   assert(deleted == NULL, "node_find: found the file that was supposed to be deleted.\n");
 
   deleted_dir = node_find(root, "dir");
   assert(deleted_dir == NULL, "node_find: found the directory that was supposed to be deleted.\n");
+  assert(root->filesystem->superblock.free_inodes_count ==
+      initial_free_inodes + DELETE_TEST_FIXTURE_RECLAIMED_INODES,
+    "node_delete: failed delete leaked a Node reference and prevented final inode reclamation.\n");
 }
 
 // Fill one long symlink target with deterministic text.
@@ -241,6 +337,9 @@ static void check_dynamic_delete_coverage(struct Node* root) {
     "ext_delete: creating a fast symlink should not consume a data block.\n");
   assert(root->filesystem->superblock.free_inodes_count == expected_inodes,
     "ext_delete: creating the short symlink should consume exactly one inode.\n");
+
+  assert(node_delete(root, "delete-scratch") == -1,
+    "node_delete: non-empty scratch-directory delete should return -1.\n");
 
   node_delete(scratch, "short-link");
   expected_inodes += 1;
@@ -361,7 +460,8 @@ static void check_dynamic_delete_coverage(struct Node* root) {
     "ext_delete: scratch directory should be empty except for '.' and '..' before deletion.\n");
   node_free(scratch);
 
-  node_delete(root, "delete-scratch");
+  assert(node_delete(root, "delete-scratch") == 0,
+    "node_delete: successful scratch-directory delete should return 0.\n");
   expected_blocks += 1;
   expected_inodes += 1;
   assert(root->filesystem->superblock.free_blocks_count == expected_blocks,
@@ -423,7 +523,9 @@ static void check_concurrent_delete_file_coverage(struct Node* root) {
   thread(fun);
 
   barrier_sync(&start);
-  node_delete(root, DELETE_TEST_BUSY_FILE_NAME);
+  assert(node_delete_typed(root, DELETE_TEST_BUSY_FILE_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == 0,
+    "node_delete_typed: failed to unlink the busy regular file.\n");
   barrier_destroy(&start);
 
   deleted = node_find(root, DELETE_TEST_BUSY_FILE_NAME);
@@ -454,7 +556,9 @@ static void check_concurrent_delete_file_coverage(struct Node* root) {
   assert(file->cached->inumber == original_inumber,
     "ext_delete: final release should make the deleted file inode reusable.\n");
   node_free(file);
-  node_delete(root, DELETE_TEST_BUSY_FILE_NAME);
+  assert(node_delete_typed(root, DELETE_TEST_BUSY_FILE_NAME,
+      NODE_DELETE_FILE_OR_SYMLINK) == 0,
+    "node_delete_typed: failed to clean up the recreated busy regular file.\n");
 
   assert(root->filesystem->superblock.free_blocks_count == baseline_blocks,
     "ext_delete: busy-file recreate cleanup should restore the free block count.\n");
@@ -506,7 +610,9 @@ static void check_concurrent_delete_dir_coverage(struct Node* root) {
   thread(fun);
 
   barrier_sync(&start);
-  node_delete(root, DELETE_TEST_BUSY_DIR_NAME);
+  assert(node_delete_typed(root, DELETE_TEST_BUSY_DIR_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == 0,
+    "node_delete_typed: failed to remove the busy empty directory.\n");
   barrier_destroy(&start);
 
   deleted = node_find(root, DELETE_TEST_BUSY_DIR_NAME);
@@ -542,7 +648,9 @@ static void check_concurrent_delete_dir_coverage(struct Node* root) {
   assert(dir != NULL,
     "ext_delete: failed to recreate the busy delete directory after release.\n");
   node_free(dir);
-  node_delete(root, DELETE_TEST_BUSY_DIR_NAME);
+  assert(node_delete_typed(root, DELETE_TEST_BUSY_DIR_NAME,
+      NODE_DELETE_EMPTY_DIRECTORY) == 0,
+    "node_delete_typed: failed to clean up the recreated busy directory.\n");
 
   assert(root->filesystem->superblock.free_blocks_count == baseline_blocks,
     "ext_delete: busy-dir recreate cleanup should restore the free block count.\n");
@@ -565,6 +673,7 @@ static void check_concurrent_delete_coverage(struct Node* root) {
 int kernel_main(void) {
   say("***Hello from ext2 delete test!\n", NULL);
 
+  check_typed_delete_coverage(&fs.root);
   check_concurrent_delete_coverage(&fs.root);
   check_fixture_delete(&fs.root);
   check_dynamic_delete_coverage(&fs.root);

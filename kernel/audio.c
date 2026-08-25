@@ -7,15 +7,33 @@
 #include "vmem.h"
 #include "ivt.h"
 #include "blocking_lock.h"
-#include "scheduler.h"
-#include "interrupts.h"
+#include "queue.h"
 #include "per_core.h"
 #include "heap.h"
 #include "interrupt_waiter.h"
+#include "interrupts.h"
+#include "scheduler.h"
+#include "semaphore.h"
+#include "pit.h"
+#include "constants.h"
+#include "machine.h"
+#include "TCB.h"
 
 struct BlockingLock audio_lock;
 
-static struct InterruptWaiter audio_waiter;
+/*
+ * One persistent HIGH_PRIORITY daemon drains this queue. Admission refuses a
+ * new request when AUDIO_MAX_QUEUED_REQUESTS are already waiting or playing,
+ * so play_audio_file cannot spawn unbounded workers.
+ */
+#define AUDIO_MAX_QUEUED_REQUESTS 4
+#define AUDIO_PROGRESS_TIMEOUT_JIFFIES 30000
+
+static struct GenericSpinQueue audio_request_queue;
+static struct InterruptWaiter audio_request_waiter;
+static int audio_queued_count;
+static bool audio_daemon_started;
+static struct TCB* audio_daemon_tcb;
 
 static char* AUDIO_RING = (char*)AUDIO_RING_BASE;
 static unsigned* AUDIO_CTRL = (unsigned*)AUDIO_CTRL_ADDR;
@@ -25,8 +43,20 @@ static unsigned* AUDIO_READ_IDX = (unsigned*)AUDIO_READ_IDX_ADDR;
 static unsigned* AUDIO_WATERMARK = (unsigned*)AUDIO_WATERMARK_ADDR;
 
 #define WAV_RIFF_HEADER_BYTES 12
+#define WAV_RIFF_ID_OFFSET 0
+#define WAV_RIFF_SIZE_OFFSET 4
+#define WAV_WAVE_ID_OFFSET 8
+#define WAV_RIFF_SIZE_PREFIX_BYTES 8
+#define WAV_FORM_TYPE_BYTES 4
 #define WAV_CHUNK_HEADER_BYTES 8
+#define WAV_CHUNK_SIZE_OFFSET 4
 #define WAV_FMT_MIN_BYTES 16
+#define WAV_FMT_AUDIO_FORMAT_OFFSET 0
+#define WAV_FMT_CHANNELS_OFFSET 2
+#define WAV_FMT_SAMPLE_RATE_OFFSET 4
+#define WAV_FMT_BYTE_RATE_OFFSET 8
+#define WAV_FMT_BLOCK_ALIGN_OFFSET 12
+#define WAV_FMT_BITS_PER_SAMPLE_OFFSET 14
 #define WAV_PCM_FORMAT 1
 #define WAV_EXPECTED_CHANNELS 1
 #define WAV_EXPECTED_SAMPLE_RATE 25000
@@ -34,19 +64,125 @@ static unsigned* AUDIO_WATERMARK = (unsigned*)AUDIO_WATERMARK_ADDR;
 #define WAV_EXPECTED_BLOCK_ALIGN 2
 #define WAV_EXPECTED_BYTE_RATE 50000
 
+#define WAV_RIFF_ID_LE 0x46464952
+#define WAV_WAVE_ID_LE 0x45564157
+
+enum AudioWavErrorCode {
+  AUDIO_WAV_ERROR_NONE = 0,
+  AUDIO_WAV_ERROR_FILE_TOO_SMALL,
+  AUDIO_WAV_ERROR_RIFF_SIGNATURE,
+  AUDIO_WAV_ERROR_WAVE_SIGNATURE,
+  AUDIO_WAV_ERROR_RIFF_SIZE_TOO_SMALL,
+  AUDIO_WAV_ERROR_RIFF_SIZE_PAST_FILE,
+  AUDIO_WAV_ERROR_CHUNK_HEADER_TRUNCATED,
+  AUDIO_WAV_ERROR_CHUNK_SIZE_OVERFLOW,
+  AUDIO_WAV_ERROR_CHUNK_PAST_RIFF,
+  AUDIO_WAV_ERROR_CHUNK_PADDING_PAST_RIFF,
+  AUDIO_WAV_ERROR_FMT_TOO_SHORT,
+  AUDIO_WAV_ERROR_AUDIO_FORMAT,
+  AUDIO_WAV_ERROR_CHANNELS,
+  AUDIO_WAV_ERROR_SAMPLE_RATE,
+  AUDIO_WAV_ERROR_BYTE_RATE,
+  AUDIO_WAV_ERROR_BLOCK_ALIGN,
+  AUDIO_WAV_ERROR_BITS_PER_SAMPLE,
+  AUDIO_WAV_ERROR_DATA_BEFORE_FMT,
+  AUDIO_WAV_ERROR_DATA_EMPTY,
+  AUDIO_WAV_ERROR_DATA_MISALIGNED,
+  AUDIO_WAV_ERROR_DATA_MISSING,
+};
+
+struct AudioWavError {
+  enum AudioWavErrorCode code;
+  unsigned offset;
+  unsigned got;
+  unsigned expected;
+};
+
+/*
+ * One request crosses exactly one syscall thread and the persistent playback
+ * daemon.
+ *
+ * Ownership and synchronization:
+ * - The daemon frees this allocation after playback/cleanup completes.
+ * - node is an independent clone released by the daemon on every path.
+ * - validation_succeeded is a 32-bit word so the architecture's word-sized
+ *   sequentially-consistent atomic operations can publish it explicitly.
+ * - ready transfers the published result to the caller; caller_acknowledged
+ *   transfers exclusive request ownership back to the daemon.
+ * - owner_count starts at two. The caller releases only after its final
+ *   sem_up() returns; the daemon releases only after all parsing/playback and
+ *   mapping/Node cleanup. The 1->0 releaser alone destroys both semaphores.
+ * - link is the first member so the request can enter BlockingQueue.
+ */
+struct AudioRequest {
+  struct GenericQueueElement link;
+  struct Node* node;
+  struct Semaphore ready;
+  struct Semaphore caller_acknowledged;
+  int validation_succeeded;
+  int owner_count;
+  int handoff_finalized;
+};
+
+static bool audio_deadline_reached(unsigned now, unsigned deadline){
+  unsigned delta = now - deadline;
+  return delta == 0 || (delta & (INT_MAX + 1U)) == 0;
+}
+
+static bool audio_request_release_owner(struct AudioRequest* request);
+static void audio_daemon(void* unused);
+static void audio_process_request(struct AudioRequest* request);
+
 // register audio isr and initialize control regs
 void audio_init(void){
   register_handler(audio_handler_, (void*)AUDIO_IVT_ENTRY);
   audio_output_reset(AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES);
   blocking_lock_init(&audio_lock);
-  interrupt_waiter_init(&audio_waiter);
+  generic_spin_queue_init(&audio_request_queue);
+  interrupt_waiter_init(&audio_request_waiter);
+  __atomic_store_n(&audio_queued_count, 0);
+  audio_daemon_started = false;
+  __atomic_store_n((int*)&audio_daemon_tcb, (int)NULL);
+
+  struct Fun* daemon_fun = leak(sizeof(struct Fun));
+  daemon_fun->func = audio_daemon;
+  daemon_fun->arg = NULL;
+  setup_thread(daemon_fun, HIGH_PRIORITY, ANY_CORE);
+  audio_daemon_started = true;
 }
 
 // to be called only from kernel_shutdown
 void audio_destroy(void){
+  /*
+   * kernel_async_work_count keeps every core in event_loop() until the daemon
+   * has cleaned all accepted requests. Once every core reaches the shutdown
+   * barrier, the queue is empty and the boot-lifetime daemon is parked either
+   * in audio_request_waiter or in a scheduler queue. It can no longer execute.
+   */
   audio_output_disable();
-  interrupt_waiter_init(&audio_waiter);
+  generic_spin_queue_destroy(&audio_request_queue);
+  interrupt_waiter_init(&audio_request_waiter);
   blocking_lock_destroy(&audio_lock);
+
+  struct TCB* daemon = (struct TCB*)__atomic_load_n((int*)&audio_daemon_tcb);
+  if (daemon != NULL){
+    assert_always(daemon->is_daemon,
+      "audio destroy: recorded playback TCB must be a persistent daemon.\n");
+    assert_always(daemon->pid != 0,
+      "audio destroy: recorded playback daemon must own a page directory.\n");
+    assert_always(daemon->vme_list == NULL,
+      "audio destroy: playback daemon retained a VME after asynchronous work reached zero.\n");
+
+    /*
+     * Every core is in its PID-0 idle shutdown context and this boot-lifetime
+     * TCB can never resume. Reclaim its finite address-space pages before VM
+     * and physmem teardown, then revoke the stale TCB pointer to that storage.
+     */
+    vmem_destroy_address_space(daemon);
+    daemon->pid = 0;
+    __atomic_store_n((int*)&audio_daemon_tcb, (int)NULL);
+  }
+  audio_daemon_started = false;
 }
 
 // Copy an even number of aligned PCM bytes into the fixed ring with ld/sd.
@@ -73,51 +209,147 @@ static bool chunk_id_is(char* bytes, char a, char b, char c, char d){
   return bytes[0] == a && bytes[1] == b && bytes[2] == c && bytes[3] == d;
 }
 
-static void panic_wav_value_mismatch(char* field,
+static bool audio_wav_reject(struct AudioWavError* error,
+    enum AudioWavErrorCode code, unsigned offset,
     unsigned got, unsigned expected){
-  void* args[3];
-
-  args[0] = field;
-  args[1] = (void*)got;
-  args[2] = (void*)expected;
-  say("audio wav parse: field=%s got=0x%X expected=0x%X\n", args);
-  panic("audio wav parse: unsupported wav format\n");
+  error->code = code;
+  error->offset = offset;
+  error->got = got;
+  error->expected = expected;
+  return false;
 }
 
-static void audio_wav_parse(char* wav,
-    unsigned wav_size, struct AudioWav* wav_out){
+static char* audio_wav_error_name(enum AudioWavErrorCode code){
+  switch (code){
+    case AUDIO_WAV_ERROR_FILE_TOO_SMALL: return "file_too_small";
+    case AUDIO_WAV_ERROR_RIFF_SIGNATURE: return "riff_signature";
+    case AUDIO_WAV_ERROR_WAVE_SIGNATURE: return "wave_signature";
+    case AUDIO_WAV_ERROR_RIFF_SIZE_TOO_SMALL: return "riff_size_too_small";
+    case AUDIO_WAV_ERROR_RIFF_SIZE_PAST_FILE: return "riff_size_past_file";
+    case AUDIO_WAV_ERROR_CHUNK_HEADER_TRUNCATED: return "chunk_header_truncated";
+    case AUDIO_WAV_ERROR_CHUNK_SIZE_OVERFLOW: return "chunk_size_overflow";
+    case AUDIO_WAV_ERROR_CHUNK_PAST_RIFF: return "chunk_past_riff";
+    case AUDIO_WAV_ERROR_CHUNK_PADDING_PAST_RIFF: return "chunk_padding_past_riff";
+    case AUDIO_WAV_ERROR_FMT_TOO_SHORT: return "fmt_too_short";
+    case AUDIO_WAV_ERROR_AUDIO_FORMAT: return "unsupported_audio_format";
+    case AUDIO_WAV_ERROR_CHANNELS: return "unsupported_channels";
+    case AUDIO_WAV_ERROR_SAMPLE_RATE: return "unsupported_sample_rate";
+    case AUDIO_WAV_ERROR_BYTE_RATE: return "unsupported_byte_rate";
+    case AUDIO_WAV_ERROR_BLOCK_ALIGN: return "unsupported_block_align";
+    case AUDIO_WAV_ERROR_BITS_PER_SAMPLE: return "unsupported_bits_per_sample";
+    case AUDIO_WAV_ERROR_DATA_BEFORE_FMT: return "data_before_fmt";
+    case AUDIO_WAV_ERROR_DATA_EMPTY: return "data_empty";
+    case AUDIO_WAV_ERROR_DATA_MISALIGNED: return "data_misaligned";
+    case AUDIO_WAV_ERROR_DATA_MISSING: return "data_missing";
+    case AUDIO_WAV_ERROR_NONE: return "none";
+  }
+
+  return "unknown";
+}
+
+static void audio_wav_report_error(struct Node* wav_node, unsigned wav_size,
+    struct AudioWavError* error){
+  void* args[6];
+  args[0] = (void*)wav_node->cached->inumber;
+  args[1] = (void*)wav_size;
+  args[2] = audio_wav_error_name(error->code);
+  args[3] = (void*)error->offset;
+  args[4] = (void*)error->got;
+  args[5] = (void*)error->expected;
+  say("audio wav validate: inode=%d size=%d error=%s offset=0x%X got=0x%X expected=0x%X\n",
+    args);
+}
+
+/*
+ * Parse untrusted user-file bytes without invoking kernel invariants.
+ *
+ * Preconditions:
+ * - Kernel mode; interrupts may be enabled and the current worker may block on
+ *   demand paging while reading `wav`.
+ * - `wav[0..wav_size)` is one live private VME owned by the current TCB.
+ * - wav_out and error point to writable kernel memory.
+ *
+ * Postconditions:
+ * - Every multi-byte field is read only after the containing range is proven
+ *   to lie inside both the mapped file and its declared RIFF extent.
+ * - Success describes one nonempty, sample-aligned payload matching the fixed
+ *   MMIO format. Failure records a structured ordinary-input diagnostic and
+ *   leaves all kernel locks untouched.
+ */
+static bool audio_wav_parse(char* wav,
+    unsigned wav_size, struct AudioWav* wav_out,
+    struct AudioWavError* error){
   bool saw_fmt = false;
   unsigned offset = WAV_RIFF_HEADER_BYTES;
+  unsigned riff_size;
+  unsigned riff_end;
+
+  error->code = AUDIO_WAV_ERROR_NONE;
+  error->offset = 0;
+  error->got = 0;
+  error->expected = 0;
 
   if (wav_size < WAV_RIFF_HEADER_BYTES){
-    panic("wav is too small for the RIFF header");
+    return audio_wav_reject(error, AUDIO_WAV_ERROR_FILE_TOO_SMALL,
+      WAV_RIFF_ID_OFFSET, wav_size, WAV_RIFF_HEADER_BYTES);
   }
   if (!chunk_id_is(wav, 'R', 'I', 'F', 'F')){
-    panic("wav is missing the RIFF signature");
+    return audio_wav_reject(error, AUDIO_WAV_ERROR_RIFF_SIGNATURE,
+      WAV_RIFF_ID_OFFSET, read_u32_le(wav), WAV_RIFF_ID_LE);
   }
-  if (!chunk_id_is(wav + 8, 'W', 'A', 'V', 'E')){
-    panic("wav is missing the WAVE signature");
+  if (!chunk_id_is(wav + WAV_WAVE_ID_OFFSET, 'W', 'A', 'V', 'E')){
+    return audio_wav_reject(error, AUDIO_WAV_ERROR_WAVE_SIGNATURE,
+      WAV_WAVE_ID_OFFSET, read_u32_le(wav + WAV_WAVE_ID_OFFSET),
+      WAV_WAVE_ID_LE);
   }
-  if (read_u32_le(wav + 4) > wav_size - 8){
-    panic("wav has a RIFF size that exceeds the mapped file");
+
+  riff_size = read_u32_le(wav + WAV_RIFF_SIZE_OFFSET);
+  if (riff_size < WAV_FORM_TYPE_BYTES){
+    return audio_wav_reject(error, AUDIO_WAV_ERROR_RIFF_SIZE_TOO_SMALL,
+      WAV_RIFF_SIZE_OFFSET, riff_size, WAV_FORM_TYPE_BYTES);
   }
+  if (riff_size > wav_size - WAV_RIFF_SIZE_PREFIX_BYTES){
+    return audio_wav_reject(error, AUDIO_WAV_ERROR_RIFF_SIZE_PAST_FILE,
+      WAV_RIFF_SIZE_OFFSET, riff_size,
+      wav_size - WAV_RIFF_SIZE_PREFIX_BYTES);
+  }
+  // The preceding subtraction check proves this addition cannot overflow.
+  riff_end = WAV_RIFF_SIZE_PREFIX_BYTES + riff_size;
 
   wav_out->bytes = wav;
   wav_out->file_size = wav_size;
   wav_out->data_offset = 0;
   wav_out->data_size = 0;
 
-  while (offset + WAV_CHUNK_HEADER_BYTES <= wav_size){
-    char* chunk = wav + offset;
-    unsigned chunk_size = read_u32_le(chunk + 4);
-    unsigned chunk_data_offset = offset + WAV_CHUNK_HEADER_BYTES;
-    unsigned padded_chunk_size = chunk_size + (chunk_size & 1);
-
-    if (chunk_size > wav_size - chunk_data_offset){
-      panic("wav contains a chunk that extends past end of file");
+  while (offset < riff_end){
+    unsigned chunk_header_bytes = riff_end - offset;
+    if (chunk_header_bytes < WAV_CHUNK_HEADER_BYTES){
+      return audio_wav_reject(error,
+        AUDIO_WAV_ERROR_CHUNK_HEADER_TRUNCATED, offset,
+        chunk_header_bytes, WAV_CHUNK_HEADER_BYTES);
     }
-    if (padded_chunk_size > wav_size - chunk_data_offset){
-      panic("wav contains chunk padding that extends past end of file");
+
+    char* chunk = wav + offset;
+    unsigned chunk_size = read_u32_le(chunk + WAV_CHUNK_SIZE_OFFSET);
+    unsigned chunk_data_offset = offset + WAV_CHUNK_HEADER_BYTES;
+    unsigned padded_chunk_size;
+    unsigned chunk_capacity = riff_end - chunk_data_offset;
+
+    // Validate the optional RIFF pad-byte addition before performing it.
+    if ((chunk_size & 1) != 0 && chunk_size == UINT_MAX){
+      return audio_wav_reject(error, AUDIO_WAV_ERROR_CHUNK_SIZE_OVERFLOW,
+        offset + WAV_CHUNK_SIZE_OFFSET, chunk_size, UINT_MAX - 1);
+    }
+    padded_chunk_size = chunk_size + (chunk_size & 1);
+
+    if (chunk_size > chunk_capacity){
+      return audio_wav_reject(error, AUDIO_WAV_ERROR_CHUNK_PAST_RIFF,
+        offset + WAV_CHUNK_SIZE_OFFSET, chunk_size, chunk_capacity);
+    }
+    if (padded_chunk_size > chunk_capacity){
+      return audio_wav_reject(error,
+        AUDIO_WAV_ERROR_CHUNK_PADDING_PAST_RIFF,
+        offset + WAV_CHUNK_SIZE_OFFSET, padded_chunk_size, chunk_capacity);
     }
 
     if (chunk_id_is(chunk, 'f', 'm', 't', ' ')){
@@ -129,55 +361,80 @@ static void audio_wav_parse(char* wav,
       unsigned bits_per_sample;
 
       if (chunk_size < WAV_FMT_MIN_BYTES){
-        panic("wav has a fmt chunk that is too short");
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_FMT_TOO_SHORT,
+          offset + WAV_CHUNK_SIZE_OFFSET, chunk_size, WAV_FMT_MIN_BYTES);
       }
 
-      audio_format = read_u16_le(chunk + 8);
-      num_channels = read_u16_le(chunk + 10);
-      sample_rate = read_u32_le(chunk + 12);
-      byte_rate = read_u32_le(chunk + 16);
-      block_align = read_u16_le(chunk + 20);
-      bits_per_sample = read_u16_le(chunk + 22);
+      audio_format = read_u16_le(wav + chunk_data_offset +
+        WAV_FMT_AUDIO_FORMAT_OFFSET);
+      num_channels = read_u16_le(wav + chunk_data_offset +
+        WAV_FMT_CHANNELS_OFFSET);
+      sample_rate = read_u32_le(wav + chunk_data_offset +
+        WAV_FMT_SAMPLE_RATE_OFFSET);
+      byte_rate = read_u32_le(wav + chunk_data_offset +
+        WAV_FMT_BYTE_RATE_OFFSET);
+      block_align = read_u16_le(wav + chunk_data_offset +
+        WAV_FMT_BLOCK_ALIGN_OFFSET);
+      bits_per_sample = read_u16_le(wav + chunk_data_offset +
+        WAV_FMT_BITS_PER_SAMPLE_OFFSET);
 
       if (audio_format != WAV_PCM_FORMAT){
-        panic_wav_value_mismatch("audio_format", audio_format,
-          WAV_PCM_FORMAT);
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_AUDIO_FORMAT,
+          chunk_data_offset + WAV_FMT_AUDIO_FORMAT_OFFSET,
+          audio_format, WAV_PCM_FORMAT);
       }
       if (num_channels != WAV_EXPECTED_CHANNELS){
-        panic_wav_value_mismatch("num_channels", num_channels,
-          WAV_EXPECTED_CHANNELS);
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_CHANNELS,
+          chunk_data_offset + WAV_FMT_CHANNELS_OFFSET,
+          num_channels, WAV_EXPECTED_CHANNELS);
       }
       if (sample_rate != WAV_EXPECTED_SAMPLE_RATE){
-        panic_wav_value_mismatch("sample_rate", sample_rate,
-          WAV_EXPECTED_SAMPLE_RATE);
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_SAMPLE_RATE,
+          chunk_data_offset + WAV_FMT_SAMPLE_RATE_OFFSET,
+          sample_rate, WAV_EXPECTED_SAMPLE_RATE);
       }
       if (bits_per_sample != WAV_EXPECTED_BITS_PER_SAMPLE){
-        panic_wav_value_mismatch("bits_per_sample", bits_per_sample,
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_BITS_PER_SAMPLE,
+          chunk_data_offset + WAV_FMT_BITS_PER_SAMPLE_OFFSET, bits_per_sample,
           WAV_EXPECTED_BITS_PER_SAMPLE);
       }
       if (block_align != WAV_EXPECTED_BLOCK_ALIGN){
-        panic_wav_value_mismatch("block_align", block_align,
-          WAV_EXPECTED_BLOCK_ALIGN);
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_BLOCK_ALIGN,
+          chunk_data_offset + WAV_FMT_BLOCK_ALIGN_OFFSET,
+          block_align, WAV_EXPECTED_BLOCK_ALIGN);
       }
       if (byte_rate != WAV_EXPECTED_BYTE_RATE){
-        panic_wav_value_mismatch("byte_rate", byte_rate,
-          WAV_EXPECTED_BYTE_RATE);
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_BYTE_RATE,
+          chunk_data_offset + WAV_FMT_BYTE_RATE_OFFSET,
+          byte_rate, WAV_EXPECTED_BYTE_RATE);
       }
 
       saw_fmt = true;
     } else if (chunk_id_is(chunk, 'd', 'a', 't', 'a')){
       if (!saw_fmt){
-        panic("wav contains a data chunk before fmt");
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_DATA_BEFORE_FMT,
+          offset, 0, 1);
+      }
+      if (chunk_size == 0){
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_DATA_EMPTY,
+          offset + WAV_CHUNK_SIZE_OFFSET, 0, AUDIO_SAMPLE_BYTES);
+      }
+      if ((chunk_size % WAV_EXPECTED_BLOCK_ALIGN) != 0 ||
+          (chunk_data_offset % WAV_EXPECTED_BLOCK_ALIGN) != 0){
+        return audio_wav_reject(error, AUDIO_WAV_ERROR_DATA_MISALIGNED,
+          chunk_data_offset, chunk_size, WAV_EXPECTED_BLOCK_ALIGN);
       }
       wav_out->data_offset = chunk_data_offset;
       wav_out->data_size = chunk_size;
-      return;
+      return true;
     }
 
+    // padded_chunk_size <= chunk_capacity proves this addition cannot overflow.
     offset = chunk_data_offset + padded_chunk_size;
   }
 
-  panic("wav is missing a data chunk");
+  return audio_wav_reject(error, AUDIO_WAV_ERROR_DATA_MISSING,
+    riff_end, 0, 1);
 }
 
 unsigned audio_output_buffered_bytes(unsigned write_idx, unsigned read_idx){
@@ -332,95 +589,407 @@ unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes){
   return consumed_bytes;
 }
 
-void audio_wav_load(struct Node* wav_node, struct AudioWav* wav_out){
+bool audio_wav_load(struct Node* wav_node, struct AudioWav* wav_out){
   unsigned wav_size;
   char* wav_bytes;
-  void* args[1];
+  struct AudioWavError error;
+
+  assert(wav_node != NULL,
+    "audio wav load: source Node must not be NULL.\n");
+  assert(node_is_file(wav_node),
+    "audio wav load: source Node must be a regular file.\n");
+  assert(wav_out != NULL,
+    "audio wav load: result storage must not be NULL.\n");
 
   wav_size = node_size_in_bytes(wav_node);
-  wav_bytes = mmap(wav_size, wav_node, 0, MMAP_READ);
+  if (wav_size == 0){
+    error.code = AUDIO_WAV_ERROR_FILE_TOO_SMALL;
+    error.offset = 0;
+    error.got = 0;
+    error.expected = WAV_RIFF_HEADER_BYTES;
+    audio_wav_report_error(wav_node, wav_size, &error);
+    return false;
+  }
 
-  audio_wav_parse(wav_bytes, wav_size, wav_out);
+  wav_bytes = mmap(wav_size, wav_node, 0, MMAP_READ);
+  if (wav_bytes == NULL){
+    // The admission handshake returns this failure to the still-blocked
+    // syscall. Keep the diagnostic as well so VM exhaustion is actionable.
+    void* args[2];
+    args[0] = (void*)wav_node->cached->inumber;
+    args[1] = (void*)wav_size;
+    say("audio wav load: operation=mmap inode=%d size=%d failed\n", args);
+    return false;
+  }
+
+  wav_out->source_inumber = wav_node->cached->inumber;
+  if (!audio_wav_parse(wav_bytes, wav_size, wav_out, &error)){
+    audio_wav_report_error(wav_node, wav_size, &error);
+
+    // The VME belongs to this worker TCB. Remove it here so a rejected request
+    // cannot retain physical pages or a cloned Node until thread reaping.
+    munmap(wav_bytes);
+    wav_out->bytes = NULL;
+    return false;
+  }
+
+  return true;
 }
 
 unsigned audio_wav_num_samples(struct AudioWav* wav){
   return wav->data_size / AUDIO_SAMPLE_BYTES;
 }
 
-void audio_block_thread(void* arg){
-  struct TCB* tcb = (struct TCB*)arg;
-  struct TCB* wakeup = interrupt_waiter_publish(&audio_waiter, tcb);
+bool audio_wav_play(struct AudioWav* wav){
+  assert(wav != NULL && wav->bytes != NULL,
+    "audio playback: validated WAV and mapping must not be NULL.\n");
+  assert(wav->data_size >= AUDIO_SAMPLE_BYTES &&
+      (wav->data_size % AUDIO_SAMPLE_BYTES) == 0,
+    "audio playback: validated data must contain complete PCM samples.\n");
+  assert(wav->data_offset <= wav->file_size &&
+      wav->data_size <= wav->file_size - wav->data_offset,
+    "audio playback: validated data range must remain inside its mapping.\n");
 
-  if (wakeup != NULL){
-    scheduler_wake_thread_from_interrupt(wakeup);
-  }
-}
-
-void audio_wav_play(struct AudioWav* wav){
   blocking_lock_acquire(&audio_lock);
 
   unsigned next_data_bytes = 0;
   unsigned filled_bytes;
+  bool playback_ok = true;
 
   audio_output_reset(AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES);
   filled_bytes = audio_output_fill_pcm_s16le(wav->bytes + wav->data_offset,
     wav->data_size);
   next_data_bytes += filled_bytes;
-  audio_output_enable();
+  if (filled_bytes == 0){
+    playback_ok = false;
+  } else {
+    audio_output_enable();
+  }
 
-  while (next_data_bytes < wav->data_size){
-    int was = interrupts_disable();
+  while (playback_ok && next_data_bytes < wav->data_size){
+    unsigned wait_deadline =
+      (unsigned)__atomic_load_n((int*)&current_jiffies) +
+      AUDIO_PROGRESS_TIMEOUT_JIFFIES;
 
     /*
-     * Clear stale edges before checking persistent LOW_WATER status. If an
-     * audio edge races with this store, LOW_WATER is already visible or the
-     * ISR leaves event_pending set for the post-switch callback.
+     * Wait for LOW_WATER with an elapsed jiffy deadline. Poll one tick at a
+     * time so a silent device cannot strand the daemon forever holding
+     * audio_lock. AUDIO_PROGRESS_TIMEOUT_JIFFIES is within INT_MAX, so modular
+     * half-range ordering matches sleep/SD. The ISR only acknowledges the
+     * enabled low-water edge; this polling loop owns playback progress and
+     * remains deadline-bounded even if the device never raises that edge.
      */
-    interrupt_waiter_prepare(&audio_waiter);
+    while (!audio_output_low_water()){
+      unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
+      if (audio_deadline_reached(now, wait_deadline)){
+        playback_ok = false;
+        break;
+      }
+      sleep(1);
+    }
 
-    if (!audio_output_low_water()){
-      struct TCB* current_tcb = get_current_tcb();
-      block(was, audio_block_thread, current_tcb, false);
-    } else {
-      interrupts_restore(was);
+    if (!playback_ok){
+      break;
     }
 
     filled_bytes = audio_output_fill_pcm_s16le(
       wav->bytes + wav->data_offset + next_data_bytes,
       wav->data_size - next_data_bytes);
 
+    if (filled_bytes == 0){
+      // A validated source always has at least one complete sample remaining.
+      // Zero therefore indicates that the MMIO producer/consumer state cannot
+      // accept progress. Abort this asynchronous request without leaking the
+      // global audio lock or leaving the device enabled.
+      playback_ok = false;
+      break;
+    }
     next_data_bytes += filled_bytes;
   }
 
-  while (!audio_output_empty()){
-    sleep(1);
+  if (playback_ok){
+    unsigned drain_deadline =
+      (unsigned)__atomic_load_n((int*)&current_jiffies) +
+      AUDIO_PROGRESS_TIMEOUT_JIFFIES;
+    while (!audio_output_empty()){
+      unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
+      if (audio_deadline_reached(now, drain_deadline)){
+        playback_ok = false;
+        break;
+      }
+      sleep(1);
+    }
+  }
+
+  if (!playback_ok){
+    void* args[6];
+    args[0] = (void*)wav->source_inumber;
+    args[1] = (void*)next_data_bytes;
+    args[2] = (void*)wav->data_size;
+    args[3] = (void*)audio_output_read_idx();
+    args[4] = (void*)audio_output_write_idx();
+    args[5] = (void*)audio_output_status();
+    say("audio playback: operation=refill inode=%d consumed=%d total=%d read_idx=0x%X write_idx=0x%X status=0x%X failed\n",
+      args);
   }
 
   audio_output_disable();
 
   blocking_lock_release(&audio_lock);
+  return playback_ok;
 }
 
-// audio interrupt handler
-// wake the thread currently playing audio
+/*
+ * Audio interrupt handler.
+ *
+ * Playback progress is deadline-bounded by polling LOW_WATER and the ring
+ * indices in audio_wav_play(); no thread is published for an interrupt wake.
+ * The device IRQ remains enabled, so this bounded handler must acknowledge
+ * each low-water edge without touching scheduler or TCB state.
+ *
+ * CPU state: kernel ISR context with interrupts disabled by hardware.
+ */
 void audio_handler(void){
   mark_audio_handled();
+}
 
-  struct TCB* tcb = interrupt_waiter_signal(&audio_waiter);
+struct AudioRequest* audio_request_create(struct Node* node){
+  assert(node != NULL,
+    "audio request create: source Node must not be NULL.\n");
+  assert(node_is_file(node),
+    "audio request create: source Node must be a regular file.\n");
 
-  if (tcb != NULL){
-    scheduler_wake_thread_from_interrupt(tcb);
+  struct AudioRequest* request = malloc(sizeof(struct AudioRequest));
+  if (request == NULL){
+    return NULL;
+  }
+
+  request->link.next = NULL;
+  request->node = node_clone(node);
+  if (request->node == NULL){
+    free(request);
+    return NULL;
+  }
+
+  sem_init(&request->ready, 0);
+  sem_init(&request->caller_acknowledged, 0);
+  __atomic_store_n(&request->validation_succeeded, 0);
+  __atomic_store_n(&request->owner_count, 2);
+  __atomic_store_n(&request->handoff_finalized, 0);
+  return request;
+}
+
+/*
+ * Enqueue one admission/playback request for the persistent daemon. Returns
+ * false when AUDIO_MAX_QUEUED_REQUESTS are already outstanding; the caller
+ * must then destroy the unsubmitted request.
+ */
+bool audio_request_submit(struct AudioRequest* request){
+  assert(request != NULL,
+    "audio request submit: request must not be NULL.\n");
+  assert(audio_daemon_started,
+    "audio request submit: persistent daemon must be running.\n");
+
+  /*
+   * Reserve with one RMW. Concurrent rejected reservations may transiently
+   * raise the counter above the limit, but each such caller rolls its own unit
+   * back and never publishes a request or asynchronous-work reference.
+   */
+  int previous = __atomic_fetch_add(&audio_queued_count, 1);
+  if (previous >= AUDIO_MAX_QUEUED_REQUESTS){
+    __atomic_fetch_add(&audio_queued_count, -1);
+    return false;
+  }
+
+  /*
+   * Acquire shutdown lifetime before making the request visible. The caller
+   * is a normal counted syscall TCB, so event_loop() cannot observe both
+   * n_active and the asynchronous-work count as zero during this handoff.
+   */
+  kernel_async_work_begin();
+  generic_spin_queue_add(&audio_request_queue, &request->link);
+
+  struct TCB* daemon = interrupt_waiter_signal(&audio_request_waiter);
+  if (daemon != NULL){
+    scheduler_wake_thread(daemon);
+  }
+  return true;
+}
+
+void audio_request_destroy_unsubmitted(struct AudioRequest* request){
+  assert(request != NULL,
+    "audio request destroy: request must not be NULL.\n");
+
+  node_free(request->node);
+  sem_destroy(&request->ready);
+  sem_destroy(&request->caller_acknowledged);
+  free(request);
+}
+
+/*
+ * Drop one of the two logical request owners after that owner has completed
+ * every semaphore operation and all other request accesses.
+ *
+ * The architecture memory model is sequentially consistent. Therefore the
+ * unique 1->0 transition observes both owners' completed semaphore operations,
+ * making sem_destroy()'s external-quiescence precondition true. This function
+ * does not free request: the daemon frees the allocation after finalization.
+ */
+static bool audio_request_release_owner(struct AudioRequest* request){
+  int previous_owners = __atomic_fetch_add(&request->owner_count, -1);
+  if (previous_owners != 1 && previous_owners != 2){
+    void* args[2];
+    args[0] = request;
+    args[1] = (void*)previous_owners;
+    say("audio request release: request=0x%X owners_before=%d invalid\n",
+      args);
+    panic("audio request release: owner count must be one or two.\n");
+  }
+
+  if (previous_owners != 1){
+    return false;
+  }
+
+  sem_destroy(&request->ready);
+  sem_destroy(&request->caller_acknowledged);
+  __atomic_store_n(&request->handoff_finalized, 1);
+  return true;
+}
+
+bool audio_request_wait_until_ready(struct AudioRequest* request){
+  assert(request != NULL,
+    "audio request wait: request must not be NULL.\n");
+
+  /*
+   * This runs in kernel mode on the syscall's current user TCB. sem_down() may
+   * context-switch with interrupts enabled in the resumed continuation. The
+   * daemon stores validation_succeeded before raising ready, so the
+   * sequentially-consistent semaphore/atomic operations publish a complete
+   * parse result before this load.
+   */
+  sem_down(&request->ready);
+  bool validation_succeeded =
+    __atomic_load_n(&request->validation_succeeded) != 0;
+
+  /*
+   * This is the caller's final semaphore operation. The following owner drop
+   * occurs only after sem_up() has left its active-operation bookkeeping,
+   * which matters when another core schedules the daemon before this core has
+   * returned from scheduler_wake_thread(). No caller request access follows
+   * audio_request_release_owner().
+   */
+  sem_up(&request->caller_acknowledged);
+  audio_request_release_owner(request);
+  return validation_succeeded;
+}
+
+static void audio_request_wait_for_finalization(struct AudioRequest* request){
+  while (__atomic_load_n(&request->handoff_finalized) == 0){
+    yield();
   }
 }
 
-void audio_worker(void* audio_node){
-  // `audio_node` is a heap-owned wrapper argument containing a cloned Node*.
-  // The worker releases the node; thread cleanup releases the wrapper itself.
-  struct Node* node = *(struct Node**)audio_node;
-  struct AudioWav* wav = malloc(sizeof(struct AudioWav));
-  audio_wav_load(node, wav);
+static void audio_process_request(struct AudioRequest* request){
+  struct AudioWav wav;
 
-  audio_wav_play(wav);
-  node_free(node);
-  free(wav);
+  assert(request != NULL,
+    "audio process: request must not be NULL.\n");
+
+  /*
+   * The persistent daemon runs in kernel mode with its own address space, so it
+   * must create and validate the VME it will itself use. request->node remains
+   * live independently of the caller's descriptor.
+   */
+  bool validation_succeeded = audio_wav_load(request->node, &wav);
+  __atomic_store_n(&request->validation_succeeded,
+    validation_succeeded ? 1 : 0);
+  sem_up(&request->ready);
+
+  sem_down(&request->caller_acknowledged);
+
+  if (validation_succeeded){
+    audio_wav_play(&wav);
+    munmap(wav.bytes);
+  }
+
+  node_free(request->node);
+
+  if (!audio_request_release_owner(request)){
+    audio_request_wait_for_finalization(request);
+  }
+
+  free(request);
+}
+
+/*
+ * Post-context-switch publication for an idle audio daemon.
+ *
+ * Preconditions: the daemon TCB is fully saved, is in no scheduler queue, and
+ * current-core interrupts are disabled. If a submitter signalled before this
+ * callback published the TCB, the callback consumes that notification and
+ * defers exactly one wake without modifying the saved TCB.
+ */
+static void audio_daemon_block(void* arg){
+  struct TCB* daemon = (struct TCB*)arg;
+  struct TCB* wakeup = interrupt_waiter_publish(&audio_request_waiter, daemon);
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
+}
+
+static void audio_request_finish_lifetime(void){
+  int previous = __atomic_fetch_add(&audio_queued_count, -1);
+  // Do not reject previous > AUDIO_MAX_QUEUED_REQUESTS: a concurrent failed
+  // reservation may temporarily own an unpublished unit above the limit.
+  if (previous <= 0){
+    __atomic_fetch_add(&audio_queued_count, 1);
+    int args[1] = {previous};
+    say("| audio request finish rejected outstanding=%d\n", args);
+    panic("audio request finish: outstanding request count is invalid.\n");
+  }
+
+  /*
+   * This is the daemon's final action for the request. Capacity is released
+   * first so no audio state is touched after the shutdown-lifetime reference
+   * reaches zero.
+   */
+  kernel_async_work_finish();
+}
+
+static void audio_daemon(void* unused){
+  (void)unused;
+
+  // setup_thread() daemons start with pid 0. Playback maps private WAV VMEs into
+  // this TCB's address space, so allocate a real page directory before the first
+  // request. Boot-critical failure remains fatal.
+  struct TCB* me = get_current_tcb();
+  if (me->pid == 0){
+    me->pid = create_page_directory();
+    assert_always(me->pid != 0,
+      "audio daemon: failed to allocate a page directory for playback mappings.\n");
+    set_pid(me->pid);
+    tlb_flush();
+  }
+  __atomic_store_n((int*)&audio_daemon_tcb, (int)me);
+
+  while (true){
+    /*
+     * Clear a stale notification before checking the real queue state. A
+     * submit racing with the check either leaves a request in the queue or a
+     * pending waiter event that makes the post-switch callback requeue us.
+     */
+    interrupt_waiter_prepare(&audio_request_waiter);
+    struct GenericQueueElement* element =
+      generic_spin_queue_remove(&audio_request_queue);
+    if (element == NULL){
+      int was = interrupts_disable();
+      struct TCB* me = get_current_tcb();
+      block(was, audio_daemon_block, me, false);
+      continue;
+    }
+
+    struct AudioRequest* request = (struct AudioRequest*)element;
+    audio_process_request(request);
+    audio_request_finish_lifetime();
+  }
 }

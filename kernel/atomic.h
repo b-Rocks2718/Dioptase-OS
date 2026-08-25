@@ -3,16 +3,24 @@
 
 #include "constants.h"
 
+struct TCB;
+
 // spin lock that disables interrupts while held
 struct SpinLock {
   bool the_lock;
   int  interrupt_state;
+  // Exact TCB identity is diagnostic/lifecycle state, published only while
+  // the_lock is held. Normal spin locks cannot be nested by one TCB.
+  struct TCB* owner;
 };
 
 // spin lock that disables preemption while held
 struct PreemptSpinLock {
   bool the_lock;
   bool preempt_state;
+  // Preemption spin locks are used by the console before TCB bootstrap, so
+  // ownership is tracked by always-available core ID rather than TCB pointer.
+  int owner_core;
 };
 
 // CLH Node for fair spin lock
@@ -29,6 +37,8 @@ struct CLHNode {
 // CLH lock for fair spin lock
 struct CLHLock {
   struct CLHNode* tail;
+  // Only the thread whose ticket reached the head may release this exact lock.
+  struct TCB* owner;
 };
 
 // initializes a spin lock to the unlocked state

@@ -95,6 +95,8 @@ Built-in command matching is case-sensitive.
 
 - Lists entries from the current directory by default or from the director(ies)
   specified as arguments.
+- Opens each requested directory with lookup-only `open_existing()`, so an
+  invalid argument cannot create a regular file.
 - Reads from `getdents()` to construct a linked list of directory entries.
 - ".", "..", and "lost+found" are skipped when printing entries.
 - Prints entries in rows with a variable number of columns depending on the
@@ -110,20 +112,15 @@ Current caveats:
 
 ### `cat FILE`
 
-- Opens `FILE`
+- Opens `FILE` with lookup-only `open_existing()`
 - Reads it in `1024`-byte chunks
 - Writes the bytes directly to `STDOUT`
-
-Current caveat:
-
-- `open()` in Dioptase-OS creates a file if it does not exist, so `cat` does
-  not currently report a missing file the way a Unix user might expect. A
-  missing path may instead create an empty file and print nothing.
+- Reports an open failure for a missing path without creating it
 
 ### `cp SRC DEST`
 
-- Opens `SRC`
-- Opens `DEST`
+- Opens `SRC` with lookup-only `open_existing()`
+- Opens `DEST` with creating `open()`
 - Copies data in `1024`-byte chunks from source to destination
 - Truncates `DEST` to the final source size after copying
 
@@ -131,9 +128,8 @@ Current caveats:
 
 - `DEST` creation follows the current `open()` contract, so a missing
   destination file is created automatically
-- Because `open()` also creates a missing source path, `cp` does not currently
-  fail cleanly for a missing source file. It may create an empty source file
-  and then copy zero bytes
+- A missing source fails before the destination is opened, so neither pathname
+  is synthesized by that failure
 - This is a byte-stream copy only. There is no metadata preservation, recursive
   copy, or option parsing
 
@@ -146,10 +142,10 @@ Current caveats:
 
 - This is not atomic
 - Because it ends with `unlink(SRC)`, it only works for non-directory sources
-- The shell currently does not check whether `cp` succeeded before attempting
-  `unlink(SRC)`, so a partial or failed copy can still be followed by source
-  removal
-- Missing-source behavior inherits the current `cp` caveats described above
+- The source is removed only after copy, truncate, and descriptor close all
+  succeed. A failed copy can still leave a partially modified destination, but
+  the source remains present.
+- A missing source fails lookup without creating either source or destination
 
 ### `mkdir NAME`
 

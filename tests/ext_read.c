@@ -255,8 +255,10 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   assert(node_is_symlink(nested_link),
     "ext_read: nested.link should decode as a symbolic link.\n");
 
-  char* nested_target = malloc(node_size_in_bytes(nested_link) + 1);
-  node_get_symlink_target(nested_link, nested_target);
+  unsigned nested_target_size = 0;
+  char* nested_target = node_copy_symlink_target(nested_link, &nested_target_size);
+  assert(nested_target_size == strlen("nested"),
+    "ext_read: nested.link target snapshot reported the wrong size.\n");
   assert(streq(nested_target, "nested"),
     "ext_read: nested.link should point at the nested directory.\n");
 

@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "machine.h"
 #include "heap.h"
+#include "print.h"
 
 // initialize queue state plus the slot/item semaphores
 void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
@@ -14,6 +15,24 @@ void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
 
 void bounded_buffer_destroy(struct BoundedBuffer* b) {
   assert(b != NULL, "bounded_buffer_destroy: buffer is NULL.\n");
+
+  // Check caller-owned payloads before tearing down either semaphore so a
+  // lifecycle violation leaves the composite state intact for diagnostics.
+  generic_spin_queue_assert_quiescent(&b->queue);
+  sem_assert_destroyable(&b->add_sem);
+  sem_assert_destroyable(&b->remove_sem);
+  unsigned size = bounded_buffer_size(b);
+  int add_permits = __atomic_load_n(&b->add_sem.count);
+  int remove_permits = __atomic_load_n(&b->remove_sem.count);
+  if (size != 0 || remove_permits != 0 ||
+      add_permits != (int)b->capacity || b->queue.head != NULL ||
+      b->queue.tail != NULL){
+    int args[7] = {(int)b, (int)size, (int)b->capacity, add_permits,
+      remove_permits, (int)b->queue.head, (int)b->queue.tail};
+    say("| bounded_buffer: destroy rejected buffer=0x%X size=%d capacity=%d add_permits=%d remove_permits=%d head=0x%X tail=0x%X\n",
+      args);
+    panic("bounded_buffer_destroy: owner must drain every payload and restore slot permits before destruction.\n");
+  }
 
   sem_destroy(&b->add_sem);
   sem_destroy(&b->remove_sem);

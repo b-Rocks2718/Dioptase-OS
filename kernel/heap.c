@@ -64,7 +64,7 @@ static void large_allocation_mark(void* page, int order) {
 
   if (heap_sync_initialized) blocking_lock_acquire(&large_allocation_lock);
 
-  assert(large_allocation_orders[frame_index] == HEAP_LARGE_ALLOC_NONE,
+  assert_always(large_allocation_orders[frame_index] == HEAP_LARGE_ALLOC_NONE,
     "heap large alloc: physical frame is already tracked as a large allocation.\n");
   large_allocation_orders[frame_index] = order;
 
@@ -74,6 +74,9 @@ static void large_allocation_mark(void* page, int order) {
 static void* large_alloc(unsigned size, bool leaked) {
   int order = large_allocation_order_for_size(size);
   void* page = leaked ? physmem_leak_order(order) : physmem_alloc_order(order);
+  if (page == NULL){
+    return NULL;
+  }
 
   large_allocation_mark(page, order);
   return page;
@@ -145,6 +148,9 @@ void heap_sync_init(){
 
 struct Slab* slab_create(unsigned object_size) {
   struct Slab* slab = (struct Slab*)physmem_alloc();
+  if (slab == NULL){
+    return NULL;
+  }
 
   int i;
   for (i = 0; i < NUM_OBJECT_SIZES; i++) {
@@ -219,7 +225,7 @@ void bitmap_alloc(struct Slab* slab, void* obj) {
   if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
 
   // assert that the bit is not already set (double allocation)
-  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) == 0,
+  assert_always((slab->allocation_bitmap[byte_index] & (1u << bit_index)) == 0,
     "double allocation detected in slab allocator\n");
 
   // mark as allocated in bitmap
@@ -300,6 +306,10 @@ void* slab_alloc(unsigned size){
   } else {
     // No available slabs, create a new one
     struct Slab* new_slab = slab_create(OBJECT_SIZES[i]);
+    if (new_slab == NULL){
+      if (heap_sync_initialized) blocking_lock_release(&cache->lock);
+      return NULL;
+    }
 
     // Add the new slab to the partial slabs list
     if (cache->partial_slabs != NULL) {
@@ -375,7 +385,7 @@ static void* alloc(unsigned size, bool leaked) {
 
   // check the poison value is still there
   for (int i = 1; i < slab->object_size / 4; i++) {
-    assert(((unsigned*)obj)[i] == HEAP_POISON,
+    assert_always(((unsigned*)obj)[i] == HEAP_POISON,
       "heap corruption detected: likely use after free\n");
   }
   #endif
@@ -409,7 +419,7 @@ void bitmap_free(struct Slab* slab, void* obj) {
       break;
     }
   }
-  assert(cache != NULL, "found slab with no matching cache\n");
+  assert_always(cache != NULL, "found slab with no matching cache\n");
 
   unsigned metadata_end = (unsigned)slab + (FRAME_SIZE - cache->objects_per_slab * slab->object_size);
   unsigned obj_index = ((unsigned)obj - metadata_end) / slab->object_size;
@@ -419,7 +429,7 @@ void bitmap_free(struct Slab* slab, void* obj) {
   if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
 
   // assert that the bit is currently set (double free)
-  assert((slab->allocation_bitmap[byte_index] & (1u << bit_index)) != 0,
+  assert_always((slab->allocation_bitmap[byte_index] & (1u << bit_index)) != 0,
     "double free detected in slab allocator\n");
 
   // mark as free in bitmap
@@ -444,7 +454,7 @@ void slab_free(void* obj) {
     }
   }
 
-  assert(cache != NULL, "found slab with no matching cache\n");
+  assert_always(cache != NULL, "found slab with no matching cache\n");
   if (heap_sync_initialized) blocking_lock_acquire(&cache->lock);
 
   // Free the object back to the slab

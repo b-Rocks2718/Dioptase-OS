@@ -4,7 +4,9 @@
 ***..
 ***lost+found
 ***test.txt
+***Basename length limits: ok
 ***New file creation: ok
+***Directory iteration offsets: ok
 ***New directory creation: ok
 ***New file in new directory: ok
 ***Inline symlink creation: ok
@@ -24,3 +26,4 @@
 ***.
 ***..
 ***nested-file.txt
+***Concurrent create publication: ok

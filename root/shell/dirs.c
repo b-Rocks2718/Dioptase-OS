@@ -42,7 +42,7 @@ struct LinkedDirent* read_directory_no_error(char* path) {
 
 // Returns -1 on error. 0 represents empty.
 struct LinkedDirent* read_directory(char* path) {
-  int fd = open(path);
+  int fd = open_existing(path);
   if (fd < 0) {
     return (struct LinkedDirent*) -1;
   }

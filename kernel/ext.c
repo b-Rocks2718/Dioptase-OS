@@ -103,8 +103,10 @@ static unsigned ext2_dir_entry_min_size(unsigned name_len){
 static void ext2_write_dir_entry(char* dest, unsigned rec_len, char* name, unsigned inumber){
   unsigned name_len = strlen(name);
 
-  assert(name_len <= sizeof(((struct DirEntry*)0)->name),
-    "ext2_write_dir_entry: name is too long for ext2.\n");
+  // EXT2_MAX_NAME_BYTES is the on-disk format limit. The in-memory scratch
+  // member is one byte larger and must not weaken this writer invariant.
+  assert(name_len <= EXT2_MAX_NAME_BYTES,
+    "ext2_write_dir_entry: basename exceeds the 255-byte ext2 limit.\n");
   assert(rec_len >= ext2_dir_entry_min_size(name_len),
     "ext2_write_dir_entry: rec_len is too small for the directory entry.\n");
 
@@ -125,7 +127,7 @@ static unsigned ext2_sectors_per_block(struct Ext2* fs){
 static void ext2_write_superblock(struct Ext2* fs){
   int rc = sd_write_blocks(SD_DRIVE_1, EXT2_SUPERBLOCK_SECTOR,
     EXT2_SUPERBLOCK_SECTORS, (char*)&fs->superblock);
-  assert(rc == 0, "ext2_write_superblock: failed to write ext2 superblock.\n");
+  assert_always(rc == 0, "ext2_write_superblock: failed to write ext2 superblock.\n");
 }
 
 // The block-group descriptor table can span a partial sector. The SD layer only
@@ -135,7 +137,7 @@ static void ext2_write_bgd_table(struct Ext2* fs){
   unsigned bgd_table_sectors = (bgd_table_bytes + SD_SECTOR_SIZE_BYTES - 1) / SD_SECTOR_SIZE_BYTES;
   int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_offset / SD_SECTOR_SIZE_BYTES,
     bgd_table_sectors, (char*)fs->bgd_table);
-  assert(rc == 0, "ext2_write_bgd_table: failed to write block group descriptor table.\n");
+  assert_always(rc == 0, "ext2_write_bgd_table: failed to write block group descriptor table.\n");
 }
 
 // Inode writeback is explicit in this filesystem implementation. Any helper
@@ -272,7 +274,7 @@ void ext2_init(struct Ext2* fs){
   // allocation bitmaps, and root inode are available.
   // start by reading superblock
   int rc = sd_read_blocks(SD_DRIVE_1, 2, 2, &fs->superblock);
-  assert(rc == 0, "ext2_init: failed to read ext2 superblock.\n");
+  assert_always(rc == 0, "ext2_init: failed to read ext2 superblock.\n");
 
   // check this is an ext2 file system
   if (fs->superblock.magic != 0xEF53){
@@ -302,7 +304,7 @@ void ext2_init(struct Ext2* fs){
   // read in bgd table
   rc = sd_read_blocks(SD_DRIVE_1, fs->bgd_offset / SD_SECTOR_SIZE_BYTES,
     bgd_table_sectors, (char*)fs->bgd_table);
-  assert(rc == 0, "ext2_init: failed to read block group descriptor table.\n");
+  assert_always(rc == 0, "ext2_init: failed to read block group descriptor table.\n");
 
   // read inode bitmaps
   fs->inode_bitmaps = malloc(fs->num_block_groups * sizeof(char*));
@@ -310,7 +312,7 @@ void ext2_init(struct Ext2* fs){
     fs->inode_bitmaps[i] = malloc(block_size);
     rc = sd_read_blocks(SD_DRIVE_1, fs->bgd_table[i].inode_bitmap * block_size / SD_SECTOR_SIZE_BYTES,
       block_size / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[i]);
-    assert(rc == 0, "ext2_init: failed to read inode bitmap.\n");
+    assert_always(rc == 0, "ext2_init: failed to read inode bitmap.\n");
   }
 
   // read in block bitmaps
@@ -319,7 +321,7 @@ void ext2_init(struct Ext2* fs){
     fs->block_bitmaps[i] = malloc(block_size);
     rc = sd_read_blocks(SD_DRIVE_1, fs->bgd_table[i].block_bitmap * block_size / SD_SECTOR_SIZE_BYTES,
       block_size / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
-    assert(rc == 0, "ext2_init: failed to read block bitmap.\n");
+    assert_always(rc == 0, "ext2_init: failed to read block bitmap.\n");
   }
 
   fs->icache.fs = fs;
@@ -335,7 +337,7 @@ void ext2_init(struct Ext2* fs){
   struct CachedInode* root_inode = icache_get(&fs->icache, EXT2_ROOT_INO);
 
   // The ext2 root inode must always be a directory.
-  assert((root_inode->inode.mode & EXT2_S_MASK) == EXT2_S_IFDIR,
+  assert_always((root_inode->inode.mode & EXT2_S_MASK) == EXT2_S_IFDIR,
     "ext2_init: root inode is not a directory.\n");
 
   node_init(&fs->root, root_inode, EXT2_BAD_INO, fs);
@@ -467,7 +469,7 @@ static struct Node* ext2_open_root_dir(struct Ext2* fs){
   struct Node* root = malloc(sizeof(struct Node));
 
   node_init(root, cached, EXT2_BAD_INO, fs);
-  assert(node_is_dir(root), "ext2_open_root_dir: root inode is not a directory.\n");
+  assert_always(node_is_dir(root), "ext2_open_root_dir: root inode is not a directory.\n");
 
   return root;
 }
@@ -487,9 +489,17 @@ struct Node* ext2_enter_dir(struct Ext2* fs, struct Node* dir, struct RingBuf* p
 
 // expand one symlink into path components and choose the next traversal base
 struct Node* ext2_expand_symlink(struct Ext2* fs, struct Node* parent, struct Node* dir, struct RingBuf* path){
-  unsigned target_size = node_size_in_bytes(dir);
-  char* buf = malloc(target_size + 1);
-  node_get_symlink_target(dir, buf);
+  // The inode size and target bytes must come from one lock acquisition. A
+  // separate size read followed by node_get_symlink_target() could allocate for
+  // an old size and then copy a concurrently grown block-backed target beyond
+  // that allocation.
+  char* buf = node_copy_symlink_target(dir, NULL);
+  if (buf == NULL){
+    // Malformed inode metadata can report UINT_MAX bytes, for which a
+    // NUL-terminated snapshot is unrepresentable. Treat that symlink as an
+    // unresolvable path component instead of wrapping the allocation size.
+    return NULL;
+  }
 
   // The symlink target is itself a path string, not one literal directory name.
   // Rebuild the traversal queue so slash-separated target components are
@@ -686,7 +696,7 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
       // write back updated bitmap
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[i]);
-      assert(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
+      assert_always(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
 
       blocking_lock_release(&fs->metadata_lock);
       
@@ -695,7 +705,12 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
   }
 
   if (inumber == 0){
-    panic("alloc_inumber: no free inodes available.\n");
+    // Ordinary filesystem capacity exhaustion is a fallible create condition,
+    // not an internal invariant failure. Release metadata ownership before
+    // returning so the caller can translate this to NULL/-1.
+    blocking_lock_release(&fs->metadata_lock);
+    say("| ext2: alloc_inumber failed reason=no_free_inodes\n", NULL);
+    return 0;
   }
 
   return inumber;
@@ -727,7 +742,7 @@ void dealloc_inumber(struct Ext2* fs, unsigned inumber, short mode) {
   // write back updated bitmap
   int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[group_index].inode_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
     ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->inode_bitmaps[group_index]);
-  assert(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
+  assert_always(rc == 0, "alloc_inumber: failed to write back inode bitmap.\n");
 
   blocking_lock_release(&fs->metadata_lock);
 }
@@ -775,7 +790,7 @@ unsigned alloc_block(struct Ext2* fs){
       // write back updated bitmap
       int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[i].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
         ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[i]);
-      assert(rc == 0, "alloc_block: failed to write back block bitmap.\n");
+      assert_always(rc == 0, "alloc_block: failed to write back block bitmap.\n");
 
       // A reused block may still contain bytes from the inode that previously
       // owned it, both on disk and in the block cache. Zero it before returning
@@ -791,8 +806,10 @@ unsigned alloc_block(struct Ext2* fs){
     }
   }
 
-  if (block_num == -1){
-    panic("alloc_block: no free blocks available.\n");
+  if (block_num == (unsigned)-1){
+    blocking_lock_release(&fs->metadata_lock);
+    say("| ext2: alloc_block failed reason=no_free_blocks\n", NULL);
+    return (unsigned)-1;
   }
 
   return block_num;
@@ -817,7 +834,7 @@ void dealloc_block(struct Ext2* fs, unsigned block_num) {
   // write back updated bitmap
   int rc = sd_write_blocks(SD_DRIVE_1, fs->bgd_table[group_index].block_bitmap * ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES,
     ext2_get_block_size(fs) / SD_SECTOR_SIZE_BYTES, fs->block_bitmaps[group_index]);
-  assert(rc == 0, "dealloc_block: failed to write back block bitmap.\n");
+  assert_always(rc == 0, "dealloc_block: failed to write back block bitmap.\n");
 
   blocking_lock_release(&fs->metadata_lock);
 }
@@ -915,6 +932,8 @@ struct CachedInode* make_inode(short mode, unsigned inumber){
  *
  * Return the number of filesystem blocks allocated, including both pointer and
  * data blocks. A zero return means the requested data slot already existed.
+ * UINT_MAX means allocation failed; any blocks allocated by this call are
+ * rolled back before returning so the inode pointer tree is unchanged.
  */
 static unsigned ext2_materialize_indirect_data_slot(struct Node* node,
     unsigned* root_pointer, unsigned levels, unsigned relative_index){
@@ -938,7 +957,11 @@ static unsigned ext2_materialize_indirect_data_slot(struct Node* node,
     "ext2_materialize_indirect_data_slot: relative logical index exceeds the pointer-block span.\n");
 
   if (*root_pointer == 0){
-    *root_pointer = alloc_block(node->filesystem);
+    unsigned new_root = alloc_block(node->filesystem);
+    if (new_root == (unsigned)-1){
+      return UINT_MAX;
+    }
+    *root_pointer = new_root;
     allocated_blocks += 1;
     new_pointer_block = true;
   }
@@ -954,12 +977,30 @@ static unsigned ext2_materialize_indirect_data_slot(struct Node* node,
 
   if (levels == EXT2_SINGLE_INDIRECT_LEVELS){
     if (pointers[slot] == 0){
-      pointers[slot] = alloc_block(node->filesystem);
+      unsigned new_data = alloc_block(node->filesystem);
+      if (new_data == (unsigned)-1){
+        free(pointers);
+        if (new_pointer_block){
+          dealloc_block(node->filesystem, *root_pointer);
+          *root_pointer = 0;
+        }
+        return UINT_MAX;
+      }
+      pointers[slot] = new_data;
       allocated_blocks += 1;
     }
   } else {
-    allocated_blocks += ext2_materialize_indirect_data_slot(node,
+    unsigned child_allocated = ext2_materialize_indirect_data_slot(node,
       &pointers[slot], levels - 1, child_index);
+    if (child_allocated == UINT_MAX){
+      free(pointers);
+      if (new_pointer_block){
+        dealloc_block(node->filesystem, *root_pointer);
+        *root_pointer = 0;
+      }
+      return UINT_MAX;
+    }
+    allocated_blocks += child_allocated;
   }
 
   if (allocated_blocks != 0){
@@ -1007,7 +1048,11 @@ static bool node_materialize_block_locked(struct Node* node,
 
   if (logical_block < single_base){
     if (node->cached->inode.block[logical_block] == 0){
-      node->cached->inode.block[logical_block] = alloc_block(node->filesystem);
+      unsigned new_block = alloc_block(node->filesystem);
+      if (new_block == (unsigned)-1){
+        return false;
+      }
+      node->cached->inode.block[logical_block] = new_block;
       allocated_blocks = 1;
     }
   } else if (logical_block < double_base){
@@ -1022,6 +1067,10 @@ static bool node_materialize_block_locked(struct Node* node,
     allocated_blocks = ext2_materialize_indirect_data_slot(node,
       &node->cached->inode.block[EXT2_TRIPLE_INDIRECT_INDEX],
       EXT2_TRIPLE_INDIRECT_LEVELS, logical_block - triple_base);
+  }
+
+  if (allocated_blocks == UINT_MAX){
+    return false;
   }
 
   node->cached->inode.blocks += allocated_blocks * sectors_per_block;
@@ -1249,11 +1298,11 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
     struct DirEntry* existing = (struct DirEntry*)(block_buf + offset);
     unsigned record_length = existing->rec_len;
 
-    assert(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
+    assert_always(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
       "dir_insert_entry_in_existing_block: invalid directory record length.\n");
-    assert(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+    assert_always(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
       "dir_insert_entry_in_existing_block: directory record is not 4-byte aligned.\n");
-    assert(offset + record_length <= block_size,
+    assert_always(offset + record_length <= block_size,
       "dir_insert_entry_in_existing_block: directory record crosses the block boundary.\n");
 
     if (existing->inode == 0){
@@ -1282,7 +1331,7 @@ static bool dir_insert_entry_in_existing_block(struct Node* dir, unsigned block_
     offset += record_length;
   }
 
-  assert(offset == block_size,
+  assert_always(offset == block_size,
     "dir_insert_entry_in_existing_block: directory block did not terminate at the block boundary.\n");
   free(block_buf);
   return false;
@@ -1311,10 +1360,18 @@ static bool dir_add_entry_locked(struct Node* dir, char* name, unsigned inumber)
   // No existing record had enough slack, so the directory must grow by one full
   // data block. The new block starts with one record that owns the entire block.
   unsigned new_block = alloc_block(dir->filesystem);
-  assert(new_block != (unsigned)-1, "dir_add_entry: failed to allocate a new directory block.\n");
+  if (new_block == (unsigned)-1){
+    return false;
+  }
 
   bool added = node_add_block(dir, new_block);
-  assert(added, "dir_add_entry: failed to attach the new directory block to the inode.\n");
+  if (!added){
+    // The data block was allocated but could not be attached (pointer-tree
+    // metadata exhaustion). Return it before reporting failure so capacity is
+    // not permanently lost for an unpublished directory growth.
+    dealloc_block(dir->filesystem, new_block);
+    return false;
+  }
 
   char* block_buf = malloc(block_size);
   ext2_write_dir_entry(block_buf, block_size, name, inumber);
@@ -1325,15 +1382,6 @@ static bool dir_add_entry_locked(struct Node* dir, char* name, unsigned inumber)
   node_sync_inode(dir);
 
   return true;
-}
-
-// Add an entry to a directory, acquiring the directory lock internally for
-// callers that are not already inside a larger directory mutation transaction.
-static bool dir_add_entry(struct Node* dir, char* name, unsigned inumber){
-  blocking_lock_acquire(&dir->cached->lock);
-  bool rc = dir_add_entry_locked(dir, name, inumber);
-  blocking_lock_release(&dir->cached->lock);
-  return rc;
 }
 
 // Remove an entry from a directory while the caller already owns the directory
@@ -1360,11 +1408,11 @@ static bool dir_remove_entry_locked(struct Node* dir, char* name){
       struct DirEntry* existing = (struct DirEntry*)(block_buf + offset);
       unsigned record_length = existing->rec_len;
 
-      assert(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
+      assert_always(record_length >= EXT2_DIR_ENTRY_HEADER_SIZE,
         "dir_remove_entry: invalid directory record length.\n");
-      assert(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+      assert_always(record_length % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
         "dir_remove_entry: directory record is not 4-byte aligned.\n");
-      assert(offset + record_length <= block_size,
+      assert_always(offset + record_length <= block_size,
         "dir_remove_entry: directory record crosses the block boundary.\n");
 
       if (existing->inode != 0 && existing->name_len == strlen(name) &&
@@ -1387,22 +1435,13 @@ static bool dir_remove_entry_locked(struct Node* dir, char* name){
       prev = existing;
     }
 
-    assert(offset == block_size,
+    assert_always(offset == block_size,
       "dir_remove_entry: directory block did not terminate at the block boundary.\n");
 
     free(block_buf);
   }
 
   return false;
-}
-
-// Remove an entry from a directory, acquiring the directory lock internally for
-// callers that are not already in a larger mutation sequence.
-static bool dir_remove_entry(struct Node* dir, char* name){
-  blocking_lock_acquire(&dir->cached->lock);
-  bool rc = dir_remove_entry_locked(dir, name);
-  blocking_lock_release(&dir->cached->lock);
-  return rc;
 }
 
 // Look up one exact basename while the caller already owns the directory lock.
@@ -1420,8 +1459,8 @@ static struct Node* dir_find_entry_locked(struct Node* dir, char* name){
 
   while (index < node_size_in_bytes(dir)){
     int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(cnt >= 4, "dir_find_entry: failed to read directory entry.\n");
-    assert(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+    assert_always(cnt >= 4, "dir_find_entry: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
       "dir_find_entry: invalid directory record length.\n");
 
     index += entry.rec_len;
@@ -1461,8 +1500,8 @@ static bool dir_has_entry_name(struct Node* dir, char* name){
 
   while (index < node_size_in_bytes(dir)){
     int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(cnt >= 4, "dir_has_entry_name: failed to read directory entry.\n");
-    assert(entry.rec_len >= 8, "dir_has_entry_name: invalid directory record length.\n");
+    assert_always(cnt >= 4, "dir_has_entry_name: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= 8, "dir_has_entry_name: invalid directory record length.\n");
 
     index += entry.rec_len;
     if (entry.inode != 0 && entry.name_len == name_len &&
@@ -1491,10 +1530,10 @@ static bool dir_is_empty_locked(struct Node* dir){
 
   while (index < node_size_in_bytes(dir)){
     int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
-    assert(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+    assert_always(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
       "dir_is_empty: invalid directory record length.\n");
-    assert(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+    assert_always(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
       "dir_is_empty: directory record is not 4-byte aligned.\n");
 
     if (entry.inode != 0){
@@ -1525,10 +1564,10 @@ bool dir_is_empty(struct Node* dir){
 
   while (index < node_size_in_bytes(dir)){
     int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
-    assert(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+    assert_always(cnt >= 4, "dir_is_empty: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
       "dir_is_empty: invalid directory record length.\n");
-    assert(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+    assert_always(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
       "dir_is_empty: directory record is not 4-byte aligned.\n");
 
     if (entry.inode != 0){
@@ -1549,19 +1588,56 @@ bool dir_is_empty(struct Node* dir){
   return true;
 }
 
-struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mode){
-  assert(dir != NULL, "alloc_inode: parent directory is NULL.\n");
-  assert(name != NULL, "alloc_inode: name is NULL.\n");
-  assert(strlen(name) > 0, "alloc_inode: name is empty.\n");
-  assert(!ext2_name_has_separator(name),
-    "alloc_inode: names must be one directory entry component without '/'.\n");
-  assert(!ext2_name_is_dot(name),
-    "alloc_inode: '.' is reserved and cannot be created as a new directory entry.\n");
-  assert(!ext2_name_is_dot_dot(name),
-    "alloc_inode: '..' is reserved and cannot be created as a new directory entry.\n");
+/*
+ * Allocate, initialize, and publish one new inode as a single namespace
+ * transaction.
+ *
+ * Preconditions:
+ * - execution is in kernel mode;
+ * - `dir` is a live directory wrapper in `fs`;
+ * - `name` is one validated directory-entry component;
+ * - `symlink_target` is non-NULL exactly when `mode` describes a symlink.
+ *
+ * The parent directory BlockingLock is the publication lock. It is acquired
+ * before duplicate-name detection and retained while the new inode is placed
+ * in the inode cache, initialized, and written to disk. Directory `.` / `..`
+ * records and symlink target bytes are therefore complete before the parent
+ * directory entry is installed as the final namespace-publication step. A
+ * concurrent lookup, delete, rename, or create on any core either runs before
+ * this transaction or blocks until the complete child is reachable.
+ *
+ * Child initialization follows the existing parent-then-child lock order used
+ * by deletion. The child is not yet reachable through a directory entry, so no
+ * independent namespace operation can contend for its lock. Blocking SD I/O
+ * is permitted while these BlockingLocks are held; interrupts may remain in
+ * the caller's original state, while lock ownership keeps the transaction
+ * non-preemptible. The project memory model is sequentially consistent, and
+ * the write-through block/inode paths complete before final publication.
+ *
+ * Returns a heap-owned wrapper on success. Duplicate names and an already
+ * unlinked parent return NULL without publishing or allocating an inode.
+ */
+static struct Node* create_inode(struct Ext2* fs, struct Node* dir, char* name,
+    short mode, char* symlink_target){
+  unsigned inode_type = mode & EXT2_S_MASK;
 
-  // Serialize duplicate-name detection and insertion so two concurrent creates
-  // of the same basename cannot both observe the name as free.
+  assert(dir != NULL, "create_inode: parent directory is NULL.\n");
+  assert(name != NULL, "create_inode: name is NULL.\n");
+  assert(strlen(name) > 0, "create_inode: name is empty.\n");
+  assert(!ext2_name_has_separator(name),
+    "create_inode: names must be one directory entry component without '/'.\n");
+  assert(!ext2_name_is_dot(name),
+    "create_inode: '.' is reserved and cannot be created as a new directory entry.\n");
+  assert(!ext2_name_is_dot_dot(name),
+    "create_inode: '..' is reserved and cannot be created as a new directory entry.\n");
+  assert(inode_type == EXT2_S_IFREG || inode_type == EXT2_S_IFDIR ||
+      inode_type == EXT2_S_IFLNK,
+    "create_inode: mode is not a supported creatable inode type.\n");
+  assert((inode_type == EXT2_S_IFLNK) == (symlink_target != NULL),
+    "create_inode: symlink target does not match the requested inode type.\n");
+
+  // This acquisition begins the namespace transaction. Every return below
+  // releases it; the success path does not release until after publication.
   blocking_lock_acquire(&dir->cached->lock);
 
   if (dir->cached->delete_pending){
@@ -1581,26 +1657,95 @@ struct Node* alloc_inode(struct Ext2* fs, struct Node* dir, char* name, short mo
   }
 
   struct CachedInode* cached = make_inode(mode, inumber);
-  // Publish the new inode in the shared cache before linking it into the
-  // directory tree so later lookups can reuse the same cached object.
+  // Cache insertion makes the allocated inode number shareable by internal
+  // inode-number users, but it does not make the child namespace-reachable.
+  // Directory traversal still blocks on the parent publication lock.
   icache_insert(&fs->icache, cached);
 
   struct Node* node = malloc(sizeof(struct Node));
 
   node_init(node, cached, dir->cached->inumber, fs);
 
-  // inode allocated successfully, now update parent directory
-  bool added = dir_add_entry_locked(dir, name, inumber);
-  assert(added, "alloc_inode: failed to add the new directory entry to the parent directory.\n");
+  if (inode_type == EXT2_S_IFDIR){
+    // Initialize both mandatory directory records while the child is
+    // unreachable. Keep one child-lock acquisition across both writes so no
+    // internal inode-number user can observe the intermediate one-entry state.
+    blocking_lock_acquire(&node->cached->lock);
+    bool dot_added = dir_add_entry_locked(node, ".", node->cached->inumber);
+    bool dot_dot_added = false;
+    if (dot_added){
+      dot_dot_added = dir_add_entry_locked(node, "..", dir->cached->inumber);
+    }
+    blocking_lock_release(&node->cached->lock);
 
-  if ((mode & EXT2_S_MASK) == EXT2_S_IFDIR){
+    if (!dot_added || !dot_dot_added){
+      // Child never became namespace-reachable. Reclaim its inode number and any
+      // blocks allocated while initializing '.' / '..'.
+      blocking_lock_acquire(&node->cached->lock);
+      node->cached->inode.links_count = 0;
+      node->cached->delete_pending = true;
+      blocking_lock_release(&node->cached->lock);
+      node_free(node);
+      blocking_lock_release(&dir->cached->lock);
+      return NULL;
+    }
+  } else if (inode_type == EXT2_S_IFLNK){
+    unsigned target_size = strlen(symlink_target);
+
+    if (target_size <= sizeof(node->cached->inode.block)){
+      // Fast symlink bytes and size form one inode mutation. The lock is
+      // required even before namespace publication because the cache entry is
+      // already valid and may be referenced by an internal inode-number user.
+      blocking_lock_acquire(&node->cached->lock);
+      memcpy((char*)node->cached->inode.block, symlink_target, target_size);
+      node->cached->inode.size = target_size;
+      node_sync_inode(node);
+      blocking_lock_release(&node->cached->lock);
+    } else {
+      // Long targets use the ordinary locked block-growth path. All target
+      // blocks and the final size are persisted before the parent entry below.
+      unsigned written = node_write_all(node, 0, target_size, symlink_target);
+      if (written != target_size){
+        blocking_lock_acquire(&node->cached->lock);
+        node->cached->inode.links_count = 0;
+        node->cached->delete_pending = true;
+        blocking_lock_release(&node->cached->lock);
+        node_free(node);
+        blocking_lock_release(&dir->cached->lock);
+        return NULL;
+      }
+    }
+  }
+
+  // Persist the final child inode before installing its parent entry. This is
+  // intentionally redundant with helpers that sync while growing the child:
+  // publication must never depend on a type-specific helper's writeback timing.
+  // icache_insert() has already made the CachedInode available to internal
+  // inode-number users, so the writeback must take the child lock even though
+  // the parent entry is not yet namespace-visible.
+  blocking_lock_acquire(&node->cached->lock);
+  node_sync_inode(node);
+  blocking_lock_release(&node->cached->lock);
+
+  // This directory-entry write is the final publication point. Since the
+  // parent lock has covered the entire transaction, no competing traversal can
+  // observe the entry until every initialization write above is complete.
+  bool added = dir_add_entry_locked(dir, name, inumber);
+  if (!added){
+    blocking_lock_acquire(&node->cached->lock);
+    node->cached->inode.links_count = 0;
+    node->cached->delete_pending = true;
+    blocking_lock_release(&node->cached->lock);
+    node_free(node);
+    blocking_lock_release(&dir->cached->lock);
+    return NULL;
+  }
+
+  if (inode_type == EXT2_S_IFDIR){
     // parent dir gets new link from child's .. entry
     dir->cached->inode.links_count += 1;
     node_sync_inode(dir);
   }
-
-  // write new inode to disk
-  node_sync_inode(node);
 
   blocking_lock_release(&dir->cached->lock);
 
@@ -1709,7 +1854,7 @@ struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber){
 
   int rc = sd_read_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
-  assert(rc == 0, "icache_get: failed to read inode table block.\n");
+  assert_always(rc == 0, "icache_get: failed to read inode table block.\n");
 
   // This thread owns the initial reference, and every concurrent getter is
   // blocked on valid_gate, so it is the only thread allowed to initialize the
@@ -1744,11 +1889,9 @@ void icache_insert(struct InodeCache* cache, struct CachedInode* cached){
   /*
    * Cache validity means the inode record and derived data_block_count are safe
    * for wrappers to observe; publish those fields before waking a getter that
-   * raced with insertion. It does not mean a higher-level create transaction is
-   * complete. alloc_inode() currently links new directories and symlinks before
-   * node_make_dir()/node_make_symlink() initializes their namespace contents or
-   * target bytes. That separate namespace-publication ordering issue remains
-   * unresolved here.
+   * raced with insertion. Namespace publication is separate: create_inode()
+   * keeps the parent directory lock through complete child initialization and
+   * installs the parent entry only after the child is persistent.
    */
   cached->valid = true;
   blocking_lock_release(&cache->lock);
@@ -1776,13 +1919,13 @@ void icache_set(struct InodeCache* cache, struct CachedInode* cached){
 
   int rc = sd_read_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
-  assert(rc == 0, "icache_set: failed to read inode table block.\n");
+  assert_always(rc == 0, "icache_set: failed to read inode table block.\n");
 
   memcpy(inode_table_buf + inode_offset, &cached->inode, sizeof(struct Inode));
 
   rc = sd_write_blocks(SD_DRIVE_1, inode_table_sector,
     block_size / SD_SECTOR_SIZE_BYTES, inode_table_buf);
-  assert(rc == 0, "icache_set: failed to write inode table block.\n");
+  assert_always(rc == 0, "icache_set: failed to write inode table block.\n");
 
   blocking_lock_release(&cache->fs->inode_lock);
 
@@ -1881,7 +2024,7 @@ void bcache_get(struct BlockCache* cache, unsigned block_num, char* dest){
   // is installed before another cache operation may proceed on any core.
   int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, dest);
-  assert(rc == 0, "bcache_get: failed to read filesystem block.\n");
+  assert_always(rc == 0, "bcache_get: failed to read filesystem block.\n");
 
   // Install the fetched block into the oldest cache line while still holding
   // the same lock acquisition used for the initial miss lookup.
@@ -1941,7 +2084,7 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
     // write back to sd
     int rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
       cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
-    assert(rc == 0, "bcache_set: failed to write filesystem block.\n");
+    assert_always(rc == 0, "bcache_set: failed to write filesystem block.\n");
 
     blocking_lock_release(&cache->lock);
 
@@ -1953,7 +2096,7 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   // need to read block first so we can do a partial write without overwriting the rest of the block
   int rc = sd_read_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
-  assert(rc == 0, "bcache_set: failed to read filesystem block before a partial write.\n");
+  assert_always(rc == 0, "bcache_set: failed to read filesystem block before a partial write.\n");
 
   // Install the freshly-read block into the chosen cache line before patching
   // the requested byte range, so the cache retains a full coherent block image.
@@ -1972,7 +2115,7 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
 
   rc = sd_write_blocks(SD_DRIVE_1, block_num * cache->block_size / SD_SECTOR_SIZE_BYTES,
     cache->block_size / SD_SECTOR_SIZE_BYTES, block_buf);
-  assert(rc == 0, "bcache_set: failed to write filesystem block.\n");
+  assert_always(rc == 0, "bcache_set: failed to write filesystem block.\n");
 
   blocking_lock_release(&cache->lock);
 
@@ -2043,6 +2186,9 @@ struct Node* node_make_file(struct Node* dir, char* name){
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_file: parent node is not a directory.\n");
   assert(name != NULL, "node_make_file: name is NULL.\n");
+  if (strlen(name) > EXT2_MAX_NAME_BYTES){
+    return NULL;
+  }
   assert(strlen(name) > 0, "node_make_file: name is empty.\n");
   assert(!ext2_name_has_separator(name),
     "node_make_file: names must be one directory entry component without '/'.\n");
@@ -2053,7 +2199,8 @@ struct Node* node_make_file(struct Node* dir, char* name){
 
   // New regular files default to owner-writable, world-readable mode so the
   // extracted host artifact is readable without an extra chmod step.
-  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_FILE_MODE);
+  struct Node* node = create_inode(dir->filesystem, dir, name,
+    EXT2_DEFAULT_FILE_MODE, NULL);
   if (node == NULL){
     return NULL;
   }
@@ -2066,6 +2213,9 @@ struct Node* node_make_dir(struct Node* dir, char* name){
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_dir: parent node is not a directory.\n");
   assert(name != NULL, "node_make_dir: name is NULL.\n");
+  if (strlen(name) > EXT2_MAX_NAME_BYTES){
+    return NULL;
+  }
   assert(strlen(name) > 0, "node_make_dir: name is empty.\n");
   assert(!ext2_name_has_separator(name),
     "node_make_dir: names must be one directory entry component without '/'.\n");
@@ -2076,17 +2226,7 @@ struct Node* node_make_dir(struct Node* dir, char* name){
 
   // New directories default to executable/traversable permissions for all
   // readers while remaining writable only by the owner.
-  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_DIR_MODE);
-
-  if (node == NULL){
-    return NULL;
-  }
-
-  // add . and .. entries to new directory
-  dir_add_entry(node, ".", node->cached->inumber);
-  dir_add_entry(node, "..", dir->cached->inumber);
-
-  return node;
+  return create_inode(dir->filesystem, dir, name, EXT2_DEFAULT_DIR_MODE, NULL);
 }
 
 struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
@@ -2094,6 +2234,9 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
   // ensure dir is actually a dir
   assert(node_is_dir(dir), "node_make_symlink: parent node is not a directory.\n");
   assert(name != NULL, "node_make_symlink: name is NULL.\n");
+  if (strlen(name) > EXT2_MAX_NAME_BYTES){
+    return NULL;
+  }
   assert(strlen(name) > 0, "node_make_symlink: name is empty.\n");
   assert(!ext2_name_has_separator(name),
     "node_make_symlink: names must be one directory entry component without '/'.\n");
@@ -2103,31 +2246,11 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
     "node_make_symlink: '..' is reserved and cannot be created as a new directory entry.\n");
   assert(target != NULL, "node_make_symlink: target is NULL.\n");
 
-  // Symlinks traditionally carry 0777 permissions even though most hosts ignore
-  // them when dereferencing the link target.
-  unsigned target_size = strlen(target);
-  struct Node* node = alloc_inode(dir->filesystem, dir, name, EXT2_DEFAULT_SYMLINK_MODE);
-
-  if (node == NULL){
-    return NULL;
-  }
-
-  // ext2 fast symlinks store short targets inline in i_block instead of
-  // allocating separate data blocks.
-  if (target_size <= sizeof(node->cached->inode.block)) {
-    memcpy((char*)node->cached->inode.block, target, target_size);
-    node->cached->inode.size = target_size;
-    node_sync_inode(node);
-    return node;
-  }
-
-  // Long targets use the ordinary block tree. node_write_all() materializes the
-  // exact covered slots under the inode lock and persists the final size/tree.
-  unsigned written = node_write_all(node, 0, target_size, target);
-  assert(written == target_size,
-    "node_make_symlink: failed to write the complete block-backed target.\n");
-
-  return node;
+  // Symlinks traditionally carry 0777 permissions even though most hosts
+  // ignore them when dereferencing the link target. create_inode() stores the
+  // complete inline or block-backed target before publishing `name`.
+  return create_inode(dir->filesystem, dir, name,
+    EXT2_DEFAULT_SYMLINK_MODE, target);
 }
 
 void node_rename(struct Node* dir, char* old_name, char* new_name){
@@ -2171,20 +2294,55 @@ void node_rename(struct Node* dir, char* old_name, char* new_name){
     "node_rename: no directory entry with the old name exists in the parent directory.\n");
   
   bool rc = dir_remove_entry_locked(dir, old_name);
-  assert(rc, "node_rename: failed to remove the old directory entry.\n");
+  assert_always(rc, "node_rename: failed to remove the old directory entry.\n");
   rc = dir_add_entry_locked(dir, new_name, node->cached->inumber);
-  assert(rc, "node_rename: failed to add the new directory entry.\n");
+  assert_always(rc, "node_rename: failed to add the new directory entry.\n");
   blocking_lock_release(&dir->cached->lock);
 
   node_free(node);
 }
 
-int node_delete(struct Node* dir, char* name){
-  assert(dir != NULL, "node_delete: parent node is NULL.\n");
-  assert(node_is_dir(dir), "node_delete: parent node is not a directory.\n");
-  assert(name != NULL, "node_delete: name is NULL.\n");
-  if (strlen(name) == 0){
+/*
+ * Atomically validate and delete one directory entry.
+ *
+ * Preconditions:
+ * - execution is in kernel mode;
+ * - `dir` is a live directory wrapper;
+ * - callers do not already hold either the parent or candidate inode lock.
+ *
+ * The parent directory BlockingLock is held from exact-name lookup through
+ * target-kind validation, optional emptiness validation, entry removal, and
+ * link-count publication. A competing create, rename, lookup, or deletion on
+ * any core therefore cannot replace `name` between validation and commit. The
+ * candidate inode lock nests inside the parent lock, matching create/delete's
+ * established parent-then-child order, and prevents an already-open directory
+ * wrapper from adding a child after the emptiness check. Blocking storage I/O
+ * is permitted while these locks are owned. Under the project's sequentially
+ * consistent memory model, releasing both locks publishes the complete delete.
+ *
+ * Postconditions:
+ * - success removes exactly the inode whose kind was validated;
+ * - failure leaves the namespace and link counts unchanged;
+ * - no lock is held and every temporary inode-cache reference is released.
+ */
+int node_delete_typed(struct Node* dir, char* name,
+    enum NodeDeleteKind delete_kind){
+  assert(dir != NULL, "node_delete_typed: parent node is NULL.\n");
+  assert(node_is_dir(dir),
+    "node_delete_typed: parent node is not a directory.\n");
+  assert(name != NULL, "node_delete_typed: name is NULL.\n");
+  assert(delete_kind == NODE_DELETE_ANY ||
+      delete_kind == NODE_DELETE_EMPTY_DIRECTORY ||
+      delete_kind == NODE_DELETE_FILE_OR_SYMLINK,
+    "node_delete_typed: delete kind is invalid.\n");
+
+  unsigned name_len = strlen(name);
+  if (name_len == 0){
     // name is empty
+    return -1;
+  }
+  if (name_len > EXT2_MAX_NAME_BYTES){
+    // no ext2 directory entry can legally contain this basename
     return -1;
   }
   if (ext2_name_has_separator(name)){
@@ -2221,13 +2379,19 @@ int node_delete(struct Node* dir, char* name){
   // directories, against creates through already-open wrappers.
   blocking_lock_acquire(&node->cached->lock);
 
-  if (node_is_dir(node)){
-    if (!dir_is_empty_locked(node)){
-      // cannot delete a non-empty directory
-      blocking_lock_release(&node->cached->lock);
-      blocking_lock_release(&dir->cached->lock);
-      return -1;
-    }
+  bool target_is_dir = node_is_dir(node);
+  bool kind_matches = delete_kind == NODE_DELETE_ANY ||
+    (delete_kind == NODE_DELETE_EMPTY_DIRECTORY && target_is_dir) ||
+    (delete_kind == NODE_DELETE_FILE_OR_SYMLINK &&
+      (node_is_file(node) || node_is_symlink(node)));
+
+  if (!kind_matches || (target_is_dir && !dir_is_empty_locked(node))){
+    // The typed API must reject the wrong inode kind while the namespace entry
+    // is still protected by the same parent lock used for lookup and removal.
+    blocking_lock_release(&node->cached->lock);
+    blocking_lock_release(&dir->cached->lock);
+    node_free(node);
+    return -1;
   }
 
   bool rc = dir_remove_entry_locked(dir, name);
@@ -2235,10 +2399,11 @@ int node_delete(struct Node* dir, char* name){
     // failed to remove the directory entry for some reason, so abort the delete
     blocking_lock_release(&node->cached->lock);
     blocking_lock_release(&dir->cached->lock);
+    node_free(node);
     return -1;
   }
 
-  if (node_is_dir(node)){
+  if (target_is_dir){
     // parent directory also has a link from the child's ".." entry, so decrement that too
     dir->cached->inode.links_count -= 1;
     node_sync_inode(dir);
@@ -2264,6 +2429,11 @@ int node_delete(struct Node* dir, char* name){
   blocking_lock_release(&dir->cached->lock);
 
   node_free(node);
+  return 0;
+}
+
+int node_delete(struct Node* dir, char* name){
+  return node_delete_typed(dir, name, NODE_DELETE_ANY);
 }
 
 void read_sectors(struct Ext2* fs, unsigned index, char* buffer){
@@ -2290,8 +2460,8 @@ void node_print_dir(struct Node* node){
   
   while (index < node_size_in_bytes(node)) {
     int cnt = node_read_all(node, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(cnt >= 4, "node_print_dir: failed to read directory entry.\n");
-    assert(entry.rec_len >= 8, "node_print_dir: invalid directory record length.\n");
+    assert_always(cnt >= 4, "node_print_dir: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= 8, "node_print_dir: invalid directory record length.\n");
   
     index += entry.rec_len;
     if (entry.inode != 0) {
@@ -2603,6 +2773,21 @@ unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* 
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src){
   if (size == 0) return 0;
 
+  // Establish the complete byte range before computing its final byte or
+  // logical block. This is a fallible public Node operation: an overflowing
+  // request is not an ext2 invariant violation and must not wrap into a small
+  // block index that modifies unrelated file contents.
+  if (offset > UINT_MAX - size){
+    int args[3] = {
+      (int)node->cached->inumber,
+      (int)offset,
+      (int)size,
+    };
+    say("| ext2: node_write_all rejected inode=%u offset=%u size=%u reason=range_overflow\n",
+      args);
+    return 0;
+  }
+
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned start_block = offset / block_size;
   unsigned end_block = (offset + size - 1) / block_size;
@@ -2623,8 +2808,21 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
    */
   for (unsigned i = start_block; i <= end_block; ++i){
     bool materialized = node_materialize_block_locked(node, i);
-    assert(materialized,
-      "node_write_all: requested logical block exceeds ext2 inode addressing capacity.\n");
+    if (!materialized){
+      // Capacity exhaustion or an unaddressable logical block. Leave any earlier
+      // successful materializations allocated but do not grow size or write
+      // bytes for this request; the caller observes a short/zero result.
+      int args[4] = {
+        (int)node->cached->inumber,
+        (int)offset,
+        (int)size,
+        (int)i,
+      };
+      say("| ext2: node_write_all materialize failed inode=%u offset=%u size=%u logical_block=%u\n",
+        args);
+      blocking_lock_release(&node->cached->lock);
+      return 0;
+    }
   }
 
   // Update the file size if we are going to write past the previous end of the file.
@@ -2704,6 +2902,53 @@ void node_get_symlink_target(struct Node* node, char* dest){
   blocking_lock_release(&node->cached->lock);
 }
 
+/*
+ * Return an owned, NUL-terminated snapshot of one symlink target.
+ *
+ * The inode BlockingLock covers the size snapshot, allocation, and byte copy,
+ * so a concurrent internal writer cannot change the required allocation size
+ * between those operations. Under the sequentially-consistent memory model,
+ * the returned bytes and optional size describe one complete inode state.
+ *
+ * Preconditions: kernel mode and a live symlink wrapper. The caller may have
+ * interrupts enabled; the BlockingLock preserves the caller's preemption
+ * state. On return, no lock is held and the caller owns a non-NULL buffer,
+ * except that malformed UINT_MAX inode size returns NULL because the required
+ * terminator cannot be represented. Kernel heap exhaustion otherwise remains
+ * fatal under the existing heap contract. `target_size` may be NULL and is not
+ * modified on the malformed-size failure path.
+ */
+char* node_copy_symlink_target(struct Node* node, unsigned* target_size){
+  assert(node != NULL, "node_copy_symlink_target: node is NULL.\n");
+  assert(node_is_symlink(node),
+    "node_copy_symlink_target: node is not a symlink.\n");
+
+  blocking_lock_acquire(&node->cached->lock);
+
+  unsigned size = node->cached->inode.size;
+  if (size == UINT_MAX){
+    blocking_lock_release(&node->cached->lock);
+    return NULL;
+  }
+  char* snapshot = malloc(size + 1);
+
+  if (size <= sizeof(node->cached->inode.block)){
+    memcpy(snapshot, (char*)node->cached->inode.block, size);
+  } else {
+    unsigned copied = node_read_all_locked(node, 0, size, snapshot);
+    assert_always(copied == size,
+      "node_copy_symlink_target: failed to copy the complete block-backed target.\n");
+  }
+  snapshot[size] = 0;
+
+  if (target_size != NULL){
+    *target_size = size;
+  }
+
+  blocking_lock_release(&node->cached->lock);
+  return snapshot;
+}
+
 unsigned node_get_num_links(struct Node* node){
   return node->cached->inode.links_count;
 }
@@ -2721,7 +2966,7 @@ unsigned node_entry_count(struct Node* node){
   // traverse the linked list
   while (index < node_size_in_bytes(node)){
     node_read_all_locked(node, index, sizeof(struct DirEntry), (char*)&entry);
-    assert(entry.rec_len >= 8, "node_entry_count: invalid directory record length.\n");
+    assert_always(entry.rec_len >= 8, "node_entry_count: invalid directory record length.\n");
     index += entry.rec_len;
     if (entry.inode != 0) count++;
   }
@@ -2788,8 +3033,19 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
 
 int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset) {
   assert(node_is_dir(dir), "node_getdents: node is not a directory.\n");
+  assert(new_offset != NULL, "node_getdents: new-offset output is NULL.\n");
 
   blocking_lock_acquire(&dir->cached->lock);
+
+  // Offset validation and iteration share this acquisition so a concurrent
+  // directory mutation cannot turn a validated record boundary into an
+  // interior offset before the scan uses it. Zero and the exact EOF offset are
+  // valid; offsets beyond EOF or inside an ext2 record are rejected.
+  unsigned directory_size = dir->cached->inode.size;
+  if (offset > directory_size){
+    blocking_lock_release(&dir->cached->lock);
+    return -1;
+  }
 
   unsigned index = 0;
   struct DirEntry entry;
@@ -2798,13 +3054,24 @@ int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buff
   unsigned total_bytes_read = 0;
   char* buffer_pointer = buffer;
   
-  while (index < node_size_in_bytes(dir)) {
+  while (index < directory_size) {
     int cnt = node_read_all_locked(dir, index, sizeof(struct DirEntry), (char*) &entry);
-    assert(cnt >= 4, "node_getdents: failed to read directory entry.\n");
-    assert(entry.rec_len >= 8, "node_getdents: invalid directory record length.\n");
+    assert_always(cnt >= 4, "node_getdents: failed to read directory entry.\n");
+    assert_always(entry.rec_len >= EXT2_DIR_ENTRY_HEADER_SIZE,
+      "node_getdents: invalid directory record length.\n");
+    assert_always(entry.rec_len % EXT2_DIR_ENTRY_ALIGN_SIZE == 0,
+      "node_getdents: directory record is not 4-byte aligned.\n");
+    assert_always(entry.rec_len <= directory_size - current_offset,
+      "node_getdents: directory entry crosses the inode size.\n");
+
+    unsigned entry_end = current_offset + entry.rec_len;
+    if (offset > current_offset && offset < entry_end){
+      blocking_lock_release(&dir->cached->lock);
+      return -1;
+    }
   
     index += entry.rec_len;
-    if (entry.inode == 0 || current_offset + entry.rec_len <= offset) {
+    if (entry.inode == 0 || entry_end <= offset) {
       // Empty entry or not at desired offset yet.
       current_offset += entry.rec_len;
       continue;
@@ -2812,14 +3079,17 @@ int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buff
 
     // Write dirent into buffer.
     int bytes_written = write_dirent(dir->filesystem, entry, buffer_pointer, buffer_size - total_bytes_read);
+    if (bytes_written == 0) {
+      // The current live entry did not fit. Leave current_offset at this
+      // entry's start so the next call retries it rather than silently skipping
+      // it. Empty on-disk records above may still advance the offset because
+      // they have no user-visible entry to retry.
+      break;
+    }
+
     total_bytes_read += bytes_written;
     buffer_pointer += bytes_written;
     current_offset += entry.rec_len;
-
-    if (bytes_written == 0) {
-      // Buffer full.
-      break;
-    }
   }
   blocking_lock_release(&dir->cached->lock);
   *new_offset = current_offset;

@@ -2,6 +2,9 @@
  * user_fork_wait_mmap_sem guest:
  * - validate that a semaphore opened before fork is usable from both parent
  *   and child
+ * - validate that descriptor references keep a semaphore alive when the
+ *   parent closes its reference while one child is entering sem_down() and a
+ *   second inherited reference later performs sem_up()
  * - validate that a pipe created before fork can carry data from the child to
  *   the parent through inherited file descriptors
  * - validate that wait_child returns the child's exit status
@@ -46,6 +49,13 @@
 #define CHILD_STATUS_BAD_SEM_UP 44
 #define CHILD_STATUS_BAD_PIPE_CLOSE 45
 #define CHILD_STATUS_BAD_PIPE_WRITE 46
+
+#define LIFETIME_WAITER_STATUS_OK 51
+#define LIFETIME_WAITER_STATUS_BAD_READY 52
+#define LIFETIME_WAITER_STATUS_BAD_DOWN 53
+#define LIFETIME_WAKER_STATUS_OK 54
+#define LIFETIME_WAKER_STATUS_BAD_TRIGGER 55
+#define LIFETIME_WAKER_STATUS_BAD_UP 56
 
 static int mapping_ok(char* mapping){
   return mapping != 0 && (int)mapping != -1;
@@ -103,6 +113,31 @@ static int child_main(char* private_map, char* shared_map, int sem,
   }
 
   return CHILD_STATUS_OK;
+}
+
+// Publish that this child is about to enter target_sem, then wait for the
+// permit supplied by the other child. The inherited descriptor reference must
+// retain the Semaphore storage after the parent closes its own descriptor.
+static int lifetime_waiter_main(int target_sem, int ready_sem){
+  if (sem_up(ready_sem) != 0){
+    return LIFETIME_WAITER_STATUS_BAD_READY;
+  }
+  if (sem_down(target_sem) != 0){
+    return LIFETIME_WAITER_STATUS_BAD_DOWN;
+  }
+  return LIFETIME_WAITER_STATUS_OK;
+}
+
+// Remain blocked until the parent has closed its target descriptor, then use
+// this child's inherited reference to wake the waiter normally.
+static int lifetime_waker_main(int target_sem, int trigger_sem){
+  if (sem_down(trigger_sem) != 0){
+    return LIFETIME_WAKER_STATUS_BAD_TRIGGER;
+  }
+  if (sem_up(target_sem) != 0){
+    return LIFETIME_WAKER_STATUS_BAD_UP;
+  }
+  return LIFETIME_WAKER_STATUS_OK;
 }
 
 int main(void){
@@ -165,6 +200,59 @@ int main(void){
   user_test_expect_eq("close(pipe_fds[0])", close(pipe_fds[0]), 0);
   user_test_expect_eq("close(private_fd)", close(private_fd), 0);
   user_test_expect_eq("close(shared_fd)", close(shared_fd), 0);
+
+  // Descriptor lifetime regression: three processes initially own target_sem.
+  // Once the waiter has reached its handoff point, give it time to enter the
+  // blocking syscall, close the parent's reference, and let the other child
+  // perform the wake. Even if scheduling delays the actual enqueue, the child
+  // descriptor references must retain the object throughout both operations.
+  int lifetime_sem = sem_open(0);
+  int lifetime_ready_sem = sem_open(0);
+  int lifetime_trigger_sem = sem_open(0);
+  user_test_expect_eq("open descriptor-lifetime target semaphore",
+    lifetime_sem >= 0, 1);
+  user_test_expect_eq("open descriptor-lifetime ready semaphore",
+    lifetime_ready_sem >= 0, 1);
+  user_test_expect_eq("open descriptor-lifetime trigger semaphore",
+    lifetime_trigger_sem >= 0, 1);
+
+  if (lifetime_sem < 0 || lifetime_ready_sem < 0 ||
+      lifetime_trigger_sem < 0){
+    return 1;
+  }
+
+  int lifetime_waiter = fork();
+  if (lifetime_waiter == 0){
+    return lifetime_waiter_main(lifetime_sem, lifetime_ready_sem);
+  }
+  int lifetime_waker = fork();
+  if (lifetime_waker == 0){
+    return lifetime_waker_main(lifetime_sem, lifetime_trigger_sem);
+  }
+
+  user_test_expect_eq("descriptor-lifetime waiter child valid",
+    lifetime_waiter >= 0, 1);
+  user_test_expect_eq("descriptor-lifetime waker child valid",
+    lifetime_waker >= 0, 1);
+  if (lifetime_waiter < 0 || lifetime_waker < 0){
+    return 1;
+  }
+
+  user_test_expect_eq("waiter reached descriptor-lifetime semaphore",
+    sem_down(lifetime_ready_sem), 0);
+  sleep(2);
+  user_test_expect_eq("parent closes active inherited semaphore",
+    sem_close(lifetime_sem), 0);
+  user_test_expect_eq("release inherited semaphore waker",
+    sem_up(lifetime_trigger_sem), 0);
+  user_test_expect_eq("descriptor-lifetime waiter exit status",
+    wait_child(lifetime_waiter), LIFETIME_WAITER_STATUS_OK);
+  user_test_expect_eq("descriptor-lifetime waker exit status",
+    wait_child(lifetime_waker), LIFETIME_WAKER_STATUS_OK);
+  user_test_expect_eq("close descriptor-lifetime ready semaphore",
+    sem_close(lifetime_ready_sem), 0);
+  user_test_expect_eq("close descriptor-lifetime trigger semaphore",
+    sem_close(lifetime_trigger_sem), 0);
 
   return 0;
 }

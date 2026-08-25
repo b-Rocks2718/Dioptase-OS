@@ -32,17 +32,16 @@ void gate_reset(struct Gate *gate) {
   blocking_lock_release(&gate->lock);
 }
 
-// Free the resources associated with the gate, but do not free the gate itself
-// waiting threads will be reaped
+// Free the resources associated with a quiescent gate, but not the gate itself.
 void gate_destroy(struct Gate* gate) {
-  // Waiters may be parked either inside the condition variable or on the gate's
-  // internal blocking lock before they enter gate_wait().
+  // The owner must first signal and join all waiters, then prevent new calls.
+  // cond_var_destroy() and blocking_lock_destroy() independently enforce that
+  // no operation remains in either layer.
   cond_var_destroy(&gate->cv);
   blocking_lock_destroy(&gate->lock);
 }
 
-// Free the resources associated with the gate and the gate itself
-// waiting threads will be reaped
+// Destroy a quiescent gate and free it.
 void gate_free(struct Gate* gate) {
   gate_destroy(gate);
   free(gate);

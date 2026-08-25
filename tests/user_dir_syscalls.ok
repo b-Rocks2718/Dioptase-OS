@@ -5,6 +5,26 @@
 ***/
 ***inner_folder0/inner_inner_file0
 ***inner_folder0/
+***PASS create leaf through intermediate directory symlink: got 1 expected 1
+***PASS close leaf created through symlink: got 0 expected 0
+***PASS symlink create published in target directory: got 1 expected 1
+***PASS close direct target lookup: got 0 expected 0
+***PASS open directory for getdents edges: got 1 expected 1
+***PASS getdents rejects zero buffer: got -1 expected -1
+***PASS seek directory to interior byte: got 1 expected 1
+***PASS getdents rejects interior offset: got -1 expected -1
+***PASS reset directory offset: got 0 expected 0
+***PASS getdents preserves entry that does not fit: got 0 expected 0
+***PASS too-small getdents retains offset: got 0 expected 0
+***PASS getdents emits dot after retry: got 16 expected 16
+***PASS first retried entry is dot: got 1 expected 1
+***PASS getdents does not skip dot-dot: got 16 expected 16
+***PASS second retried entry is dot-dot: got 1 expected 1
+***PASS seek one byte beyond directory EOF: got 1 expected 1
+***PASS getdents rejects beyond-EOF offset: got -1 expected -1
+***PASS seek to exact directory EOF: got 1 expected 1
+***PASS getdents accepts exact EOF: got 0 expected 0
+***PASS close getdents edge descriptor: got 0 expected 0
 ***getdents returned 192.
 ***Found entry: .
 ***  Type: Directory.
@@ -27,4 +47,7 @@
 ***getdents returned 0.
 ***Starting getdents fork test with shared file descriptor.
 ***Total getdents bytes: 192
+***PASS chdir folder for symlink unlink: got 0 expected 0
+***PASS unlink accepts symlink: got 0 expected 0
+***PASS unlinked symlink is gone: got -1 expected -1
 ***Done.

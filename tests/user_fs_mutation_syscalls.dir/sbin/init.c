@@ -4,6 +4,7 @@
  * - ensure mkdir() creates one traversable empty directory in the current cwd
  * - ensure unlink() removes only non-directory entries
  * - ensure rmdir() removes only empty directories and rejects file targets
+ * - accept a 255-byte mkdir basename and reject a 256-byte basename
  *
  * How:
  * - reject one invalid user pointer and one slash-separated name for each new
@@ -14,6 +15,7 @@
  *   open() recreated it as an empty file
  * - verify unlink() rejects directories, rmdir() rejects a file, and rmdir()
  *   rejects a non-empty directory until its nested file is removed
+ * - construct exact-limit and overlong mkdir names in guest memory
  */
 
 #include "../../../root/crt/print.h"
@@ -30,6 +32,19 @@
 #define VICTIM_BYTE 'V'
 #define FILE_TARGET_BYTE 'F'
 #define NESTED_BYTE 'N'
+#define EXT2_BASENAME_MAX_BYTES 255
+#define EXT2_BASENAME_BUFFER_BYTES 256
+#define EXT2_OVERLONG_BASENAME_BYTES 256
+#define EXT2_OVERLONG_BASENAME_BUFFER_BYTES 257
+
+// Fill one basename with ordinary bytes that cannot be mistaken for a path
+// separator or either reserved dot entry.
+static void fill_basename(char* dest, unsigned size){
+  for (unsigned i = 0; i < size; ++i){
+    dest[i] = 'm';
+  }
+  dest[size] = '\0';
+}
 
 static int write_one_byte_file(char* path, char value){
   int fd = open(path);
@@ -71,6 +86,8 @@ static int read_one_byte_file(char* path, char* out){
 
 int main(void){
   char byte = 0;
+  char exact_name[EXT2_BASENAME_BUFFER_BYTES];
+  char overlong_name[EXT2_OVERLONG_BASENAME_BUFFER_BYTES];
 
   puts("***mkdir bad path pointer\n");
   user_test_expect_eq("mkdir(BAD_LOW_PTR)", mkdir(BAD_LOW_PTR), -1);
@@ -85,6 +102,16 @@ int main(void){
   user_test_expect_eq("mkdir(\"a/b\")", mkdir("a/b"), -1);
   user_test_expect_eq("rmdir(\"a/b\")", rmdir("a/b"), -1);
   user_test_expect_eq("unlink(\"a/b\")", unlink("a/b"), -1);
+
+  puts("***mkdir basename length boundary\n");
+  fill_basename(exact_name, EXT2_BASENAME_MAX_BYTES);
+  fill_basename(overlong_name, EXT2_OVERLONG_BASENAME_BYTES);
+  user_test_expect_eq("mkdir accepts 255-byte basename",
+    mkdir(exact_name), 0);
+  user_test_expect_eq("rmdir removes 255-byte basename",
+    rmdir(exact_name), 0);
+  user_test_expect_eq("mkdir rejects 256-byte basename",
+    mkdir(overlong_name), -1);
 
   puts("***mkdir create and traverse\n");
   user_test_expect_eq("mkdir(MADE_DIR)", mkdir(MADE_DIR), 0);

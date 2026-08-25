@@ -82,15 +82,15 @@ static void free_loaded_files(char** files, int count) {
 // Purpose: Read the full source file into user-owned heap memory.
 // Inputs: file_path names the source file to copy.
 // Outputs: Returns a NUL-terminated heap buffer on success, NULL on failure.
-// Invariants/Assumptions: `open()` may create a missing file, so an empty
-// source here can mean either an intentionally empty file or a missing path.
+// Invariants/Assumptions: open_existing() distinguishes a missing source from
+// an intentionally empty file without publishing any filesystem entry.
 static char* load_source_file(char* file_path) {
   int fd;
   int file_size;
   unsigned copied;
   char* bytes;
 
-  fd = open(file_path);
+  fd = open_existing(file_path);
   if (fd < 0) {
     print_basm_path_error("failed to open source file", file_path);
     return NULL;

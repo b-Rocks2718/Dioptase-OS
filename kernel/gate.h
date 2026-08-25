@@ -24,12 +24,11 @@ void gate_signal(struct Gate *gate);
 // reset the gate to the non-signaled state. If the gate is already non-signaled, this has no effect
 void gate_reset(struct Gate *gate);
 
-// Free the resources associated with the gate, but do not free the gate itself.
-// Waiters blocked in the condvar or on the internal blocking lock will be reaped.
+// Free synchronization resources after all waiters/signallers have returned,
+// but do not free the gate itself.
 void gate_destroy(struct Gate* gate);
 
-// Free the resources associated with the gate and the gate itself
-// waiting threads will be reaped
+// Destroy a quiescent gate and free it.
 void gate_free(struct Gate* gate);
 
 #endif // GATE_H

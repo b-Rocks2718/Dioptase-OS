@@ -250,7 +250,7 @@ void handle_cat(int argc, char** argv){
   if (argc < 2){
     puts("cat: expected file argument\n");
   } else {
-    int fd = open(argv[1]);
+    int fd = open_existing(argv[1]);
     if (fd < 0){
       puts("cat: failed to open file\n");
     } else {
@@ -310,7 +310,7 @@ bool handle_cp(int argc, char** argv){
     return false;
   }
     
-  int src_fd = open(argv[1]); 
+  int src_fd = open_existing(argv[1]);
   if (src_fd < 0){
     puts("cp: failed to open source file\n");
     return false;

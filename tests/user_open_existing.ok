@@ -1,0 +1,29 @@
+***PASS open_existing rejects low user pointer: got -1 expected -1
+***PASS open_existing rejects 256-byte component: got -1 expected -1
+***PASS open_existing rejects unterminated maximum path: got -1 expected -1
+***PASS missing lookup returns -1: got -1 expected -1
+***PASS missing lookup did not create entry: got 1 expected 1
+***PASS open_existing finds existing file: got 1 expected 1
+***PASS open_existing reads existing contents: got 1 expected 1
+***PASS close existing descriptor: got 0 expected 0
+***PASS open_existing finds existing directory: got 1 expected 1
+***PASS close existing directory descriptor: got 0 expected 0
+***PASS read-mode fopen rejects missing input: got 1 expected 1
+***PASS read-mode fopen did not create input: got 1 expected 1
+***PASS read-mode fopen finds existing input: got 1 expected 1
+***PASS read-mode fopen reads existing contents: got 1 expected 1
+***PASS close read-mode stream: got 0 expected 0
+***PASS write-mode fopen creates output: got 1 expected 1
+***PASS close write-mode stream: got 0 expected 0
+***PASS created fopen output is visible: got 0 expected 0
+***PASS legacy open retains recursive creation: got 1 expected 1
+***PASS close legacy-created descriptor: got 0 expected 0
+***PASS legacy-created file is visible: got 0 expected 0
+***PASS directory reader rejects missing path: got 1 expected 1
+***PASS directory reader did not create path: got 1 expected 1
+***PASS shell cat did not create missing input: got 1 expected 1
+***PASS shell cp did not create missing source: got 1 expected 1
+***PASS shell cp did not create destination after source failure: got 1 expected 1
+***PASS shell mv did not create missing source: got 1 expected 1
+***PASS shell mv did not create destination after source failure: got 1 expected 1
+***Done.
