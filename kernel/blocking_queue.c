@@ -1,12 +1,33 @@
 #include "blocking_queue.h"
 #include "debug.h"
-
-// port of Gheith kernel implementation
+#include "print.h"
 
 // initialize queue state and zero the available-item count
 void blocking_queue_init(struct BlockingQueue* b) {
   generic_spin_queue_init(&b->queue);
   sem_init(&b->sem, 0);
+}
+
+void blocking_queue_destroy(struct BlockingQueue* b) {
+  assert(b != NULL, "blocking_queue_destroy: queue is NULL.\n");
+
+  // Check payload ownership before destroying the semaphore. This keeps a
+  // rejected teardown from partially dismantling the composite object.
+  generic_spin_queue_assert_quiescent(&b->queue);
+  sem_assert_destroyable(&b->sem);
+  unsigned size = blocking_queue_size(b);
+  int permits = __atomic_load_n(&b->sem.count);
+  if (size != 0 || permits != 0 || b->queue.head != NULL ||
+      b->queue.tail != NULL){
+    int args[5] = {(int)b, (int)size, permits, (int)b->queue.head,
+      (int)b->queue.tail};
+    say("| blocking_queue: destroy rejected queue=0x%X size=%d permits=%d head=0x%X tail=0x%X\n",
+      args);
+    panic("blocking_queue_destroy: owner must drain every payload and permit before destruction.\n");
+  }
+
+  sem_destroy(&b->sem);
+  generic_spin_queue_destroy(&b->queue);
 }
 
 // enqueue one element and publish one available item

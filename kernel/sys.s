@@ -6,6 +6,9 @@ trap_handler_:
   # Trap ABI on entry:
   # - r1 holds the user-selected trap code.
   # - r2-r8 hold trap-specific arguments.
+  # - r20-r31 are trap-callee-saved. Save the interrupted r29 before either C
+  #   call overwrites the architectural return-address register.
+  push ra
 
   # Trap entry already cleared IMR[31]. Snapshot the interrupted PC/flags
   # before re-enabling nested interrupts so rfe later restores the exact trap
@@ -39,6 +42,14 @@ trap_handler_:
   cmp  r2, r0
   bz   return_to_kernel
 
+  # The syscall C continuation has fully returned, so it no longer owns a
+  # blocking primitive or partially completed handoff. Preserve the syscall
+  # result in r1 while the final user-return hook processes at most one pending
+  # asynchronous signal against the still-saved user frame.
+  push r1
+  call process_pending_signals_before_user_return
+  pop  r1
+
   # Disable the global interrupts again before restoring EPC/EFG and
   # returning through rfe
   movi r9, 0x7FFFFFFF
@@ -51,10 +62,15 @@ trap_handler_:
   pop  r9
   mov  epc, r9
 
+  # Restore the trap-callee-saved user return-address register.
+  pop  ra
+
   rfe
 
 return_to_kernel:
-  add sp, sp, 8 # 2 regs
+  # Discard saved EFG, EPC, and the interrupted user r29. This path returns to
+  # the kernel continuation saved by jump_to_user(), not to the user trap site.
+  add sp, sp, 12
 
   pop ra
   pop bp

@@ -141,6 +141,8 @@ static void test_nonblocking_paths(void) {
               "blocking_queue test: semaphore count after remove_all mismatch\n");
   expect_ptr(blocking_queue_try_remove(&local_queue), NULL,
              "blocking_queue test: try_remove should see empty queue after remove_all\n");
+
+  blocking_queue_destroy(&local_queue);
 }
 
 // Publish one producer's fixed range of item ids into the queue.
@@ -288,6 +290,8 @@ void kernel_main(void) {
       panic("blocking_queue test: missing item\n");
     }
   }
+
+  blocking_queue_destroy(&queue);
 
   say("***blocking_queue ok\n", NULL);
   say("***blocking_queue test complete\n", NULL);

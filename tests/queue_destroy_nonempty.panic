@@ -1,0 +1,3 @@
+blocking_queue: destroy rejected
+size=1
+blocking_queue_destroy: owner must drain every payload and permit before destruction.

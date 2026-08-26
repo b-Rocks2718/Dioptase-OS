@@ -7,4 +7,7 @@
 ***
 ***[31munknown[37m [49mfifo[37m    [48mcharacter_device[37m        [34mdirectory[37m       [48mblock_device[37m
 ***[37mregular_file[37m    [36msymbolic_link[37m   [35msocket[37m  [37mwhiteout[37m        [37m
+***PASS all-filtered directory emits no formatting
+***PASS prepare mv symlink-alias source: got 1 expected 1
+***PASS mv rejects direct symlink destination and preserves source/link: got 1 expected 1
 ***Done.

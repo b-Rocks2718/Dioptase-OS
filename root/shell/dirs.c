@@ -42,7 +42,7 @@ struct LinkedDirent* read_directory_no_error(char* path) {
 
 // Returns -1 on error. 0 represents empty.
 struct LinkedDirent* read_directory(char* path) {
-  int fd = open(path);
+  int fd = open_existing(path);
   if (fd < 0) {
     return (struct LinkedDirent*) -1;
   }
@@ -110,8 +110,8 @@ void print_print_buffer(char* print_buffer, unsigned index) {
   puts(print_buffer);
 }
 
-void get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, unsigned* longest, bool skip_current_and_parent) {
-  int count = 0;
+unsigned get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, unsigned* longest, bool skip_current_and_parent) {
+  unsigned count = 0;
 
   // Find longest names for formatting.
   for (struct LinkedDirent* current = head; current != 0; current = current->next) {
@@ -133,10 +133,12 @@ void get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, uns
     count++;
   }
 
-  for (int i = 0; i < entries_per_line - 1; i++) {
+  for (unsigned i = 0; i < entries_per_line - 1; i++) {
     // Add one for a space, and then round up.
     longest[i] = (longest[i] + SPACES_PER_TAB) & ~(SPACES_PER_TAB - 1);
   }
+
+  return count;
 }
 
 void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
@@ -145,7 +147,15 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   }
 
   unsigned longest_array[ENTRIES_PER_LINE] = {0};
-  get_column_widths(head, ENTRIES_PER_LINE, longest_array, skip_current_and_parent);
+  unsigned visible_entries = get_column_widths(head, ENTRIES_PER_LINE,
+                                                longest_array,
+                                                skip_current_and_parent);
+  if (visible_entries == 0) {
+    // A non-empty ext2 directory can contain only entries hidden by ls (for
+    // example ".", "..", and "lost+found"). There is no column width to
+    // divide by and no output to emit in that case.
+    return;
+  }
 
   unsigned total_longest = 0;
   unsigned one_line_width = 0;

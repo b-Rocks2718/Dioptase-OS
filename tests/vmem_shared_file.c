@@ -6,6 +6,11 @@
  * - a page-aligned nonzero file_offset selects the expected file page
  * - writes from different workers become visible through every live mapping
  * - the final shared bytes are written back to the backing file after unmap
+ * - later writable aliases max-merge their exposed writeback extent, while a
+ *   wider read-only alias cannot extend a dirty writer's file
+ * - truncate caps partial-page dirty writeback and discards dirty pages wholly
+ *   beyond its new EOF, without preventing a later writable fault from
+ *   deliberately extending the file again
  *
  * How:
  * - initialize one ext2 filesystem fixture whose second page contains the test
@@ -19,6 +24,8 @@
  *   deterministic even though the writes overlap in time
  * - the main thread rereads the backing file after all workers unmap to verify
  *   that the round's shared bytes were persisted
+ * - after joining the workers, the main thread uses isolated empty files and
+ *   deliberate fault order to make each extent/truncate outcome deterministic
  */
 
 #include "../kernel/vmem.h"
@@ -40,6 +47,17 @@
 #define TEST_FILE_SIZE 4106
 #define SHARED_FILE_BYTES 10
 #define SHARED_BASE_TEXT "SHAREDmap\n"
+
+#define EXTENT_MERGE_FILE_NAME "extent-merge.bin"
+#define READ_ONLY_EXTENT_FILE_NAME "readonly-extent.bin"
+#define TRUNCATE_CACHE_FILE_NAME "truncate-cache.bin"
+
+#define NARROW_EXTENT_BYTES 1
+#define WIDE_EXTENT_BYTES 4
+// The current preprocessor does not recursively expand object-like macros.
+#define WIDE_LAST_BYTE_INDEX 3 // final index of the four-byte extent above
+#define TRUNCATE_INITIAL_BYTES 8
+#define TRUNCATE_INITIAL_LAST_BYTE_INDEX 7 // final index of the eight-byte fixture
 
 static struct Barrier phase_barrier;
 static int finished = 0;
@@ -100,6 +118,154 @@ static void expect_bytes(char* got, char* expected, int worker_id,
       panic("vmem shared file thread: byte contents mismatch.\n");
     }
   }
+}
+
+// The first cache miss used to permanently choose the eventual dirty
+// writeback size. Fault the one-byte writable mapping first, then fault a
+// four-byte writable alias and change its final byte. The later writable
+// exposure must enlarge the serialized writeback extent to four bytes.
+static void check_writable_extent_merge(void){
+  struct Node* file = node_make_file(&fs.root, EXTENT_MERGE_FILE_NAME);
+  assert(file != NULL,
+    "vmem shared file: failed to create writable extent fixture.\n");
+
+  char* narrow = mmap(NARROW_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(narrow != NULL,
+    "vmem shared file: failed to map narrow writable alias.\n");
+  narrow[0] = 'N';
+
+  char* wider = mmap(WIDE_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(wider != NULL,
+    "vmem shared file: failed to map wider writable alias.\n");
+  wider[WIDE_LAST_BYTE_INDEX] = 'W';
+
+  munmap(narrow);
+  munmap(wider);
+
+  assert(node_size_in_bytes(file) == WIDE_EXTENT_BYTES,
+    "vmem shared file: wider writable alias did not persist its file extent.\n");
+  char persisted[WIDE_EXTENT_BYTES];
+  unsigned cnt = node_read_all(file, 0, sizeof(persisted), persisted);
+  assert(cnt == sizeof(persisted),
+    "vmem shared file: writable extent fixture read was short.\n");
+  assert(persisted[0] == 'N' && persisted[WIDE_LAST_BYTE_INDEX] == 'W',
+    "vmem shared file: later writable alias byte was not persisted.\n");
+
+  node_free(file);
+}
+
+// A tempting fix is to max-merge every cache acquisition. That would make a
+// four-byte read-only alias enlarge a one-byte dirty writer. Keep the read-only
+// mapping live until final release so this regression exercises exactly that
+// erroneous final-writeback path.
+static void check_read_only_extent_is_inert(void){
+  struct Node* file = node_make_file(&fs.root, READ_ONLY_EXTENT_FILE_NAME);
+  assert(file != NULL,
+    "vmem shared file: failed to create read-only extent fixture.\n");
+
+  char* writable = mmap(NARROW_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(writable != NULL,
+    "vmem shared file: failed to map narrow dirty writer.\n");
+  writable[0] = 'D';
+
+  char* read_only = mmap(WIDE_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_SHARED);
+  assert(read_only != NULL,
+    "vmem shared file: failed to map wider read-only alias.\n");
+  char tail = read_only[WIDE_LAST_BYTE_INDEX];
+  assert(tail == 0,
+    "vmem shared file: zero-filled read-only cache tail was not zero.\n");
+
+  munmap(writable);
+  munmap(read_only);
+
+  assert(node_size_in_bytes(file) == NARROW_EXTENT_BYTES,
+    "vmem shared file: read-only alias enlarged dirty writeback extent.\n");
+  char persisted = 0;
+  unsigned cnt = node_read_all(file, 0, NARROW_EXTENT_BYTES, &persisted);
+  assert(cnt == NARROW_EXTENT_BYTES && persisted == 'D',
+    "vmem shared file: narrow dirty writer did not persist exactly one byte.\n");
+
+  node_free(file);
+}
+
+/*
+ * Dirty both a page straddling the new EOF and a page wholly beyond it, then
+ * truncate while both cache entries remain referenced. Serialized truncation
+ * must retain the first dirty byte, cap the first page at one byte, and clear
+ * the second page's dirty state. Once both old mappings are gone, a new
+ * writable fault is intentionally allowed to publish a four-byte extent and
+ * extend the file again under the existing shared-mmap contract.
+ */
+static void check_truncate_cache_serialization(void){
+  struct Node* file = node_make_file(&fs.root, TRUNCATE_CACHE_FILE_NAME);
+  assert(file != NULL,
+    "vmem shared file: failed to create truncate cache fixture.\n");
+
+  unsigned cnt = node_write_all(file, 0, TRUNCATE_INITIAL_BYTES, "abcdefgh");
+  assert(cnt == TRUNCATE_INITIAL_BYTES,
+    "vmem shared file: failed to initialize truncate cache fixture.\n");
+
+  char* partial = mmap(TRUNCATE_INITIAL_BYTES, file, 0,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(partial != NULL,
+    "vmem shared file: failed to map truncate partial page.\n");
+  partial[0] = 'P';
+  partial[TRUNCATE_INITIAL_LAST_BYTE_INDEX] = 'X';
+
+  char* beyond = mmap(WIDE_EXTENT_BYTES, file, TEST_FILE_OFFSET,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(beyond != NULL,
+    "vmem shared file: failed to map truncate beyond-EOF page.\n");
+  beyond[0] = 'B';
+
+  assert(vmem_truncate_file(file, NARROW_EXTENT_BYTES),
+    "vmem shared file: serialized truncate rejected a valid shrink.\n");
+
+  munmap(beyond);
+  munmap(partial);
+
+  assert(node_size_in_bytes(file) == NARROW_EXTENT_BYTES,
+    "vmem shared file: dirty release restored bytes beyond truncated EOF.\n");
+  char prefix = 0;
+  cnt = node_read_all(file, 0, NARROW_EXTENT_BYTES, &prefix);
+  assert(cnt == NARROW_EXTENT_BYTES && prefix == 'P',
+    "vmem shared file: truncate discarded dirty data before the new EOF.\n");
+
+  // Retain a read-only reference so the next writable fault republishes its
+  // extent into an already-live post-truncate cache entry, not merely a fresh
+  // cache miss.
+  char* retained_read = mmap(NARROW_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_SHARED);
+  assert(retained_read != NULL,
+    "vmem shared file: failed to retain post-truncate cache entry.\n");
+  char retained_prefix = retained_read[0];
+  assert(retained_prefix == 'P',
+    "vmem shared file: retained post-truncate prefix was incorrect.\n");
+
+  char* later = mmap(WIDE_EXTENT_BYTES, file, 0,
+    MMAP_READ | MMAP_WRITE | MMAP_SHARED);
+  assert(later != NULL,
+    "vmem shared file: failed to map post-truncate writable alias.\n");
+  later[WIDE_LAST_BYTE_INDEX] = 'E';
+  munmap(later);
+
+  assert(node_size_in_bytes(file) == NARROW_EXTENT_BYTES,
+    "vmem shared file: non-final writable release wrote through live cache entry.\n");
+  munmap(retained_read);
+
+  assert(node_size_in_bytes(file) == WIDE_EXTENT_BYTES,
+    "vmem shared file: later writable fault did not extend truncated file.\n");
+  char regrown[WIDE_EXTENT_BYTES];
+  cnt = node_read_all(file, 0, sizeof(regrown), regrown);
+  assert(cnt == sizeof(regrown) && regrown[0] == 'P' &&
+      regrown[WIDE_LAST_BYTE_INDEX] == 'E',
+    "vmem shared file: post-truncate shared-mmap bytes did not persist.\n");
+
+  node_free(file);
 }
 
 static void shared_file_worker(void* arg) {
@@ -180,6 +346,12 @@ void kernel_main(void) {
   }
 
   barrier_destroy(&phase_barrier);
+
+  check_writable_extent_merge();
+  check_read_only_extent_is_inert();
+  check_truncate_cache_serialization();
+
+  say("***vmem shared file cache extent/truncate: ok\n", NULL);
 
   int args[2] = {WORKER_COUNT, ROUNDS};
   say("***vmem shared file thread ok workers=%d rounds=%d\n", args);

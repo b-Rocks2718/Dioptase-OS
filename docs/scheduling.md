@@ -22,6 +22,11 @@ To see this working, run `EMU_VGA=yes make load_balance_test`
 ### Idle thread logic
 As mentioned previously, the idle thread wakes all thread in the per-core interrupt wake queue, and it empties the core's pinned queue into its ready queue. Idle threads also wake sleeping threads once they have slept for the required amount of time. Idle threads rebalance the per-core queues, and periodically boost threads to the highest MLFQ priority.
 
+The PIT jiffy counter is a wrapping 32-bit value. Sleep queues compare times
+with modular half-range ordering, so deadlines continue to work when the
+counter crosses `0xFFFFFFFF` to zero. One sleep is limited to `INT_MAX` ticks;
+that bound keeps every live deadline unambiguous relative to the current time.
+
 ## Combination of Static Priorities and MLFQ Scheduling
 
 ### Static Priorities
@@ -56,8 +61,9 @@ of different priorities are scheduled
 `LOW_PRIORITY_WEIGHT: 1`  
 
 `TIME_QUANTUM[MLFQ_LEVELS]: {2, 4, 8}` - (in PIT interrupts) how many times threads at each level can get get timer interrupted before they are preempted/demoted  
-`MLFQ_BOOST_INTERVAL: 250` - (in PIT interrupts) boost queued work often enough to avoid indefinite starvation without constantly resetting CPU-bound threads  
+`MLFQ_BOOST_INTERVAL: 256` - (in PIT interrupts) boost queued work often enough to avoid indefinite starvation without constantly resetting CPU-bound threads
 
-`REBALANCE_INTERVAL: 32` - (in PIT interrupts) rebalance often enough that per-core priority/MLFQ skew does not persist for long on 4-core runs  
+`REBALANCE_INTERVAL: 512` - (in PIT interrupts) rebalance often enough that per-core priority/MLFQ skew does not persist for long on 4-core runs
+
 `MAX_REBALANCE_PERCENT: 130` - rebalance if we have >130% of our ideal number of threads  
 `MIN_REBALANCE_PERCENT: 70` - rebalance if we have <70% of our ideal number of threads  

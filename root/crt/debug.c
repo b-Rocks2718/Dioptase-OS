@@ -17,6 +17,17 @@ void panic(char* msg) {
 }
 
 void assert(bool condition, char* msg) {
+#ifdef OS_RELEASE
+  (void)condition;
+  (void)msg;
+#else
+  if (!condition) {
+    panic(msg);
+  }
+#endif
+}
+
+void assert_always(bool condition, char* msg) {
   if (!condition) {
     panic(msg);
   }

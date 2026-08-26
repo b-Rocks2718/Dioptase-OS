@@ -15,6 +15,13 @@ struct BoundedBuffer {
 // initialize an empty bounded buffer with the given capacity
 void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity);
 
+// Destroy synchronization after all users have stopped and the owner has
+// drained every queued payload. A nonempty destroy panics.
+void bounded_buffer_destroy(struct BoundedBuffer* b);
+
+// destroy the bounded buffer and free the struct itself
+void bounded_buffer_free(struct BoundedBuffer* b);
+
 // append an element, blocking while the buffer is full
 void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* element);
 

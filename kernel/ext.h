@@ -4,7 +4,6 @@
 #include "ext2_structs.h"
 #include "atomic.h"
 #include "machine.h"
-#include "shared.h"
 #include "queue.h"
 #include "hashmap.h"
 #include "blocking_lock.h"
@@ -13,6 +12,11 @@
 #define BCACHE_SIZE 32
 
 #define SD_SECTOR_SIZE_BYTES 512
+
+// ext2 directory-entry names are limited to 255 bytes. Keep this separate
+// from `struct DirEntry::name`, whose extra byte is only in-memory scratch
+// capacity and must never be interpreted as permitting a 256-byte basename.
+#define EXT2_MAX_NAME_BYTES 255
 
 struct Ext2;
 
@@ -61,6 +65,15 @@ struct Node {
   unsigned parent_inumber;
 
   struct Ext2* filesystem;
+};
+
+// Selects the target inode kinds accepted by one atomic namespace deletion.
+// The typed syscall-facing variants prevent a pathname from being checked as
+// one kind, replaced on another core, and then deleted as a different kind.
+enum NodeDeleteKind {
+  NODE_DELETE_ANY,
+  NODE_DELETE_EMPTY_DIRECTORY,
+  NODE_DELETE_FILE_OR_SYMLINK,
 };
 
 // the main ext2 filesystem struct, containing the superblock, block group descriptors, and caches
@@ -178,9 +191,10 @@ void node_free(struct Node* node);
 // Returns the current logical size of the inode in bytes.
 unsigned node_size_in_bytes(struct Node* node);
 
-// Reads one already-allocated logical block from `node` into `dest`. Callers
-// must only request block numbers that actually exist in the inode's current
-// data-block tree; `node_read_all(...)` is the safe API for EOF-clamped reads.
+// Reads one logical block from `node` into `dest`. A sparse hole, including a
+// missing indirect metadata subtree, produces one zero-filled filesystem block.
+// This low-level API is not EOF-clamped; `node_read_all(...)` is the normal
+// byte-range API when the inode's logical size must bound the result.
 void node_read_block(struct Node* node, unsigned block_num, char* dest);
 
 // Reads up to `size` bytes starting at `offset`. The read shortens at EOF and
@@ -194,7 +208,8 @@ void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned
 
 // Writes `size` bytes starting at `offset` and grows the inode if needed.
 // Supported only for regular files and symlinks. The returned count matches the
-// requested write size on success.
+// requested write size on success; a nonzero range whose exclusive end cannot
+// be represented in 32 bits is rejected with a zero-byte result.
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src);
 
 // Shrinks a regular file to `target_size` bytes and writes the smaller inode
@@ -217,10 +232,11 @@ bool node_is_file(struct Node* node);
 bool node_is_symlink(struct Node* node);
 
 // Creates one regular file entry inside `dir`. `dir` must be a directory, and
-// `name` must be one non-empty directory-entry component without '/' and must
-// not be "." or "..". Returns a heap-owned wrapper for the new inode, or NULL
-// if the basename already exists in `dir` or `dir` has already been unlinked
-// and is only being kept alive by existing wrappers.
+// `name` must be one non-empty directory-entry component of at most
+// EXT2_MAX_NAME_BYTES bytes without '/' and must not be "." or "..". Returns a
+// heap-owned wrapper for the new inode, or NULL if the basename is too long,
+// already exists in `dir`, or `dir` has already been unlinked and is only being
+// kept alive by existing wrappers.
 struct Node* node_make_file(struct Node* dir, char* name);
 
 // Creates one subdirectory inside `dir`. The same basename rules as
@@ -242,16 +258,39 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target);
 // itself is a no-op.
 void node_rename(struct Node* dir, char* old_name, char* new_name);
 
-// Deletes one entry from `dir`. `name` must be one non-empty entry component
-// without '/' and may not be "." or "..". Directory targets must already be
-// empty except for "." and "..". If this removes the final directory link, the
-// pathname disappears immediately but block/inode reclamation is deferred until
-// every live wrapper for that inode has been released.
+// Deletes one entry from `dir` without restricting its inode kind. `name` must
+// be one non-empty entry component of at most EXT2_MAX_NAME_BYTES bytes without
+// '/' and may not be "." or "..". Directory targets must already be empty
+// except for "." and "..". This compatibility wrapper uses NODE_DELETE_ANY;
+// syscall implementations should use node_delete_typed(...) instead.
 int node_delete(struct Node* dir, char* name);
+
+// Atomically looks up, validates, and deletes one entry while retaining the
+// parent-directory lock. NODE_DELETE_EMPTY_DIRECTORY accepts only an empty
+// directory. NODE_DELETE_FILE_OR_SYMLINK accepts only a regular file or
+// symbolic link. NODE_DELETE_ANY preserves node_delete(...) behavior.
+//
+// If this removes the final directory link, the pathname disappears
+// immediately but block/inode reclamation is deferred until every live wrapper
+// for that inode has been released. Returns 0 on success and -1 for an invalid
+// name, missing entry, wrong target kind, non-empty directory, or unlinked
+// parent.
+int node_delete_typed(struct Node* dir, char* name,
+  enum NodeDeleteKind delete_kind);
 
 // For symlink nodes only. `dest` must have space for the raw target plus one
 // trailing NUL byte because this helper always NUL-terminates the result.
 void node_get_symlink_target(struct Node* node, char* dest);
+
+// Returns a heap-owned, NUL-terminated snapshot of one symlink target. The
+// inode size and bytes are captured under one inode-lock acquisition, so this
+// is the safe API when the caller does not already know a stable destination
+// capacity. If `target_size` is non-NULL, it receives the byte count excluding
+// the terminator. Returns NULL without modifying `target_size` if malformed
+// inode metadata reports UINT_MAX bytes, which cannot be represented together
+// with the required terminator. Otherwise, a valid call returns non-NULL under
+// the kernel heap contract; the caller must free the returned buffer.
+char* node_copy_symlink_target(struct Node* node, unsigned* target_size);
 
 // Returns the inode link count from the ext2 metadata.
 unsigned node_get_num_links(struct Node* node);
@@ -267,10 +306,13 @@ unsigned node_entry_count(struct Node* node);
 // `node_free(...)`.
 struct Node* node_find(struct Node* dir, char* name);
 
-// Reads the directory entries from `dir` (starting from `offset`, which is
-// assumed to be the start of a directory entry) into `buffer` as an array of
-// `struct linux_dirent`. Returns the number of bytes read.
-// `new_offset` will be updated to the offset of the next directory entry not read.
+// Reads directory entries from `dir` into `buffer` as an array of
+// `struct linux_dirent`. `offset` must be zero, exact EOF, or the start of an
+// ext2 directory record; an interior or beyond-EOF offset returns -1. On
+// success, returns the number of bytes emitted and updates `new_offset` to the
+// next live entry that did not fit (or the furthest consumed on-disk record).
+// Validation, iteration, and offset selection are one directory-lock
+// transaction, so concurrent namespace mutation cannot invalidate the offset.
 int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset);
 
 // ext2 directories are empty when every live entry is either "." or "..".

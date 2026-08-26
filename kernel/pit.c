@@ -8,7 +8,6 @@
 #include "per_core.h"
 #include "debug.h"
 #include "scheduler.h"
-#include "ps2.h"
 #include "ivt.h"
 
 static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
@@ -24,7 +23,7 @@ void pit_handler(void){
   int me = get_core_id();
 
   int imr = get_imr();
-  assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
+  assert_always((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   if (me == 0){
     // core 0 is responsible for incrementing jiffies
@@ -45,22 +44,12 @@ void pit_handler(void){
         __atomic_store_n(&per_core_data[core].rebalance_pending, true);
       }
     }
-
-    if (current_jiffies % PS2_WAKE_INTERVAL == 0){
-      // decide if we need to wake ps2 worker thread
-      // atomic exchange prevents a double wakeup
-      struct TCB* worker = (struct TCB*)__atomic_exchange_n((int*)&ps2_worker_thread, NULL);
-
-      if (worker != NULL) {
-        scheduler_wake_thread_from_interrupt(worker);
-      }
-    }
   }
 
   struct PerCore* per_core = get_per_core();
 
   struct TCB* tcb = per_core->current_thread;
-  assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
+  assert_always(tcb != NULL, "current thread is NULL in PIT handler.\n");
 
   if (tcb != &per_core->idle_thread){
     tcb->remaining_quantum--;
@@ -84,12 +73,12 @@ void pit_handler(void){
   }
 
   imr = get_imr();
-  assert((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
+  assert_always((imr & 0x80000000) == 0, "interrupts enabled in PIT handler.\n");
 
   per_core = get_per_core();
-  assert(per_core->current_thread == tcb, "current thread changed unexpectedly in PIT handler.\n");
+  assert_always(per_core->current_thread == tcb, "current thread changed unexpectedly in PIT handler.\n");
 
-  assert(tcb != NULL, "current thread is NULL in PIT handler.\n");
+  assert_always(tcb != NULL, "current thread is NULL in PIT handler.\n");
 }
 
 // Initialize the PIT to generate interrupts at the specified frequency in hertz

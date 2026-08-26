@@ -1,6 +1,7 @@
 #include "stdio.h"
 
 #include "fcntl.h"
+#include "limits.h"
 #include "print.h"
 #include "stdlib.h"
 
@@ -30,13 +31,18 @@ static int is_std_stream(FILE* stream) {
 // Purpose: Open one Dioptase path and wrap its fd in FILE storage.
 // Inputs: path names the file; mode only distinguishes write-truncate vs read.
 // Outputs: Returns a heap-allocated FILE wrapper or NULL on failure.
-// Invariants/Assumptions: fcntl.h exposes open() without flags, so the mode
-// string can only request truncation/rewind after a successful open.
+// Invariants/Assumptions: A leading `w` intentionally uses creating open(),
+// then truncates and rewinds. Every other mode is this CRT's read behavior and
+// uses open_existing(), so a missing input cannot be created as a side effect.
 FILE* fopen(char* path, char* mode) {
   int fd;
   FILE* stream;
 
-  fd = open(path);
+  if (mode != NULL && mode[0] == 'w') {
+    fd = open(path);
+  } else {
+    fd = open_existing(path);
+  }
   if (fd < 0) {
     return NULL;
   }
@@ -111,13 +117,18 @@ int fputs(char* str, FILE* stream) {
 // Inputs: ptr points to size*count writable bytes; stream must reference a readable fd.
 // Outputs: Returns the number of whole items read before EOF or read failure.
 // Invariants/Assumptions: The syscall layer may short-read, so this helper
-// loops until the request completes or read() stops making progress.
+// loops until the request completes or read() stops making progress. An item
+// extent that is not representable by the 32-bit size_t contract is rejected
+// before pointer arithmetic or descriptor I/O.
 size_t fread(void* ptr, size_t size, size_t count, FILE* stream) {
   char* bytes;
   size_t total;
   size_t read_total;
 
-  if (ptr == NULL || stream == NULL) {
+  if (ptr == NULL || stream == NULL || size == 0 || count == 0) {
+    return 0;
+  }
+  if (count > UINT_MAX / size) {
     return 0;
   }
 
@@ -132,9 +143,6 @@ size_t fread(void* ptr, size_t size, size_t count, FILE* stream) {
     read_total += (size_t)rc;
   }
 
-  if (size == 0) {
-    return 0;
-  }
   return read_total / size;
 }
 
@@ -142,13 +150,18 @@ size_t fread(void* ptr, size_t size, size_t count, FILE* stream) {
 // Inputs: ptr points to size*count bytes; stream must reference a writable fd.
 // Outputs: Returns the number of whole items written before any short write.
 // Invariants/Assumptions: The syscall layer may short-write, so this helper
-// loops until the transfer completes or write() stops making progress.
+// loops until the transfer completes or write() stops making progress. An item
+// extent that is not representable by the 32-bit size_t contract is rejected
+// before pointer arithmetic or descriptor I/O.
 size_t fwrite(void* ptr, size_t size, size_t count, FILE* stream) {
   char* bytes;
   size_t total;
   size_t written;
 
-  if (ptr == NULL || stream == NULL) {
+  if (ptr == NULL || stream == NULL || size == 0 || count == 0) {
+    return 0;
+  }
+  if (count > UINT_MAX / size) {
     return 0;
   }
 
@@ -163,9 +176,6 @@ size_t fwrite(void* ptr, size_t size, size_t count, FILE* stream) {
     written += (size_t)rc;
   }
 
-  if (size == 0) {
-    return 0;
-  }
   return written / size;
 }
 

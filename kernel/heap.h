@@ -1,32 +1,56 @@
-/* Copyright (C) 2025 Ahmed Gheith and contributors.
- *
- * Use restricted to classroom projects.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 #ifndef HEAP_H
 #define HEAP_H
 
-// initialize the heap allocator over one writable memory range
-void heap_init(void* start, unsigned size);
+#include "blocking_lock.h"
 
-// allocate at least size bytes, or panic on allocator failure
+#define HEAP_POISON 0xABCDEFAA
+
+struct Slab {
+  void* free_list; // Pointer to the first free object in the slab
+  unsigned object_size;
+  unsigned free_objects;
+  struct Slab* next;
+  struct Slab* prev;
+
+  #ifdef HEAP_DEBUG
+  char allocation_bitmap[4]; // variable size struct
+    // we may reserve > 4 bytes for the bitmap
+  #endif
+};
+
+struct SlabCache {
+  struct BlockingLock lock;
+  unsigned objects_per_slab;
+  struct Slab* full_slabs;
+  struct Slab* partial_slabs;
+  struct Slab* empty_slabs; // keep max of 2 empty slabs
+  unsigned num_empty_slabs;
+};
+
+struct FreeObject {
+  struct FreeObject* next;
+};
+
+#define NUM_OBJECT_SIZES 9
+extern unsigned OBJECT_SIZES[NUM_OBJECT_SIZES];
+
+#define MIN_PER_CORE_FREE_LIST 0
+#define MAX_PER_CORE_FREE_LIST 64
+#define PER_CORE_FREE_LIST_REFILL 32
+
+void heap_init();
+
+void heap_sync_init();
+
+extern void heap_large_alloc_init(unsigned char* large_allocation_orders,
+  int phys_frame_count, int heap_large_alloc_none); // large loop, done in asm
+
 void* malloc(unsigned size);
 
-// allocate memory and count it as intentionally leaked for leak reporting
 void* leak(unsigned size);
 
-// free one allocation returned by malloc/leak; NULL is ignored
-void free(void* p);
+void free(void* ptr);
 
-// print the allocator leak summary
-void check_leaks(void);
+void heap_destroy();
 
 #endif // HEAP_H

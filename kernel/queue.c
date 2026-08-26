@@ -5,17 +5,55 @@
 #include "constants.h"
 #include "pit.h"
 #include "debug.h"
+#include "print.h"
+
+/*
+ * The PIT timekeeper is a 32-bit wrapping counter. Sleep deadlines are limited
+ * to INT_MAX ticks from their insertion point, so the high bit of the modular
+ * subtraction gives an unambiguous ordering within that half-range. This uses
+ * only unsigned arithmetic; it does not depend on converting an out-of-range
+ * unsigned value to signed int.
+ *
+ * Preconditions: a and b are deadlines/current times that differ by less than
+ * 2^31 ticks. sleep() and the user trap enforce that horizon for every live
+ * production entry. Tests using explicit deadlines must preserve it as well.
+ */
+static bool jiffies_before(unsigned a, unsigned b){
+  return a != b && ((a - b) & (INT_MAX + 1U)) != 0;
+}
 
 void spin_queue_init(struct SpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
-  spin_lock_init(&queue->spinlock);
+  clh_lock_init(&queue->spinlock);
   queue->size = 0;
+}
+
+// Release an externally quiescent, empty queue's CLH state.
+void spin_queue_destroy(struct SpinQueue* queue){
+  assert(queue != NULL, "spin_queue_destroy: queue is NULL.\n");
+
+  // Queue nodes are TCBs owned by their scheduler/lifecycle state. Silently
+  // clearing a nonempty queue would lose those owners and strand their stacks,
+  // descriptors, or exit publication. External quiescence permits this
+  // lock-free snapshot; no producer or consumer may still be active here.
+  int size = __atomic_load_n(&queue->size);
+  if (size != 0 || queue->head != NULL || queue->tail != NULL){
+    int args[4] = {(int)queue, size, (int)queue->head, (int)queue->tail};
+    say("| queue: spin_queue_destroy rejected queue=0x%X size=%d head=0x%X tail=0x%X\n",
+      args);
+    panic("spin_queue_destroy: owner must drain every TCB before destruction.\n");
+  }
+
+  clh_lock_destroy(&queue->spinlock);
+  queue->head = NULL;
+  queue->tail = NULL;
+  __atomic_store_n(&queue->size, 0);
 }
 
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
   assert(data != NULL, "spin_queue_add: data is NULL.\n");
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   // Queue insertion always consumes a single detached node.
   // Force next=NULL to avoid linking stale list tails into this queue.
@@ -31,14 +69,14 @@ void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
 
   __atomic_fetch_add(&queue->size, 1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 }
 
 struct TCB* spin_queue_remove(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
-    spin_lock_release(&queue->spinlock);
+    clh_lock_release(&queue->spinlock);
     return NULL;
   }
 
@@ -52,20 +90,20 @@ struct TCB* spin_queue_remove(struct SpinQueue* queue){
 
   __atomic_fetch_add(&queue->size, -1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return node;
 }
 
 struct TCB* spin_queue_remove_all(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
   queue->head = NULL;
   queue->tail = NULL;
   __atomic_store_n(&queue->size, 0);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return head;
 }
@@ -75,11 +113,11 @@ unsigned spin_queue_size(struct SpinQueue* queue){
 }
 
 struct TCB* spin_queue_peek(struct SpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  clh_lock_acquire(&queue->spinlock);
 
   struct TCB* head = queue->head;
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
 
   return head;
 }
@@ -167,7 +205,8 @@ void sleep_queue_add(void* args){
     struct TCB* current = queue->head;
     struct TCB* previous = NULL;
 
-    while (current != NULL && current->wakeup_jiffies <= data->wakeup_jiffies) {
+    while (current != NULL &&
+        !jiffies_before(data->wakeup_jiffies, current->wakeup_jiffies)) {
       previous = current;
       current = current->next;
     }
@@ -203,7 +242,7 @@ struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies
   }
 
   struct TCB* node = queue->head;
-  if (node->wakeup_jiffies <= now_jiffies) {
+  if (!jiffies_before(now_jiffies, node->wakeup_jiffies)) {
     // remove from sleep queue
     queue->head = node->next;
     node->next = NULL;
@@ -219,6 +258,18 @@ struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies
 
 struct TCB* sleep_queue_remove(struct SleepQueue* queue){
   return sleep_queue_remove_at(queue, current_jiffies);
+}
+
+struct TCB* sleep_queue_remove_all(struct SleepQueue* queue){
+  assert(queue != NULL, "sleep_queue_remove_all: queue is NULL.\n");
+
+  // SleepQueue is intentionally single-owner and has no internal lock.
+  // Shutdown calls this only after every core has disabled interrupts and
+  // reached the barrier, so no PIT path or scheduler can mutate this list.
+  struct TCB* head = queue->head;
+  queue->head = NULL;
+  __atomic_store_n(&queue->size, 0);
+  return head;
 }
 
 unsigned sleep_queue_size(struct SleepQueue* queue){
@@ -285,13 +336,63 @@ unsigned generic_queue_size(struct GenericQueue* queue){
 void generic_spin_queue_init(struct GenericSpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
-  spin_lock_init(&queue->spinlock);
+  clh_lock_init(&queue->spinlock);
   queue->size = 0;
+  __atomic_store_n(&queue->active_operations, 0);
+}
+
+void generic_spin_queue_assert_quiescent(struct GenericSpinQueue* queue){
+  assert(queue != NULL,
+    "generic_spin_queue_assert_quiescent: queue is NULL.\n");
+
+  // Every queue operation increments before exchanging into the CLH tail.
+  // Therefore active==0 proves there is no owner, contender, or caller in the
+  // post-unlock window. The external owner contract separately forbids a new
+  // operation from starting after this snapshot.
+  int active = __atomic_load_n(&queue->active_operations);
+  bool owner_clear = queue->spinlock.owner == NULL;
+  bool tail_idle = queue->spinlock.tail != NULL &&
+    !queue->spinlock.tail->locked;
+  if (active != 0 || !owner_clear || !tail_idle){
+    int args[4] = {(int)queue, active, (int)queue->spinlock.owner,
+      (int)queue->spinlock.tail};
+    say("| queue: generic spin teardown rejected queue=0x%X active=%d owner=0x%X tail=0x%X\n",
+      args);
+    panic("generic_spin_queue_destroy: owner must stop and join every queue operation before destruction.\n");
+  }
+}
+
+void generic_spin_queue_assert_empty(struct GenericSpinQueue* queue){
+  assert(queue != NULL, "generic_spin_queue_assert_empty: queue is NULL.\n");
+
+  // Generic elements remain owned by the queue's caller. Destroy has no
+  // payload callback, so accepting a live element would erase the caller's
+  // only ownership chain. External quiescence permits this unlocked snapshot.
+  int size = __atomic_load_n(&queue->size);
+  if (size != 0 || queue->head != NULL || queue->tail != NULL){
+    int args[4] = {(int)queue, size, (int)queue->head, (int)queue->tail};
+    say("| queue: generic_spin_queue_destroy rejected queue=0x%X size=%d head=0x%X tail=0x%X\n",
+      args);
+    panic("generic_spin_queue_destroy: owner must drain every payload before destruction.\n");
+  }
+}
+
+// Release an externally quiescent, empty generic queue's CLH state.
+void generic_spin_queue_destroy(struct GenericSpinQueue* queue){
+  assert(queue != NULL, "generic_spin_queue_destroy: queue is NULL.\n");
+  generic_spin_queue_assert_quiescent(queue);
+  generic_spin_queue_assert_empty(queue);
+
+  clh_lock_destroy(&queue->spinlock);
+  queue->head = NULL;
+  queue->tail = NULL;
+  __atomic_store_n(&queue->size, 0);
 }
 
 void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueElement* data){
   assert(data != NULL, "generic_spin_queue_add: data is NULL.\n");
-  spin_lock_acquire(&queue->spinlock);
+  __atomic_fetch_add(&queue->active_operations, 1);
+  clh_lock_acquire(&queue->spinlock);
 
   // Queue insertion always consumes a single detached node.
   // Force next=NULL to avoid linking stale list tails into this queue.
@@ -307,14 +408,18 @@ void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueE
 
   __atomic_fetch_add(&queue->size, 1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
+  __atomic_fetch_add(&queue->active_operations, -1);
 }
 
 struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  assert(queue != NULL, "generic_spin_queue_remove: queue is NULL.\n");
+  __atomic_fetch_add(&queue->active_operations, 1);
+  clh_lock_acquire(&queue->spinlock);
 
   if (queue->head == NULL){
-    spin_lock_release(&queue->spinlock);
+    clh_lock_release(&queue->spinlock);
+    __atomic_fetch_add(&queue->active_operations, -1);
     return NULL;
   }
 
@@ -328,26 +433,34 @@ struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* q
 
   __atomic_fetch_add(&queue->size, -1);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
+  __atomic_fetch_add(&queue->active_operations, -1);
 
   return node;
 }
 
 struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueue* queue){
-  spin_lock_acquire(&queue->spinlock);
+  assert(queue != NULL, "generic_spin_queue_remove_all: queue is NULL.\n");
+  __atomic_fetch_add(&queue->active_operations, 1);
+  clh_lock_acquire(&queue->spinlock);
 
   struct GenericQueueElement* head = queue->head;
   queue->head = NULL;
   queue->tail = NULL;
   __atomic_store_n(&queue->size, 0);
 
-  spin_lock_release(&queue->spinlock);
+  clh_lock_release(&queue->spinlock);
+  __atomic_fetch_add(&queue->active_operations, -1);
 
   return head;
 }
 
 unsigned generic_spin_queue_size(struct GenericSpinQueue* queue){
-  return __atomic_load_n(&queue->size);
+  assert(queue != NULL, "generic_spin_queue_size: queue is NULL.\n");
+  __atomic_fetch_add(&queue->active_operations, 1);
+  unsigned size = __atomic_load_n(&queue->size);
+  __atomic_fetch_add(&queue->active_operations, -1);
+  return size;
 }
 
 

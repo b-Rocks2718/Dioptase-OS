@@ -1,6 +1,8 @@
 # Default to the repo-local toolchain so direct `make` in this directory does
 # not depend on env.sh or a runner-global PATH setup.
 VERSION ?= release
+# Optional -D flags from the top-level OS Makefile (e.g. -DOS_RELEASE=1).
+OS_BCC_DEFINES ?=
 TOOLCHAIN_ROOT ?= ../../../
 CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM = $(TOOLCHAIN_ROOT)Dioptase-Assembler/build/$(VERSION)/basm
@@ -39,10 +41,10 @@ $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 	$(BASM) -bin -o $@ $(LINK_ASM_SRCS)
 
 $(BUILD_DIR)/%.s: %.c Makefile | $(BUILD_DIR)
-	$(CC) -s -o $@ $<
+	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
 
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
-	$(CC) -s -o $@ $<
+	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
 
 $(BUILD_DIR):
 	mkdir -p $@

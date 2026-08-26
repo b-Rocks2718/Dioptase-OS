@@ -7,12 +7,18 @@
 // Reader-Writer Lock
 // Allows multiple readers or one writer at a time.
 // Write-preferring implementation: readers block if any writer is waiting.
+//
+// Lifecycle contract: the owner must prevent new operations, release every
+// holder, wake/join every waiter, and wait for all operations to return before
+// destruction. active_operations begins before the first CLH exchange, so it
+// also covers an acquire that has not yet reached its block() enqueue callback.
 struct RwLock {
-  struct SpinLock lock;
+  struct CLHLock lock;
   struct Queue waiting_readers;
   struct Queue waiting_writers;
   unsigned readers; // invariant: readers > 0 implies !writer_active
   bool writer_active;
+  int active_operations;
 };
 
 // initialize an empty write-preferring reader-writer lock
@@ -30,7 +36,7 @@ void rw_lock_acquire_write(struct RwLock* rwlock);
 // release exclusive access and hand off to queued writers or readers
 void rw_lock_release_write(struct RwLock* rwlock);
 
-// destroy the lock and reap queued readers and writers
+// Destroy a quiescent lock. Destruction never terminates queued TCBs.
 void rw_lock_destroy(struct RwLock* rwlock);
 
 // destroy the lock and free its memory

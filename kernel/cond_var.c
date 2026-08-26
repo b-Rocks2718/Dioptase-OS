@@ -2,6 +2,7 @@
 #include "semaphore.h"
 #include "heap.h"
 #include "debug.h"
+#include "print.h"
 
 // Each waiter owns a private semaphore and links itself into cv->wait_queue
 // before releasing the external lock. Signal/broadcast remove concrete waiter
@@ -14,9 +15,10 @@ struct CondVarWaiter {
 };
 
 void cond_var_init(struct CondVar* cv){
-  spin_lock_init(&cv->lock);
+  clh_lock_init(&cv->lock);
   generic_queue_init(&cv->wait_queue);
   cv->waiters = 0;
+  __atomic_store_n(&cv->active_operations, 0);
 }
 
 // Contract note:
@@ -27,16 +29,29 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   assert(external_lock != NULL, "cond_var wait: external lock is NULL.\n");
   assert(external_lock->is_held, "cond_var wait: external lock must be held by caller.\n");
 
+  /*
+   * Keep this operation live from before the stack-owned waiter semaphore is
+   * initialized until after it is destroyed. This covers both the interval
+   * before publication and the interval after signal removes the waiter but
+   * before this continuation re-acquires external_lock.
+   *
+   * Preconditions: external_lock protects the predicate, and the CondVar
+   * owner has not begun destruction. The owner keeps both objects allocated.
+   * Postcondition: on return this waiter is unlinked, holds external_lock, and
+   * no stack-owned semaphore remains reachable from another core.
+   */
+  __atomic_fetch_add(&cv->active_operations, 1);
+
   struct CondVarWaiter waiter;
   sem_init(&waiter.semaphore, 0);
 
   // Publish this waiter before releasing the external lock so any later
   // signal/broadcast can target this exact waiter, even if it has not reached
   // sem_down() yet.
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   generic_queue_add(&cv->wait_queue, &waiter.link);
   cv->waiters += 1;
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   // release external lock before waiting
   blocking_lock_release(external_lock);
@@ -50,6 +65,7 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   blocking_lock_acquire(external_lock);
 
   sem_destroy(&waiter.semaphore);
+  __atomic_fetch_add(&cv->active_operations, -1);
 }
 
 void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
@@ -57,20 +73,22 @@ void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
   assert(external_lock != NULL, "cond_var signal: external lock is NULL.\n");
   assert(external_lock->is_held, "cond_var signal: external lock must be held by caller.\n");
 
+  __atomic_fetch_add(&cv->active_operations, 1);
   struct CondVarWaiter* waiter = NULL;
 
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   if (cv->waiters > 0) {
     waiter = (struct CondVarWaiter*)generic_queue_remove(&cv->wait_queue);
     assert(waiter != NULL,
       "cond_var signal: waiter count was non-zero but queue was empty.\n");
     cv->waiters -= 1;
   }
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   if (waiter != NULL) {
     sem_up(&waiter->semaphore);
   }
+  __atomic_fetch_add(&cv->active_operations, -1);
 }
 
 void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
@@ -78,12 +96,13 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
   assert(external_lock != NULL, "cond_var broadcast: external lock is NULL.\n");
   assert(external_lock->is_held, "cond_var broadcast: external lock must be held by caller.\n");
 
+  __atomic_fetch_add(&cv->active_operations, 1);
   struct CondVarWaiter* waiter = NULL;
 
-  spin_lock_acquire(&cv->lock);
+  clh_lock_acquire(&cv->lock);
   waiter = (struct CondVarWaiter*)generic_queue_remove_all(&cv->wait_queue);
   cv->waiters = 0;
-  spin_lock_release(&cv->lock);
+  clh_lock_release(&cv->lock);
 
   while (waiter != NULL) {
     struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
@@ -91,23 +110,31 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
     sem_up(&waiter->semaphore);
     waiter = next;
   }
+  __atomic_fetch_add(&cv->active_operations, -1);
 }
 
 void cond_var_destroy(struct CondVar* cv){
   assert(cv != NULL, "cond_var destroy: cv is NULL.\n");
 
-  spin_lock_acquire(&cv->lock);
-  struct CondVarWaiter* waiter =
-    (struct CondVarWaiter*)generic_queue_remove_all(&cv->wait_queue);
-  cv->waiters = 0;
-  spin_lock_release(&cv->lock);
+  clh_lock_acquire(&cv->lock);
+  int active = __atomic_load_n(&cv->active_operations);
+  int waiters = cv->waiters;
+  bool quiescent = active == 0 && waiters == 0 &&
+    cv->wait_queue.size == 0 && cv->wait_queue.head == NULL &&
+    cv->wait_queue.tail == NULL;
+  clh_lock_release(&cv->lock);
 
-  while (waiter != NULL) {
-    struct CondVarWaiter* next = (struct CondVarWaiter*)waiter->link.next;
-    waiter->link.next = NULL;
-    sem_destroy(&waiter->semaphore);
-    waiter = next;
+  if (!quiescent) {
+    int args[3] = {(int)cv, active, waiters};
+    say("| cond_var destroy rejected cv=0x%X active=%d waiters=%d\n",
+      args);
+    panic("cond_var_destroy: owner must stop new operations and wake/join every waiter before destruction.\n");
   }
+
+  // active_operations begins before any public operation can exchange itself
+  // into this CLH tail. The external no-new-operation guarantee therefore
+  // makes the final unlocked tail node safe to free.
+  clh_lock_destroy(&cv->lock);
 }
 
 void cond_var_free(struct CondVar* cv){

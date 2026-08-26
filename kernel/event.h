@@ -21,7 +21,7 @@ void event_wait(struct Event* event);
 // signal the event, waking all current waiters
 void event_signal(struct Event* event);
 
-// destroy the event and reap any waiters
+// destroy the event after all waiters/signallers have returned
 void event_destroy(struct Event* event);
 
 // destroy the event and free its memory

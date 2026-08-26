@@ -1,16 +1,3 @@
-/* Copyright (C) 2025 Ahmed Gheith and contributors.
- *
- * Use restricted to classroom projects.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 #ifndef THREADS_H
 #define THREADS_H
 
@@ -59,6 +46,30 @@ extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *
 // calls the thread's main function and calls stop() when it returns
 void thread_entry(void);
 
+// Attempt to deliver a synchronous signal to the current user thread.
+//
+// Returns false when the signal has no registered handler or a handler is
+// already active. Returns true only after the handler calls sigreturn().
+// A handler that exits, faults, or returns normally terminates the thread, so
+// this function does not return in those cases.
+bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2);
+
+// Complete sigreturn for the current handler. This atomically orders handler
+// completion with cross-core signal sends: a nonmaskable signal published
+// before completion terminates the thread, while later sends remain pending
+// for a subsequent final user-return boundary.
+void finish_current_signal_handler(void);
+
+// Process at most one asynchronous signal immediately before the current
+// kernel activation performs its final rfe into user mode.
+//
+// This is deliberately not a scheduler operation. A runnable thread may have
+// been awakened in the middle of a blocking syscall or page fault, before its
+// C continuation has accepted a synchronization handoff and released outer
+// resources. The trap/interrupt/exception wrapper calls this only after that
+// continuation returns and before restoring the saved user frame.
+void process_pending_signals_before_user_return(void);
+
 // idle thread loop
 // calls to block() context switch to here, 
 // where we decide which thread to run next and switch to it
@@ -73,6 +84,27 @@ void thread(struct Fun* thread_fun);
 // leaks mem because it assumes these threads run forever
 void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
 
+/*
+ * Keep the scheduler alive for asynchronous kernel work that outlives the
+ * normal TCB which accepted it.
+ *
+ * begin preconditions:
+ * - kernel mode in a normal, n_active-counted TCB
+ * - called before the work is published to a daemon
+ *
+ * finish preconditions:
+ * - kernel mode after the daemon has released every resource owned by exactly
+ *   one previously acquired work reference
+ *
+ * The sequentially-consistent counter closes shutdown against accepted work:
+ * event_loop() cannot leave while a reference exists. Each successful begin
+ * must have exactly one finish. Exceeding the implementation's signed-count
+ * safety limit is a kernel lifecycle error and panics without retaining the
+ * rejected reference.
+ */
+void kernel_async_work_begin(void);
+void kernel_async_work_finish(void);
+
 // create a thread to run the given function, and add it to the global ready queue
 // allows specifying the thread's priority and the core affinity
 void thread_(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
@@ -83,7 +115,8 @@ void bootstrap(void);
 // voluntarily yield the CPU and re-queue the current thread
 void yield(void);
 
-// block the current thread until a target jiffy count is reached
+// Block the current thread for at most INT_MAX ticks. Deadlines use modular
+// 32-bit ordering, so this duration bound is required across jiffy wrap.
 void sleep(unsigned jiffies);
 
 // terminate the current thread and 
@@ -102,7 +135,5 @@ enum CoreAffinity core_pin(void);
 
 // allow a thread to be scheduled on any core
 void core_unpin(enum CoreAffinity prev);
-
-void reap_tcb(void* tcb);
 
 #endif // THREADS_H

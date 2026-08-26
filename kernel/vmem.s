@@ -53,6 +53,17 @@ tlb_miss_handler_:
   cmp  r2, r0
   bz   return_to_kernel
 
+  # A user page-fault continuation may have blocked on filesystem I/O while
+  # holding outer VM/page-cache state. It is safe to process an asynchronous
+  # signal only after tlb_miss_handler has completed that continuation. Kernel
+  # uaccess and ordinary nested kernel misses also return through this path, so
+  # gate the hook on the ISA's exact user-origin depth.
+  mov  r1, cr0
+  cmp  r1, 1
+  bnz  tlb_signal_return_done
+  call process_pending_signals_before_user_return
+tlb_signal_return_done:
+
   # disable interrupts
   movi r1, 0x7FFFFFFF
   mov  r2, imr

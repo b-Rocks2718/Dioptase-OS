@@ -28,8 +28,12 @@ field stores the physical address of that page directory, and the same value is
 loaded into the hardware PID register when that thread's address space becomes
 active.
 
-There is currently no address-space inheritance or cloning during thread
-creation. A newly created thread starts with an empty `vme_list`.
+Kernel thread creation does not inherit an address space: `thread_()` gives the
+new thread an empty page directory and `vme_list`. Process creation through
+`fork()` is different; `vmem_fork()` clones the parent's VME metadata, resident
+user mappings, and resident direct mappings into a new child address space.
+Private RAM is snapshotted, while direct physical/MMIO VMEs remain borrowed
+aliases of the same live physical pages in both processes.
 
 ### PDE / PTE Format
 
@@ -110,6 +114,7 @@ Each VME records:
 - the original requested `size`
 - `MMAP_*` flags
 - optional file backing (`struct Node*` plus page-aligned `file_offset`)
+- an explicit direct-physical-mapping marker and physical base address
 
 `mmap(size, file, file_offset, flags)`:
 
@@ -121,6 +126,8 @@ Each VME records:
 - inserts the new VME into the calling thread's sorted list
 - clones the passed `Node` wrapper for file-backed mappings, so the caller may
   later free its own wrapper independently
+- returns `NULL` if size cannot be page-rounded representably or first-fit
+  cannot find a sufficiently large range
 
 Current caller requirements:
 
@@ -207,18 +214,39 @@ On the first fault for each page, the kernel:
 
 - acquires the corresponding page from the global page cache
 - uses the cache page directly as the mapped physical page
+- for a writable mapping, conservatively marks the page dirty and max-merges
+  the number of bytes that this mapping exposes in that page
 - installs a PTE pointing at that shared page
 
 All mappings of the same file page share one in-memory cache page, keyed by the
-inode plus the page-aligned byte `file_offset` used for that page.
+inode plus the page-aligned byte `file_offset` used for that page. Merely
+acquiring the page does not change its writeback extent. Consequently a wider
+read-only or private mapping cannot enlarge an already-dirty writable mapping's
+eventual file write, while a later wider writable fault can do so.
 
-On the last `page_cache_release()` for that cached page, the kernel writes back
-`file_bytes` bytes to the backing file and frees the cached physical page.
+The ISA does not currently provide a usable dirty transition for this path, so
+the first writable fault conservatively authorizes writeback of the mapping's
+complete logical extent in that page even if user code does not later modify
+every byte. On the last `page_cache_release()` for a dirty cached page, the
+kernel writes that max-merged extent to the backing file and frees the cached
+physical page. Clean pages are freed without writeback.
+
+`vmem_truncate_file()` serializes shrink-only truncate with cache acquisition,
+dirty publication, and final release. It holds the global page-cache lock while
+`node_shrink()` holds the inode lock, then caps a straddling dirty page to the
+new EOF and clears dirty state for pages wholly beyond it. An old dirty release
+therefore cannot undo truncate. A writable page fault ordered after truncate
+may deliberately publish a wider extent and extend the file again, preserving
+the existing shared-mapping extension semantics. An already-resident writable
+PTE does not generate another software dirty event after truncate; extending
+again requires a later fault that republishes an extent.
 
 This gives shared visibility between concurrent mappings of the same cached file
 page. The current implementation defines sharing in terms of the page cache; it
-does not separately define coherence with any file-write path that bypasses that
-cache.
+does not define coherence with `node_read_all()` / `node_write_all()` or syscall
+file I/O that bypasses that cache. In particular, direct file writes can leave a
+live cached page stale or later be overwritten by dirty cached writeback; that
+separate coherence problem remains unresolved.
 
 #### Shared Anonymous Mappings
 
@@ -228,6 +256,35 @@ Current behavior:
 
 - faulting such a VME panics in `tlb_miss_handler()`
 - unmapping such a VME asserts in `munmap()` / `unmap_vme()`
+
+#### Direct Physical/MMIO Mappings
+
+`mmap_physmem(size, paddr, flags)` is a kernel-only API. It creates a VME whose
+virtual pages refer directly to one contiguous physical window; it does not
+allocate, copy, or take ownership of the backing pages. Its caller contract is:
+
+- `size` is nonzero and page-roundable without 32-bit unsigned overflow
+- `paddr` is 4096-byte aligned
+- the page-rounded window is wholly inside the 27-bit physical address space
+  `0x0000000..0x7FFFFFF` defined by the ISA and `../../docs/mem_map.md`
+- only `MMAP_READ`, `MMAP_WRITE`, `MMAP_EXEC`, and `MMAP_USER` are accepted;
+  `MMAP_SHARED` describes page-cache ownership and is invalid here because a
+  direct mapping is already a live physical alias
+
+Malformed requests are kernel bugs and panic with the physical address, size,
+or flags in the diagnostic. Failure to find a virtual range is ordinary
+resource exhaustion and returns `NULL`.
+
+An exact repeated request in the same TCB—same physical base, requested size,
+and flags—returns the existing virtual base instead of adding another VME.
+Because translation is page-granular, the VME reserves and maps the rounded
+page extent. A device client must access only byte ranges whose behavior is
+defined by the physical memory map; behavior of undocumented trailing bytes is
+unspecified.
+
+Direct physical pages are borrowed for the complete VME lifetime. `munmap()`
+and address-space teardown invalidate translations and free page tables, but
+never pass those physical pages to the `physmem` allocator.
 
 ### Fault Handling
 
@@ -244,6 +301,26 @@ For a tlb miss, it:
 
 If no containing VME exists, the kernel panics.
 
+### Address-Space Cloning During `fork()`
+
+`fork()` calls `vmem_fork()` before making the child runnable. The clone path:
+
+- copies the parent's VME metadata into a separately owned child VME list
+- allocates a new page directory and page tables for the child
+- leaves nonresident pages nonresident so either process can fault them in later
+- copies each resident direct physical/MMIO PTE verbatim, so pages faulted
+  before fork and pages first faulted afterward alias the same live physical
+  page in the parent and child
+- acquires another page-cache reference for each resident shared file-backed
+  page and maps the same cache page in both processes
+- allocates and copies a new physical page for each resident private user page
+
+The parent and child therefore have independent page tables and private mapping
+contents. Shared file-backed mappings continue to refer to the same page-cache
+entries, and direct physical mappings continue to refer to the same device or
+physical pages. Private pages are currently copied eagerly during `fork()`;
+copy-on-write cloning is not implemented.
+
 ### Address-Space Teardown
 
 Thread teardown calls `vmem_destroy_address_space()` and then frees the VME
@@ -258,7 +335,8 @@ Address-space teardown:
 
 For private mappings, teardown frees resident physical pages directly. For
 shared file-backed mappings, teardown releases the page-cache references instead
-of freeing the shared pages directly.
+of freeing the shared pages directly. For direct physical mappings, teardown
+only removes the borrowed translations.
 
 ### Concurrency / Invariants
 
@@ -272,7 +350,12 @@ That last point matters because `munmap()` invalidates TLB entries only on the
 current core. There is no cross-core TLB shootdown mechanism yet.
 
 Shared file-backed page sharing is implemented with the global page cache, which
-has its own lock and reference counts.
+has its own lock and reference counts. Cache fill, dirty publication, final
+writeback, and serialized truncate are sequentially consistent under that
+lock. Any operation needing both locks acquires `page_cache.lock` first and the
+cached inode lock second. No ext path may acquire the page-cache lock while it
+already holds an inode lock; preserving that one-way order prevents an inverse
+lock dependency across blocking storage operations.
 
 ### Current Limitations
 
@@ -286,11 +369,12 @@ so user VM remains lightly exercised.
 
 The API flag combination exists, but the fault and unmap paths still reject it.
 
-#### No Address-Space Inheritance
+#### No Shared Address Spaces Between Threads
 
-Thread creation always allocates a fresh page directory and starts with an empty
-VME list. There is no `fork()`-style address-space clone and no way to make a
-new thread automatically observe an existing anonymous mapping.
+Kernel thread creation still allocates a fresh page directory and starts with an
+empty VME list. `fork()` clones a snapshot into a distinct child address space;
+there is no thread-creation operation that makes multiple threads concurrently
+use the same page tables or `vme_list`.
 
 #### No Partial `munmap()`
 
@@ -300,8 +384,9 @@ trim, split, or punch holes inside an existing mapping.
 #### No Copy-On-Write
 
 Private file-backed mappings eagerly copy the cached file page on first fault.
-The kernel does not yet share clean private pages and break sharing later on
-write.
+In addition, `fork()` eagerly copies every resident private user page into a new
+child frame. The kernel does not yet share either kind of clean private page and
+break sharing later on write.
 
 #### Local-Core-Only TLB Invalidation
 
@@ -324,8 +409,12 @@ The VM subsystem currently asserts or panics on:
 - invalid `munmap()` addresses
 - TLB misses that do not fall inside any VME
 - attempts to fault or unmap shared anonymous mappings
+- malformed kernel-only `mmap_physmem()` size, physical range, alignment, or
+  flags
 
 These failures are treated as kernel bugs, not recoverable runtime conditions.
+Plain `mmap()` and `mmap_physmem()` virtual-range exhaustion are instead normal
+fallible results; public callers translate `NULL` to the syscall's `-1` result.
 
 ### Tests
 
@@ -335,6 +424,7 @@ VM functionality is currently exercised by:
 - `vmem_private_anonymous.c`
 - `vmem_private_file.c`
 - `vmem_shared_file.c`
+- `user_physmem_alias.dir/sbin/init.c`
 
 Those tests currently cover:
 
@@ -344,12 +434,17 @@ Those tests currently cover:
 - concurrent private file-backed mappings of the same file
 - shared file-backed visibility across concurrent mappings
 - shared file-backed persistence back to disk after unmap
+- dirty writeback-extent merging across differently sized writable aliases
+- non-extension by a wider read-only alias
+- dirty partial-page and wholly-beyond-EOF behavior across truncate, plus a
+  later writable fault extending the file again
 - page-aligned nonzero `file_offset` for both private and shared file-backed
   mappings
+- page-by-page physical-window translation, idempotent display getters, and
+  live parent/child aliasing of resident direct mappings across `fork()`
 
 They do not currently cover:
 
 - shared anonymous mappings
-- user-mode virtual memory
 - non-page-aligned `file_offset`
 - multi-core TLB invalidation for a shared address space

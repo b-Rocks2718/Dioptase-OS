@@ -25,10 +25,15 @@
 //   threads that were already waiting when the wakeup was issued. This avoids
 //   a future waiter stealing a stale wakeup token during reusable-generation
 //   patterns such as Event reuse.
+// - Destruction requires external quiescence: no wait/signal/broadcast call
+//   may be active and no new call may begin. active_operations begins before a
+//   waiter semaphore is initialized or published and ends only after the
+//   waiter has re-acquired its external lock and destroyed that semaphore.
 struct CondVar {
-  struct SpinLock lock;
+  struct CLHLock lock;
   struct GenericQueue wait_queue;
   unsigned waiters;
+  int active_operations;
 };
 
 // initialize an empty condition variable
@@ -43,7 +48,7 @@ void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock);
 // wake all current waiters.
 void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock);
 
-// destroy the condition variable and reap any waiters
+// Destroy a quiescent condition variable. Destruction never terminates waiters.
 void cond_var_destroy(struct CondVar* cv);
 
 // destroy the condition variable and free its memory

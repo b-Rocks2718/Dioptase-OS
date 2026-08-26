@@ -1,16 +1,3 @@
-/* Copyright (C) 2025 Ahmed Gheith and contributors.
- *
- * Use restricted to classroom projects.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 #include "heap.h"
 #include "assert.h"
 #include "atomic.h"
@@ -161,12 +148,31 @@ void *malloc(unsigned bytes) {
   if (bytes == 0)
     return (void *)array;
 
-  unsigned entries = ((bytes + 3) / 4) + 4;
+  // Round the payload up without evaluating `bytes + 3`: for requests near
+  // UINT_MAX that expression wraps and can turn a huge request into a tiny,
+  // apparently successful allocation. Metadata requires four more entries;
+  // ceil(UINT_MAX / HEAP_WORD_BYTES) leaves ample unsigned range for them.
+  unsigned entries = bytes / HEAP_WORD_BYTES;
+  if (bytes % HEAP_WORD_BYTES != 0) {
+    entries++;
+  }
+  entries += 4;
   if (entries < 4)
     entries = 4;
 
   if (entries & 1) {
     entries++;
+  }
+
+  /*
+   * Reject a request that cannot fit even in a completely empty configured
+   * heap. This is a caller input/range error, not runtime fragmentation, and
+   * lets near-UINT_MAX requests fail without perturbing allocator state.
+   * Ordinary exhaustion retains the CRT's existing fatal policy so legacy
+   * callers that rely on malloc not returning NULL do not dereference it.
+   */
+  if (entries > len - 4) {
+    return NULL;
   }
 
   spin_lock_acquire(&theLock);
@@ -282,6 +288,11 @@ void* realloc(void* p, unsigned bytes) {
   }
 
   new_ptr = malloc(bytes);
+  if (new_ptr == NULL) {
+    // Match the malloc failure contract: the original allocation remains
+    // owned by the caller when growth cannot be satisfied.
+    return NULL;
+  }
   memcpy(new_ptr, p, old_bytes);
   free(p);
   return new_ptr;

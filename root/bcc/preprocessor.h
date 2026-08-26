@@ -6,6 +6,11 @@
 
 #include "source_location.h"
 
+// The root translation unit is not counted. At most this many recursively
+// included files may be active at once. This implementation-defined bound
+// keeps malformed or adversarial include graphs within the fixed user stack.
+#define PREPROCESSOR_MAX_INCLUDE_DEPTH 32
+
 // Purpose: Own interned file name storage for source mappings.
 // Inputs/Outputs: Managed by the preprocessor; freed by destroy_preprocess_result.
 // Invariants/Assumptions: names entries are heap-allocated NUL-terminated strings.
@@ -29,6 +34,8 @@ struct PreprocessResult {
 // Outputs: Returns true on success and fills result; false on error.
 // Invariants/Assumptions: Supports quoted relative includes and angle-bracket
 //                         includes rooted at /crt; macros are object-like only.
+//                         Active include cycles and nesting beyond
+//                         PREPROCESSOR_MAX_INCLUDE_DEPTH are rejected.
 bool preprocess(char * prog, char* filename, int num_defines,
                 char* * defines, struct PreprocessResult* result);
 

@@ -1,297 +1,893 @@
 #include "sd_driver.h"
+
 #include "atomic.h"
 #include "blocking_lock.h"
 #include "debug.h"
-#include "print.h"
-#include "threads.h"
+#include "heap.h"
+#include "interrupt_waiter.h"
 #include "interrupts.h"
-#include "per_core.h"
-#include "machine.h"
-#include "scheduler.h"
 #include "ivt.h"
+#include "per_core.h"
+#include "pit.h"
+#include "print.h"
+#include "scheduler.h"
+#include "string.h"
+#include "threads.h"
 
-// SD MMIO addresses 
+/* SD DMA register addresses from docs/mem_map.md. */
+#define SD0_DMA_MEM_ADDR 0x07FE5810
+#define SD0_DMA_BLOCK_ADDR 0x07FE5814
+#define SD0_DMA_LEN_ADDR 0x07FE5818
+#define SD0_DMA_CTRL_ADDR 0x07FE581C
+#define SD0_DMA_STATUS_ADDR 0x07FE5820
+#define SD0_DMA_ERR_ADDR 0x07FE5824
 
-int* DMA_MEM_REG_0 =  (int*)0x7FE5810;
-int* DMA_BLOCK_REG_0 = (int*)0x7FE5814;
-int* DMA_LEN_REG_0 =   (int*)0x7FE5818;
-int* DMA_CTRL_REG_0 =  (int*)0x7FE581C;
-int* DMA_STATUS_REG_0 = (int*)0x7FE5820;
-int* DMA_ERR_REG_0 = (int*)0x7FE5824;
+#define SD1_DMA_MEM_ADDR 0x07FE5828
+#define SD1_DMA_BLOCK_ADDR 0x07FE582C
+#define SD1_DMA_LEN_ADDR 0x07FE5830
+#define SD1_DMA_CTRL_ADDR 0x07FE5834
+#define SD1_DMA_STATUS_ADDR 0x07FE5838
+#define SD1_DMA_ERR_ADDR 0x07FE583C
 
-int* DMA_MEM_REG_1 =  (int*)0x7FE5828;
-int* DMA_BLOCK_REG_1 = (int*)0x7FE582C;
-int* DMA_LEN_REG_1 =   (int*)0x7FE5830;
-int* DMA_CTRL_REG_1 =  (int*)0x7FE5834;
-int* DMA_STATUS_REG_1 = (int*)0x7FE5838;
-int* DMA_ERR_REG_1 = (int*)0x7FE583C;
-
-bool sd_wait_thread_0_pending; // is there about to be a thread waiting for SD drive 0?
-struct TCB* sd_wait_thread_0; // thread waiting for SD drive 0
-
-bool sd_wait_thread_1_pending; // is there about to be a thread waiting for SD drive 1?
-struct TCB* sd_wait_thread_1; // thread waiting for SD drive 1
-
-// SD DMA register contract from docs/mem_map.md:
-// - DMA_LEN is measured in 512-byte blocks.
-// - CTRL bit 0 starts DMA and bit 3 starts SD init. Both are clear-on-write command bits.
-// - STATUS/DONE/ERR are shared between DMA and SD init.
 #define SD_BLOCK_SIZE_BYTES 512
+#define SD_DMA_ALIGNMENT_BYTES 4
+// docs/kernel_mem_map.md: this is the first MMIO address after ordinary RAM.
+#define SD_DMA_RAM_END_EXCLUSIVE 0x07FB8000
+#define SD_DMA_BOUNCE_BYTES 4096
 
 #define SD_DMA_CTRL_START 0x1
 #define SD_DMA_CTRL_DIR_RAM_TO_SD 0x2
-#define SD_DMA_IRQ_ENABLE 0x4
+#define SD_DMA_CTRL_IRQ_ENABLE 0x4
 #define SD_DMA_CTRL_SD_INIT 0x8
 
+#define SD_DMA_STATUS_BUSY 0x1
 #define SD_DMA_STATUS_DONE 0x2
 #define SD_DMA_STATUS_ERR 0x4
+#define SD_DMA_STATUS_KNOWN_MASK 0x7
 
-static struct BlockingLock sd_lock_0;
-static struct BlockingLock sd_lock_1;
+#define SD_CONTROLLER_ERR_BUSY 1
+#define SD_CONTROLLER_ERR_MAX 6
 
-static int sd_wait_done(enum SdDrive drive, int was);
+/*
+ * The SD hardware specifies its own command-level timeouts but does not specify
+ * a software wait deadline. These two bounds are therefore implementation-
+ * defined kernel policy:
+ *
+ * - Runtime commands get 30,000 PIT ticks. kernel_entry programs the PIT for
+ *   3,000 Hz, so the normal configuration permits roughly ten seconds. The
+ *   value is well below INT_MAX, preserving unambiguous wrapping-jiffy order.
+ * - Boot has no live scheduler/PIT wake path. It performs at most 16,777,216
+ *   status reads. This is deliberately an operation bound, not a time claim;
+ *   the power-of-two value is an explicit policy window and makes no claim
+ *   about a hardware duration the specification does not define.
+ */
+#define SD_RUNTIME_TIMEOUT_JIFFIES 30000
+#define SD_WATCHDOG_POLL_JIFFIES 30
+#define SD_BOOT_POLL_OPERATION_LIMIT 16777216
 
-// get the BlockingLock for the given drive
-void sd_lock_acquire(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) {
-    blocking_lock_acquire(&sd_lock_0);
-  } else {
-    blocking_lock_acquire(&sd_lock_1);
-  }
+enum SdOperation {
+  SD_OPERATION_INIT = 0,
+  SD_OPERATION_READ = 1,
+  SD_OPERATION_WRITE = 2,
+};
+
+/*
+ * Raw state lock usable by both thread and interrupt context.
+ *
+ * This cannot use SpinLock/CLHLock because those primitives consume TCB lock
+ * ownership state and may assert if an ISR interrupted code that owned another
+ * spinlock. Every thread-context attempt masks all interrupts before the swap,
+ * so an SD ISR cannot interrupt a same-core owner. A cross-core owner executes
+ * only the bounded, allocation-free state/MMIO updates documented below; it
+ * never blocks or acquires another lock. Consequently an ISR may spin here
+ * without creating a lock cycle.
+ */
+struct SdStateLock {
+  int held;
+};
+
+struct SdDriveContext {
+  struct BlockingLock command_lock;
+  struct SdStateLock state_lock;
+  struct InterruptWaiter waiter;
+  struct SdRequestState request;
+
+  unsigned deadline_jiffies;
+  enum SdOperation operation;
+  unsigned start_block;
+  unsigned num_blocks;
+  unsigned buffer_addr;
+  unsigned command;
+
+  unsigned last_status;
+  unsigned last_error;
+
+  // One page permanently owned by this drive. Hardware never receives a
+  // caller address. Quarantine prevents restaging while an old generation may
+  // still be performing non-atomic DMA into/from this page.
+  char* bounce_buffer;
+};
+
+static struct SdDriveContext sd_contexts[2];
+
+static unsigned* sd_mem_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_MEM_ADDR;
+  return (unsigned*)SD1_DMA_MEM_ADDR;
 }
 
-// release the BlockingLock for the given drive
-void sd_lock_release(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) {
-    blocking_lock_release(&sd_lock_0);
-  } else {
-    blocking_lock_release(&sd_lock_1);
-  }
+static unsigned* sd_block_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_BLOCK_ADDR;
+  return (unsigned*)SD1_DMA_BLOCK_ADDR;
 }
 
-// clear sticky DONE/ERR state before issuing a new SD command.
+static unsigned* sd_len_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_LEN_ADDR;
+  return (unsigned*)SD1_DMA_LEN_ADDR;
+}
+
+static unsigned* sd_ctrl_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_CTRL_ADDR;
+  return (unsigned*)SD1_DMA_CTRL_ADDR;
+}
+
+static unsigned* sd_status_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_STATUS_ADDR;
+  return (unsigned*)SD1_DMA_STATUS_ADDR;
+}
+
+static unsigned* sd_error_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_ERR_ADDR;
+  return (unsigned*)SD1_DMA_ERR_ADDR;
+}
+
+static bool sd_drive_is_valid(enum SdDrive drive){
+  return drive == SD_DRIVE_0 || drive == SD_DRIVE_1;
+}
+
+static char* sd_operation_name(enum SdOperation operation){
+  if (operation == SD_OPERATION_INIT) return "init";
+  if (operation == SD_OPERATION_READ) return "read";
+  if (operation == SD_OPERATION_WRITE) return "write";
+  return "invalid-operation";
+}
+
+void sd_request_state_init(struct SdRequestState* state){
+  assert(state != NULL,
+    "sd request state init: state pointer is NULL.\n");
+  state->generation = 0;
+  state->active = false;
+  state->quarantined = false;
+  state->result = 0;
+}
+
+unsigned sd_request_state_begin(struct SdRequestState* state){
+  assert(state != NULL,
+    "sd request state begin: state pointer is NULL.\n");
+
+  if (state->active || state->quarantined){
+    return 0;
+  }
+
+  unsigned next_generation = state->generation + 1;
+  if (next_generation == 0){
+    // Zero is the begin-failure sentinel, so skip it after 32-bit wrap.
+    next_generation = 1;
+  }
+
+  state->generation = next_generation;
+  state->active = true;
+  state->result = SD_DRIVER_ERR_UNEXPECTED_STATUS;
+  return next_generation;
+}
+
+bool sd_request_state_finish(struct SdRequestState* state,
+    unsigned generation, int result, bool quarantine){
+  assert(state != NULL,
+    "sd request state finish: state pointer is NULL.\n");
+
+  if (generation == 0 || !state->active ||
+      state->generation != generation){
+    return false;
+  }
+
+  state->result = result;
+  state->quarantined = quarantine;
+  state->active = false;
+  return true;
+}
+
+bool sd_request_state_acknowledge_quarantine(struct SdRequestState* state,
+    unsigned generation){
+  assert(state != NULL,
+    "sd request state acknowledge: state pointer is NULL.\n");
+
+  if (generation == 0 || state->active || !state->quarantined ||
+      state->generation != generation){
+    return false;
+  }
+
+  state->quarantined = false;
+  return true;
+}
+
+/*
+ * Acquire one drive's state lock with the complete IMR masked.
+ *
+ * Preconditions: kernel mode; lock initialized; caller does not already own
+ * this state lock. The caller may be an SD ISR, whose IMR global-enable bit is
+ * already clear. Postcondition: the lock is held and the complete IMR is zero;
+ * the returned mask must be passed exactly once to sd_state_lock_release().
+ */
+static unsigned sd_state_lock_acquire(struct SdStateLock* lock){
+  unsigned was = interrupts_disable();
+  while (__atomic_exchange_n(&lock->held, true)){
+    // The remote owner executes a bounded nonblocking critical section.
+  }
+  return was;
+}
+
+/*
+ * Release the state lock and restore the caller's exact IMR. Atomic store is
+ * sufficient under the architecture's sequentially-consistent memory model:
+ * all state/MMIO reads and writes become visible before a later acquirer.
+ */
+static void sd_state_lock_release(struct SdStateLock* lock, unsigned was){
+  __atomic_store_n(&lock->held, false);
+  interrupts_restore(was);
+}
+
 static void sd_clear_status(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) {
-    *DMA_STATUS_REG_0 = 0;
-  } else {
-    *DMA_STATUS_REG_1 = 0;
-  }
+  // Per docs/mem_map.md, any status write clears DONE, ERR, and DMA_ERR only.
+  *sd_status_reg(drive) = 0;
 }
 
-// Initialize the SD driver and both drives, and register SD interrupt handlers
-void sd_init(void){
-  // initialize drives
-  blocking_lock_init(&sd_lock_0);
-  sd_clear_status(SD_DRIVE_0);
-  *DMA_CTRL_REG_0 = SD_DMA_CTRL_SD_INIT;
-  if (sd_wait_done(SD_DRIVE_0, interrupts_disable()) != 0){
-    panic("sd driver: SD_INIT command failed for drive 0\n");
-  }
-
-  blocking_lock_init(&sd_lock_1);
-  sd_clear_status(SD_DRIVE_1);
-  *DMA_CTRL_REG_1 = SD_DMA_CTRL_SD_INIT;
-  if (sd_wait_done(SD_DRIVE_1, interrupts_disable()) != 0){
-    panic("sd driver: SD_INIT command failed for drive 1\n");
-  }
-
-  // register SD interrupt handlers
-  register_handler(sd0_handler_, (void*)SD_0_IVT_ENTRY);
-  register_handler(sd1_handler_, (void*)SD_1_IVT_ENTRY);
-
-  // initialize threads
-  sd_wait_thread_0_pending = false;
-  sd_wait_thread_0 = NULL;
-
-  sd_wait_thread_1_pending = false;
-  sd_wait_thread_1 = NULL;
+static bool sd_status_is_terminal(unsigned status, unsigned error){
+  return (status & (SD_DMA_STATUS_DONE | SD_DMA_STATUS_ERR)) != 0 ||
+    error != 0;
 }
 
-// Write a command to DMA_CTRL_REG and wait for completion
-// Caller must hold the lock for the drive
-int sd_send_command(enum SdDrive drive, int cmd){
-  int was = interrupts_disable();
-
-
-  if (drive == SD_DRIVE_0) {
-    // if bootstrapping, we will spin instead of blocking
-    // we dont want to send an interrupt request
-    if (!__atomic_load_n(&bootstrapping)) sd_wait_thread_0_pending = true;
-    else cmd &= ~SD_DMA_IRQ_ENABLE;
-    *(DMA_CTRL_REG_0) = cmd;
-  } else {
-    if (!__atomic_load_n(&bootstrapping)) sd_wait_thread_1_pending = true;
-    else cmd &= ~SD_DMA_IRQ_ENABLE;
-    *(DMA_CTRL_REG_1) = cmd;
-  }
-  int rc = sd_wait_done(drive, was);
-
-  return rc;
-}
-
-// Read multiple blocks starting from the given block number into the destination buffer
-// The buffer must be at least num_blocks * 512 bytes
-// Returns 0 on success or a negative error code on failure
-int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks, void* dest){
-  if (drive == SD_DRIVE_1 && start_block == 0) {
-    // warn about access to block 0
-    say("| Warning: reading block 0 of drive 1\n", NULL);
+static int sd_result_from_status(unsigned status, unsigned error){
+  if ((status & ~SD_DMA_STATUS_KNOWN_MASK) != 0){
+    return SD_DRIVER_ERR_UNEXPECTED_STATUS;
   }
 
-  sd_lock_acquire(drive);
-
-  // Set up DMA to read from SD card to memory.
-  sd_clear_status(drive);
-  if (drive == SD_DRIVE_0) {
-    *(DMA_MEM_REG_0) = (int)dest;
-    *(DMA_BLOCK_REG_0) = start_block;
-    *(DMA_LEN_REG_0) = num_blocks;
-  } else {
-    *(DMA_MEM_REG_1) = (int)dest;
-    *(DMA_BLOCK_REG_1) = start_block;
-    *(DMA_LEN_REG_1) = num_blocks;
-  }
-
-  int rc = sd_send_command(drive, SD_DMA_CTRL_START | SD_DMA_IRQ_ENABLE);
-
-  sd_lock_release(drive);
-
-  return rc;
-}
-
-// Write multiple blocks starting from the given block number from the source buffer
-// The buffer must be at least num_blocks * 512 bytes
-// Returns 0 on success or a negative error code on failure
-int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks, void* src){
-  if (drive == SD_DRIVE_1 && start_block == 0) {
-    // warn about access to block 0
-    say("| Warning: writing block 0 of drive 1\n", NULL);
-  }
-
-  sd_lock_acquire(drive);
-
-  // Set up DMA to write from memory to SD card.
-  sd_clear_status(drive);
-  if (drive == SD_DRIVE_0) {
-    *(DMA_MEM_REG_0) = (int)src;
-    *(DMA_BLOCK_REG_0) = start_block;
-    *(DMA_LEN_REG_0) = num_blocks;
-  } else {
-    *(DMA_MEM_REG_1) = (int)src;
-    *(DMA_BLOCK_REG_1) = start_block;
-    *(DMA_LEN_REG_1) = num_blocks;
-  }
-
-  int rc = sd_send_command(drive, 
-    SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD | SD_DMA_IRQ_ENABLE);
-
-  sd_lock_release(drive);
-
-  return rc;
-}
-
-// thread function for blocking on SD commands. Will be passed to block() in sd_wait_done().
-// Stores the single waiter for each drive in a global slot so the corresponding
-// SD completion interrupt can detach and wake that thread later.
-void sd_block_thread(void* arg){
-  int* args = (int*)arg;
-  enum SdDrive drive = (enum SdDrive)args[0];
-  struct TCB* tcb = (struct TCB*)args[1];
-
-  if (drive == SD_DRIVE_0) {
-    assert(sd_wait_thread_0 == NULL, 
-      "sd_block_thread: sd_wait_thread_0 is not NULL");
-    sd_wait_thread_0 = tcb;
-  } else {
-    assert(sd_wait_thread_1 == NULL, 
-      "sd_block_thread: sd_wait_thread_1 is not NULL");
-    sd_wait_thread_1 = tcb;
-  }
-}
-
-// wait for shared SD status to report completion and surface failures
-// must be called with interrupts disabled, will restore interrupts to "was" before returning
-static int sd_wait_done(enum SdDrive drive, int was){
-  int status;
-  int err;
-
-  if (__atomic_load_n(&bootstrapping)) {
-    // During bootstrapping, we don't have threads or interrupts set up yet, 
-    // so we have to busy wait
-    interrupts_restore(was);
-    do {
-      if (drive == SD_DRIVE_0) {
-        status = *DMA_STATUS_REG_0;
-      } else {
-        status = *DMA_STATUS_REG_1;
-      }
-    } while ((status & SD_DMA_STATUS_DONE) == 0);
-  } else {
-    struct TCB* current_tcb = get_current_tcb();
-    int args[2] = { (int)drive, (int)current_tcb };
-    block(was, sd_block_thread, (void*)(args), false);
-
-    if (drive == SD_DRIVE_0) {
-      status = *DMA_STATUS_REG_0;
-    } else {
-      status = *DMA_STATUS_REG_1;
+  if (error != 0){
+    if (error <= SD_CONTROLLER_ERR_MAX){
+      return 0 - (int)error;
     }
+    return SD_DRIVER_ERR_UNEXPECTED_STATUS;
   }
 
-  assert(was == get_imr(), "imr changed unexpectedly in sd_wait_done\n");
+  if ((status & SD_DMA_STATUS_BUSY) != 0 ||
+      (status & SD_DMA_STATUS_ERR) != 0 ||
+      (status & SD_DMA_STATUS_DONE) == 0){
+    return SD_DRIVER_ERR_UNEXPECTED_STATUS;
+  }
 
-  if (drive == SD_DRIVE_0) {
-    err = *DMA_ERR_REG_0;
-    sd_clear_status(SD_DRIVE_0);
+  return 0;
+}
+
+static void sd_report_request_rejection(char* operation,
+    enum SdDrive drive, int start_block, int num_blocks, void* buffer,
+    char* reason){
+  void* args[6];
+  args[0] = operation;
+  args[1] = (void*)drive;
+  args[2] = (void*)start_block;
+  args[3] = (void*)num_blocks;
+  args[4] = buffer;
+  args[5] = reason;
+  say("sd driver: operation=%s drive=%d block=%d count=%d buffer=0x%X rejected=%s\n",
+    args);
+}
+
+static void sd_report_result(enum SdDrive drive,
+    struct SdDriveContext* context, int result){
+  void* args[11];
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  args[0] = sd_operation_name(context->operation);
+  args[1] = (void*)drive;
+  args[2] = (void*)context->request.generation;
+  args[3] = (void*)context->start_block;
+  args[4] = (void*)context->num_blocks;
+  args[5] = (void*)context->buffer_addr;
+  args[6] = (void*)result;
+  args[7] = (void*)context->last_status;
+  args[8] = (void*)context->last_error;
+  args[9] = (void*)context->request.quarantined;
+  args[10] = (void*)context->command;
+  sd_state_lock_release(&context->state_lock, state_was);
+  say("sd driver: operation=%s drive=%d generation=%u block=%u count=%u buffer=0x%X result=%d status=0x%X error=%u quarantined=%d command=0x%X\n",
+    args);
+}
+
+/* Validate the complete request before acquiring a drive lock or touching MMIO. */
+static int sd_validate_transfer(enum SdDrive drive, int start_block,
+    int num_blocks, void* buffer, char* operation){
+  if (!sd_drive_is_valid(drive)){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "invalid-drive");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+  if (start_block < 0){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "negative-start-block");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+  if (num_blocks <= 0){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "nonpositive-block-count");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+  if (buffer == NULL){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "null-buffer");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+
+  unsigned buffer_addr = (unsigned)buffer;
+  if ((buffer_addr & (SD_DMA_ALIGNMENT_BYTES - 1)) != 0){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "unaligned-buffer");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+
+  unsigned block_count = (unsigned)num_blocks;
+  if (block_count > SD_DMA_RAM_END_EXCLUSIVE / SD_BLOCK_SIZE_BYTES){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "byte-count-overflow");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+
+  unsigned byte_count = block_count * SD_BLOCK_SIZE_BYTES;
+  if (buffer_addr >= SD_DMA_RAM_END_EXCLUSIVE ||
+      byte_count > SD_DMA_RAM_END_EXCLUSIVE - buffer_addr){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "ordinary-ram-range-overflow");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+
+  unsigned first_block = (unsigned)start_block;
+  if (block_count - 1 > UINT_MAX - first_block){
+    sd_report_request_rejection(operation, drive, start_block, num_blocks,
+      buffer, "block-range-overflow");
+    return SD_DRIVER_ERR_INVALID_REQUEST;
+  }
+
+  return 0;
+}
+
+/*
+ * Prepare a command while owning state_lock.
+ *
+ * The command blocking lock is already held, so there is no other legitimate
+ * software writer for this drive. Holding state_lock with interrupts masked
+ * makes waiter preparation, generation publication, DMA parameter stores, and
+ * the CTRL store one indivisible operation with respect to the SD ISR and
+ * watchdog. Sequential consistency orders all DMA parameters before START.
+ */
+static int sd_begin_command_locked(enum SdDrive drive,
+    struct SdDriveContext* context, enum SdOperation operation,
+    unsigned start_block, unsigned num_blocks, unsigned caller_buffer_addr,
+    unsigned dma_buffer_addr,
+    unsigned command, bool use_interrupt, unsigned* generation_out){
+  unsigned status = *sd_status_reg(drive);
+  unsigned error = *sd_error_reg(drive);
+  context->operation = operation;
+  context->start_block = start_block;
+  context->num_blocks = num_blocks;
+  context->buffer_addr = caller_buffer_addr;
+  context->command = command;
+  context->last_status = status;
+  context->last_error = error;
+
+  if (context->request.quarantined){
+    return SD_DRIVER_ERR_QUARANTINED;
+  }
+  if (context->request.active){
+    return 0 - SD_CONTROLLER_ERR_BUSY;
+  }
+  if ((status & SD_DMA_STATUS_BUSY) != 0){
+    return 0 - SD_CONTROLLER_ERR_BUSY;
+  }
+  if ((status & ~SD_DMA_STATUS_KNOWN_MASK) != 0 ||
+      (status & SD_DMA_STATUS_ERR) != 0 || error != 0){
+    int result = sd_result_from_status(status, error);
+    sd_clear_status(drive);
+    return result;
+  }
+  if ((status & SD_DMA_STATUS_DONE) != 0){
+    // A completed, inactive pre-IRQ command has no remaining owner.
+    sd_clear_status(drive);
+  }
+
+  unsigned generation = sd_request_state_begin(&context->request);
+  if (generation == 0){
+    return context->request.quarantined ? SD_DRIVER_ERR_QUARANTINED :
+      0 - SD_CONTROLLER_ERR_BUSY;
+  }
+
+  context->last_status = 0;
+  context->last_error = 0;
+
+  if (use_interrupt){
+    interrupt_waiter_prepare(&context->waiter);
+    unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
+    context->deadline_jiffies = now + SD_RUNTIME_TIMEOUT_JIFFIES;
+    command |= SD_DMA_CTRL_IRQ_ENABLE;
+  }
+  context->command = command;
+
+  if (operation != SD_OPERATION_INIT){
+    *sd_mem_reg(drive) = dma_buffer_addr;
+    *sd_block_reg(drive) = start_block;
+    *sd_len_reg(drive) = num_blocks;
+  }
+  *sd_ctrl_reg(drive) = command;
+
+  *generation_out = generation;
+  return 0;
+}
+
+/*
+ * Early-boot command path. No scheduler or interrupt-driven wakeup may be used.
+ * The bounded poll always terminates in success, controller error, or software
+ * timeout. A timeout quarantines the controller permanently because IRQ_EN was
+ * intentionally clear and no later interrupt can safely retire that command.
+ */
+static int sd_execute_boot_command(enum SdDrive drive,
+    struct SdDriveContext* context, enum SdOperation operation,
+    unsigned start_block, unsigned num_blocks, unsigned caller_buffer_addr,
+    unsigned dma_buffer_addr,
+    unsigned command){
+  unsigned generation = 0;
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  int result = sd_begin_command_locked(drive, context, operation,
+    start_block, num_blocks, caller_buffer_addr, dma_buffer_addr,
+    command & ~SD_DMA_CTRL_IRQ_ENABLE, false, &generation);
+  sd_state_lock_release(&context->state_lock, state_was);
+
+  if (result != 0){
+    return result;
+  }
+
+  unsigned status = 0;
+  unsigned error = 0;
+  unsigned polls = 0;
+  while (polls < SD_BOOT_POLL_OPERATION_LIMIT){
+    status = *sd_status_reg(drive);
+    error = *sd_error_reg(drive);
+    if (sd_status_is_terminal(status, error)){
+      break;
+    }
+    polls++;
+  }
+
+  state_was = sd_state_lock_acquire(&context->state_lock);
+  context->last_status = status;
+  context->last_error = error;
+
+  if (!sd_status_is_terminal(status, error)){
+    result = SD_DRIVER_ERR_TIMEOUT;
+    sd_request_state_finish(&context->request, generation, result, true);
   } else {
-    err = *DMA_ERR_REG_1;
-    sd_clear_status(SD_DRIVE_1);
+    result = sd_result_from_status(status, error);
+    bool still_busy = (status & SD_DMA_STATUS_BUSY) != 0;
+    sd_request_state_finish(&context->request, generation, result, still_busy);
+    sd_clear_status(drive);
+  }
+  sd_state_lock_release(&context->state_lock, state_was);
+  return result;
+}
+
+struct SdBlockArgs {
+  enum SdDrive drive;
+  struct TCB* thread;
+};
+
+/*
+ * Post-context-switch waiter publication callback.
+ *
+ * Preconditions: the outgoing request TCB has been completely saved and is in
+ * no scheduler queue; current-core interrupts are disabled; drive generation
+ * remains protected from a later command by command_lock ownership.
+ *
+ * If ISR/watchdog completion preceded publication, InterruptWaiter returns the
+ * just-published TCB to this callback. Otherwise it leaves the TCB for the
+ * future terminal publisher. Exactly one path detaches and enqueues it.
+ */
+static void sd_block_thread(void* arg){
+  struct SdBlockArgs* args = (struct SdBlockArgs*)arg;
+  struct SdDriveContext* context = &sd_contexts[args->drive];
+  struct TCB* wakeup = interrupt_waiter_publish(&context->waiter,
+    args->thread);
+
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
+}
+
+static int sd_wait_runtime_command(enum SdDrive drive,
+    struct SdDriveContext* context, unsigned generation){
+  unsigned was = interrupts_disable();
+  struct SdBlockArgs args;
+  args.drive = drive;
+  args.thread = get_current_tcb();
+  block(was, sd_block_thread, &args, false);
+
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  int result;
+  if (context->request.generation != generation ||
+      context->request.active){
+    // This is a software state-machine failure, but return an actionable error
+    // rather than converting a device request into a generic kernel panic.
+    result = SD_DRIVER_ERR_UNEXPECTED_STATUS;
+  } else {
+    result = context->request.result;
+  }
+  sd_state_lock_release(&context->state_lock, state_was);
+  return result;
+}
+
+static int sd_execute_runtime_command(enum SdDrive drive,
+    struct SdDriveContext* context, enum SdOperation operation,
+    unsigned start_block, unsigned num_blocks, unsigned caller_buffer_addr,
+    unsigned dma_buffer_addr,
+    unsigned command){
+  unsigned generation = 0;
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  int result = sd_begin_command_locked(drive, context, operation,
+    start_block, num_blocks, caller_buffer_addr, dma_buffer_addr, command, true,
+    &generation);
+  sd_state_lock_release(&context->state_lock, state_was);
+
+  if (result != 0){
+    return result;
+  }
+  return sd_wait_runtime_command(drive, context, generation);
+}
+
+/*
+ * Reserve the drive's permanent bounce page for one command chunk.
+ *
+ * command_lock excludes another thread request. state_lock excludes the ISR
+ * and watchdog while checking that neither an active nor quarantined
+ * generation may still own the bounce page. Once this returns zero, no device
+ * path can create an active generation before this caller reaches
+ * sd_begin_command_locked(), so a write can copy one fixed page with
+ * interrupts enabled and without holding the state lock.
+ */
+static int sd_prepare_bounce_chunk(enum SdDrive drive,
+    struct SdDriveContext* context, enum SdOperation operation,
+    unsigned start_block, unsigned caller_buffer_addr, unsigned num_blocks,
+    unsigned command){
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  bool quarantined = context->request.quarantined;
+  bool active = context->request.active;
+  unsigned status = *sd_status_reg(drive);
+  unsigned error = *sd_error_reg(drive);
+  context->operation = operation;
+  context->start_block = start_block;
+  context->num_blocks = num_blocks;
+  context->buffer_addr = caller_buffer_addr;
+  context->command = command;
+  context->last_status = status;
+  context->last_error = error;
+  sd_state_lock_release(&context->state_lock, state_was);
+
+  if (quarantined){
+    return SD_DRIVER_ERR_QUARANTINED;
+  }
+  if (active || (status & SD_DMA_STATUS_BUSY) != 0){
+    return 0 - SD_CONTROLLER_ERR_BUSY;
   }
 
-  if ((status & SD_DMA_STATUS_ERR) != 0 || err != 0){
-    return -err;
+  assert(num_blocks > 0 && num_blocks <= SD_DMA_BOUNCE_BLOCKS,
+    "sd driver bounce: command chunk is outside the fixed bounce capacity.\n");
+  if (operation == SD_OPERATION_WRITE){
+    memcpy(context->bounce_buffer, (void*)caller_buffer_addr,
+      num_blocks * SD_BLOCK_SIZE_BYTES);
   }
   return 0;
 }
 
-// Sd interrupt handler, called by assembly stub in sd_driver.s
+/* Caller must own context->command_lock for the complete command and wait. */
+static int sd_execute_command(enum SdDrive drive,
+    struct SdDriveContext* context, enum SdOperation operation,
+    unsigned start_block, unsigned num_blocks, unsigned buffer_addr,
+    unsigned command){
+  unsigned dma_buffer_addr = buffer_addr;
+  if (operation != SD_OPERATION_INIT){
+    int prepare_result = sd_prepare_bounce_chunk(drive, context, operation,
+      start_block, buffer_addr, num_blocks, command);
+    if (prepare_result != 0){
+      return prepare_result;
+    }
+    dma_buffer_addr = (unsigned)context->bounce_buffer;
+  }
+
+  int result;
+  if (__atomic_load_n(&bootstrapping)){
+    result = sd_execute_boot_command(drive, context, operation, start_block,
+      num_blocks, buffer_addr, dma_buffer_addr, command);
+  } else {
+    result = sd_execute_runtime_command(drive, context, operation, start_block,
+      num_blocks, buffer_addr, dma_buffer_addr, command);
+  }
+
+  // Expose a read only after successful terminal completion. On timeout/error
+  // caller bytes remain untouched even if quarantined hardware continues to
+  // write the permanent bounce page.
+  if (result == 0 && operation == SD_OPERATION_READ){
+    memcpy((void*)buffer_addr, context->bounce_buffer,
+      num_blocks * SD_BLOCK_SIZE_BYTES);
+  }
+  return result;
+}
+
+/*
+ * Wrapping deadline comparison copied from the sleep-queue contract. Both
+ * operands are within INT_MAX ticks because SD_RUNTIME_TIMEOUT_JIFFIES is
+ * bounded to that horizon. The high bit of the unsigned modular difference
+ * distinguishes a not-yet-reached deadline without implementation-defined
+ * unsigned-to-signed conversion.
+ */
+bool sd_runtime_deadline_reached(unsigned now, unsigned deadline){
+  unsigned delta = now - deadline;
+  return delta == 0 || (delta & (INT_MAX + 1U)) == 0;
+}
+
+/*
+ * Poll one active generation from the persistent watchdog.
+ *
+ * The state lock makes the generation snapshot and terminal transition atomic
+ * with respect to the SD ISR and command admission. If status is already
+ * terminal, the watchdog returns the controller result but quarantines the
+ * drive until the corresponding late IRQ is acknowledged. If status has not
+ * progressed by the deadline, it publishes timeout and applies the same
+ * quarantine. It deliberately leaves DONE/ERR untouched so the device can
+ * still assert the outstanding IRQ.
+ */
+static void sd_watchdog_check(enum SdDrive drive, unsigned now){
+  struct SdDriveContext* context = &sd_contexts[drive];
+  bool publish = false;
+
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  if (context->request.active){
+    unsigned generation = context->request.generation;
+    unsigned status = *sd_status_reg(drive);
+    unsigned error = *sd_error_reg(drive);
+
+    if (sd_status_is_terminal(status, error)){
+      context->last_status = status;
+      context->last_error = error;
+      int result = sd_result_from_status(status, error);
+      publish = sd_request_state_finish(&context->request, generation,
+        result, true);
+    } else if (sd_runtime_deadline_reached(now,
+        context->deadline_jiffies)){
+      context->last_status = status;
+      context->last_error = error;
+      publish = sd_request_state_finish(&context->request, generation,
+        SD_DRIVER_ERR_TIMEOUT, true);
+    }
+  }
+  sd_state_lock_release(&context->state_lock, state_was);
+
+  if (publish){
+    struct TCB* wakeup = interrupt_waiter_signal(&context->waiter);
+    if (wakeup != NULL){
+      scheduler_wake_thread(wakeup);
+    }
+  }
+}
+
+/* One bounded-storage daemon supplies the independent PIT deadline wake path. */
+static void sd_watchdog(void* unused){
+  (void)unused;
+  while (true){
+    sleep(SD_WATCHDOG_POLL_JIFFIES);
+    unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
+    sd_watchdog_check(SD_DRIVE_0, now);
+    sd_watchdog_check(SD_DRIVE_1, now);
+  }
+}
+
+static void sd_context_init(struct SdDriveContext* context){
+  blocking_lock_init(&context->command_lock);
+  __atomic_store_n(&context->state_lock.held, false);
+  interrupt_waiter_init(&context->waiter);
+  sd_request_state_init(&context->request);
+  context->deadline_jiffies = 0;
+  context->operation = SD_OPERATION_INIT;
+  context->start_block = 0;
+  context->num_blocks = 0;
+  context->buffer_addr = 0;
+  context->command = 0;
+  context->last_status = 0;
+  context->last_error = 0;
+  context->bounce_buffer = leak(SD_DMA_BOUNCE_BYTES);
+  assert(context->bounce_buffer != NULL &&
+      ((unsigned)context->bounce_buffer & (SD_DMA_ALIGNMENT_BYTES - 1)) == 0 &&
+      (unsigned)context->bounce_buffer < SD_DMA_RAM_END_EXCLUSIVE &&
+      SD_DMA_BOUNCE_BYTES <= SD_DMA_RAM_END_EXCLUSIVE -
+        (unsigned)context->bounce_buffer,
+    "sd driver init: failed to allocate one aligned ordinary-RAM bounce page.\n");
+}
+
+void sd_init(void){
+  sd_context_init(&sd_contexts[SD_DRIVE_0]);
+  sd_context_init(&sd_contexts[SD_DRIVE_1]);
+
+  for (int i = SD_DRIVE_0; i <= SD_DRIVE_1; i++){
+    enum SdDrive drive = (enum SdDrive)i;
+    struct SdDriveContext* context = &sd_contexts[drive];
+
+    blocking_lock_acquire(&context->command_lock);
+    int result = sd_execute_command(drive, context, SD_OPERATION_INIT,
+      0, 0, 0, SD_DMA_CTRL_SD_INIT);
+    blocking_lock_release(&context->command_lock);
+
+    if (result != 0){
+      sd_report_result(drive, context, result);
+      panic("sd driver init: required controller failed; see drive/status/error diagnostic.\n");
+    }
+  }
+
+  /*
+   * Handlers become reachable only after boot commands have completed without
+   * IRQ_EN. Runtime command state and InterruptWaiter are already initialized.
+   */
+  register_handler(sd0_handler_, (void*)SD_0_IVT_ENTRY);
+  register_handler(sd1_handler_, (void*)SD_1_IVT_ENTRY);
+
+  // The sole watchdog is persistent and uses no per-request allocation.
+  struct Fun* watchdog_fun = leak(sizeof(struct Fun));
+  watchdog_fun->func = sd_watchdog;
+  watchdog_fun->arg = NULL;
+  setup_thread(watchdog_fun, HIGH_PRIORITY, ANY_CORE);
+}
+
+void sd_destroy(void){
+  /*
+   * Preconditions:
+   * - All normal TCBs and all configured cores have entered shutdown.
+   * - The scheduler can no longer run the persistent watchdog.
+   * - No request is active, no waiter is published, and no new caller can
+   *   acquire either command lock.
+   */
+  blocking_lock_destroy(&sd_contexts[SD_DRIVE_0].command_lock);
+  blocking_lock_destroy(&sd_contexts[SD_DRIVE_1].command_lock);
+  interrupt_waiter_init(&sd_contexts[SD_DRIVE_0].waiter);
+  interrupt_waiter_init(&sd_contexts[SD_DRIVE_1].waiter);
+  sd_request_state_init(&sd_contexts[SD_DRIVE_0].request);
+  sd_request_state_init(&sd_contexts[SD_DRIVE_1].request);
+}
+
+static int sd_transfer(enum SdDrive drive, int start_block, int num_blocks,
+    void* buffer, enum SdOperation operation, unsigned command){
+  char* operation_name = sd_operation_name(operation);
+  int result = sd_validate_transfer(drive, start_block, num_blocks, buffer,
+    operation_name);
+  if (result != 0){
+    return result;
+  }
+
+  if (drive == SD_DRIVE_1 && start_block == 0){
+    int args[2] = {(int)drive, start_block};
+    say("| Warning: SD operation drive=%d block=%d accesses filesystem boot sector\n",
+      args);
+  }
+
+  struct SdDriveContext* context = &sd_contexts[drive];
+  blocking_lock_acquire(&context->command_lock);
+  unsigned blocks_done = 0;
+  unsigned total_blocks = (unsigned)num_blocks;
+  while (blocks_done < total_blocks){
+    unsigned chunk_blocks = total_blocks - blocks_done;
+    if (chunk_blocks > SD_DMA_BOUNCE_BLOCKS){
+      chunk_blocks = SD_DMA_BOUNCE_BLOCKS;
+    }
+
+    unsigned chunk_byte_offset = blocks_done * SD_BLOCK_SIZE_BYTES;
+    result = sd_execute_command(drive, context, operation,
+      (unsigned)start_block + blocks_done, chunk_blocks,
+      (unsigned)buffer + chunk_byte_offset, command);
+    if (result != 0){
+      // command_lock keeps this chunk's metadata stable through diagnostic.
+      sd_report_result(drive, context, result);
+      break;
+    }
+    blocks_done += chunk_blocks;
+  }
+  blocking_lock_release(&context->command_lock);
+  return result;
+}
+
+int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks,
+    void* dest){
+  return sd_transfer(drive, start_block, num_blocks, dest,
+    SD_OPERATION_READ, SD_DMA_CTRL_START);
+}
+
+int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks,
+    void* src){
+  return sd_transfer(drive, start_block, num_blocks, src,
+    SD_OPERATION_WRITE, SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD);
+}
+
 void sd_handler(enum SdDrive drive){
-  // clear ISR bit so we don't get duplicate interrupts
+  if (!sd_drive_is_valid(drive)){
+    int arg = (int)drive;
+    say("sd driver: operation=interrupt invalid drive=%d\n", &arg);
+    return;
+  }
+
+  // Acknowledge only this controller before examining its sticky MMIO status.
   if (drive == SD_DRIVE_0){
     mark_sd0_handled();
-
-    assert(sd_wait_thread_0_pending, "got SD0 interrupt but no thread was pending\n");
-    sd_wait_thread_0_pending = false;
   } else {
     mark_sd1_handled();
-
-    assert(sd_wait_thread_1_pending, "got SD1 interrupt but no thread was pending\n");
-    sd_wait_thread_1_pending = false;
   }
 
-  // wake up waiting thread
-  struct TCB* tcb;
-  do {
-    tcb = (drive == SD_DRIVE_0) ? sd_wait_thread_0 : sd_wait_thread_1;
-  } while (tcb == NULL); 
-  // spin until the thread has called block and set the wait_thread variable
-  // I'm willing to spin in the interrupt handler here, because the thread that will set
-  // sd_wait_thread disabled interrupts before sending the SD command, and will not restore them
-  // until after setting sd_wait_thread. Therefore there is a (small) constant number
-  // of instructions that need to be run on another core before we stop spinning.
-  
-  // The deadlock where the thread that was setting sd_wait_thread is the one that got interrupted,
-  // and won't make progress until we return, is avoided because the thread has interrupts disabled
-  // so it can only be interrupted after sd_wait_thread is set
-  
-  // wake up the thread waiting for this interrupt
-  if (drive == SD_DRIVE_0) {
-    sd_wait_thread_0 = NULL;
-    sd_wait_thread_0_pending = false;
+  struct SdDriveContext* context = &sd_contexts[drive];
+  bool publish = false;
+  bool unexpected_interrupt = false;
+  unsigned status;
+  unsigned error;
+  unsigned generation;
+
+  unsigned state_was = sd_state_lock_acquire(&context->state_lock);
+  status = *sd_status_reg(drive);
+  error = *sd_error_reg(drive);
+  generation = context->request.generation;
+
+  if (!context->request.active && context->request.quarantined &&
+      sd_status_is_terminal(status, error)){
+    /*
+     * This IRQ belongs to the timed-out generation. Clear sticky controller
+     * state and quarantine while holding the same lock checked by admission;
+     * only then can a later generation start, so this IRQ cannot satisfy it.
+     */
+    context->last_status = status;
+    context->last_error = error;
+    sd_clear_status(drive);
+    sd_request_state_acknowledge_quarantine(&context->request,
+      context->request.generation);
+  } else if (context->request.active &&
+      sd_status_is_terminal(status, error)){
+    int result = sd_result_from_status(status, error);
+    bool still_busy = (status & SD_DMA_STATUS_BUSY) != 0;
+    context->last_status = status;
+    context->last_error = error;
+    sd_clear_status(drive);
+    publish = sd_request_state_finish(&context->request, generation,
+      result, still_busy);
   } else {
-    sd_wait_thread_1 = NULL;
-    sd_wait_thread_1_pending = false;
+    /*
+     * A nonterminal or ownerless IRQ is acknowledged but never wakes a TCB.
+     * If a command is active, its independent watchdog remains responsible for
+     * eventual completion/timeout. Clear only terminal sticky state.
+     */
+    unexpected_interrupt = true;
+    if (sd_status_is_terminal(status, error)){
+      sd_clear_status(drive);
+    }
   }
+  sd_state_lock_release(&context->state_lock, state_was);
 
-  scheduler_wake_thread_from_interrupt(tcb);
+  if (publish){
+    struct TCB* wakeup = interrupt_waiter_signal(&context->waiter);
+    if (wakeup != NULL){
+      scheduler_wake_thread_from_interrupt(wakeup);
+    }
+  } else if (unexpected_interrupt){
+    void* args[4];
+    args[0] = (void*)drive;
+    args[1] = (void*)generation;
+    args[2] = (void*)status;
+    args[3] = (void*)error;
+    say("sd driver: operation=interrupt drive=%d generation=%u status=0x%X error=%u had no terminal owner\n",
+      args);
+  }
 }

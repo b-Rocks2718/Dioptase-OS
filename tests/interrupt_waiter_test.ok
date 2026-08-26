@@ -1,0 +1,6 @@
+***interrupt waiter test start
+***interrupt waiter signal-before-publish ok
+***interrupt waiter publish-before-signal ok
+***interrupt waiter prepare ok
+***interrupt waiter coalescing ok
+***interrupt waiter test complete

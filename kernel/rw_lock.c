@@ -5,16 +5,18 @@
 #include "debug.h"
 #include "heap.h"
 #include "scheduler.h"
+#include "print.h"
 
 // Reader-writer lock implementation (write-preferring).
 // Waiting readers and writers are queued; writers are granted priority when present.
 
 void rw_lock_init(struct RwLock* rwlock){
-  spin_lock_init(&rwlock->lock);
+  clh_lock_init(&rwlock->lock);
   queue_init(&rwlock->waiting_readers);
   queue_init(&rwlock->waiting_writers);
   rwlock->readers = 0;
   rwlock->writer_active = false;
+  __atomic_store_n(&rwlock->active_operations, 0);
 }
 
 // block() callback for readers: either claim a read slot or enqueue
@@ -23,29 +25,39 @@ static void rw_add_reader(void* arg){
   struct RwLock* rwlock = (struct RwLock*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_acquire(&rwlock->lock);
+  clh_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     rwlock->readers++;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
     scheduler_wake_thread(tcb);
   } else {
     queue_add(&rwlock->waiting_readers, tcb);
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
   }
 }
 
 void rw_lock_acquire_read(struct RwLock* rwlock){
-  spin_lock_acquire(&rwlock->lock);
+  assert(rwlock != NULL, "rw_lock_acquire_read: lock is NULL.\n");
+
+  /*
+   * Begin the operation before touching the CLH tail. This count remains live
+   * across block(), covering both queued readers and the pre-enqueue context-
+   * switch interval. The owner must keep rwlock allocated until this call
+   * returns and must prevent new calls before destruction.
+   */
+  __atomic_fetch_add(&rwlock->active_operations, 1);
+  clh_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     // No active writer and no waiting writers, can acquire read lock
     rwlock->readers++;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
+    __atomic_fetch_add(&rwlock->active_operations, -1);
     return;
   }
 
-  spin_lock_release(&rwlock->lock);
+  clh_lock_release(&rwlock->lock);
 
   int was = interrupts_disable();
 
@@ -53,12 +65,15 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
 
   int* args[2] = { (int*)rwlock, (int*)current_tcb };
   block(was, (void (*)(void *))rw_add_reader, (void*)(args), true);
+  __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
 void rw_lock_release_read(struct RwLock* rwlock){
-  spin_lock_acquire(&rwlock->lock);
+  assert(rwlock != NULL, "rw_lock_release_read: lock is NULL.\n");
+  __atomic_fetch_add(&rwlock->active_operations, 1);
+  clh_lock_acquire(&rwlock->lock);
 
-  assert(rwlock->readers > 0, "rw_lock_release_read: no active readers\n");
+  assert_always(rwlock->readers > 0, "rw_lock_release_read: no active readers\n");
 
   rwlock->readers--;
 
@@ -67,11 +82,15 @@ void rw_lock_release_read(struct RwLock* rwlock){
     // Wake up one waiting writer
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
     scheduler_wake_thread(writer);
   } else {
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
   }
+
+  // Include ready-queue publication in the operation lifetime so destruction
+  // cannot race a detached writer between this lock and the scheduler.
+  __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
 // block() callback for writers: either claim write ownership or enqueue
@@ -80,32 +99,35 @@ static void rw_add_writer(void* arg){
   struct RwLock* rwlock = (struct RwLock*)args[0];
   struct TCB* tcb = (struct TCB*)args[1];
 
-  spin_lock_acquire(&rwlock->lock);
+  clh_lock_acquire(&rwlock->lock);
 
   // check if nobody else has the lock
   if (!rwlock->writer_active && rwlock->readers == 0){
     // take the lock
     rwlock->writer_active = true;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
     scheduler_wake_thread(tcb);
   } else {
     // wait in the writers queue
     queue_add(&rwlock->waiting_writers, tcb);
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
   }
 }
 
 void rw_lock_acquire_write(struct RwLock* rwlock){
-  spin_lock_acquire(&rwlock->lock);
+  assert(rwlock != NULL, "rw_lock_acquire_write: lock is NULL.\n");
+  __atomic_fetch_add(&rwlock->active_operations, 1);
+  clh_lock_acquire(&rwlock->lock);
 
   if (!rwlock->writer_active && rwlock->readers == 0){
     // No active writer and no active readers, can acquire write lock
     rwlock->writer_active = true;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
+    __atomic_fetch_add(&rwlock->active_operations, -1);
     return;
   }
 
-  spin_lock_release(&rwlock->lock);
+  clh_lock_release(&rwlock->lock);
 
   int was = interrupts_disable();
 
@@ -113,12 +135,15 @@ void rw_lock_acquire_write(struct RwLock* rwlock){
 
   int* args[2] = { (int*)rwlock, (int*)current_tcb };
   block(was, (void (*)(void *))rw_add_writer, (void*)(args), true);
+  __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
 void rw_lock_release_write(struct RwLock* rwlock){
-  spin_lock_acquire(&rwlock->lock);
+  assert(rwlock != NULL, "rw_lock_release_write: lock is NULL.\n");
+  __atomic_fetch_add(&rwlock->active_operations, 1);
+  clh_lock_acquire(&rwlock->lock);
 
-  assert(rwlock->writer_active, "rw_lock_release_write: no active writer\n");
+  assert_always(rwlock->writer_active, "rw_lock_release_write: no active writer\n");
 
   rwlock->writer_active = false;
 
@@ -126,7 +151,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     // Wake up one waiting writer
     struct TCB* writer = queue_remove(&rwlock->waiting_writers);
     rwlock->writer_active = true;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
     scheduler_wake_thread(writer);
   } else {
     // Wake up all waiting readers.
@@ -134,7 +159,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
     unsigned wake_count = rwlock->waiting_readers.size;
     struct TCB* readers = queue_remove_all(&rwlock->waiting_readers);
     rwlock->readers += wake_count;
-    spin_lock_release(&rwlock->lock);
+    clh_lock_release(&rwlock->lock);
 
     while (readers != NULL){
       struct TCB* next = readers->next;
@@ -143,32 +168,37 @@ void rw_lock_release_write(struct RwLock* rwlock){
       readers = next;
     }
   }
+
+  // No detached reader/writer remains in transit once this reaches zero.
+  __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
 void rw_lock_destroy(struct RwLock* rwlock) {
-  spin_lock_acquire(&rwlock->lock);
+  assert(rwlock != NULL, "rw_lock_destroy: lock is NULL.\n");
+  clh_lock_acquire(&rwlock->lock);
 
-  // Reap all waiting readers
-  struct TCB* readers = queue_remove_all(&rwlock->waiting_readers);
+  int active = __atomic_load_n(&rwlock->active_operations);
+  int readers = rwlock->readers;
+  int writers = rwlock->writer_active ? 1 : 0;
+  int waiting_readers = rwlock->waiting_readers.size;
+  int waiting_writers = rwlock->waiting_writers.size;
+  bool quiescent = active == 0 && readers == 0 && writers == 0 &&
+    waiting_readers == 0 && waiting_writers == 0;
+  clh_lock_release(&rwlock->lock);
 
-  // Reap all waiting writers
-  struct TCB* writers = queue_remove_all(&rwlock->waiting_writers);
-  
-  spin_lock_release(&rwlock->lock);
-
-  while (readers != NULL) {
-    struct TCB* next = readers->next;
-    readers->next = NULL;
-    spin_queue_add(&reaper_queue, readers);
-    readers = next;
+  if (!quiescent) {
+    int args[6] = {
+      (int)rwlock, active, readers, writers, waiting_readers, waiting_writers
+    };
+    say("| rw_lock destroy rejected lock=0x%X active=%d readers=%d writer=%d waiting_readers=%d waiting_writers=%d\n",
+      args);
+    panic("rw_lock_destroy: owner must stop new operations, release holders, and wake/join waiters before destruction.\n");
   }
 
-  while (writers != NULL) {
-    struct TCB* next = writers->next;
-    writers->next = NULL;
-    spin_queue_add(&reaper_queue, writers);
-    writers = next;
-  }
+  // active_operations starts before every public operation's CLH exchange.
+  // With a zero snapshot and the external no-new-operation guarantee, no TCB
+  // can own or wait behind the tail node that clh_lock_destroy() now frees.
+  clh_lock_destroy(&rwlock->lock);
 }
 
 void rw_lock_free(struct RwLock* rwlock){

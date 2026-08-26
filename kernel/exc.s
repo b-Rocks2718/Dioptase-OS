@@ -34,11 +34,14 @@ invalid_instr_exc_handler_:
   push bp
   push ra
 
+  # pass in epc in r2
+  mov  r2, epc
+
   # re-enable interrupts
   movi r1, 0x80000000
-  mov  r2, imr
-  or   r2, r1, r2
-  mov  imr, r2
+  mov  r3, imr
+  or   r3, r1, r3
+  mov  imr, r3
 
   # allocate space for return_to_user argument
   push r0
@@ -48,6 +51,10 @@ invalid_instr_exc_handler_:
   pop  r2
   cmp  r2, r0
   bz   return_to_kernel
+
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -118,11 +125,16 @@ priv_exc_handler_:
   push bp
   push ra
 
+  # Snapshot the faulting user EPC as C argument 2 before interrupts are
+  # re-enabled. A nested interrupt may temporarily replace the EPC register,
+  # but cannot change this saved argument or the exception frame below it.
+  mov  r2, epc
+
   # re-enable interrupts
   movi r1, 0x80000000
-  mov  r2, imr
-  or   r2, r1, r2
-  mov  imr, r2
+  mov  r3, imr
+  or   r3, r1, r3
+  mov  imr, r3
 
   # allocate space for return_to_user argument
   push r0
@@ -132,6 +144,10 @@ priv_exc_handler_:
   pop  r2
   cmp  r2, r0
   bz   return_to_kernel
+
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
 
   # disable interrupts
   movi r1, 0x7FFFFFFF
@@ -202,11 +218,14 @@ misaligned_pc_exc_handler_:
   push bp
   push ra
 
+  # pass in epc in r2
+  mov  r2, epc
+
   # re-enable interrupts
   movi r1, 0x80000000
-  mov  r2, imr
-  or   r2, r1, r2
-  mov  imr, r2
+  mov  r3, imr
+  or   r3, r1, r3
+  mov  imr, r3
 
   # allocate space for return_to_user argument
   push r0
@@ -216,6 +235,10 @@ misaligned_pc_exc_handler_:
   pop  r2
   cmp  r2, r0
   bz   return_to_kernel
+
+  # The synchronous exception action has completed and the saved user frame is
+  # still intact. Process at most one asynchronous signal before the final rfe.
+  call process_pending_signals_before_user_return
 
   # disable interrupts
   movi r1, 0x7FFFFFFF

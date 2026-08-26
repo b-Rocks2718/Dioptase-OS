@@ -7,6 +7,7 @@
  *   missing paths correctly
  * - read helpers honor EOF and preserve cross-block marker positions
  * - concurrent readers can share inode-cache and block-cache state safely
+ * - concurrent wrapper clone/release churn preserves cached-inode lifetime
  *
  * How:
  * - open the root fixtures from tests/ext_read.dir and validate their metadata,
@@ -14,8 +15,9 @@
  * - locate the marker inside blocks.txt and re-read both the direct block and a
  *   smaller marker window to prove offset handling stays correct
  * - exercise EOF-clamped reads and missing lookups
- * - launch a short concurrent phase where several readers hit hello.txt and
- *   blocks.txt together through the shared caches
+ * - launch a short concurrent phase where several readers hold clones of one
+ *   stable hello.txt anchor together, release them together, and also read
+ *   blocks.txt through the shared caches
  */
 #include "../kernel/print.h"
 #include "../kernel/heap.h"
@@ -30,6 +32,7 @@
 #define EXT2_BLOCK_SIZE_4K 4096
 #define CONCURRENT_READERS 8
 #define CONCURRENT_ROUNDS 3
+#define HELLO_ANCHOR_BASELINE_REFCOUNT 1
 #define MARKER_WINDOW_LEAD_BYTES 32
 #define MARKER_WINDOW_MAX_BYTES 320
 #define BLOCKS_MARKER "BLOCK1-MARKER\n"
@@ -37,9 +40,13 @@
 
 struct ConcurrentReadArgs {
   unsigned block_size;
+  // The main test thread owns this wrapper until every worker has exited.
+  // Workers may clone it but must never release the anchor reference itself.
+  struct Node* hello_anchor;
 };
 
 static struct Barrier concurrent_start_barrier;
+static struct Barrier concurrent_clone_barrier;
 static int concurrent_finished = 0;
 static int concurrent_hello_reads = 0;
 static int concurrent_block_reads = 0;
@@ -248,8 +255,10 @@ static void check_nested_entries(struct Node* root, unsigned hello_inumber) {
   assert(node_is_symlink(nested_link),
     "ext_read: nested.link should decode as a symbolic link.\n");
 
-  char* nested_target = malloc(node_size_in_bytes(nested_link) + 1);
-  node_get_symlink_target(nested_link, nested_target);
+  unsigned nested_target_size = 0;
+  char* nested_target = node_copy_symlink_target(nested_link, &nested_target_size);
+  assert(nested_target_size == strlen("nested"),
+    "ext_read: nested.link target snapshot reported the wrong size.\n");
   assert(streq(nested_target, "nested"),
     "ext_read: nested.link should point at the nested directory.\n");
 
@@ -385,14 +394,22 @@ static void check_missing_path(struct Node* root) {
   say("***Missing path: ok\n", NULL);
 }
 
-// Reads the small hello.txt fixture from a fresh lookup. All workers run this
-// against the shared filesystem at the same time after the start barrier, so it
-// exercises concurrent cache hits on the same hot file path.
-static void check_concurrent_hello_once(unsigned block_size) {
-  struct Node* hello = node_find(&fs.root, "hello.txt");
-  assert(hello != NULL, "ext_read: concurrent hello.txt lookup failed.\n");
+// Clones the main thread's stable hello.txt anchor. The first barrier proves
+// every worker owns a clone before any worker may release one; after reading,
+// the second barrier proves every release completed before the next round can
+// increment the count. The reusable barrier is worker-only and is therefore
+// entered by the same fixed set of threads on every generation.
+static void check_concurrent_hello_once(struct Node* hello_anchor,
+  unsigned block_size) {
+  struct Node* hello = node_clone(hello_anchor);
+  assert(hello != NULL,
+    "ext_read: concurrent hello.txt wrapper clone failed.\n");
+  assert(hello->cached == hello_anchor->cached,
+    "ext_read: concurrent clone should retain the anchor's cached inode.\n");
   assert(node_is_file(hello),
-    "ext_read: concurrent hello.txt lookup did not return a regular file.\n");
+    "ext_read: concurrent hello.txt clone did not retain regular-file metadata.\n");
+
+  barrier_sync(&concurrent_clone_barrier);
 
   char* hello_block = malloc(block_size + 1);
   node_read_block(hello, 0, hello_block);
@@ -402,6 +419,8 @@ static void check_concurrent_hello_once(unsigned block_size) {
 
   free(hello_block);
   node_free(hello);
+
+  barrier_sync(&concurrent_clone_barrier);
 }
 
 // Reads a small marker window from blocks.txt. For the 1024-byte image this
@@ -444,7 +463,8 @@ static void concurrent_reader_thread(void* arg) {
   barrier_sync(&concurrent_start_barrier);
 
   for (unsigned round = 0; round < CONCURRENT_ROUNDS; ++round) {
-    check_concurrent_hello_once(read_args->block_size);
+    check_concurrent_hello_once(read_args->hello_anchor,
+      read_args->block_size);
     __atomic_fetch_add(&concurrent_hello_reads, 1);
 
     check_concurrent_blocks_once(read_args->block_size);
@@ -461,6 +481,21 @@ static void concurrent_reader_thread(void* arg) {
 static void check_concurrent_reads(unsigned block_size) {
   int expected = CONCURRENT_READERS * CONCURRENT_ROUNDS;
 
+  // Keep one wrapper alive for the full worker lifetime. Because the earlier
+  // sequential checks release all hello.txt wrappers, this anchor is the sole
+  // baseline reference. It prevents cache eviction while workers contend on
+  // clone increments and releases.
+  struct Node* hello_anchor = node_find(&fs.root, "hello.txt");
+  assert(hello_anchor != NULL,
+    "ext_read: failed to create stable hello.txt clone anchor.\n");
+  assert(node_is_file(hello_anchor),
+    "ext_read: stable hello.txt clone anchor should be a regular file.\n");
+
+  blocking_lock_acquire(&fs.icache.lock);
+  assert(hello_anchor->cached->refcount == HELLO_ANCHOR_BASELINE_REFCOUNT,
+    "ext_read: stable hello.txt anchor should be the sole initial inode reference.\n");
+  blocking_lock_release(&fs.icache.lock);
+
   concurrent_finished = 0;
   concurrent_hello_reads = 0;
   concurrent_block_reads = 0;
@@ -469,11 +504,13 @@ static void check_concurrent_reads(unsigned block_size) {
   say("***Concurrent reads start: threads=%d rounds=%d ops=%d\n", args);
 
   barrier_init(&concurrent_start_barrier, CONCURRENT_READERS + 1);
+  barrier_init(&concurrent_clone_barrier, CONCURRENT_READERS);
 
   for (unsigned i = 0; i < CONCURRENT_READERS; ++i) {
     struct ConcurrentReadArgs* args = malloc(sizeof(struct ConcurrentReadArgs));
     assert(args != NULL, "ext_read: concurrent reader args allocation failed.\n");
     args->block_size = block_size;
+    args->hello_anchor = hello_anchor;
 
     struct Fun* fun = malloc(sizeof(struct Fun));
     assert(fun != NULL, "ext_read: concurrent reader Fun allocation failed.\n");
@@ -492,6 +529,17 @@ static void check_concurrent_reads(unsigned block_size) {
     yield();
   }
 
+  // Every worker has crossed the post-release barrier in its final round and
+  // then reported completion. Inspect the count while holding the lock that
+  // protects every icache reference transition. No worker may touch the anchor
+  // after this point, so the exact one-reference baseline must be restored.
+  blocking_lock_acquire(&fs.icache.lock);
+  assert(hello_anchor->cached->refcount == HELLO_ANCHOR_BASELINE_REFCOUNT,
+    "ext_read: concurrent clone releases did not restore the anchor inode refcount.\n");
+  blocking_lock_release(&fs.icache.lock);
+
+  node_free(hello_anchor);
+  barrier_destroy(&concurrent_clone_barrier);
   barrier_destroy(&concurrent_start_barrier);
 
   assert(__atomic_load_n(&concurrent_hello_reads) == expected,

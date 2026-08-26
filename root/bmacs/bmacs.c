@@ -25,6 +25,8 @@
 #define BMACS_BORDER_COLOR 0x92
 #define BMACS_TEXT_COLOR 0xFF
 #define BMACS_CURSOR_COLOR 0xFF
+#define ASCII_ETX 0x03
+#define ASCII_DC3 0x13
 
 struct TextBuffer {
   char* bytes;
@@ -57,6 +59,24 @@ static void init_text_buffer(struct TextBuffer* buffer){
   buffer->bytes = NULL;
   buffer->length = 0;
   buffer->capacity = 0;
+}
+
+static int read_input_event(void){
+  int available = fd_bytes_available(STDIN);
+
+  if (available > 0){
+    unsigned char byte;
+    if (read(STDIN, &byte, 1) == 1){
+      return byte;
+    }
+    return 0;
+  }
+
+  if (available < 0){
+    return getkey();
+  }
+
+  return 0;
 }
 
 static void init_editor_state(struct EditorState* editor){
@@ -133,10 +153,6 @@ static void set_default_status(struct EditorState* editor){
 
 static void hide_terminal_cursor(void){
   puts("\x1b[?25l");
-}
-
-static void show_terminal_cursor(void){
-  puts("\x1b[?25h");
 }
 
 static short make_tile_entry(unsigned tile_index, unsigned color){
@@ -364,6 +380,8 @@ static bool write_all_file_bytes(int fd, char* bytes, unsigned length){
 }
 
 static bool save_text_buffer_to_file(struct TextBuffer* buffer, char* filename){
+  // Saving is an intentional publication point: retain creating open() so a
+  // file removed after load can be recreated before its new contents commit.
   int fd = open(filename);
   bool ok = true;
 
@@ -718,7 +736,10 @@ int main(int argc, char** argv){
   }
 
   char* filename = argv[1];
-  int fd = open(filename);
+  // Loading must not create an empty entry merely because the requested
+  // document is missing. The current ABI has no errno/stat distinction, so
+  // every lookup failure remains an explicit editor error below.
+  int fd = open_existing(filename);
   if (fd < 0){
     print_bmacs_file_error("failed to open file", filename);
     return 1;
@@ -737,7 +758,6 @@ int main(int argc, char** argv){
 
   hide_terminal_cursor();
   if (!init_editor_display()){
-    show_terminal_cursor();
     free_editor_state(&editor);
     return 1;
   }
@@ -748,8 +768,8 @@ int main(int argc, char** argv){
       needs_redraw = false;
     }
 
-    short c;
-    while ((c = getkey()) != 0){
+    int c;
+    while ((c = read_input_event()) != 0){
       if (c & 0xFF00) {
         c = c & 0xFF;
         if (c == KEY_LEFT_ALT || c == KEY_RIGHT_ALT) alt_held = false;
@@ -781,6 +801,16 @@ int main(int argc, char** argv){
       } else if (c == KEY_DOWN) {
         move_cursor_down(&editor);
         needs_redraw = true;
+      } else if (c == ASCII_DC3) {
+        if (save_text_buffer_to_file(&editor.text, filename)){
+          set_status_message(&editor, "Saved ", filename);
+        } else {
+          set_status_message(&editor, "Save failed ", filename);
+        }
+        needs_redraw = true;
+      } else if (c == ASCII_ETX) {
+        running = false;
+        break;
       } else if (isprint(c) || isspace(c)){
         if (ctrl_held){
           if (c == 's' || c == 'S'){
@@ -823,14 +853,7 @@ int main(int argc, char** argv){
     sleep(1);
   }
 
-  show_terminal_cursor();
   free_editor_state(&editor);
-
-  // clear the screen
-  puts("\x1b[2J");
-
-  // home cursor
-  puts("\x1b[H");
 
   return 0;
 }

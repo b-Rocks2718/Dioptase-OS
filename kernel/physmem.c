@@ -20,6 +20,8 @@ static int order_allocs[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_frees[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 static int order_leaks[PHYS_FRAME_MAX_ORDER_PLUS_ONE];
 
+static bool physmem_sync_initialized = false;
+
 // sanity check that something could be a frame address
 static bool physmem_is_frame_address(unsigned phys_addr) {
   if (phys_addr < FRAMES_ADDR_START || phys_addr >= FRAMES_ADDR_END) {
@@ -29,12 +31,12 @@ static bool physmem_is_frame_address(unsigned phys_addr) {
 }
 
 unsigned frame_index_from_address(unsigned phys_addr) {
-  assert(physmem_is_frame_address(phys_addr), "physmem: invalid frame address.\n");
+  assert_always(physmem_is_frame_address(phys_addr), "physmem: invalid frame address.\n");
   return (phys_addr - FRAMES_ADDR_START) / FRAME_SIZE;
 }
 
 unsigned address_from_frame_index(unsigned frame_index) {
-  assert(frame_index < PHYS_FRAME_COUNT, "physmem: invalid frame index.\n");
+  assert_always(frame_index < PHYS_FRAME_COUNT, "physmem: invalid frame index.\n");
   return FRAMES_ADDR_START + frame_index * FRAME_SIZE;
 }
 
@@ -122,12 +124,11 @@ static struct FreePageNode* free_list_remove(struct FreePageNode* node) {
 
 // add all frames to free lists, coalescing into larger blocks as much as possible
 void physmem_init(void){
-  assert((FRAMES_ADDR_END - FRAMES_ADDR_START) / FRAME_SIZE == PHYS_FRAME_COUNT, 
+  assert_always((FRAMES_ADDR_END - FRAMES_ADDR_START) / FRAME_SIZE == PHYS_FRAME_COUNT, 
   "physmem init: frame count does not match address range.\n");
-  assert((PHYS_FRAME_COUNT + 7) / 8 == FREE_PAGE_BITMAP_SIZE, 
+  assert_always((PHYS_FRAME_COUNT + 7) / 8 == FREE_PAGE_BITMAP_SIZE, 
     "physmem init: free page bitmap size is incorrect.\n");
 
-  blocking_lock_init(&physmem_lock);
   for (int i = 0; i < PHYS_FRAME_MAX_ORDER_PLUS_ONE; i++) {
     free_page_list[i] = NULL;
   }
@@ -157,7 +158,6 @@ void physmem_init(void){
 
   // init per core caches
   for (int i = 0; i < MAX_CORES; i++) {
-    blocking_lock_init(&per_core_data[i].physmem_cache.lock);
     per_core_data[i].physmem_cache.count = 0;
     for (int j = 0; j < LOCAL_CACHE_SIZE; j++) {
       per_core_data[i].physmem_cache.pages[j] = NULL;
@@ -165,12 +165,41 @@ void physmem_init(void){
   }
 }
 
+void physmem_sync_init(void){
+  blocking_lock_init(&physmem_lock);
+  for (int i = 0; i < MAX_CORES; i++) {
+    blocking_lock_init(&per_core_data[i].physmem_cache.lock);
+  }
+  physmem_sync_initialized = true;
+}
+
+// to be called only from kernel_shutdown
+void physmem_destroy_locks(void){
+  bool locks_initialized = physmem_sync_initialized;
+
+  // kernel_shutdown() has already stopped concurrent physmem users. Turn off
+  // locking before freeing the CLH tail nodes backing these locks because those
+  // frees go through the heap, and heap_destroy() will still need to return
+  // pages to physmem after this point.
+  physmem_sync_initialized = false;
+
+  if (!locks_initialized) {
+    return;
+  }
+
+  blocking_lock_destroy(&physmem_lock);
+  for (int i = 0; i < MAX_CORES; i++) {
+    blocking_lock_destroy(&per_core_data[i].physmem_cache.lock);
+  }
+}
+
 // allocate a physical page of given order
-// Panics if no free frames remain
+// Returns NULL if no free frames remain; callers at public boundaries must
+// translate that into a normal failure rather than treating it as corruption.
 void* physmem_alloc_order(int order){
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem alloc: invalid order.\n");
 
-  blocking_lock_acquire(&physmem_lock);
+  if (physmem_sync_initialized) blocking_lock_acquire(&physmem_lock);
 
   __atomic_fetch_add(&order_allocs[order], 1);
 
@@ -178,8 +207,10 @@ void* physmem_alloc_order(int order){
   int current_order = order;
   while (free_page_list[current_order] == NULL) {
     if (current_order >= PHYS_FRAME_MAX_ORDER) {
-      blocking_lock_release(&physmem_lock);
-      panic("physmem alloc: out of physical pages.\n");
+      if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
+      int args[1] = {order};
+      say("| physmem: alloc_order failed order=%d reason=out_of_physical_pages\n",
+        args);
       return NULL;
     }
     current_order++;
@@ -197,9 +228,9 @@ void* physmem_alloc_order(int order){
     free_list_push(buddy, current_order);
   }
 
-  blocking_lock_release(&physmem_lock);
+  if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
 
-  assert(
+  assert_always(
     physmem_is_frame_address((unsigned)node),
     "physmem alloc: free list returned an invalid frame address.\n"
   );
@@ -209,6 +240,8 @@ void* physmem_alloc_order(int order){
 
 void* physmem_leak_order(int order){
   void* page = physmem_alloc_order(order);
+  assert_always(page != NULL,
+    "physmem leak_order: boot-critical allocation exhausted physical memory.\n");
   __atomic_fetch_add(&order_leaks[order], 1);
   return page;
 }
@@ -216,8 +249,8 @@ void* physmem_leak_order(int order){
 // free a physical page of given order
 void physmem_free_order(void* page, int order){
   unsigned phys_addr = (unsigned)page;
-  assert(page != NULL, "physmem free: page is NULL.\n");
-  assert(
+  assert_always(page != NULL, "physmem free: page is NULL.\n");
+  assert_always(
     physmem_is_frame_address(phys_addr),
     "physmem free: page is not a valid allocatable frame.\n"
   );
@@ -226,7 +259,7 @@ void physmem_free_order(void* page, int order){
   assert((frame_index_from_address(phys_addr) & ((1u << order) - 1)) == 0, 
     "physmem free: page address is not aligned to its size.\n");
 
-  blocking_lock_acquire(&physmem_lock);
+  if (physmem_sync_initialized) blocking_lock_acquire(&physmem_lock);
 
   __atomic_fetch_add(&order_frees[order], 1);
 
@@ -264,7 +297,7 @@ void physmem_free_order(void* page, int order){
   unsigned block_addr = address_from_frame_index(block_index);
   free_list_push((struct FreePageNode*)block_addr, order);
 
-  blocking_lock_release(&physmem_lock);
+  if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
 }
 
 // allocate a physical page from core-local cache
@@ -273,58 +306,80 @@ void* physmem_alloc(void){
   struct PerCore* per_core = get_per_core();
 
   // protect against re-entrance, needed because physmem_alloc_order can block
-  blocking_lock_acquire(&per_core->physmem_cache.lock);
+  if (physmem_sync_initialized) blocking_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_alloced, 1);
 
   // refill cache if necessary, then pop and return a page
   if (per_core->physmem_cache.count == 0) {
-    // refill cache
-    for (int i = 0; i < LOCAL_CACHE_SIZE; i++) {
-      per_core->physmem_cache.pages[i] = physmem_alloc_order(0);
+    // Refill as many order-0 pages as remain. A partial refill is success; an
+    // empty refill is ordinary exhaustion for this core.
+    int filled = 0;
+    for (int i = 0; i < LOCAL_CACHE_REFILL; i++) {
+      void* page = physmem_alloc_order(0);
+      if (page == NULL){
+        break;
+      }
+      per_core->physmem_cache.pages[i] = page;
+      filled++;
     }
-    per_core->physmem_cache.count = LOCAL_CACHE_SIZE;
+    per_core->physmem_cache.count = (unsigned)filled;
+    if (filled == 0){
+      if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+      core_unpin(prev);
+      return NULL;
+    }
   }
 
   // pop from local cache
   per_core->physmem_cache.count--;
   void* page = per_core->physmem_cache.pages[per_core->physmem_cache.count];
 
-  blocking_lock_release(&per_core->physmem_cache.lock);
+  if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
 
   core_unpin(prev);
 
   return page;
 }
 
-void* physmem_leak(void* page){
+void* physmem_leak(void){
+  void* page = physmem_alloc();
+  assert_always(page != NULL,
+    "physmem leak: boot-critical allocation exhausted physical memory.\n");
   __atomic_fetch_add(&frames_leaked, 1);
-  return physmem_alloc();
+  return page;
 }
 
 // free a physical page
 void physmem_free(void* page){
+  unsigned phys_addr = (unsigned)page;
+  assert_always(page != NULL, "physmem free: page is NULL.\n");
+  assert_always(
+    physmem_is_frame_address(phys_addr),
+    "physmem free: page is not a valid order-0 allocatable frame.\n"
+  );
+
   enum CoreAffinity prev = core_pin();
   struct PerCore* per_core = get_per_core();
 
   // protect against re-entrance
-  blocking_lock_acquire(&per_core->physmem_cache.lock);
+  if (physmem_sync_initialized) blocking_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_freed, 1);
-  
-  // push to local cache if there is room, otherwise free to global pool
-  if (per_core->physmem_cache.count < LOCAL_CACHE_SIZE) {
-    per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
-    per_core->physmem_cache.count++;
 
-    blocking_lock_release(&per_core->physmem_cache.lock);
-    core_unpin(prev);
-  } else {
-    blocking_lock_release(&per_core->physmem_cache.lock);
-    core_unpin(prev);
-
-    physmem_free_order(page, 0);
+  // empty cache if full, then free to cache
+  if (per_core->physmem_cache.count == LOCAL_CACHE_SIZE) {
+    while (per_core->physmem_cache.count >= LOCAL_CACHE_REFILL){
+      physmem_free_order(per_core->physmem_cache.pages[per_core->physmem_cache.count - 1], 0);
+      per_core->physmem_cache.count--;
+    }
   }
+
+  per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
+  per_core->physmem_cache.count++;
+
+  if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+  core_unpin(prev);
 }
 
 void physmem_check_leaks(void){

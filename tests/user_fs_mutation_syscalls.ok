@@ -1,48 +1,52 @@
 ***mkdir bad path pointer
-***test_syscall arg = -1
+***PASS mkdir(BAD_LOW_PTR): got -1 expected -1
 ***rmdir bad path pointer
-***test_syscall arg = -1
+***PASS rmdir(BAD_LOW_PTR): got -1 expected -1
 ***unlink bad path pointer
-***test_syscall arg = -1
+***PASS unlink(BAD_LOW_PTR): got -1 expected -1
 ***slash path rejection
-***test_syscall arg = -1
-***test_syscall arg = -1
-***test_syscall arg = -1
+***PASS mkdir("a/b"): got -1 expected -1
+***PASS rmdir("a/b"): got -1 expected -1
+***PASS unlink("a/b"): got -1 expected -1
+***mkdir basename length boundary
+***PASS mkdir accepts 255-byte basename: got 0 expected 0
+***PASS rmdir removes 255-byte basename: got 0 expected 0
+***PASS mkdir rejects 256-byte basename: got -1 expected -1
 ***mkdir create and traverse
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS mkdir(MADE_DIR): got 0 expected 0
+***PASS chdir(MADE_DIR): got 0 expected 0
+***PASS chdir(".."): got 0 expected 0
 ***mkdir duplicate
-***test_syscall arg = -1
+***PASS mkdir(MADE_DIR): got -1 expected -1
 ***unlink regular file
-***test_syscall arg = 0
-***test_syscall arg = 1
-***test_syscall arg = 86
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS write_one_byte_file(VICTIM_FILE, VICTIM_BYTE): got 0 expected 0
+***PASS read_one_byte_file(VICTIM_FILE, &byte): got 1 expected 1
+***PASS victim file byte before unlink: got 86 expected 86
+***PASS unlink(VICTIM_FILE): got 0 expected 0
+***PASS read_one_byte_file(VICTIM_FILE, &byte): got 0 expected 0
+***PASS unlink(VICTIM_FILE): got 0 expected 0
 ***unlink rejects directory
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS mkdir(UNLINK_DIR): got 0 expected 0
+***PASS unlink(UNLINK_DIR): got -1 expected -1
+***PASS chdir(UNLINK_DIR): got 0 expected 0
+***PASS chdir(".."): got 0 expected 0
+***PASS rmdir(UNLINK_DIR): got 0 expected 0
 ***rmdir rejects file
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 0
+***PASS write_one_byte_file(FILE_TARGET, FILE_TARGET_BYTE): got 0 expected 0
+***PASS rmdir(FILE_TARGET): got -1 expected -1
+***PASS unlink(FILE_TARGET): got 0 expected 0
 ***rmdir rejects non-empty directory
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS mkdir(NONEMPTY_DIR): got 0 expected 0
+***PASS chdir(NONEMPTY_DIR): got 0 expected 0
+***PASS write_one_byte_file(NESTED_FILE, NESTED_BYTE): got 0 expected 0
+***PASS chdir(".."): got 0 expected 0
+***PASS rmdir(NONEMPTY_DIR): got -1 expected -1
+***PASS chdir(NONEMPTY_DIR): got 0 expected 0
+***PASS unlink(NESTED_FILE): got 0 expected 0
+***PASS chdir(".."): got 0 expected 0
+***PASS rmdir(NONEMPTY_DIR): got 0 expected 0
 ***rmdir empty directory
-***test_syscall arg = 0
-***test_syscall arg = -1
-***test_syscall arg = 0
-***test_syscall arg = 0
+***PASS rmdir(MADE_DIR): got 0 expected 0
+***PASS chdir(MADE_DIR): got -1 expected -1
+***PASS mkdir(MADE_DIR): got 0 expected 0
+***PASS rmdir(MADE_DIR): got 0 expected 0

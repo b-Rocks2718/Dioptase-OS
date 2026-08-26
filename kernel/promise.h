@@ -3,8 +3,6 @@
 
 #include "semaphore.h"
 
-// port of Gheith kernel implementation
-
 // Promise blocks getters until it has been set at least once
 struct Promise {
   struct Semaphore sem;
@@ -20,7 +18,7 @@ void promise_set(struct Promise* promise, void* value);
 // return the current value, blocking until the promise has been set
 void* promise_get(struct Promise* promise);
 
-// destroy the promise and reap any waiters
+// destroy the promise after all getters/setters have returned
 void promise_destroy(struct Promise* promise);
 
 // destroy the promise and free its memory

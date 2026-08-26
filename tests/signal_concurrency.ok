@@ -1,0 +1,5 @@
+***PASS test_pending_order(): got 0 expected 0
+***PASS test_nonmaskable_during_handler(): got 0 expected 0
+***PASS test_fault_during_handler(): got 0 expected 0
+***PASS test_mask_send_race(): got 0 expected 0
+***PASS test_send_exit_race(): got 0 expected 0

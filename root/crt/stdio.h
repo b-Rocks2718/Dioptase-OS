@@ -25,8 +25,11 @@ extern FILE __stderr_storage;
  * These helpers behave like the usual stdio byte/string output entry points.
  * Raw file-descriptor formatting helpers live in print.h instead of stdio.h.
  */
-void putchar(char c);
-unsigned puts(char* str);
+// putchar returns the emitted unsigned byte value, or -1 on write failure.
+int putchar(char c);
+// This CRT's historical puts writes no implicit newline and returns its byte
+// count after complete success, or -1 on write failure.
+int puts(char* str);
 
 FILE* fopen(char* path, char* mode);
 int fclose(FILE* stream);

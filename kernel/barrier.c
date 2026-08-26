@@ -56,19 +56,17 @@ void barrier_sync(struct Barrier* barrier) {
   sem_up(&barrier->sem_2);
 }
 
-// free resources used by the barrier, but does not free the barrier struct itself
-// waiting threads will be reaped
+// Free resources only after every participant has returned from barrier_sync().
 void barrier_destroy(struct Barrier* barrier) {
   assert(barrier != NULL, "barrier destroy: barrier is NULL.\n");
-  // Barrier waiters may be blocked either on one of the two turnstiles or on
-  // the internal blocking lock while trying to enter barrier_sync().
+  // Each layer enforces quiescence. The owner-level participant lifetime is
+  // still required so a new barrier_sync() cannot begin between these calls.
   sem_destroy(&barrier->sem_1);
   sem_destroy(&barrier->sem_2);
   blocking_lock_destroy(&barrier->lock);
 }
 
-// free the barrier struct and all resources used by the barrier
-// waiting threads will be reaped
+// Destroy a quiescent barrier and free it.
 void barrier_free(struct Barrier* barrier) {
   barrier_destroy(barrier);
   free(barrier);

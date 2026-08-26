@@ -1,9 +1,17 @@
 # Kernel Design
 
+## Initialization
+
+Boot starts in `kernel/init.s`, core 0 initializes global subsystems, secondary
+cores are woken with a boot IPI, and every core enters the idle-thread scheduler
+loop after the start barrier.
+
+See `kernel_init.md` for more details.
+
 ## Threading
 
 Structure:
-- Allocates a fixed size stack per thread (TODO: use page allocator instead of heap, and use guard pages to detect overflow)
+- Allocates a fixed size stack per thread
 - Per-core and global ready queues with load-balancing
 - Kernel can set threads as `HIGH_PRIORITY`, `NORMAL_PRIORITY`, and `LOW_PRIORITY`. Within each priority, MLFQ is used to schedule threads
 - Preemptive, timer isr context switches to idle threads, idle thread cannot be preempted and finds next ready thread to switch to
@@ -26,13 +34,15 @@ Supported Sync Primatives:
 - barrier
 - gate (implements wait(), signal(), and reset(); signal unblocks waiters, and calls to wait() after signal will not block)
 - event (like gate, except it does not remain open after call to signal(). Therefore does not need a reset() method)
-- shared pointers
 
 See `sync.md` for more details.
 
 ## Heap
-Global heap shared by all cores, free blocks kept in doubly linked list  
-TODO: replace with slab allocator
+Global heap shared by all cores. Small allocations use slab caches with
+per-core free lists, and larger allocations use whole order-based `physmem`
+blocks.
+
+See `heap.md` for more details.
 
 ## File System
 ext2 rev 0
@@ -73,3 +83,70 @@ User programs enter the kernel with the single `trap` instruction.
 - IVT entry `0x004`: shared trap vector
 
 Current trap code assignments are documented in `syscalls.md`.
+
+## Signals
+
+User threads have pending and masked signal bitmaps, registered user handlers,
+and a dedicated signal stack. Explicit final kernel-to-user return paths deliver
+asynchronous signals only after the current syscall, fault, or PIT continuation
+has unwound; the scheduler itself never consumes pending signals. User-mode
+memory and instruction exceptions deliver synchronous fault signals.
+
+See `signals.md` for the signal-number assignments, masking rules, handler ABI,
+default actions, and fault-resumption behavior.
+
+## Terminal Foreground Control
+
+Dioptase-OS currently has one foreground child slot for
+the interactive terminal.
+
+- The shell sets the foreground child to the external command it is about to
+  wait for.
+- The terminal sends Ctrl-C to that foreground child with
+  `signal_foreground(SIGNAL_TERMINATE)`.
+- Normal keyboard bytes still flow through the terminal input pipe inherited as
+  `STDIN`.
+- A foreground child's descriptor records whether that live child used a direct
+  VGA configuration or mapping trap. The descriptor state lock protects this
+  claim together with the child TCB lifetime.
+- After `wait_child()`, the shell clears the foreground slot.
+  `set_foreground_child(-1)` atomically returns the old descriptor's display
+  claim while the foreground and descriptor locks exclude concurrent claims.
+- If the returned claim is set, the shell queues the terminal-private display
+  recovery sequence before it prints the next prompt. The terminal, rather than
+  the shell, resets VGA and renderer state in pipe order.
+
+## Asserts and release builds
+
+Kernel and user CRT share two assertion helpers:
+
+| Form | Use when |
+|---|---|
+| `assert(condition, msg)` | Soft check. Kernel programming or API-contract bug. In the default build it panics when false; when `OS_RELEASE=yes` the function body is a no-op. Skipping in release may crash later or hang, but must not silently leave durable or globally shared state corrupted. |
+| `assert_always(condition, msg)` | Hard check. Always panics on failure, including release builds. Use when continuing would silently corrupt kernel/FS/device/sync state, break a boot-critical dependency, or violate an interrupt/hardware contract with no safe recovery. |
+| Neither (error return) | User- or capacity-triggerable condition. Prefer ordinary failure returns; do not promote these to `assert_always`. |
+
+Existing direct `panic()` sites are already always-on and stay as-is.
+
+Soft by default examples: NULL `this`/argument checks on internal helpers, “caller must hold X lock”, trusted-caller parameter ranges, scheduler affinity preconditions.
+
+Always-on examples: allocator double-free / poison UAF, FS metadata writeback mid-update, detected on-disk directory corruption, boot-critical physmem leak exhaustion, PIT/bootstrap IMR and current-TCB contracts, pipe endpoint table corruption, sync wrong-owner / double-release / acquire-while-holding.
+
+`VERSION` in the Makefile selects the host toolchain flavor (`bcc` / `basm` /
+emulator). OS assert policy is independent and controlled by `OS_RELEASE`
+(default `no`). bcc has no function-like macros, so soft asserts remain real
+calls: release only empties the `assert` body; call-site conditions and message
+strings are still evaluated and may remain in the image.
+
+Recommended shipping build:
+
+```sh
+make run OS_RELEASE=yes HEAP_DEBUG=no
+```
+
+`HEAP_DEBUG` stays independent; turn it off explicitly for a release image.
+Toggling `OS_RELEASE` or `HEAP_DEBUG` updates `build/kernel-test-config.stamp`
+so kernel and test assembly rebuild with the matching `-D` flags. Root and
+guest program Makefiles accept `OS_BCC_DEFINES` from the top-level so CRT
+`assert` matches the kernel.
+

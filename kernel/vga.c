@@ -3,7 +3,6 @@
 #include "constants.h"
 #include "print.h"
 #include "ivt.h"
-#include "debug.h"
 
 // MMIO addresses for VGA text mode
 
@@ -30,13 +29,15 @@ void vga_init(void){
 
 // write a transparent tile to every tile in the framebuffer
 void make_tiles_transparent(void){
-  for (int i = 0; i < FB_NUM_TILES; ++i){
-    TILE_FB[i] = TRANSPARENT;
-  }
+  // Console output and this pixel-layer handoff share TILE_FB across all cores.
+  // The console bulk transaction keeps the long MMIO loop interruptible while
+  // excluding other cores and diverting same-core nested diagnostics to UART.
+  console_make_tiles_transparent();
 }
 
 void vga_vblank_handler(void){
+  // VBLANK remains masked by default and has no display-refresh consumer yet.
+  // If a caller enables the source anyway, acknowledge the edge and return so
+  // enabling the interrupt cannot escalate into a kernel panic by itself.
   mark_vblank_handled();
-
-  panic("| VGA VBLANK handler unexpectedly called\n");
 }

@@ -40,9 +40,12 @@ struct VME;
 
 struct Node;
 
+#define MAX_SIGNALS 32
+
 // Thread Control Block
 // One per thread, stores all info about the thread including its context for switching
 struct TCB {
+  // callee-saved registers
   unsigned r20; // offset 0
   unsigned r21; // offset 4
   unsigned r22; // offset 8
@@ -53,11 +56,13 @@ struct TCB {
   unsigned r27; // offset 28
   unsigned r28; // offset 32
 
+  // function state registers
   unsigned sp;  // offset 36
   unsigned bp;  // offset 40
-  unsigned ra; // offset 44
-
-  unsigned flags; // offset 48
+  unsigned ra;  // offset 44
+  
+  // control registers
+  unsigned flags;    // offset 48
   unsigned psr;      // offset 52
   unsigned imr;      // offset 56
   unsigned pid;      // offset 60
@@ -65,7 +70,8 @@ struct TCB {
   unsigned fault_flags; // offset 68
   unsigned ksp; // offset 72
 
-  unsigned uaccess_active; // offset 76
+  // other thread state
+  unsigned uaccess_active;   // offset 76
   unsigned uaccess_err_addr; // offset 80
 
   unsigned* stack;
@@ -89,7 +95,32 @@ struct TCB {
 
   struct VME* vme_list;
 
-  int pending_signals;
+  // Cross-core senders and the current thread's final user-return path
+  // serialize this bitmap through parent_promise->state_lock while child_tcb
+  // is live. The scheduler must not consume pending signals: a runnable TCB
+  // may still have a suspended kernel continuation that owns resources.
+  unsigned pending_signals;
+
+  // A set bit defers the corresponding maskable signal; it does not discard a
+  // pending instance. Only the running thread mutates this field, and the
+  // final user-return path reads it while executing on behalf of that thread.
+  unsigned signal_mask;
+
+  // Only the running thread registers handlers. Final user-return paths and
+  // synchronous exception paths read these entries while executing on behalf
+  // of that same TCB, so the TCB cannot be active concurrently on another core.
+  void* signal_handlers[MAX_SIGNALS];
+  bool in_signal_handler;
+  unsigned signal_stack_top;
+
+  struct CLHNode* my_node; // used as a ticket for accessing any kind of spinlock
+  struct CLHNode* my_pred;
+
+  // setup_thread() TCBs are boot-lifetime daemons. Normal completion ignores
+  // them when deciding to shut down, so scheduler teardown may detach only
+  // TCBs carrying this explicit ownership marker from residual ready/sleep
+  // queues. This field is after all assembly-addressed context members.
+  bool is_daemon;
 
   struct TCB* next;
 };

@@ -1,0 +1,2 @@
+KERNEL PANIC
+threads block: thread tried to block while holding a spinlock.

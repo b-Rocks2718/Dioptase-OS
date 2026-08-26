@@ -7,14 +7,14 @@
 mark_uart_rx_handled:
   # Acknowledge only the UART RX bit in ISR.
   # `eoi` performs the clear atomically with respect to new pending interrupts
-  eoi 4
+  eoi 2
   ret
 
   .global uart_rx_handler_
 uart_rx_handler_:
   # ISR wrapper for uart that preserves interrupted CPU state.
   # Interrupts have been disabled by hardware, will be re-enabled by rfe
-  # ISR status bit must be cleared by pit_handler
+  # ISR status bit must be cleared by uart_rx_handler
 
   # Save caller-saved registers.
   push  r1

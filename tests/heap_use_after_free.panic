@@ -1,0 +1,2 @@
+KERNEL PANIC
+heap corruption detected: likely use after free

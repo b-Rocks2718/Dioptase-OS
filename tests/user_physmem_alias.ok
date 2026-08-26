@@ -1,5 +1,16 @@
-***test_syscall arg = 273
-***test_syscall arg = 546
-***test_syscall arg = 257
-***test_syscall arg = 514
-***test_syscall arg = 1
+***PASS tilemap mapping succeeds: got 1 expected 1
+***PASS tile framebuffer mapping succeeds: got 1 expected 1
+***PASS spritemap mapping succeeds: got 1 expected 1
+***PASS repeated tilemap getter reuses pointer: got 1 expected 1
+***PASS repeated tile framebuffer getter reuses pointer: got 1 expected 1
+***PASS repeated spritemap getter reuses pointer: got 1 expected 1
+***PASS tilemap first-page sentinel: got 273 expected 273
+***PASS tilemap second-page sentinel: got 546 expected 546
+***PASS tile framebuffer first-page sentinel: got 257 expected 257
+***PASS tile framebuffer second-page sentinel: got 514 expected 514
+***PASS independent physical pages retain sentinels: got 1 expected 1
+***PASS fork direct-mapping child created: got 1 expected 1
+***PASS direct-mapping child exit status: got 42 expected 42
+***PASS parent sees child tilemap update: got 1092 expected 1092
+***PASS parent sees child tile framebuffer update: got 1028 expected 1028
+***PASS parent sees child spritemap update: got 1542 expected 1542

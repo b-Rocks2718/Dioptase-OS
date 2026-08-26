@@ -131,6 +131,8 @@ static void test_remove_all_paths(void) {
               "bounded_buffer test: add_sem after reuse remove mismatch\n");
   expect_uint((unsigned)local_buffer.remove_sem.count, 0,
               "bounded_buffer test: remove_sem after reuse remove mismatch\n");
+
+  bounded_buffer_destroy(&local_buffer);
 }
 
 // Publish one producer's fixed range of item ids into the bounded buffer.
@@ -239,6 +241,8 @@ void kernel_main(void) {
       panic("bounded_buffer test: missing item\n");
     }
   }
+
+  bounded_buffer_destroy(&buffer);
 
   say("***bounded_buffer ok\n", NULL);
   say("***bounded_buffer test complete\n", NULL);

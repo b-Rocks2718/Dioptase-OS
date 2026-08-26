@@ -5,7 +5,7 @@
  * - FIFO queue and spin queue operations preserve order and clear stale next
  *   pointers when nodes are detached
  * - sleep queues release threads in wakeup order and keep equal-deadline
- *   elements stable
+ *   elements stable, including deadlines that cross the 32-bit jiffy wrap
  * - generic queue, generic spin queue, ring buffer, and key buffer helpers
  *   preserve their documented size, ordering, wrap-around, and full/empty
  *   behavior
@@ -228,6 +228,8 @@ static void test_spin_queue(void) {
   expect_uint(spin_queue_size(&queue), 0, "queue test: spin queue size after remove_all mismatch\n");
   expect_tcb(spin_queue_peek(&queue), NULL, "queue test: spin queue peek after remove_all mismatch\n");
   expect_tcb(spin_queue_remove(&queue), NULL, "queue test: spin remove after remove_all mismatch\n");
+
+  spin_queue_destroy(&queue);
 }
 
 // Check sleep queue ordering across early, equal-deadline, and late wakeups.
@@ -279,6 +281,38 @@ static void test_sleep_queue(void) {
   expect_tcb(remove_sleep_node_at(&queue, 30), NULL,
              "queue test: sleep queue should be empty after all wakes\n");
   expect_uint(sleep_queue_size(&queue), 0, "queue test: sleep queue size after removals mismatch\n");
+
+  static struct TCB before_wrap;
+  static struct TCB at_wrap;
+  static struct TCB after_wrap;
+  static struct TCB later_after_wrap;
+
+  init_tcb(&before_wrap, UINT_MAX - 1, &extra);
+  init_tcb(&at_wrap, UINT_MAX, &extra);
+  init_tcb(&after_wrap, 0, &extra);
+  init_tcb(&later_after_wrap, 2, &extra);
+
+  // Add in deliberately scrambled numeric order. Ordinary unsigned compares
+  // would put the post-wrap zero/two deadlines first and wake them early.
+  add_sleep_node(&queue, &after_wrap);
+  add_sleep_node(&queue, &later_after_wrap);
+  add_sleep_node(&queue, &before_wrap);
+  add_sleep_node(&queue, &at_wrap);
+
+  expect_tcb(remove_sleep_node_at(&queue, UINT_MAX - 2), NULL,
+             "queue test: wrap sleeper released before deadline\n");
+  expect_tcb(remove_sleep_node_at(&queue, UINT_MAX - 1), &before_wrap,
+             "queue test: pre-wrap deadline ordering mismatch\n");
+  expect_tcb(remove_sleep_node_at(&queue, UINT_MAX), &at_wrap,
+             "queue test: wrap deadline ordering mismatch\n");
+  expect_tcb(remove_sleep_node_at(&queue, 0), &after_wrap,
+             "queue test: zero deadline after wrap mismatch\n");
+  expect_tcb(remove_sleep_node_at(&queue, 1), NULL,
+             "queue test: post-wrap sleeper released early\n");
+  expect_tcb(remove_sleep_node_at(&queue, 2), &later_after_wrap,
+             "queue test: post-wrap deadline ordering mismatch\n");
+  expect_uint(sleep_queue_size(&queue), 0,
+              "queue test: wrapped sleep queue did not drain\n");
 }
 
 // Check the generic queue helpers with the same FIFO and remove_all() patterns.
@@ -402,6 +436,8 @@ static void test_generic_spin_queue(void) {
               "queue test: generic spin queue size after remove_all mismatch\n");
   expect_element(generic_spin_queue_remove(&queue), NULL,
                  "queue test: generic spin remove after remove_all mismatch\n");
+
+  generic_spin_queue_destroy(&queue);
 }
 
 // Check ring buffer add/remove order, wrap-around, and cleanup.

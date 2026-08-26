@@ -1,0 +1,7 @@
+***elf validation test start
+***elf empty and non-load handling ok
+***elf header validation ok
+***elf program-header count limit ok
+***elf load range validation ok
+***elf entry validation ok
+***elf validation test complete

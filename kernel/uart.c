@@ -1,6 +1,5 @@
 #include "uart.h"
 #include "ivt.h"
-#include "debug.h"
 
 // Initialize the UART by registering the RX interrupt handler
 void uart_init(void){
@@ -8,6 +7,8 @@ void uart_init(void){
 }
 
 void uart_rx_handler(void){
+  // UART RX remains masked by default and has no line discipline yet. If a
+  // caller enables the source anyway, acknowledge the edge and return so the
+  // machine cannot panic solely from enabling a currently unused interrupt.
   mark_uart_rx_handled();
-  panic("| Unexpected UART RX interrupt received\n");
 }

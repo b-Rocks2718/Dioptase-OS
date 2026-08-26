@@ -5,6 +5,8 @@
  * - sem_try_down consumes a permit when one is available and reports failure
  *   without blocking when the count is zero, even when several threads race
  *   for a fixed permit pool
+ * - sem_try_up preserves INT_MAX and reports failure instead of overflowing,
+ *   then succeeds again after one permit is consumed
  * - sem_down blocks workers until main posts the semaphore
  * - one sem_up wakes one waiter and no worker runs more than once
  *
@@ -96,6 +98,23 @@ void kernel_main(void) {
   if (sem_try_down(&local_sem)) {
     panic("semaphore test: sem_try_down consumed a non-existent second permit\n");
   }
+  sem_destroy(&local_sem);
+
+  struct Semaphore max_sem;
+  sem_init(&max_sem, INT_MAX);
+  if (sem_try_up(&max_sem)) {
+    panic("semaphore test: sem_try_up overflowed an INT_MAX count\n");
+  }
+  if (max_sem.count != INT_MAX) {
+    int args[2] = { max_sem.count, INT_MAX };
+    say("***semaphore FAIL overflow count=%d expected=%d\n", args);
+    panic("semaphore test: failed sem_try_up changed the semaphore count\n");
+  }
+  sem_down(&max_sem);
+  if (!sem_try_up(&max_sem) || max_sem.count != INT_MAX) {
+    panic("semaphore test: sem_try_up did not restore a consumed INT_MAX permit\n");
+  }
+  sem_destroy(&max_sem);
 
   sem_init(&try_sem, NUM_TRY_PERMITS);
   try_ready = 0;
@@ -150,6 +169,7 @@ void kernel_main(void) {
   if (sem_try_down(&try_sem)) {
     panic("semaphore test: concurrent sem_try_down left an unexpected permit\n");
   }
+  sem_destroy(&try_sem);
 
   sem_init(&start_sem, 0);
   sem_init(&done_sem, 0);
@@ -198,6 +218,9 @@ void kernel_main(void) {
       panic("semaphore test: per-thread progress mismatch\n");
     }
   }
+
+  sem_destroy(&start_sem);
+  sem_destroy(&done_sem);
 
   say("***semaphore ok\n", NULL);
   say("***semaphore test complete\n", NULL);

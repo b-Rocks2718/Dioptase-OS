@@ -11,12 +11,15 @@ int main(void) {
   // close the debug stdio pipes
   // and replace with our own
   int stdout_pipe[2] = {-1, -1};
+  int stdin_pipe[2] = {-1, -1};
   pipe(stdout_pipe);
   close(STDOUT);
-  assert(dup(stdout_pipe[1]) == STDOUT, "| failed to dup stdout pipe\n");
+  int new_stdout = dup(stdout_pipe[1]);
+  assert(new_stdout == STDOUT, "| failed to dup stdout pipe\n");
   close(stdout_pipe[1]);
 
   // write end of stdout pipe is now assigned to STDOUT
+  pipe(stdin_pipe);
 
   // create terminal emulator process
   int terminal_pid = fork();
@@ -27,8 +30,16 @@ int main(void) {
   } else if (terminal_pid == 0) {
     // replace STDIN with the read end of the stdout pipe
     close(STDIN);
-    assert(dup(stdout_pipe[0]) == STDIN, "| failed to dup stdout pipe read end to STDIN\n");
+    int new_stdin = dup(stdout_pipe[0]);
+    assert(new_stdin == STDIN, "| failed to dup stdout pipe read end to STDIN\n");
     close(stdout_pipe[0]);
+
+    // replace STDOUT with the write end of the shell input pipe
+    close(STDOUT);
+    new_stdout = dup(stdin_pipe[1]);
+    assert(new_stdout == STDOUT, "| failed to dup stdin pipe write end to STDOUT\n");
+    close(stdin_pipe[0]);
+    close(stdin_pipe[1]);
 
     // child process: exec terminal emulator
     execv("/sbin/terminal", 0, NULL);
@@ -47,14 +58,24 @@ int main(void) {
     puts("| failed to fork shell process\n");
     return -1;
   } else if (shell_pid == 0) {
+    // replace STDIN with the read end of the terminal input pipe
+    close(STDIN);
+    int new_stdin = dup(stdin_pipe[0]);
+    assert(new_stdin == STDIN, "| failed to dup stdin pipe read end to STDIN\n");
+    close(stdin_pipe[0]);
+    close(stdin_pipe[1]);
+
     execv("/sbin/shell", 0, NULL);
     puts("| failed to exec shell\n");
     return -1;
   }
 
+  close(stdin_pipe[0]);
+  close(stdin_pipe[1]);
+
   wait_child(shell_pid);
 
-  kill(terminal_pid);
+  signal_child(terminal_pid, SIGNAL_TERMINATE);
 
   return 67;
 }

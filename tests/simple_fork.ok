@@ -1,4 +1,5 @@
 ***hello from fork test
+***child self descriptor result: -1
 ***hello from child
 ***hello from parent
 ***child returned with status: 42

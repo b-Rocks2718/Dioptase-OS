@@ -3,4 +3,5 @@
 ***argc = 2
 ***argv[0] = /test/init
 ***argv[1] = hello!
+***argv[argc] is NULL = 1
 ***wait_child returned 42

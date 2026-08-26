@@ -1,0 +1,2 @@
+KERNEL PANIC
+spin_lock_release: thread attempted to release a spinlock while not holding one.

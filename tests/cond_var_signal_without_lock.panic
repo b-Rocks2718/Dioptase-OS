@@ -1,0 +1,2 @@
+KERNEL PANIC
+cond_var signal: external lock must be held by caller.

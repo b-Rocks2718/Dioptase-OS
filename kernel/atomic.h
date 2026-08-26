@@ -3,16 +3,42 @@
 
 #include "constants.h"
 
+struct TCB;
+
 // spin lock that disables interrupts while held
 struct SpinLock {
   bool the_lock;
   int  interrupt_state;
+  // Exact TCB identity is diagnostic/lifecycle state, published only while
+  // the_lock is held. Normal spin locks cannot be nested by one TCB.
+  struct TCB* owner;
 };
 
 // spin lock that disables preemption while held
 struct PreemptSpinLock {
   bool the_lock;
   bool preempt_state;
+  // Preemption spin locks are used by the console before TCB bootstrap, so
+  // ownership is tracked by always-available core ID rather than TCB pointer.
+  int owner_core;
+};
+
+// CLH Node for fair spin lock
+// each thread gets exactly one CLH Node, as part of their TCB
+// Normal spinlock still marks the CLHNode as locked,
+// to enforce the invariant that threads only ever acquire one spinlock at a time
+// PreemptSpinLock is exempt from this invariant, but should only be used
+// for kernel debug printing
+struct CLHNode {
+  bool locked;
+  int interrupt_state;
+};
+
+// CLH lock for fair spin lock
+struct CLHLock {
+  struct CLHNode* tail;
+  // Only the thread whose ticket reached the head may release this exact lock.
+  struct TCB* owner;
 };
 
 // initializes a spin lock to the unlocked state
@@ -44,6 +70,21 @@ bool preempt_spin_lock_try_acquire(struct PreemptSpinLock* lock);
 
 // restores preemption state
 void preempt_spin_lock_release(struct PreemptSpinLock* lock);
+
+// initializes a CLH lock to the unlocked state
+void clh_lock_init(struct CLHLock* lock);
+
+// will acquire the CLH lock in a fair manner, with FIFO ordering
+void clh_lock_acquire(struct CLHLock* lock);
+
+// releases the CLH lock, allowing the next waiting thread to acquire it
+void clh_lock_release(struct CLHLock* lock);
+
+// destroys a CLH lock after it is done being used
+void clh_lock_destroy(struct CLHLock* lock);
+
+// destroys a CLH lock and frees its memory after it is no longer needed
+void clh_lock_free(struct CLHLock* lock);
 
 // simple barrier synchronization for a known number of threads
 // threads spin until all threads have reached the barrier

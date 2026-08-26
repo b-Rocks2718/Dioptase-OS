@@ -1,0 +1,5 @@
+***PASS prepare include recursion fixtures: got 1 expected 1
+***PASS maximum documented include depth succeeds: got 1 expected 1
+***PASS active include cycle is rejected: got 0 expected 0
+***PASS lexical alias recursion reaches bounded failure: got 0 expected 0
+***Done.

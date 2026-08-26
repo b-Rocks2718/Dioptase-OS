@@ -1,0 +1,2 @@
+KERNEL PANIC
+spin_barrier_sync: thread attempted to synchronize while holding a spinlock.

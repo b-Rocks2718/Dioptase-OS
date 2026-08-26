@@ -1,0 +1,2 @@
+KERNEL PANIC
+clh_acquire: thread attempted to acquire a spinlock while already holding one.
