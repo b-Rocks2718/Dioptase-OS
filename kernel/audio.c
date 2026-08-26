@@ -156,8 +156,10 @@ void audio_destroy(void){
   /*
    * kernel_async_work_count keeps every core in event_loop() until the daemon
    * has cleaned all accepted requests. Once every core reaches the shutdown
-   * barrier, the queue is empty and the boot-lifetime daemon is parked either
-   * in audio_request_waiter or in a scheduler queue. It can no longer execute.
+   * barrier, the queue is empty and the boot-lifetime daemon can no longer
+   * execute. Before its first request, every preemptible daemon continuation
+   * owns no address-space allocation; request processing, including lazy
+   * address-space initialization, is protected by the asynchronous-work count.
    */
   audio_output_disable();
   generic_spin_queue_destroy(&audio_request_queue);
@@ -168,18 +170,19 @@ void audio_destroy(void){
   if (daemon != NULL){
     assert_always(daemon->is_daemon,
       "audio destroy: recorded playback TCB must be a persistent daemon.\n");
-    assert_always(daemon->pid != 0,
-      "audio destroy: recorded playback daemon must own a page directory.\n");
     assert_always(daemon->vme_list == NULL,
       "audio destroy: playback daemon retained a VME after asynchronous work reached zero.\n");
 
     /*
      * Every core is in its PID-0 idle shutdown context and this boot-lifetime
-     * TCB can never resume. Reclaim its finite address-space pages before VM
-     * and physmem teardown, then revoke the stale TCB pointer to that storage.
+     * TCB can never resume. Reclaim its finite address-space pages, if audio
+     * ever needed them, before VM and physmem teardown. A zero PID is the
+     * expected state when no request reached the daemon.
      */
-    vmem_destroy_address_space(daemon);
-    daemon->pid = 0;
+    if (daemon->pid != 0){
+      vmem_destroy_address_space(daemon);
+      daemon->pid = 0;
+    }
     __atomic_store_n((int*)&audio_daemon_tcb, (int)NULL);
   }
   audio_daemon_started = false;
@@ -956,20 +959,44 @@ static void audio_request_finish_lifetime(void){
   kernel_async_work_finish();
 }
 
+/*
+ * Lazily create the persistent daemon's private address space.
+ *
+ * Preconditions:
+ * - kernel mode in audio_daemon's TCB; blocking physmem allocation is allowed
+ * - the daemon has removed an accepted request from audio_request_queue
+ * - that request still owns one kernel_async_work_count reference
+ *
+ * The asynchronous-work reference prevents every event loop from entering
+ * shutdown if this daemon is preempted or blocks during allocation. Before the
+ * first request the daemon therefore owns no finite physical-memory resource
+ * that scheduler shutdown could abandon.
+ *
+ * Postcondition: the current hardware PID and TCB PID identify one valid,
+ * initially empty page directory owned by this daemon.
+ */
+static void audio_daemon_prepare_address_space(struct TCB* daemon){
+  assert_always(daemon != NULL && daemon == get_current_tcb(),
+    "audio daemon address space: caller must be the current daemon TCB.\n");
+  assert_always(daemon->is_daemon,
+    "audio daemon address space: current TCB must be persistent.\n");
+
+  if (daemon->pid == 0){
+    daemon->pid = create_page_directory();
+    assert_always(daemon->pid != 0,
+      "audio daemon: failed to allocate a page directory for playback mappings.\n");
+    set_pid(daemon->pid);
+    tlb_flush();
+  }
+}
+
 static void audio_daemon(void* unused){
   (void)unused;
 
-  // setup_thread() daemons start with pid 0. Playback maps private WAV VMEs into
-  // this TCB's address space, so allocate a real page directory before the first
-  // request. Boot-critical failure remains fatal.
+  // Publish the boot-lifetime TCB before doing any resource-owning work. If no
+  // audio request ever arrives, this daemon can be abandoned at shutdown
+  // without retaining a finite page-directory allocation.
   struct TCB* me = get_current_tcb();
-  if (me->pid == 0){
-    me->pid = create_page_directory();
-    assert_always(me->pid != 0,
-      "audio daemon: failed to allocate a page directory for playback mappings.\n");
-    set_pid(me->pid);
-    tlb_flush();
-  }
   __atomic_store_n((int*)&audio_daemon_tcb, (int)me);
 
   while (true){
@@ -989,6 +1016,7 @@ static void audio_daemon(void* unused){
     }
 
     struct AudioRequest* request = (struct AudioRequest*)element;
+    audio_daemon_prepare_address_space(me);
     audio_process_request(request);
     audio_request_finish_lifetime();
   }

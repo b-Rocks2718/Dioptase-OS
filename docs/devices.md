@@ -170,13 +170,16 @@ The daemon drains a spin-protected request queue and parks through a
 sequentially-consistent `InterruptWaiter` handoff. A submitter publishes the
 request before signalling, so a notification racing with the daemon's
 post-context-switch TCB publication cannot be lost or enqueue the daemon twice.
-Each accepted request also holds one asynchronous-work reference from
-publication through validation/playback, mapping and Node cleanup, request
-destruction, and capacity release. Kernel event loops therefore remain live
-until all retained audio resources are gone. During globally quiescent
-shutdown, the empty request queue is destroyed, the daemon's boot-lifetime TCB
-is detached from its waiter, and its now-empty private address space is
-explicitly reclaimed before VM/physmem teardown.
+The daemon allocates its private page directory lazily after removing its first
+accepted request. Each accepted request holds one asynchronous-work reference
+from publication through that initialization, validation/playback, mapping and
+Node cleanup, request destruction, and capacity release. Kernel event loops
+therefore remain live until all retained audio resources are gone, while an
+unused daemon can be discarded without abandoning a page allocation or live
+allocator operation. During globally quiescent shutdown, the empty request
+queue is destroyed, the daemon's boot-lifetime TCB is detached from its waiter,
+and its private address space, if it was ever created, is explicitly reclaimed
+before VM/physmem teardown.
 
 This path owns the `AUDIO_*` control block. The bounded audio ISR acknowledges
 each enabled low-water edge, but playback progress does not depend on an

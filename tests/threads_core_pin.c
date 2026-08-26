@@ -29,6 +29,7 @@ static struct Semaphore done_sem;
 static int worker_ready = 0;
 static int worker_pinned_core = -1;
 static int worker_runs = 0;
+static int worker_returned = 0;
 
 // Pin to the startup core and verify every later wakeup resumes there again.
 static void worker_thread(void* arg) {
@@ -59,6 +60,10 @@ static void worker_thread(void* arg) {
     __atomic_fetch_add(&worker_runs, 1);
     sem_up(&done_sem);
   }
+
+  // The final permit can wake main before the corresponding sem_up() returns.
+  // Publish only after all worker semaphore operations are quiescent.
+  __atomic_store_n(&worker_returned, 1);
 }
 
 // Allocate and start the single pinned worker.
@@ -76,6 +81,7 @@ void kernel_main(void) {
 
   sem_init(&wake_sem, 0);
   sem_init(&done_sem, 0);
+  __atomic_store_n(&worker_returned, 0);
 
   spawn_worker();
 
@@ -110,6 +116,10 @@ void kernel_main(void) {
     int args[2] = { __atomic_load_n(&worker_runs), WAKE_ROUNDS };
     say("***core pin FAIL runs=%d expected=%d\n", args);
     panic("core pin test: worker did not complete all wakeup rounds\n");
+  }
+
+  while (__atomic_load_n(&worker_returned) == 0) {
+    yield();
   }
 
   sem_destroy(&wake_sem);
