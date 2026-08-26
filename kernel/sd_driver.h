@@ -59,6 +59,16 @@ bool sd_request_state_finish(struct SdRequestState* state,
   unsigned generation, int result, bool quarantine);
 
 /*
+ * Publish a result observed in terminal controller state. A terminal status
+ * releases DMA ownership only when BUSY is clear; otherwise the fixed bounce
+ * page remains quarantined. A matching late interrupt may release it only
+ * after BUSY clears. Software deadline expiry is not a terminal observation
+ * and must continue to call sd_request_state_finish(..., true) directly.
+ */
+bool sd_request_state_finish_controller(struct SdRequestState* state,
+  unsigned generation, int result, bool controller_busy);
+
+/*
  * Clear quarantine only for the matching, already-finished generation. This is
  * the late-IRQ acknowledgement that permits a later request to begin.
  */
