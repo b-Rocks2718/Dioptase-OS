@@ -29,7 +29,7 @@ KERNEL_STACKS_BOTTOM := 0xF0000
 BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 
 # Test config
-TEST_RUNS ?= 10
+TEST_RUNS ?= 75
 TIMEOUT_SECONDS ?= 360
 VERSION ?= release
 HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
