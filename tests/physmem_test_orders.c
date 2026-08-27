@@ -47,6 +47,7 @@ static struct SpinLock owner_lock;
 static struct SpinLock state_lock;
 static struct Semaphore finished_sem;
 static int ready_workers = 0;
+static int returned_workers = 0;
 static bool go = false;
 
 static unsigned char live_owner[PHYS_FRAME_COUNT];
@@ -234,6 +235,10 @@ static void physmem_worker(void* arg) {
   }
 
   sem_up(&finished_sem);
+
+  // A consumed completion permit may race the producer's still-active
+  // sem_up(). Publish only after that operation has returned.
+  __atomic_fetch_add(&returned_workers, 1);
 }
 
 void kernel_main(void) {
@@ -243,6 +248,7 @@ void kernel_main(void) {
   spin_lock_init(&state_lock);
   sem_init(&finished_sem, 0);
   ready_workers = 0;
+  returned_workers = 0;
   go = false;
 
   for (int i = 0; i < PHYS_FRAME_COUNT; i++) {
@@ -280,6 +286,10 @@ void kernel_main(void) {
 
   for (int i = 0; i < NUM_WORKERS; i++) {
     sem_down(&finished_sem);
+  }
+
+  while (__atomic_load_n(&returned_workers) != NUM_WORKERS) {
+    yield();
   }
 
   sem_destroy(&finished_sem);

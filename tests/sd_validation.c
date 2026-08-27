@@ -4,6 +4,8 @@
  * Validates:
  * - one generation accepts exactly one terminal result
  * - timeout quarantine rejects a new generation until matching acknowledgement
+ * - terminal watchdog completion without BUSY permits the next generation
+ * - terminal controller state with BUSY retains bounce-page quarantine
  * - a late result for an old generation cannot finish a newer request
  * - malformed drive/block/count/buffer/range inputs fail before DMA MMIO
  * - wrapping runtime deadlines use unsigned half-range arithmetic
@@ -59,6 +61,30 @@ static void test_generation_arbitration(void){
     "sd validation: successful terminal state is inconsistent.\n");
 }
 
+static void test_terminal_controller_policy(void){
+  struct SdRequestState state;
+  sd_request_state_init(&state);
+
+  unsigned completed = sd_request_state_begin(&state);
+  assert(completed != 0,
+    "sd validation: terminal-policy generation did not begin.\n");
+  assert(sd_request_state_finish_controller(&state, completed, 0, false),
+    "sd validation: clean terminal watchdog result was not published.\n");
+  assert(!state.active && !state.quarantined,
+    "sd validation: clean terminal watchdog result retained quarantine.\n");
+
+  unsigned next = sd_request_state_begin(&state);
+  assert(next != 0 && next != completed,
+    "sd validation: clean terminal watchdog result blocked the next request.\n");
+  assert(sd_request_state_finish_controller(&state, next,
+      SD_DRIVER_ERR_UNEXPECTED_STATUS, true),
+    "sd validation: BUSY terminal controller result was not published.\n");
+  assert(state.quarantined && sd_request_state_begin(&state) == 0,
+    "sd validation: BUSY terminal controller result released DMA ownership.\n");
+  assert(sd_request_state_acknowledge_quarantine(&state, next),
+    "sd validation: BUSY terminal quarantine could not be acknowledged.\n");
+}
+
 static void test_wrapping_deadline(void){
   unsigned deadline = 2;
   assert(!sd_runtime_deadline_reached(UINT_MAX - 2, deadline),
@@ -99,6 +125,7 @@ int kernel_main(void){
   say("***sd validation test start\n", NULL);
 
   test_generation_arbitration();
+  test_terminal_controller_policy();
   test_wrapping_deadline();
 
   char* buffer = malloc(TEST_BLOCK_BYTES);

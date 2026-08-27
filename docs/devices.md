@@ -127,12 +127,22 @@ interrupt progresses by the deadline, it returns `SD_DRIVER_ERR_TIMEOUT` while
 retaining the bounce page under quarantine.
 
 The watchdog and ISR arbitrate under the per-drive state lock, and only the
-first terminal transition for the active generation may wake its caller. Any
-watchdog result quarantines that drive until the outstanding hardware interrupt
-is acknowledged. Later requests fail promptly with
-`SD_DRIVER_ERR_QUARANTINED`; if the device never completes, quarantine remains
-permanent. Consequently a late IRQ cannot be mistaken for completion of a
-newer generation. The other drive remains independent.
+first terminal transition for the active generation may wake its caller. A
+watchdog-observed terminal result quarantines the drive only if BUSY remains
+set; clean DONE or terminal controller error with BUSY clear has released DMA
+ownership and may admit the next request immediately. The driver records the
+outstanding interrupt provenance, so its delayed handler either clears the old
+sticky terminal state or, if a newer command has already completed, safely
+handles that active generation. A delayed old edge observed while the newer
+command is nonterminal is acknowledged without waking it or clearing its
+status.
+
+A nonterminal software deadline always quarantines the drive until terminal
+hardware state with BUSY clear and the late interrupt are acknowledged. Later
+requests fail promptly with `SD_DRIVER_ERR_QUARANTINED`; if the device never
+completes, quarantine remains permanent. Consequently unresolved DMA cannot
+access newly staged bytes, and a late IRQ cannot be mistaken for completion of
+a newer generation. The other drive remains independent.
 
 Early boot cannot use scheduler or PIT wakeups, so it polls without IRQ_EN for
 at most 16,777,216 status reads. This implementation-defined operation budget
@@ -147,10 +157,11 @@ warning when code accesses block 0 on drive 1, because that drive currently
 backs the filesystem image.
 
 Tested in `sd_drives.c` and `sd_validation.c`. The latter exercises generation,
-single-terminal-publication, quarantine, stale-generation, and request-admission
-rules without requiring a deliberately hung device. The ext2 tests `ext_read.c`,
-`ext_write.c`, `ext_new_file.c`, `ext_delete.c`, and `ext_rename.c` also exercise
-the SD path indirectly through the filesystem.
+single-terminal-publication, watchdog terminal-release, quarantine,
+stale-generation, and request-admission rules without requiring a deliberately
+hung device. The ext2 tests `ext_read.c`,
+`ext_write.c`, `ext_new_file.c`, `ext_delete.c`, and `ext_rename.c` also
+exercise the SD path indirectly through the filesystem.
 
 ### Audio
 
@@ -170,13 +181,16 @@ The daemon drains a spin-protected request queue and parks through a
 sequentially-consistent `InterruptWaiter` handoff. A submitter publishes the
 request before signalling, so a notification racing with the daemon's
 post-context-switch TCB publication cannot be lost or enqueue the daemon twice.
-Each accepted request also holds one asynchronous-work reference from
-publication through validation/playback, mapping and Node cleanup, request
-destruction, and capacity release. Kernel event loops therefore remain live
-until all retained audio resources are gone. During globally quiescent
-shutdown, the empty request queue is destroyed, the daemon's boot-lifetime TCB
-is detached from its waiter, and its now-empty private address space is
-explicitly reclaimed before VM/physmem teardown.
+The daemon allocates its private page directory lazily after removing its first
+accepted request. Each accepted request holds one asynchronous-work reference
+from publication through that initialization, validation/playback, mapping and
+Node cleanup, request destruction, and capacity release. Kernel event loops
+therefore remain live until all retained audio resources are gone, while an
+unused daemon can be discarded without abandoning a page allocation or live
+allocator operation. During globally quiescent shutdown, the empty request
+queue is destroyed, the daemon's boot-lifetime TCB is detached from its waiter,
+and its private address space, if it was ever created, is explicitly reclaimed
+before VM/physmem teardown.
 
 This path owns the `AUDIO_*` control block. The bounded audio ISR acknowledges
 each enabled low-water edge, but playback progress does not depend on an

@@ -38,6 +38,7 @@ static struct Semaphore try_sem;
 static int ready = 0;
 static int started = 0;
 static int finished = 0;
+static int workers_returned = 0;
 static int progress[NUM_WORKERS];
 static int try_ready = 0;
 static int try_done = 0;
@@ -80,11 +81,17 @@ static void worker_thread(void* arg) {
   __atomic_fetch_add(&finished, 1);
 
   sem_up(&done_sem);
+
+  // Publish after the final semaphore operation itself has returned. The
+  // completion permit alone does not establish sem_destroy() quiescence.
+  __atomic_fetch_add(&workers_returned, 1);
 }
 
 // Release the waiter set one by one and verify each runs exactly once.
 void kernel_main(void) {
   say("***semaphore test start\n", NULL);
+
+  __atomic_store_n(&workers_returned, 0);
 
   struct Semaphore local_sem;
   sem_init(&local_sem, 0);
@@ -217,6 +224,10 @@ void kernel_main(void) {
       say("***semaphore FAIL id=%d got=%d expected=%d\n", args);
       panic("semaphore test: per-thread progress mismatch\n");
     }
+  }
+
+  while (__atomic_load_n(&workers_returned) != NUM_WORKERS) {
+    yield();
   }
 
   sem_destroy(&start_sem);

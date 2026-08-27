@@ -46,6 +46,7 @@
 
 static struct Semaphore console_stress_start;
 static struct Semaphore console_stress_done;
+static int console_stress_workers_returned;
 static char console_stress_buffers[CONSOLE_STRESS_WORKERS]
   [CONSOLE_STRESS_BYTES_PER_WORKER];
 static char continuous_wrap_buffer[CONTINUOUS_WRAP_BYTES];
@@ -92,6 +93,11 @@ static void console_stress_worker(void* raw_arg){
   console_write(console_stress_buffers[arg->worker],
     CONSOLE_STRESS_BYTES_PER_WORKER);
   sem_up(&console_stress_done);
+
+  // Receiving the permit only proves this sem_up() detached or counted its
+  // wake. Publish separately after the operation returns so the owner may
+  // safely destroy both test semaphores.
+  __atomic_fetch_add(&console_stress_workers_returned, 1);
 }
 
 static enum CoreAffinity console_stress_affinity(int worker){
@@ -107,6 +113,7 @@ static int run_console_stress(void){
   clear_screen();
   sem_init(&console_stress_start, 0);
   sem_init(&console_stress_done, 0);
+  __atomic_store_n(&console_stress_workers_returned, 0);
 
   for (int worker = 0; worker < CONSOLE_STRESS_WORKERS; ++worker){
     for (int i = 0; i < CONSOLE_STRESS_BYTES_PER_WORKER; ++i){
@@ -141,6 +148,11 @@ static int run_console_stress(void){
 
   for (int worker = 0; worker < CONSOLE_STRESS_WORKERS; ++worker){
     sem_down(&console_stress_done);
+  }
+
+  while (__atomic_load_n(&console_stress_workers_returned) !=
+      CONSOLE_STRESS_WORKERS){
+    yield();
   }
   sem_destroy(&console_stress_start);
   sem_destroy(&console_stress_done);

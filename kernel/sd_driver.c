@@ -102,6 +102,20 @@ struct SdDriveContext {
   unsigned last_status;
   unsigned last_error;
 
+  /*
+   * True after the watchdog publishes a terminal result without clearing the
+   * controller's sticky state. The hardware IRQ for that completed command may
+   * already be routed but delayed on another core. The next handler consumes
+   * this provenance even if a newer command has started; terminal status then
+   * belongs to the active command, while nonterminal status identifies the
+   * handler as the delayed edge and must not finish the newer generation.
+   *
+   * All access is under state_lock. Commands are serialized per drive and the
+   * interrupt source is a pending bit rather than a counted event, so one bit
+   * records all unconsumed terminal-watchdog completions safely.
+   */
+  bool late_terminal_irq_pending;
+
   // One page permanently owned by this drive. Hardware never receives a
   // caller address. Quarantine prevents restaging while an old generation may
   // still be performing non-atomic DMA into/from this page.
@@ -194,6 +208,15 @@ bool sd_request_state_finish(struct SdRequestState* state,
   state->quarantined = quarantine;
   state->active = false;
   return true;
+}
+
+bool sd_request_state_finish_controller(struct SdRequestState* state,
+    unsigned generation, int result, bool controller_busy){
+  /*
+   * BUSY is the hardware ownership boundary. DONE/ERR alone is sticky status,
+   * not evidence that DMA can still access the drive's bounce page.
+   */
+  return sd_request_state_finish(state, generation, result, controller_busy);
 }
 
 bool sd_request_state_acknowledge_quarantine(struct SdRequestState* state,
@@ -473,7 +496,8 @@ static int sd_execute_boot_command(enum SdDrive drive,
   } else {
     result = sd_result_from_status(status, error);
     bool still_busy = (status & SD_DMA_STATUS_BUSY) != 0;
-    sd_request_state_finish(&context->request, generation, result, still_busy);
+    sd_request_state_finish_controller(&context->request, generation, result,
+      still_busy);
     sd_clear_status(drive);
   }
   sd_state_lock_release(&context->state_lock, state_was);
@@ -642,11 +666,11 @@ bool sd_runtime_deadline_reached(unsigned now, unsigned deadline){
  *
  * The state lock makes the generation snapshot and terminal transition atomic
  * with respect to the SD ISR and command admission. If status is already
- * terminal, the watchdog returns the controller result but quarantines the
- * drive until the corresponding late IRQ is acknowledged. If status has not
- * progressed by the deadline, it publishes timeout and applies the same
- * quarantine. It deliberately leaves DONE/ERR untouched so the device can
- * still assert the outstanding IRQ.
+ * terminal, the watchdog returns the controller result and quarantines only
+ * while BUSY says DMA still owns the fixed bounce page. It leaves DONE/ERR
+ * untouched and records that the already-routed IRQ may arrive late. If status
+ * has not progressed by the deadline, it publishes timeout and always applies
+ * quarantine because hardware ownership is then unresolved.
  */
 static void sd_watchdog_check(enum SdDrive drive, unsigned now){
   struct SdDriveContext* context = &sd_contexts[drive];
@@ -662,8 +686,18 @@ static void sd_watchdog_check(enum SdDrive drive, unsigned now){
       context->last_status = status;
       context->last_error = error;
       int result = sd_result_from_status(status, error);
-      publish = sd_request_state_finish(&context->request, generation,
-        result, true);
+      bool still_busy = (status & SD_DMA_STATUS_BUSY) != 0;
+      publish = sd_request_state_finish_controller(&context->request,
+        generation, result, still_busy);
+      if (publish && !still_busy){
+        /*
+         * Do not acknowledge or clear the controller here: the routed handler
+         * owns the interrupt acknowledgement. Admission may safely start a new
+         * command because BUSY is clear, and the provenance bit lets that late
+         * handler distinguish its nonterminal edge from new completion.
+         */
+        context->late_terminal_irq_pending = true;
+      }
     } else if (sd_runtime_deadline_reached(now,
         context->deadline_jiffies)){
       context->last_status = status;
@@ -706,6 +740,7 @@ static void sd_context_init(struct SdDriveContext* context){
   context->command = 0;
   context->last_status = 0;
   context->last_error = 0;
+  context->late_terminal_irq_pending = false;
   context->bounce_buffer = leak(SD_DMA_BOUNCE_BYTES);
   assert(context->bounce_buffer != NULL &&
       ((unsigned)context->bounce_buffer & (SD_DMA_ALIGNMENT_BYTES - 1)) == 0 &&
@@ -841,19 +876,26 @@ void sd_handler(enum SdDrive drive){
   status = *sd_status_reg(drive);
   error = *sd_error_reg(drive);
   generation = context->request.generation;
+  bool expected_late_irq = context->late_terminal_irq_pending;
+  context->late_terminal_irq_pending = false;
 
   if (!context->request.active && context->request.quarantined &&
       sd_status_is_terminal(status, error)){
     /*
      * This IRQ belongs to the timed-out generation. Clear sticky controller
-     * state and quarantine while holding the same lock checked by admission;
-     * only then can a later generation start, so this IRQ cannot satisfy it.
+     * state while holding the same lock checked by admission. Quarantine may
+     * be released only after BUSY clears; terminal ERR/DONE with BUSY still set
+     * does not release the non-atomic DMA engine's ownership of the bounce
+     * page. Only after that ownership boundary can a later generation start,
+     * so this IRQ cannot satisfy it.
      */
     context->last_status = status;
     context->last_error = error;
     sd_clear_status(drive);
-    sd_request_state_acknowledge_quarantine(&context->request,
-      context->request.generation);
+    if ((status & SD_DMA_STATUS_BUSY) == 0){
+      sd_request_state_acknowledge_quarantine(&context->request,
+        context->request.generation);
+    }
   } else if (context->request.active &&
       sd_status_is_terminal(status, error)){
     int result = sd_result_from_status(status, error);
@@ -861,8 +903,21 @@ void sd_handler(enum SdDrive drive){
     context->last_status = status;
     context->last_error = error;
     sd_clear_status(drive);
-    publish = sd_request_state_finish(&context->request, generation,
-      result, still_busy);
+    publish = sd_request_state_finish_controller(&context->request,
+      generation, result, still_busy);
+  } else if (expected_late_irq){
+    /*
+     * The watchdog already published this terminal command. If no newer
+     * command is active, discard its sticky terminal status. If a newer
+     * command is active and nonterminal, this is only the delayed old edge and
+     * its status must remain untouched. An active terminal command was handled
+     * by the preceding branch and is safely allowed to consume a coalesced IRQ.
+     */
+    if (sd_status_is_terminal(status, error)){
+      context->last_status = status;
+      context->last_error = error;
+      sd_clear_status(drive);
+    }
   } else {
     /*
      * A nonterminal or ownerless IRQ is acknowledged but never wakes a TCB.
