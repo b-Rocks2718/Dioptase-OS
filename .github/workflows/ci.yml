@@ -1,0 +1,67 @@
+name: PR CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: os-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: OS smoke suite
+    runs-on: ubuntu-24.04
+    # Five repetitions should remain far below GitHub's six-hour hosted limit.
+    timeout-minutes: 330
+    env:
+      DIOPTASE_OS_TEST_RUNS: "5"
+      DIOPTASE_OS_PARALLEL_JOBS: "4"
+    steps:
+      - name: Check out assembler dependency
+        uses: actions/checkout@v7
+        with:
+          repository: b-Rocks2718/Dioptase-Assembler
+          path: Dioptase-Assembler
+          persist-credentials: false
+      - name: Check out full emulator dependency
+        uses: actions/checkout@v7
+        with:
+          repository: b-Rocks2718/Dioptase-Emulator-Full
+          path: Dioptase-Emulators/Dioptase-Emulator-Full
+          persist-credentials: false
+      - name: Check out compiler dependency
+        uses: actions/checkout@v7
+        with:
+          repository: b-Rocks2718/Dioptase-C-Compiler
+          path: Dioptase-Languages/Dioptase-C-Compiler
+          persist-credentials: false
+      - name: Check out OS pull request
+        uses: actions/checkout@v7
+        with:
+          path: Dioptase-OS
+          persist-credentials: false
+      - name: Install ext2 image tools
+        run: |
+          if ! command -v mkfs.ext2 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes e2fsprogs
+          fi
+      - name: Run OS smoke suite
+        run: bash Dioptase-OS/.github/scripts/ci.sh
+      - name: Upload failure outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: os-ci-failure-outputs
+          if-no-files-found: ignore
+          # Failure outputs are diagnostic scratch data, not release artifacts.
+          retention-days: 7
+          path: |
+            Dioptase-OS/tests/*.raw
+            Dioptase-OS/tests/*.out
+            Dioptase-OS/tests/*.out.dir/**
+            Dioptase-OS/build/*.labels
