@@ -1,5 +1,7 @@
 # Dioptase OS
 
+[![CI](https://github.com/b-Rocks2718/Dioptase-OS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/b-Rocks2718/Dioptase-OS/actions/workflows/ci.yml)
+
 Operating system for the [Dioptase system](https://github.com/b-Rocks2718/Dioptase)
 
 ## Makefile usage

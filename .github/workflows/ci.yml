@@ -11,6 +11,10 @@ concurrency:
   group: os-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Override this repository variable only with a tested, full root commit SHA.
+  DIOPTASE_STACK_REF: ${{ vars.DIOPTASE_STACK_REF || '20a493b87692552881c1712779a0800fac72d34b' }}
+
 jobs:
   tests:
     name: OS smoke suite
@@ -21,24 +25,25 @@ jobs:
       DIOPTASE_OS_TEST_RUNS: "5"
       DIOPTASE_OS_PARALLEL_JOBS: "4"
     steps:
-      - name: Check out assembler dependency
+      - name: Require an immutable stack revision
+        run: |
+          if [[ ! "$DIOPTASE_STACK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "OS CI: DIOPTASE_STACK_REF must be a full root repository commit SHA; observed '$DIOPTASE_STACK_REF'." >&2
+            exit 1
+          fi
+      - name: Check out pinned Dioptase stack
         uses: actions/checkout@v7
         with:
-          repository: b-Rocks2718/Dioptase-Assembler
-          path: Dioptase-Assembler
+          repository: b-Rocks2718/Dioptase
+          ref: ${{ env.DIOPTASE_STACK_REF }}
           persist-credentials: false
-      - name: Check out full emulator dependency
-        uses: actions/checkout@v7
-        with:
-          repository: b-Rocks2718/Dioptase-Emulator-Full
-          path: Dioptase-Emulators/Dioptase-Emulator-Full
-          persist-credentials: false
-      - name: Check out compiler dependency
-        uses: actions/checkout@v7
-        with:
-          repository: b-Rocks2718/Dioptase-C-Compiler
-          path: Dioptase-Languages/Dioptase-C-Compiler
-          persist-credentials: false
+      - name: Initialize pinned OS dependencies
+        run: |
+          git -c url."https://github.com/".insteadOf="git@github.com:" \
+            submodule update --init --depth 1 -- \
+            Dioptase-Assembler \
+            Dioptase-Emulators/Dioptase-Emulator-Full \
+            Dioptase-Languages/Dioptase-C-Compiler
       - name: Check out OS pull request
         uses: actions/checkout@v7
         with:
