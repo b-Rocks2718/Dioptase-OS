@@ -5,6 +5,7 @@
   # this word-addressed configuration blob.
   .align 4
   .global CONFIG
+# Export the boot configuration words consumed by kernel configuration code.
 CONFIG:
   .fill NUM_CORES
   .fill USE_VGA

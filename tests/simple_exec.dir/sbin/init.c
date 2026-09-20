@@ -8,7 +8,7 @@
 #include "../../../root/crt/print.h"
 #include "../../../root/crt/sys.h"
 
-int main(void) {
+int main(void) { /* Verify launching the minimal user executable. */
   puts("***hello from exec test\n");
 
   int child = fork();

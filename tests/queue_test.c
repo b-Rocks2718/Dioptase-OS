@@ -26,7 +26,7 @@
 #include "../kernel/debug.h"
 #include "../kernel/TCB.h"
 
-struct TestElement {
+struct TestElement { /* Embed a generic queue link for FIFO ordering checks. */
   struct GenericQueueElement link;
   int id;
 };

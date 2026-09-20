@@ -79,6 +79,7 @@ get_user_sp:
   ret
 
   .global set_user_sp
+# Load the user stack pointer into the architecture's user-stack register.
 set_user_sp:
   crmv sp, r1
   ret

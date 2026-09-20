@@ -21,6 +21,7 @@ short* PIXEL_FB = (short*)0x7FC0000;
 char* SPRITE_SCALES = (char*)0x7FE5B60;
 short* SPRITE_COORDS = (short*)0x7FE5B00;
 
+// Initialize VGA registers and the text-mode tile state.
 void vga_init(void){
   vga_text_init();
 
@@ -35,6 +36,7 @@ void make_tiles_transparent(void){
   console_make_tiles_transparent();
 }
 
+// Service the vertical-blank interrupt and publish a completed frame.
 void vga_vblank_handler(void){
   // VBLANK remains masked by default and has no display-refresh consumer yet.
   // If a caller enables the source anyway, acknowledge the edge and return so

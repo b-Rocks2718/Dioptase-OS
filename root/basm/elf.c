@@ -8,12 +8,14 @@
 #include "../crt/string.h"
 #include "../crt/unistd.h"
 
+// Write u16 little-endian.
 static void write_u16_le(uint8_t* buf, size_t* offset, uint16_t value){
   buf[*offset] = (uint8_t)value;
   buf[*offset + 1] = (uint8_t)(value >> 8);
   *offset += 2;
 }
 
+// Write u32 little-endian.
 static void write_u32_le(uint8_t* buf, size_t* offset, uint32_t value){
   buf[*offset] = (uint8_t)value;
   buf[*offset + 1] = (uint8_t)(value >> 8);
@@ -22,6 +24,7 @@ static void write_u32_le(uint8_t* buf, size_t* offset, uint32_t value){
   *offset += 4;
 }
 
+// Write a complete byte buffer, retrying after short writes.
 static void write_all(int file, uint8_t* bytes, size_t len){
   size_t offset = 0;
   while (offset < len){
@@ -31,6 +34,7 @@ static void write_all(int file, uint8_t* bytes, size_t len){
   }
 }
 
+// Print word bytes.
 static void fprint_word_bytes(int file, uint8_t* bytes, size_t len){
   assert(len % 4 == 0, "ELF word dump requires 4-byte alignment");
   for (size_t i = 0; i < len; i += 4){
@@ -44,19 +48,20 @@ static void fprint_word_bytes(int file, uint8_t* bytes, size_t len){
   }
 }
 
-// Purpose: Write a byte buffer directly to a file.
-// Inputs: ptr is the output file; bytes points to the payload; len is the byte count.
-// Outputs: Writes len bytes to ptr.
-// Invariants/Assumptions: ptr is open for binary output.
+// Write a byte buffer directly to a file.
+// Ptr is the output file; bytes points to the payload; len is the byte count.
+// Ptr is open for binary output.
 static void fwrite_bytes(int file, uint8_t* bytes, size_t len){
   write_all(file, bytes, len);
 }
 
+// Free an assembled program and all of its section storage.
 void destroy_program_descriptor(struct ProgramDescriptor* program){
   destroy_instruction_array_list(program->sections);
   free(program);
 }
 
+// Fill the ELF header fields for the assembled image.
 struct ElfHeader create_elf_header(struct ProgramDescriptor* program){
   struct ElfHeader header;
 
@@ -101,6 +106,7 @@ struct ElfHeader create_elf_header(struct ProgramDescriptor* program){
   return header;
 }
 
+// Allocate and initialize the three-entry ELF program-header table.
 struct ElfProgramHeader* create_PHT(struct ProgramDescriptor* program){
   struct ElfProgramHeader* pht = malloc(3 * sizeof(struct ElfProgramHeader));
 
@@ -134,6 +140,7 @@ struct ElfProgramHeader* create_PHT(struct ProgramDescriptor* program){
   return pht;
 }
 
+// Describe the executable text section as an ELF load segment.
 struct ElfProgramHeader create_text_program_header(uint32_t offset, uint32_t vaddr, uint32_t filesz){
   struct ElfProgramHeader ph;
 
@@ -149,6 +156,7 @@ struct ElfProgramHeader create_text_program_header(uint32_t offset, uint32_t vad
   return ph;
 }
 
+// Describe the read-only data section as an ELF load segment.
 struct ElfProgramHeader create_rodata_program_header(uint32_t offset, uint32_t vaddr, uint32_t filesz){
   struct ElfProgramHeader ph;
 
@@ -164,6 +172,7 @@ struct ElfProgramHeader create_rodata_program_header(uint32_t offset, uint32_t v
   return ph;
 }
 
+// Describe writable data/BSS sections as an ELF load segment.
 struct ElfProgramHeader create_data_program_header(uint32_t offset, uint32_t vaddr, uint32_t filesz, uint32_t memsz){
   struct ElfProgramHeader ph;
 
@@ -179,6 +188,7 @@ struct ElfProgramHeader create_data_program_header(uint32_t offset, uint32_t vad
   return ph;
 }
 
+// Print ELF header fields for diagnostic inspection.
 void fprint_elf_header(int file, struct ElfHeader* header){
   uint8_t bytes[52];
   size_t offset = 0;
@@ -204,6 +214,7 @@ void fprint_elf_header(int file, struct ElfHeader* header){
   fprint_word_bytes(file, bytes, sizeof(bytes));
 }
 
+// Print program-header entries for diagnostic inspection.
 void fprint_pht(int file, struct ElfProgramHeader* pht){
   for (int i = 0; i < 3; ++i){
     uint8_t bytes[32];
@@ -223,6 +234,7 @@ void fprint_pht(int file, struct ElfProgramHeader* pht){
   }
 }
 
+// Serialize the ELF header fields to the output file in little-endian order.
 void fwrite_elf_header(int file, struct ElfHeader* header){
   uint8_t bytes[52];
   size_t offset = 0;
@@ -248,6 +260,7 @@ void fwrite_elf_header(int file, struct ElfHeader* header){
   fwrite_bytes(file, bytes, sizeof(bytes));
 }
 
+// Serialize the program-header table to the output file.
 void fwrite_pht(int file, struct ElfProgramHeader* pht){
   for (int i = 0; i < 3; ++i){
     uint8_t bytes[32];

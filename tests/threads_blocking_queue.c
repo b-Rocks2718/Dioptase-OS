@@ -36,7 +36,7 @@
 #define SENTINEL_ID (-1)
 #define PRE_PRODUCE_YIELDS 32
 
-struct Item {
+struct Item { /* Carry one producer value through the blocking queue. */
   struct GenericQueueElement link;
   int id;
 };
@@ -61,19 +61,19 @@ static void fail_ptr(char* msg, void* got, void* expected) {
   panic(msg);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* msg) {
+static void expect_uint(unsigned got, unsigned expected, char* msg) { /* Check uint. */
   if (got != expected) {
     fail_uint(msg, got, expected);
   }
 }
 
-static void expect_ptr(void* got, void* expected, char* msg) {
+static void expect_ptr(void* got, void* expected, char* msg) { /* Check ptr. */
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }
 }
 
-static void reset_workload_state(void) {
+static void reset_workload_state(void) { /* Reset workload state. */
   produced = 0;
   consumed = 0;
   consumers_done = 0;

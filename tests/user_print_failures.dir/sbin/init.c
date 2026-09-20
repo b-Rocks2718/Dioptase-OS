@@ -32,7 +32,7 @@
 #define CLOSED_STDOUT_UNSIGNED_FAILED 77
 #define CLOSED_STDOUT_HEX_FAILED 78
 
-static int bytes_equal(char* lhs, char* rhs, unsigned count){
+static int bytes_equal(char* lhs, char* rhs, unsigned count){ /* Compare two byte ranges for exact equality. */
   for (unsigned i = 0; i < count; ++i){
     if (lhs[i] != rhs[i]){
       return 0;
@@ -41,7 +41,7 @@ static int bytes_equal(char* lhs, char* rhs, unsigned count){
   return 1;
 }
 
-static int closed_stdout_child(void){
+static int closed_stdout_child(void){ /* Run the closed stdout child process. */
   if (close(STDOUT) != 0){
     return CLOSED_STDOUT_CLOSE_FAILED;
   }
@@ -66,7 +66,7 @@ static int closed_stdout_child(void){
   return CLOSED_STDOUT_CHILD_OK;
 }
 
-int main(void){
+int main(void){ /* Verify user print syscalls report closed-output failures. */
   int format_args[8];
   char actual[FORMATTED_BUFFER_BYTES];
   int pipe_fds[2];

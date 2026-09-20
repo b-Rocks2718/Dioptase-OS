@@ -51,7 +51,7 @@ static char console_stress_buffers[CONSOLE_STRESS_WORKERS]
   [CONSOLE_STRESS_BYTES_PER_WORKER];
 static char continuous_wrap_buffer[CONTINUOUS_WRAP_BYTES];
 
-struct ConsoleStressArg {
+struct ConsoleStressArg { /* Identifies which output pattern a console stress worker emits. */
   int worker;
 };
 
@@ -59,7 +59,7 @@ extern int trap_handler(unsigned code,
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7,
     bool* return_to_user);
 
-static void emit_result(char* name, int value){
+static void emit_result(char* name, int value){ /* Emit result. */
   void* args[2];
 
   args[0] = name;
@@ -67,7 +67,7 @@ static void emit_result(char* name, int value){
   say("***syscall_display %s = %d\n", args);
 }
 
-static int call_trap(unsigned code,
+static int call_trap(unsigned code, /* Call trap. */
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7){
   bool return_to_user = false;
   int rc = trap_handler(code, arg1, arg2, arg3, arg4, arg5, arg6, arg7,
@@ -100,14 +100,14 @@ static void console_stress_worker(void* raw_arg){
   __atomic_fetch_add(&console_stress_workers_returned, 1);
 }
 
-static enum CoreAffinity console_stress_affinity(int worker){
+static enum CoreAffinity console_stress_affinity(int worker){ /* Assign console-stress workers to rotating cores. */
   if (worker == 0) return CORE_0;
   if (worker == 1) return CORE_1;
   if (worker == 2) return CORE_2;
   return CORE_3;
 }
 
-static int run_console_stress(void){
+static int run_console_stress(void){ /* Run console stress. */
   bool saved_use_vga = CONFIG.use_vga;
   CONFIG.use_vga = true;
   clear_screen();
@@ -273,7 +273,7 @@ static int console_preserves_disabled_cpu_state(void){
   return preserved_by_call && restored_after_probe;
 }
 
-int kernel_main(void){
+int kernel_main(void){ /* Stress concurrent console syscalls and display ownership. */
   unsigned before_jiffies = call_trap(TRAP_GET_CURRENT_JIFFIES, 0, 0, 0, 0, 0,
     0, 0);
   unsigned before_frame = call_trap(TRAP_GET_VGA_FRAME_COUNTER, 0, 0, 0, 0, 0,

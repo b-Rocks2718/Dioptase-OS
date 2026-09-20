@@ -30,7 +30,7 @@
 #define BUFFER_CAPACITY 3
 #define SENTINEL_ID (-1)
 
-struct Item {
+struct Item { /* Carry one producer value through the bounded buffer. */
   struct GenericQueueElement link;
   int id;
 };
@@ -55,13 +55,13 @@ static void fail_ptr(char* msg, void* got, void* expected) {
   panic(msg);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* msg) {
+static void expect_uint(unsigned got, unsigned expected, char* msg) { /* Check uint. */
   if (got != expected) {
     fail_uint(msg, got, expected);
   }
 }
 
-static void expect_ptr(void* got, void* expected, char* msg) {
+static void expect_ptr(void* got, void* expected, char* msg) { /* Check ptr. */
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }

@@ -29,14 +29,14 @@
 #define AUDIO_PROGRESS_TIMEOUT_JIFFIES 200
 #define AUDIO_DRAIN_TIMEOUT_JIFFIES 12000
 
-struct ToneGenerator {
+struct ToneGenerator { /* Track phase and sample position for a generated tone. */
   unsigned segment_idx;
   unsigned segment_progress;
   unsigned toggle_countdown;
   int sample_value;
 };
 
-static unsigned tone_segment_samples(unsigned segment_idx){
+static unsigned tone_segment_samples(unsigned segment_idx){ /* Return the sample count for one tone segment. */
   switch (segment_idx) {
     case 0: return 100; /* short leading silence */
     case 1: return 350; /* ~14 ms at ~440 Hz */
@@ -47,7 +47,7 @@ static unsigned tone_segment_samples(unsigned segment_idx){
   }
 }
 
-static unsigned tone_half_period_samples(unsigned segment_idx){
+static unsigned tone_half_period_samples(unsigned segment_idx){ /* Return the square wave half-period for a segment. */
   switch (segment_idx) {
     case 1: return 28;
     case 3: return 19;
@@ -55,11 +55,11 @@ static unsigned tone_half_period_samples(unsigned segment_idx){
   }
 }
 
-static bool tone_has_more(struct ToneGenerator* tone){
+static bool tone_has_more(struct ToneGenerator* tone){ /* Return whether unread samples remain in the tone buffer. */
   return tone->segment_idx < TONE_SEGMENT_COUNT;
 }
 
-static int tone_next_sample(struct ToneGenerator* tone){
+static int tone_next_sample(struct ToneGenerator* tone){ /* Advance the tone and return its next signed sample. */
   while (tone->segment_idx < TONE_SEGMENT_COUNT){
     unsigned segment_samples = tone_segment_samples(tone->segment_idx);
     unsigned half_period_samples = tone_half_period_samples(tone->segment_idx);
@@ -116,7 +116,7 @@ static void audio_fill_generated_samples(struct ToneGenerator* tone){
   audio_output_set_write_idx(write_idx);
 }
 
-int kernel_main(void){
+int kernel_main(void){ /* Validate WAV loading and asynchronous audio playback. */
   struct ToneGenerator tone;
   unsigned initial_read_idx;
   unsigned progressed_read_idx;

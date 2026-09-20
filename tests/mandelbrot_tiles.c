@@ -29,7 +29,7 @@
 
 #define RESOLUTION 0
 
-struct Complex {
+struct Complex { /* Store the real and imaginary parts of one fractal value. */
   fix32 x;
   fix32 y;
 };

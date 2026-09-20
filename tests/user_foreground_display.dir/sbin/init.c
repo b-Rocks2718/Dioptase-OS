@@ -24,7 +24,7 @@
 #define CHILD_FAILURE_STATUS 73
 #define CLOSED_GATE_COUNT 0
 
-static int wait_for_parent(int gate){
+static int wait_for_parent(int gate){ /* Wait for parent. */
   if (sem_down(gate) != 0){
     return CHILD_FAILURE_STATUS;
   }
@@ -34,7 +34,7 @@ static int wait_for_parent(int gate){
   return 0;
 }
 
-static void test_non_child_display_use(void){
+static void test_non_child_display_use(void){ /* Test non child display use. */
   int gate = sem_open(CLOSED_GATE_COUNT);
   int child = fork();
 
@@ -55,7 +55,7 @@ static void test_non_child_display_use(void){
   sem_close(gate);
 }
 
-static void test_foreground_child_display_use(void){
+static void test_foreground_child_display_use(void){ /* Test foreground child display use. */
   int gate = sem_open(CLOSED_GATE_COUNT);
   int child = fork();
 
@@ -75,7 +75,7 @@ static void test_foreground_child_display_use(void){
   sem_close(gate);
 }
 
-int main(void){
+int main(void){ /* Verify foreground-display ownership across user processes. */
   test_non_child_display_use();
   test_foreground_child_display_use();
   return 0;

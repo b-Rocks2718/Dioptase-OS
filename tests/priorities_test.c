@@ -46,7 +46,7 @@
 #define FINISH_WAIT_BUDGET 100000
 #define COUNTER_DIGITS 5
 
-struct TileVisualArg {
+struct TileVisualArg { /* Positions one priority worker's marker in the VGA panel. */
   int panel_x;
   int panel_y;
   int worker_index;
@@ -261,7 +261,7 @@ static void spawn_tile_visual_worker(int panel_x, int panel_y,
   thread_(fun, priority, ANY_CORE);
 }
 
-int kernel_main(void) {
+int kernel_main(void) { /* Verify ready-queue ordering for thread priorities. */
   int row;
   int col;
   int panel_x;

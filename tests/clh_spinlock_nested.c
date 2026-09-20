@@ -17,7 +17,7 @@
 static struct SpinLock normal_lock;
 static struct CLHLock clh_lock;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify nested CLH acquisition is rejected by ownership checks. */
   say("***clh nested negative start\n", NULL);
 
   spin_lock_init(&normal_lock);

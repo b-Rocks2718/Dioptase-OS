@@ -22,7 +22,7 @@
 #define MV_TEST_BUFFER_BYTES 17
 #define MV_TEST_COMMAND "mv inner_file0 ../file_link"
 
-void test_directory(char* path) {
+void test_directory(char* path) { /* Test directory. */
   struct LinkedDirent* head = tab_complete_directory(path, false);
   puts("***");
   print_directory(head, true);
@@ -30,7 +30,7 @@ void test_directory(char* path) {
   destroy_linked_dirents(head);
 }
 
-struct LinkedDirent* create_linkeddirent(char d_type, char* name, struct LinkedDirent* next) {
+struct LinkedDirent* create_linkeddirent(char d_type, char* name, struct LinkedDirent* next) { /* Create linkeddirent. */
   unsigned name_length = strlen(name);
   struct LinkedDirent* entry = malloc(sizeof(struct LinkedDirent) + name_length + 1);
   entry->d_type = d_type;
@@ -39,7 +39,7 @@ struct LinkedDirent* create_linkeddirent(char d_type, char* name, struct LinkedD
   return entry;
 }
 
-int main(void) {
+int main(void) { /* Verify shell directory tab completion and entry filtering. */
   test_directory("");
   test_directory("folder");
   test_directory("folder/"); // Longer name should spill onto next line and thus not be printed.

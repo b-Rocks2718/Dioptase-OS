@@ -12,15 +12,11 @@
 
 // TAC interpreter written by Codex
 
-// Purpose: Provide a small TAC interpreter for validating TAC lowering output.
-// Inputs: Consumes a TACProg with functions and static variables.
-// Outputs: Returns the integer result of main() or exits on interpreter errors.
-// Invariants/Assumptions: Values are normalized to 32/64-bit based on type metadata.
+// Provide a small TAC interpreter for validating TAC lowering output.
+// Returns the integer result of main() or exits on interpreter errors.
 
-// Purpose: Define interpreter memory sizing constants.
-// Inputs: Used for address allocation and dynamic array growth.
-// Outputs: Controls initial capacities, growth behavior, and scalar slot counts.
-// Invariants/Assumptions: Values are stored in 4-byte slots and grow by factor 2.
+// Define interpreter memory sizing constants.
+// Controls initial capacities, growth behavior, and scalar slot counts.
 static int kTacInterpWordBytes = 4;
 static size_t kTacInterpInitialMemoryCapacity = 8;
 static size_t kTacInterpInitialBindingCapacity = 8;
@@ -29,26 +25,19 @@ static size_t kTacInterpGrowthFactor = 2;
 static size_t kTacInterpSingleSlot = 1;
 static size_t kTacInterpMainNameLen = sizeof("main") - 1;
 static int kTacInterpFunctionAddrBase = 0x10000000;
-// Purpose: Define supported host builtin names and signatures.
-// Inputs/Outputs: Used to detect external calls like putchar.
-// Invariants/Assumptions: Builtins exist only for test-visible output.
+// Define supported host builtin names and signatures.
 static char* kTacBuiltinPutcharName = "putchar";
 static size_t kTacBuiltinPutcharArgCount = 1;
 
-// Purpose: Track one addressable memory cell in the interpreter.
-// Inputs: address is a byte address; value is the stored integer.
-// Outputs: initialized indicates whether the cell has a defined value.
-// Invariants/Assumptions: address values are byte addresses; allocations align to kTacInterpWordBytes.
+// Track one addressable memory cell in the interpreter.
+// Initialized indicates whether the cell has a defined value.
 struct TacMemoryCell {
   int address;
   uint64_t value;
   bool initialized;
 };
 
-// Purpose: Maintain the interpreter's memory space.
-// Inputs: cells holds allocated memory slots; next_address is the allocator cursor.
-// Outputs: Stores variable and pointer-referenced values.
-// Invariants/Assumptions: Addresses are monotonically allocated.
+// Maintain the interpreter's memory space.
 struct TacMemory {
   struct TacMemoryCell* cells;
   size_t count;
@@ -56,56 +45,47 @@ struct TacMemory {
   int next_address;
 };
 
-// Purpose: Map an identifier name to a memory address.
-// Inputs: name is the variable identifier; address is its storage base.
-// Outputs: Used for variable lookup and address-of operations.
-// Invariants/Assumptions: name pointers remain valid for the interpreter lifetime.
+// Map an identifier name to a memory address.
+// Used for variable lookup and address-of operations.
+// Name pointers remain valid for the interpreter lifetime.
 struct TacBinding {
   struct Slice* name;
   int address;
 };
 
-// Purpose: Maintain name-to-address bindings for a scope.
-// Inputs: bindings stores the list of bound identifiers.
-// Outputs: Provides lookup for globals and locals.
-// Invariants/Assumptions: Names are unique within a binding set.
+// Maintain name-to-address bindings for a scope.
+// Provides lookup for globals and locals.
+// Names are unique within a binding set.
 struct TacBindings {
   struct TacBinding* bindings;
   size_t count;
   size_t capacity;
 };
 
-// Purpose: Track required storage for CopyTo/FromOffset base variables.
-// Inputs: name is the variable name; bytes is the max byte span needed.
-// Outputs: Used to pre-allocate local storage before executing a function.
-// Invariants/Assumptions: bytes counts from offset 0 up to the highest accessed byte.
+// Track required storage for CopyTo/FromOffset base variables.
+// Used to pre-allocate local storage before executing a function.
 struct TacCopyOffsetRequirement {
   struct Slice* name;
   size_t bytes;
 };
 
-// Purpose: Hold a dynamic list of CopyTo/FromOffset storage requirements.
-// Inputs/Outputs: entries stores the requirements; count/capacity track usage.
-// Invariants/Assumptions: Names are unique within the map.
+// Own storage requirements collected for aggregate copy operations.
+// Names are unique within the map.
 struct TacCopyOffsetMap {
   struct TacCopyOffsetRequirement* entries;
   size_t count;
   size_t capacity;
 };
 
-// Purpose: Map a function name to a synthetic address for function pointers.
-// Inputs: name is the function identifier; func is the top-level node; address is the pointer value.
-// Outputs: Used to resolve function-pointer calls and address-of operations.
-// Invariants/Assumptions: address values are unique and non-zero.
+// Map a function name to a synthetic address for function pointers.
+// Used to resolve function-pointer calls and address-of operations.
 struct TacFunctionEntry {
   struct Slice* name;
   struct TopLevel* func;
   int address;
 };
 
-// Purpose: Track function pointer addresses for the interpreter.
-// Inputs/Outputs: entries holds the registered functions; next_address allocates unique addresses.
-// Invariants/Assumptions: next_address is advanced by word size for each function.
+// Track function pointer addresses for the interpreter.
 struct TacFunctionTable {
   struct TacFunctionEntry* entries;
   size_t count;
@@ -113,19 +93,17 @@ struct TacFunctionTable {
   int next_address;
 };
 
-// Purpose: Associate a label name with its instruction node.
-// Inputs: label is the label name; instr points at the label instruction.
-// Outputs: Supports TACJUMP and TACCOND_JUMP dispatch.
-// Invariants/Assumptions: Label names are unique within a function body.
+// Associate a label name with its instruction node.
+// Label is the label name; instr points at the label instruction.
+// Supports TACJUMP and TACCOND_JUMP dispatch.
+// Label names are unique within a function body.
 struct TacLabelEntry {
   struct Slice* label;
   struct TACInstr* instr;
 };
 
-// Purpose: Store per-function execution state for the interpreter.
-// Inputs: locals holds the local bindings; labels index jump targets.
-// Outputs: Tracks comparison state for TACCOND_JUMP.
-// Invariants/Assumptions: cmp_valid is set only after a TACCMP.
+// Store per-function execution state for the interpreter.
+// Tracks comparison state for TACCOND_JUMP.
 struct TacFrame {
   struct TacBindings locals;
   struct TacLabelEntry* labels;
@@ -136,10 +114,9 @@ struct TacFrame {
   uint64_t cmp_right;
 };
 
-// Purpose: Hold interpreter-wide state across function calls.
-// Inputs: prog is the TAC program; memory and globals are initialized up front.
-// Outputs: Provides global storage and shared memory space.
-// Invariants/Assumptions: Globals are initialized before executing main.
+// Own global memory, bindings, function metadata, and call-time state.
+// Provides global storage and shared memory space.
+// Globals are initialized before executing main.
 struct TacInterpreter {
   struct TACProg* prog;
   struct TacMemory memory;
@@ -147,10 +124,8 @@ struct TacInterpreter {
   struct TacFunctionTable functions;
 };
 
-// Purpose: Emit a TAC interpreter error and terminate execution.
-// Inputs: fmt is a printf-style format string.
-// Outputs: Writes to stderr and exits with non-zero status.
-// Invariants/Assumptions: Used for irrecoverable interpreter errors.
+// Emit a TAC interpreter error and terminate execution.
+// Writes to stderr and exits with non-zero status.
 static void tac_interp_error(char* fmt, ...) {
   va_list args;
   fprintf(stderr, "TAC Interpreter Error: ");
@@ -161,10 +136,10 @@ static void tac_interp_error(char* fmt, ...) {
   exit(EXIT_FAILURE);
 }
 
-// Purpose: Initialize a TacMemory structure.
-// Inputs: mem points to the memory object to initialize.
-// Outputs: Resets memory tracking to an empty state.
-// Invariants/Assumptions: mem is non-NULL.
+// Reset interpreter memory cells and the next synthetic address.
+// Mem points to the memory object to initialize.
+// Resets memory tracking to an empty state.
+// Mem is non-NULL.
 static void tac_memory_init(struct TacMemory* mem) {
   mem->cells = NULL;
   mem->count = 0;
@@ -173,10 +148,9 @@ static void tac_memory_init(struct TacMemory* mem) {
   mem->next_address = kTacInterpWordBytes;
 }
 
-// Purpose: Release a TacMemory's allocated resources.
-// Inputs: mem points to the memory object to free.
-// Outputs: Frees allocated memory slots.
-// Invariants/Assumptions: mem was initialized with tac_memory_init.
+// Free interpreter memory-cell storage and reset its counters.
+// Mem points to the memory object to free.
+// Frees allocated memory slots.
 static void tac_memory_destroy(struct TacMemory* mem) {
   free(mem->cells);
   mem->cells = NULL;
@@ -185,10 +159,10 @@ static void tac_memory_destroy(struct TacMemory* mem) {
   mem->next_address = 0;
 }
 
-// Purpose: Grow the TacMemory cell array if needed.
-// Inputs: mem points to the memory object to grow.
-// Outputs: Ensures capacity for at least one more cell.
-// Invariants/Assumptions: mem is non-NULL.
+// Grow the interpreter's addressable-cell array when full.
+// Mem points to the memory object to grow.
+// Ensures capacity for at least one more cell.
+// Mem is non-NULL.
 static void tac_memory_reserve(struct TacMemory* mem) {
   if (mem->count < mem->capacity) {
     return;
@@ -205,10 +179,8 @@ static void tac_memory_reserve(struct TacMemory* mem) {
   mem->capacity = new_capacity;
 }
 
-// Purpose: Find an existing memory cell by address.
-// Inputs: mem is the memory object; address is the byte address to find.
-// Outputs: Returns the cell pointer or NULL if not found.
-// Invariants/Assumptions: mem is initialized.
+// Look up a previously allocated interpreter cell by byte address.
+// Returns the cell pointer or NULL if not found.
 static struct TacMemoryCell* tac_memory_find_cell(struct TacMemory* mem, int address) {
   for (size_t i = 0; i < mem->count; i++) {
     if (mem->cells[i].address == address) {
@@ -218,10 +190,8 @@ static struct TacMemoryCell* tac_memory_find_cell(struct TacMemory* mem, int add
   return NULL;
 }
 
-// Purpose: Ensure a memory cell exists for a given address.
-// Inputs: mem is the memory object; address is the byte address to access.
-// Outputs: Returns a pointer to the memory cell, creating it if missing.
-// Invariants/Assumptions: New cells are marked uninitialized.
+// Look up or create the interpreter cell for a byte address.
+// Returns a pointer to the memory cell, creating it if missing.
 static struct TacMemoryCell* tac_memory_get_cell(struct TacMemory* mem, int address) {
   struct TacMemoryCell* cell = tac_memory_find_cell(mem, address);
   if (cell != NULL) {
@@ -235,10 +205,9 @@ static struct TacMemoryCell* tac_memory_get_cell(struct TacMemory* mem, int addr
   return cell;
 }
 
-// Purpose: Allocate a contiguous range of memory slots.
-// Inputs: mem is the memory object; slots is the number of word slots to reserve.
-// Outputs: Returns the base byte address for the allocated range.
-// Invariants/Assumptions: slots must be non-zero.
+// Reserve zeroed word slots and return their synthetic base address.
+// Returns the base byte address for the allocated range.
+// Slots must be non-zero.
 static int tac_memory_alloc_range(struct TacMemory* mem, size_t slots) {
   if (slots == 0) {
     tac_interp_error("attempted to allocate zero TAC memory slots");
@@ -252,20 +221,15 @@ static int tac_memory_alloc_range(struct TacMemory* mem, size_t slots) {
   return base;
 }
 
-// Purpose: Store a value into a memory cell.
-// Inputs: mem is the memory object; address is the target byte address; value is the data.
-// Outputs: Writes the value and marks the cell initialized.
-// Invariants/Assumptions: address refers to a word slot.
+// Store a value into a memory cell.
 static void tac_memory_store(struct TacMemory* mem, int address, uint64_t value) {
   struct TacMemoryCell* cell = tac_memory_get_cell(mem, address);
   cell->value = value;
   cell->initialized = true;
 }
 
-// Purpose: Load a value from a memory cell.
-// Inputs: mem is the memory object; address is the source byte address.
-// Outputs: Returns the stored value.
-// Invariants/Assumptions: Loading an uninitialized address is an error.
+// Load a value from a memory cell.
+// Returns the stored value.
 static uint64_t tac_memory_load(struct TacMemory* mem, int address) {
   struct TacMemoryCell* cell = tac_memory_find_cell(mem, address);
   if (cell == NULL || !cell->initialized) {
@@ -274,20 +238,18 @@ static uint64_t tac_memory_load(struct TacMemory* mem, int address) {
   return cell->value;
 }
 
-// Purpose: Initialize a TacBindings structure.
-// Inputs: bindings points to the bindings object to initialize.
-// Outputs: Resets the binding list to empty.
-// Invariants/Assumptions: bindings is non-NULL.
+// Reset the name-to-address binding set for a new scope.
+// Bindings points to the bindings object to initialize.
+// Resets the binding list to empty.
+// Bindings is non-NULL.
 static void tac_bindings_init(struct TacBindings* bindings) {
   bindings->bindings = NULL;
   bindings->count = 0;
   bindings->capacity = 0;
 }
 
-// Purpose: Release memory held by a TacBindings structure.
-// Inputs: bindings points to the bindings object to free.
-// Outputs: Frees the bindings array.
-// Invariants/Assumptions: bindings was initialized with tac_bindings_init.
+// Free all name-to-address bindings in a scope.
+// Bindings points to the bindings object to free.
 static void tac_bindings_destroy(struct TacBindings* bindings) {
   free(bindings->bindings);
   bindings->bindings = NULL;
@@ -295,10 +257,10 @@ static void tac_bindings_destroy(struct TacBindings* bindings) {
   bindings->capacity = 0;
 }
 
-// Purpose: Grow a binding list if needed.
-// Inputs: bindings points to the bindings object to grow.
-// Outputs: Ensures capacity for at least one more binding.
-// Invariants/Assumptions: bindings is non-NULL.
+// Grow a scope's binding array when it reaches capacity.
+// Bindings points to the bindings object to grow.
+// Ensures capacity for at least one more binding.
+// Bindings is non-NULL.
 static void tac_bindings_reserve(struct TacBindings* bindings) {
   if (bindings->count < bindings->capacity) {
     return;
@@ -315,10 +277,8 @@ static void tac_bindings_reserve(struct TacBindings* bindings) {
   bindings->capacity = new_capacity;
 }
 
-// Purpose: Find an existing binding by name.
-// Inputs: bindings is the binding list; name is the identifier to find.
-// Outputs: Returns the binding pointer or NULL if not found.
-// Invariants/Assumptions: Name comparisons use slice equality.
+// Look up a name-to-address binding in the current scope set.
+// Returns the binding pointer or NULL if not found.
 static struct TacBinding* tac_bindings_find(struct TacBindings* bindings, struct Slice* name) {
   for (size_t i = 0; i < bindings->count; i++) {
     if (compare_slice_to_slice(bindings->bindings[i].name, name)) {
@@ -328,10 +288,9 @@ static struct TacBinding* tac_bindings_find(struct TacBindings* bindings, struct
   return NULL;
 }
 
-// Purpose: Create or return a binding with a specific slot allocation.
-// Inputs: bindings is the binding list; mem is the shared memory allocator; name is the identifier.
-// Outputs: Returns the binding for the identifier, allocating storage if missing.
-// Invariants/Assumptions: slots must be non-zero.
+// Look up or create a binding with an explicit storage span.
+// Returns the binding for the identifier, allocating storage if missing.
+// Slots must be non-zero.
 static struct TacBinding* tac_bindings_get_or_add_range(struct TacBindings* bindings,
                                                         struct TacMemory* mem,
                                                         struct Slice* name,
@@ -347,20 +306,16 @@ static struct TacBinding* tac_bindings_get_or_add_range(struct TacBindings* bind
   return binding;
 }
 
-// Purpose: Create or return a binding for a name.
-// Inputs: bindings is the binding list; mem is the shared memory allocator; name is the identifier.
-// Outputs: Returns the binding for the identifier, allocating storage if missing.
-// Invariants/Assumptions: Newly created bindings allocate one word slot.
+// Look up or create a binding with one word of storage.
+// Returns the binding for the identifier, allocating storage if missing.
 static struct TacBinding* tac_bindings_get_or_add(struct TacBindings* bindings,
                                                   struct TacMemory* mem,
                                                   struct Slice* name) {
   return tac_bindings_get_or_add_range(bindings, mem, name, kTacInterpSingleSlot);
 }
 
-// Purpose: Convert a byte span into the number of word slots required.
-// Inputs: bytes is the total byte count to cover.
-// Outputs: Returns the number of word slots to reserve.
-// Invariants/Assumptions: bytes is non-zero and slots are 4-byte words.
+// Convert a byte span into the number of word slots required.
+// Returns the number of word slots to reserve.
 static size_t tac_slots_for_bytes(size_t bytes) {
   if (bytes == 0) {
     tac_interp_error("zero-sized copy offset allocation");
@@ -369,20 +324,17 @@ static size_t tac_slots_for_bytes(size_t bytes) {
   return (slots > 0) ? slots : kTacInterpSingleSlot;
 }
 
-// Purpose: Initialize a CopyTo/FromOffset requirement map.
-// Inputs: map is the map to initialize.
-// Outputs: Resets the map to an empty state.
-// Invariants/Assumptions: map is non-NULL.
+// Reset aggregate-copy storage requirements for a function.
+// Resets the map to an empty state.
+// Map is non-NULL.
 static void tac_copy_offset_map_init(struct TacCopyOffsetMap* map) {
   map->entries = NULL;
   map->count = 0;
   map->capacity = 0;
 }
 
-// Purpose: Release resources held by a CopyTo/FromOffset requirement map.
-// Inputs: map is the map to destroy.
-// Outputs: Frees map storage and resets metadata.
-// Invariants/Assumptions: map was initialized with tac_copy_offset_map_init.
+// Free aggregate-copy requirement entries and backing storage.
+// Frees map storage and resets metadata.
 static void tac_copy_offset_map_destroy(struct TacCopyOffsetMap* map) {
   free(map->entries);
   map->entries = NULL;
@@ -390,10 +342,9 @@ static void tac_copy_offset_map_destroy(struct TacCopyOffsetMap* map) {
   map->capacity = 0;
 }
 
-// Purpose: Grow the CopyTo/FromOffset requirement map if needed.
-// Inputs: map is the map to grow.
-// Outputs: Ensures capacity for one additional entry.
-// Invariants/Assumptions: map is non-NULL.
+// Grow aggregate-copy requirements when a new base is encountered.
+// Ensures capacity for one additional entry.
+// Map is non-NULL.
 static void tac_copy_offset_map_reserve(struct TacCopyOffsetMap* map) {
   if (map->count < map->capacity) {
     return;
@@ -411,10 +362,8 @@ static void tac_copy_offset_map_reserve(struct TacCopyOffsetMap* map) {
   map->capacity = new_capacity;
 }
 
-// Purpose: Find an existing CopyTo/FromOffset requirement by name.
-// Inputs: map is the requirement map; name is the variable name.
-// Outputs: Returns the entry pointer or NULL if not found.
-// Invariants/Assumptions: Name comparisons use slice equality.
+// Look up the required byte span for one aggregate-copy base.
+// Returns the entry pointer or NULL if not found.
 static struct TacCopyOffsetRequirement* tac_copy_offset_map_find(struct TacCopyOffsetMap* map,
                                                                  struct Slice* name) {
   for (size_t i = 0; i < map->count; i++) {
@@ -425,10 +374,8 @@ static struct TacCopyOffsetRequirement* tac_copy_offset_map_find(struct TacCopyO
   return NULL;
 }
 
-// Purpose: Record the maximum byte span required for a CopyTo/FromOffset base.
-// Inputs: map is the requirement map; name is the variable name; bytes is required span.
-// Outputs: Updates or inserts the requirement entry for the name.
-// Invariants/Assumptions: bytes counts from offset 0 and fits in size_t.
+// Record the maximum byte span required for a CopyTo/FromOffset base.
+// Map is the requirement map; name is the variable name; bytes is required span.
 static void tac_copy_offset_map_update(struct TacCopyOffsetMap* map,
                                        struct Slice* name,
                                        size_t bytes) {
@@ -448,10 +395,8 @@ static void tac_copy_offset_map_update(struct TacCopyOffsetMap* map,
   map->count++;
 }
 
-// Purpose: Compute the byte span required for a CopyTo/FromOffset access.
-// Inputs: op_name labels the operation; offset is the byte offset; type describes the value size.
-// Outputs: Returns the byte span needed to cover the access.
-// Invariants/Assumptions: offset is non-negative and type has a non-zero size.
+// Compute the byte span required for a CopyTo/FromOffset access.
+// Returns the byte span needed to cover the access.
 static size_t tac_copy_offset_required_bytes(char* op_name,
                                              int offset,
                                              struct Type* type,
@@ -476,10 +421,8 @@ static size_t tac_copy_offset_required_bytes(char* op_name,
   return base + size;
 }
 
-// Purpose: Collect CopyTo/FromOffset storage requirements for a TAC function body.
-// Inputs: map is the requirement map; body is the TAC instruction list.
-// Outputs: Populates map with max byte spans for each base variable.
-// Invariants/Assumptions: TAC instruction list links are acyclic.
+// Collect CopyTo/FromOffset storage requirements for a TAC function body.
+// Populates map with max byte spans for each base variable.
 static void tac_collect_copy_offset_requirements(struct TacCopyOffsetMap* map,
                                                  struct TACInstr* body) {
   for (struct TACInstr* cur = body; cur != NULL; cur = cur->next) {
@@ -511,10 +454,8 @@ static void tac_collect_copy_offset_requirements(struct TacCopyOffsetMap* map,
   }
 }
 
-// Purpose: Pre-allocate local storage for CopyTo/FromOffset base variables.
-// Inputs: frame is the current frame; interp is the interpreter state; body is the TAC list.
-// Outputs: Ensures local bindings exist for each CopyTo/FromOffset base variable.
-// Invariants/Assumptions: Globals are allocated separately before function execution.
+// Pre-allocate local storage for CopyTo/FromOffset base variables.
+// Ensures local bindings exist for each CopyTo/FromOffset base variable.
 static void tac_preallocate_copy_offsets(struct TacFrame* frame,
                                          struct TacInterpreter* interp,
                                          struct TACInstr* body) {
@@ -537,10 +478,10 @@ static void tac_preallocate_copy_offsets(struct TacFrame* frame,
   tac_copy_offset_map_destroy(&map);
 }
 
-// Purpose: Initialize a TacFunctionTable structure.
-// Inputs: table points to the function table to initialize.
-// Outputs: Resets the table to empty and sets the first synthetic address.
-// Invariants/Assumptions: table is non-NULL.
+// Reset function-name/address entries and the next synthetic function address.
+// Table points to the function table to initialize.
+// Resets the table to empty and sets the first synthetic address.
+// Table is non-NULL.
 static void tac_function_table_init(struct TacFunctionTable* table) {
   table->entries = NULL;
   table->count = 0;
@@ -548,10 +489,9 @@ static void tac_function_table_init(struct TacFunctionTable* table) {
   table->next_address = kTacInterpFunctionAddrBase;
 }
 
-// Purpose: Release memory held by a TacFunctionTable.
-// Inputs: table points to the function table to free.
-// Outputs: Frees the entries array and resets metadata.
-// Invariants/Assumptions: table was initialized with tac_function_table_init.
+// Free all function-name/address entries in the interpreter table.
+// Table points to the function table to free.
+// Frees the entries array and resets metadata.
 static void tac_function_table_destroy(struct TacFunctionTable* table) {
   free(table->entries);
   table->entries = NULL;
@@ -560,10 +500,10 @@ static void tac_function_table_destroy(struct TacFunctionTable* table) {
   table->next_address = 0;
 }
 
-// Purpose: Grow the function table if needed.
-// Inputs: table points to the function table to grow.
-// Outputs: Ensures capacity for at least one more entry.
-// Invariants/Assumptions: table is non-NULL.
+// Grow the function table when another function is registered.
+// Table points to the function table to grow.
+// Ensures capacity for at least one more entry.
+// Table is non-NULL.
 static void tac_function_table_reserve(struct TacFunctionTable* table) {
   if (table->count < table->capacity) {
     return;
@@ -580,10 +520,8 @@ static void tac_function_table_reserve(struct TacFunctionTable* table) {
   table->capacity = new_capacity;
 }
 
-// Purpose: Find a function table entry by name.
-// Inputs: table holds the function table; name is the identifier to find.
-// Outputs: Returns the entry pointer or NULL if not found.
-// Invariants/Assumptions: Name comparisons use slice equality.
+// Look up a function entry by its source-level name.
+// Returns the entry pointer or NULL if not found.
 static struct TacFunctionEntry* tac_function_table_find_name(struct TacFunctionTable* table,
                                                              struct Slice* name) {
   for (size_t i = 0; i < table->count; i++) {
@@ -594,10 +532,8 @@ static struct TacFunctionEntry* tac_function_table_find_name(struct TacFunctionT
   return NULL;
 }
 
-// Purpose: Find a function table entry by address.
-// Inputs: table holds the function table; address is the synthetic pointer value.
-// Outputs: Returns the entry pointer or NULL if not found.
-// Invariants/Assumptions: address values are unique per function.
+// Look up a function entry by its synthetic pointer address.
+// Returns the entry pointer or NULL if not found.
 static struct TacFunctionEntry* tac_function_table_find_address(struct TacFunctionTable* table,
                                                                 int address) {
   for (size_t i = 0; i < table->count; i++) {
@@ -608,10 +544,9 @@ static struct TacFunctionEntry* tac_function_table_find_address(struct TacFuncti
   return NULL;
 }
 
-// Purpose: Register a function in the table and return its synthetic address.
-// Inputs: table holds the function table; func is the function to register.
-// Outputs: Returns the assigned synthetic address for func.
-// Invariants/Assumptions: Each function name is registered at most once.
+// Register a function in the table and return its synthetic address.
+// Returns the assigned synthetic address for func.
+// Each function name is registered at most once.
 static int tac_function_table_register(struct TacFunctionTable* table,
                                        struct TopLevel* func) {
   if (func == NULL || func->name == NULL) {
@@ -633,10 +568,9 @@ static int tac_function_table_register(struct TacFunctionTable* table,
   return entry->address;
 }
 
-// Purpose: Populate the function table from a TAC program.
-// Inputs: table holds the function table; prog is the TAC program to scan.
-// Outputs: Registers all top-level functions for pointer resolution.
-// Invariants/Assumptions: prog is non-NULL and contains unique function names.
+// Populate the function table from a TAC program.
+// Registers all top-level functions for pointer resolution.
+// Prog is non-NULL and contains unique function names.
 static void tac_function_table_populate(struct TacFunctionTable* table,
                                         struct TACProg* prog) {
   for (struct TopLevel* cur = prog->head; cur != NULL; cur = cur->next) {
@@ -646,10 +580,8 @@ static void tac_function_table_populate(struct TacFunctionTable* table,
   }
 }
 
-// Purpose: Select the binding list that should store a variable.
-// Inputs: interp is the interpreter state; frame is the current frame; name is the identifier.
-// Outputs: Returns the bindings list to use for the identifier.
-// Invariants/Assumptions: Globals are matched before locals.
+// Select the binding list that should store a variable.
+// Returns the bindings list to use for the identifier.
 static struct TacBindings* tac_select_bindings(struct TacInterpreter* interp,
                                                struct TacFrame* frame,
                                                struct Slice* name) {
@@ -659,10 +591,8 @@ static struct TacBindings* tac_select_bindings(struct TacInterpreter* interp,
   return &frame->locals;
 }
 
-// Purpose: Read a variable value by name.
-// Inputs: interp is the interpreter state; frame is the current frame; name is the variable name.
-// Outputs: Returns the stored integer value.
-// Invariants/Assumptions: Reading an unbound or uninitialized variable is an error.
+// Load a variable's current value from interpreter bindings.
+// Returns the stored integer value.
 static uint64_t tac_read_var(struct TacInterpreter* interp,
                              struct TacFrame* frame,
                              struct Slice* name) {
@@ -676,10 +606,7 @@ static uint64_t tac_read_var(struct TacInterpreter* interp,
   return tac_memory_load(&interp->memory, binding->address);
 }
 
-// Purpose: Write a variable value by name, creating storage if needed.
-// Inputs: interp is the interpreter state; frame is the current frame; name is the variable name.
-// Outputs: Stores the value in memory.
-// Invariants/Assumptions: Unknown globals are treated as locals.
+// Store a variable value, allocating a binding when absent.
 static void tac_write_var(struct TacInterpreter* interp,
                           struct TacFrame* frame,
                           struct Slice* name,
@@ -689,10 +616,8 @@ static void tac_write_var(struct TacInterpreter* interp,
   tac_memory_store(&interp->memory, binding->address, value);
 }
 
-// Purpose: Determine the base element size for a type (flattening arrays).
-// Inputs: type is the declared variable type.
-// Outputs: Returns the size in bytes of the innermost element type.
-// Invariants/Assumptions: Only scalar/array types are expected here.
+// Determine the base element size for a type (flattening arrays).
+// Returns the size in bytes of the innermost element type.
 static size_t tac_base_element_size(struct Type* type) {
   struct Type* cur = type;
   while (cur != NULL && cur->type == ARRAY_TYPE) {
@@ -704,10 +629,8 @@ static size_t tac_base_element_size(struct Type* type) {
   return get_type_size((struct Type*)cur);
 }
 
-// Purpose: Map a static initializer kind to its byte size.
-// Inputs: init_type is the static initializer kind.
-// Outputs: Returns the size in bytes for one initializer entry.
-// Invariants/Assumptions: ZERO_INIT is handled separately.
+// Map a static initializer kind to its byte size.
+// Returns the size in bytes for one initializer entry.
 static size_t tac_static_init_size(enum StaticInitType init_type) {
   switch (init_type) {
     case CHAR_INIT:
@@ -731,10 +654,8 @@ static size_t tac_static_init_size(enum StaticInitType init_type) {
   }
 }
 
-// Purpose: Determine the slot count needed for an addressable type.
-// Inputs: type is the TAC value type for the address-of source.
-// Outputs: Returns the number of word slots to reserve.
-// Invariants/Assumptions: Allocates enough space for the full type size.
+// Determine the slot count needed for an addressable type.
+// Returns the number of word slots to reserve.
 static size_t tac_slots_for_type(struct Type* type) {
   if (type == NULL) {
     return kTacInterpSingleSlot;
@@ -746,10 +667,8 @@ static size_t tac_slots_for_type(struct Type* type) {
   return tac_slots_for_bytes(bytes);
 }
 
-// Purpose: Resolve the address associated with a variable name.
-// Inputs: interp is the interpreter state; frame is the current frame; name is the variable name.
-// Outputs: Returns the address for the variable, allocating if needed.
-// Invariants/Assumptions: Unknown globals are treated as locals.
+// Resolve the address associated with a variable name.
+// Returns the address for the variable, allocating if needed.
 static int tac_address_of(struct TacInterpreter* interp,
                           struct TacFrame* frame,
                           struct Slice* name,
@@ -760,10 +679,9 @@ static int tac_address_of(struct TacInterpreter* interp,
   return binding->address;
 }
 
-// Purpose: Evaluate a TAC value to its integer representation.
-// Inputs: interp is the interpreter state; frame is the current frame; val is the TAC value.
-// Outputs: Returns the integer representation of the value.
-// Invariants/Assumptions: Variable values must be initialized before use.
+// Evaluate a TAC value to its integer representation.
+// Returns the integer representation of the value.
+// Variable values must be initialized before use.
 static uint64_t tac_eval_val(struct TacInterpreter* interp,
                              struct TacFrame* frame,
                              struct Val* val) {
@@ -786,10 +704,8 @@ static uint64_t tac_eval_val(struct TacInterpreter* interp,
   }
 }
 
-// Purpose: Assign a TAC value to a destination variable.
-// Inputs: interp is the interpreter state; frame is the current frame; dst is the destination.
-// Outputs: Writes the evaluated value into destination storage.
-// Invariants/Assumptions: dst must be a VARIABLE value.
+// Assign a TAC value to a destination variable.
+// Dst must be a VARIABLE value.
 static void tac_assign_val(struct TacInterpreter* interp,
                            struct TacFrame* frame,
                            struct Val* dst,
@@ -800,10 +716,8 @@ static void tac_assign_val(struct TacInterpreter* interp,
   tac_write_var(interp, frame, dst->val.var_name, value);
 }
 
-// Purpose: Determine the result of a TAC conditional jump.
-// Inputs: cond is the condition enum; left/right are the compared values.
-// Outputs: Returns true if the condition is satisfied.
-// Invariants/Assumptions: Signed comparisons use int64_t, unsigned use uint64_t.
+// Determine the result of a TAC conditional jump.
+// Returns true if the condition is satisfied.
 static bool tac_condition_true(enum TACCondition cond, uint64_t left, uint64_t right) {
   switch (cond) {
     case CondE:
@@ -832,10 +746,8 @@ static bool tac_condition_true(enum TACCondition cond, uint64_t left, uint64_t r
   }
 }
 
-// Purpose: Apply a unary operator to a value.
-// Inputs: op is the unary operator; value is the operand.
-// Outputs: Returns the result of the unary operation.
-// Invariants/Assumptions: Boolean not returns 1 or 0.
+// Apply a unary operator to a value.
+// Returns the result of the unary operation.
 static uint64_t tac_apply_unary(enum UnOp op, uint64_t value, struct Type* type) {
   uint64_t result = 0;
   switch (op) {
@@ -862,10 +774,8 @@ static uint64_t tac_apply_unary(enum UnOp op, uint64_t value, struct Type* type)
   return result;
 }
 
-// Purpose: Apply a binary operator to two values.
-// Inputs: op is the binary operator; left/right are operands.
-// Outputs: Returns the result of the binary operation.
-// Invariants/Assumptions: Division or modulo by zero is an error.
+// Apply a binary operator to two values.
+// Returns the result of the binary operation.
 static uint64_t tac_apply_binary(enum ALUOp op,
                                  uint64_t left,
                                  uint64_t right) {
@@ -942,10 +852,8 @@ static uint64_t tac_apply_binary(enum ALUOp op,
   return result;
 }
 
-// Purpose: Initialize label metadata for a function frame.
-// Inputs: frame is the frame to populate; body is the function's instruction list.
-// Outputs: Populates frame->labels for quick label lookup.
-// Invariants/Assumptions: Duplicate labels are rejected.
+// Index labels in a function body for jump dispatch.
+// Populates frame->labels for quick label lookup.
 static void tac_collect_labels(struct TacFrame* frame, struct TACInstr* body) {
   for (struct TACInstr* cur = body; cur != NULL; cur = cur->next) {
     if (cur->type != TACLABEL) {
@@ -976,10 +884,8 @@ static void tac_collect_labels(struct TacFrame* frame, struct TACInstr* body) {
   }
 }
 
-// Purpose: Look up a label instruction in the current frame.
-// Inputs: frame is the current frame; label is the label name.
-// Outputs: Returns the instruction pointer for the label.
-// Invariants/Assumptions: Labels are collected before execution.
+// Look up a label instruction in the current frame.
+// Returns the instruction pointer for the label.
 static struct TACInstr* tac_find_label(struct TacFrame* frame, struct Slice* label) {
   for (size_t i = 0; i < frame->label_count; i++) {
     if (compare_slice_to_slice(frame->labels[i].label, label)) {
@@ -990,10 +896,7 @@ static struct TACInstr* tac_find_label(struct TacFrame* frame, struct Slice* lab
   return NULL;
 }
 
-// Purpose: Initialize a function frame before execution.
-// Inputs: frame is the frame to initialize; interp is the interpreter state.
-// Outputs: Sets up local bindings and label table for the function.
-// Invariants/Assumptions: Caller supplies the function body.
+// Prepare bindings, labels, and comparison state for one call frame.
 static void tac_frame_init(struct TacFrame* frame, struct TacInterpreter* interp, struct TACInstr* body) {
   tac_bindings_init(&frame->locals);
   frame->labels = NULL;
@@ -1006,10 +909,7 @@ static void tac_frame_init(struct TacFrame* frame, struct TacInterpreter* interp
   tac_preallocate_copy_offsets(frame, interp, body);
 }
 
-// Purpose: Release resources associated with a function frame.
-// Inputs: frame is the frame to destroy.
-// Outputs: Frees label and local binding storage.
-// Invariants/Assumptions: Frame memory is heap-allocated.
+// Free per-call labels, bindings, and temporary interpreter state.
 static void tac_frame_destroy(struct TacFrame* frame) {
   tac_bindings_destroy(&frame->locals);
   free(frame->labels);
@@ -1018,10 +918,8 @@ static void tac_frame_destroy(struct TacFrame* frame) {
   frame->label_capacity = 0;
 }
 
-// Purpose: Handle built-in function calls that have no TAC definition.
-// Inputs: call describes the call site; args are evaluated argument values.
-// Outputs: Returns true if a builtin was handled and writes its result to out_result.
-// Invariants/Assumptions: Builtins are limited to host-side I/O helpers like putchar.
+// Execute interpreter-provided runtime calls that have no TAC body.
+// Returns true if a builtin was handled and writes its result to out_result.
 static bool tac_try_builtin_call(struct TACCall* call,
                                  uint64_t* args,
                                  uint64_t* out_result) {
@@ -1041,10 +939,8 @@ static bool tac_try_builtin_call(struct TACCall* call,
   return false;
 }
 
-// Purpose: Execute a TAC function and return its result.
-// Inputs: interp is the interpreter state; func is the function top-level node.
-// Outputs: Returns the integer result produced by TACRETURN.
-// Invariants/Assumptions: Function bodies include a TACRETURN on all paths.
+// Execute a TAC function and return its result.
+// Returns the integer result produced by TACRETURN.
 static uint64_t tac_execute_function(struct TacInterpreter* interp,
                                      struct TopLevel* func,
                                      uint64_t* args,
@@ -1320,10 +1216,8 @@ static uint64_t tac_execute_function(struct TacInterpreter* interp,
   return 0;
 }
 
-// Purpose: Initialize global/static variables from TAC top-level entries.
-// Inputs: interp is the interpreter state; prog is the TAC program.
-// Outputs: Allocates storage and sets initial values in global memory.
-// Invariants/Assumptions: Static init lists are stored in consecutive word slots.
+// Initialize global/static variables from TAC top-level entries.
+// Allocates storage and sets initial values in global memory.
 static void tac_init_globals(struct TacInterpreter* interp, struct TACProg* prog) {
   struct TopLevel* cur = (prog->statics != NULL) ? prog->statics : prog->head;
   for (; cur != NULL; cur = cur->next) {
@@ -1425,10 +1319,8 @@ static void tac_init_globals(struct TacInterpreter* interp, struct TACProg* prog
   }
 }
 
-// Purpose: Find the "main" function in a TAC program.
-// Inputs: prog is the TAC program; name is the function name to locate.
-// Outputs: Returns the matching function node or NULL if missing.
-// Invariants/Assumptions: Function names are unique at top level.
+// Find the "main" function in a TAC program.
+// Returns the matching function node or NULL if missing.
 static struct TopLevel* tac_find_function(struct TACProg* prog, struct Slice* name) {
   for (struct TopLevel* cur = prog->head; cur != NULL; cur = cur->next) {
     if (cur->type == FUNC && compare_slice_to_slice(cur->name, name)) {
@@ -1438,10 +1330,7 @@ static struct TopLevel* tac_find_function(struct TACProg* prog, struct Slice* na
   return NULL;
 }
 
-// Purpose: Report missing entry point with available function names.
-// Inputs: prog is the TAC program searched for main.
-// Outputs: Writes diagnostics to stderr and terminates execution.
-// Invariants/Assumptions: Function names are stored as slices in the TAC program.
+// Report missing entry point with available function names.
 static void tac_report_missing_main(struct TACProg* prog) {
   fprintf(stderr, "TAC Interpreter Error: no main function found in TAC program\n");
   fprintf(stderr, "TAC Interpreter Error: expected main length %zu\n", kTacInterpMainNameLen);
@@ -1480,10 +1369,8 @@ static void tac_report_missing_main(struct TACProg* prog) {
   exit(EXIT_FAILURE);
 }
 
-// Purpose: Interpret a TAC program and return the result of main().
-// Inputs: prog is the TAC program to execute.
-// Outputs: Returns the integer result of the main function.
-// Invariants/Assumptions: main takes no parameters in this interpreter.
+// Interpret a TAC program and return the result of main().
+// Returns the integer result of the main function.
 int tac_interpret_prog(struct TACProg* prog) {
   if (prog == NULL) {
     tac_interp_error("cannot interpret a NULL TAC program");

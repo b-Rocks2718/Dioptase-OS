@@ -67,6 +67,7 @@ static unsigned* AUDIO_WATERMARK = (unsigned*)AUDIO_WATERMARK_ADDR;
 #define WAV_RIFF_ID_LE 0x46464952
 #define WAV_WAVE_ID_LE 0x45564157
 
+// Classify the validation failures that can reject a WAV stream.
 enum AudioWavErrorCode {
   AUDIO_WAV_ERROR_NONE = 0,
   AUDIO_WAV_ERROR_FILE_TOO_SMALL,
@@ -91,6 +92,7 @@ enum AudioWavErrorCode {
   AUDIO_WAV_ERROR_DATA_MISSING,
 };
 
+// Describe why a WAV stream was rejected before playback.
 struct AudioWavError {
   enum AudioWavErrorCode code;
   unsigned offset;
@@ -124,6 +126,7 @@ struct AudioRequest {
   int handoff_finalized;
 };
 
+// Return whether the wrapping tick counter has reached a playback deadline.
 static bool audio_deadline_reached(unsigned now, unsigned deadline){
   unsigned delta = now - deadline;
   return delta == 0 || (delta & (INT_MAX + 1U)) == 0;
@@ -196,11 +199,13 @@ extern unsigned audio_copy_even_bytes_to_ring_asm(char* src, unsigned write_idx,
 extern unsigned audio_copy_word_bytes_to_ring_asm(char* src, unsigned write_idx,
     unsigned copy_bytes);
 
+// Decode a little-endian 16-bit value from an untrusted WAV header.
 static unsigned read_u16_le(char* bytes){
   return ((unsigned)(unsigned char)bytes[0]) |
          ((unsigned)(unsigned char)bytes[1] << 8);
 }
 
+// Decode a little-endian 32-bit value from an untrusted WAV header.
 static unsigned read_u32_le(char* bytes){
   return ((unsigned)(unsigned char)bytes[0]) |
          ((unsigned)(unsigned char)bytes[1] << 8) |
@@ -208,10 +213,12 @@ static unsigned read_u32_le(char* bytes){
          ((unsigned)(unsigned char)bytes[3] << 24);
 }
 
+// Return whether four bytes match a WAV chunk identifier.
 static bool chunk_id_is(char* bytes, char a, char b, char c, char d){
   return bytes[0] == a && bytes[1] == b && bytes[2] == c && bytes[3] == d;
 }
 
+// Store a WAV validation failure and emit its diagnostic context.
 static bool audio_wav_reject(struct AudioWavError* error,
     enum AudioWavErrorCode code, unsigned offset,
     unsigned got, unsigned expected){
@@ -222,6 +229,7 @@ static bool audio_wav_reject(struct AudioWavError* error,
   return false;
 }
 
+// Map a WAV validation code to its diagnostic name.
 static char* audio_wav_error_name(enum AudioWavErrorCode code){
   switch (code){
     case AUDIO_WAV_ERROR_FILE_TOO_SMALL: return "file_too_small";
@@ -250,6 +258,7 @@ static char* audio_wav_error_name(enum AudioWavErrorCode code){
   return "unknown";
 }
 
+// Report a stored WAV validation failure through the kernel diagnostic path.
 static void audio_wav_report_error(struct Node* wav_node, unsigned wav_size,
     struct AudioWavError* error){
   void* args[6];
@@ -440,6 +449,7 @@ static bool audio_wav_parse(char* wav,
     riff_end, 0, 1);
 }
 
+// Compute the number of PCM bytes currently queued in the hardware ring.
 unsigned audio_output_buffered_bytes(unsigned write_idx, unsigned read_idx){
   if (write_idx >= read_idx){
     return write_idx - read_idx;
@@ -447,10 +457,12 @@ unsigned audio_output_buffered_bytes(unsigned write_idx, unsigned read_idx){
   return AUDIO_RING_SIZE_BYTES - (read_idx - write_idx);
 }
 
+// Compute writable PCM capacity while preserving the ring's empty slot.
 unsigned audio_output_free_bytes(unsigned write_idx, unsigned read_idx){
   return AUDIO_USABLE_BYTES - audio_output_buffered_bytes(write_idx, read_idx);
 }
 
+// Advance a PCM ring index with wraparound.
 unsigned audio_output_advance_idx(unsigned idx, unsigned bytes){
   idx += bytes;
   if (idx >= AUDIO_RING_SIZE_BYTES){
@@ -459,6 +471,7 @@ unsigned audio_output_advance_idx(unsigned idx, unsigned bytes){
   return idx;
 }
 
+// Write one signed 16-bit little-endian sample into the PCM ring.
 void audio_output_write_sample_s16le(int sample, unsigned write_idx){
   unsigned encoded = (unsigned short)sample;
   unsigned next_idx = audio_output_advance_idx(write_idx, 1);
@@ -467,22 +480,27 @@ void audio_output_write_sample_s16le(int sample, unsigned write_idx){
   AUDIO_RING[next_idx] = (encoded >> 8) & 0xFF;
 }
 
+// Read the audio device status register.
 unsigned audio_output_status(void){
   return *AUDIO_STATUS;
 }
 
+// Read the producer index published by the audio device.
 unsigned audio_output_write_idx(void){
   return *AUDIO_WRITE_IDX;
 }
 
+// Read the consumer index published by the audio device.
 unsigned audio_output_read_idx(void){
   return *AUDIO_READ_IDX;
 }
 
+// Publish a new producer index after PCM bytes have been written.
 void audio_output_set_write_idx(unsigned write_idx){
   *AUDIO_WRITE_IDX = write_idx;
 }
 
+// Reset the PCM ring and program its low-water watermark.
 void audio_output_reset(unsigned watermark_bytes){
   unsigned read_idx = *AUDIO_READ_IDX;
 
@@ -491,32 +509,39 @@ void audio_output_reset(unsigned watermark_bytes){
   *AUDIO_WRITE_IDX = read_idx;
 }
 
+// Enable audio playback after the ring has been prepared.
 void audio_output_enable(void){
   *AUDIO_CTRL = AUDIO_CTRL_ENABLE | AUDIO_CTRL_IRQ;
 }
 
+// Disable audio playback without changing queued PCM data.
 void audio_output_disable(void){
   *AUDIO_CTRL = 0;
 }
 
+// Return whether the device reports that its PCM ring is below watermark.
 bool audio_output_low_water(void){
   return ((*AUDIO_STATUS) & AUDIO_STATUS_LOW_WATER) != 0;
 }
 
+// Return whether the hardware has consumed every queued PCM byte.
 bool audio_output_empty(void){
   return *AUDIO_READ_IDX == *AUDIO_WRITE_IDX;
 }
 
+// Return the byte offset within one four-byte stereo sample.
 static unsigned audio_ring_ptr_mod4(unsigned write_idx){
   return (AUDIO_RING_BASE + write_idx) & (AUDIO_WORD_BYTES - 1);
 }
 
+// Append one silent stereo sample and return the next ring index.
 static unsigned audio_write_silence_sample(unsigned write_idx){
   AUDIO_RING[write_idx] = 0;
   AUDIO_RING[audio_output_advance_idx(write_idx, 1)] = 0;
   return audio_output_advance_idx(write_idx, AUDIO_SAMPLE_BYTES);
 }
 
+// Copy as many complete PCM samples as fit into the output ring.
 unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes){
   unsigned read_idx = *AUDIO_READ_IDX;
   unsigned write_idx = *AUDIO_WRITE_IDX;
@@ -592,6 +617,7 @@ unsigned audio_output_fill_pcm_s16le(char* src, unsigned src_bytes){
   return consumed_bytes;
 }
 
+// Validate and load WAV metadata and sample bytes from an ext2 node.
 bool audio_wav_load(struct Node* wav_node, struct AudioWav* wav_out){
   unsigned wav_size;
   char* wav_bytes;
@@ -639,10 +665,12 @@ bool audio_wav_load(struct Node* wav_node, struct AudioWav* wav_out){
   return true;
 }
 
+// Return the number of complete stereo samples in a loaded WAV.
 unsigned audio_wav_num_samples(struct AudioWav* wav){
   return wav->data_size / AUDIO_SAMPLE_BYTES;
 }
 
+// Start playback of a loaded WAV if the device can accept its format.
 bool audio_wav_play(struct AudioWav* wav){
   assert(wav != NULL && wav->bytes != NULL,
     "audio playback: validated WAV and mapping must not be NULL.\n");
@@ -756,6 +784,7 @@ void audio_handler(void){
   mark_audio_handled();
 }
 
+// Allocate an asynchronous audio request retaining one node reference.
 struct AudioRequest* audio_request_create(struct Node* node){
   assert(node != NULL,
     "audio request create: source Node must not be NULL.\n");
@@ -819,6 +848,7 @@ bool audio_request_submit(struct AudioRequest* request){
   return true;
 }
 
+// Destroy an audio request that was never submitted to the daemon.
 void audio_request_destroy_unsubmitted(struct AudioRequest* request){
   assert(request != NULL,
     "audio request destroy: request must not be NULL.\n");
@@ -859,6 +889,7 @@ static bool audio_request_release_owner(struct AudioRequest* request){
   return true;
 }
 
+// Wait until the daemon has accepted or rejected the submitted request.
 bool audio_request_wait_until_ready(struct AudioRequest* request){
   assert(request != NULL,
     "audio request wait: request must not be NULL.\n");
@@ -886,12 +917,14 @@ bool audio_request_wait_until_ready(struct AudioRequest* request){
   return validation_succeeded;
 }
 
+// Wait for the daemon to release its final request reference.
 static void audio_request_wait_for_finalization(struct AudioRequest* request){
   while (__atomic_load_n(&request->handoff_finalized) == 0){
     yield();
   }
 }
 
+// Load and start one queued request, publishing its completion state.
 static void audio_process_request(struct AudioRequest* request){
   struct AudioWav wav;
 
@@ -940,6 +973,7 @@ static void audio_daemon_block(void* arg){
   }
 }
 
+// Release one daemon-owned request reference and wake its final waiter.
 static void audio_request_finish_lifetime(void){
   int previous = __atomic_fetch_add(&audio_queued_count, -1);
   // Do not reject previous > AUDIO_MAX_QUEUED_REQUESTS: a concurrent failed
@@ -990,6 +1024,7 @@ static void audio_daemon_prepare_address_space(struct TCB* daemon){
   }
 }
 
+// Service queued audio requests and device low-water interrupts.
 static void audio_daemon(void* unused){
   (void)unused;
 

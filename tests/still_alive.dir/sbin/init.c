@@ -7,7 +7,7 @@
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/print.h"
 
-void print_dramatically(char* str, unsigned delay){
+void print_dramatically(char* str, unsigned delay){ /* Print dramatically. */
   for (unsigned i = 0; str[i] != '\0'; i++){
     if (str[i] == '%'){
       sleep(delay * 10);
@@ -23,7 +23,7 @@ void print_dramatically(char* str, unsigned delay){
 
 char lyrics[LYRICS_BUFFER_BYTES];
 
-int main(void){
+int main(void){ /* Keep a user process alive while the harness checks scheduling. */
   clear_screen();
 
   set_text_color(0xF9);

@@ -6,6 +6,7 @@
 #include "blocking_ringbuf.h"
 #include "blocking_lock.h"
 
+// Identify the synchronous trap causes dispatched by the kernel.
 enum TrapCode {
   TRAP_EXIT = 0,
   TRAP_TEST_SYSCALL = 1,
@@ -112,12 +113,14 @@ struct Node;
 struct Semaphore;
 struct Promise;
 
+// Identify per-thread descriptor-table namespaces.
 enum DescriptorType {
   DESCRIPTOR_FILE,
   DESCRIPTOR_SEM,
   DESCRIPTOR_CHILD,
 };
 
+// Identify the object kinds represented by file descriptors.
 enum FileDescriptorType {
   FILE_DESCRIPTOR_STDIN = 0,
   FILE_DESCRIPTOR_STDOUT = 1,
@@ -127,6 +130,7 @@ enum FileDescriptorType {
   FILE_DESCRIPTOR_NORMAL = 5,
 };
 
+// Hold one open file's node, offset, flags, and reference count.
 struct FileDescriptor {
   struct Node* file; // pipe descriptors cast this to a (struct Pipe*)
   int offset;
@@ -135,11 +139,13 @@ struct FileDescriptor {
   int refcount;
 };
 
+// Hold one process-visible reference to a kernel semaphore.
 struct SemDescriptor {
   struct Semaphore* sem;
   int refcount;
 };
 
+// Publish a child's TCB, exit promise, and signal state to its parent.
 struct ChildDescriptor {
   // A non-NULL child_tcb observed while holding state_lock names a live TCB.
   // Every exit path clears it under this lock before that TCB reaches reaper.
@@ -156,6 +162,7 @@ struct ChildDescriptor {
 // the final release destroys it.
 void child_descriptor_release(struct ChildDescriptor* descriptor);
 
+// Own the shared byte stream and endpoint references for a pipe.
 struct Pipe {
   struct BlockingRingBuf buf;
 

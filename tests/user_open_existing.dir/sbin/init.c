@@ -23,7 +23,7 @@
 #define EXPECTED_TEXT_BYTES 7
 #define EXPECTED_TEXT_BUFFER_BYTES 8
 
-static int path_is_missing(char* path){
+static int path_is_missing(char* path){ /* Return whether opening the path failed with the missing-file error. */
   int fd = open_existing(path);
   if (fd >= 0){
     close(fd);
@@ -32,13 +32,13 @@ static int path_is_missing(char* path){
   return 1;
 }
 
-static void run_shell_command(char* command){
+static void run_shell_command(char* command){ /* Run shell command. */
   cmd_buf_len = strlen(command);
   memcpy(cmd_buf, command, cmd_buf_len + 1);
   handle_command();
 }
 
-int main(void){
+int main(void){ /* Verify opening existing files and reporting missing paths. */
   char text[EXPECTED_TEXT_BUFFER_BYTES];
   char overlong[OVERLONG_BUFFER_BYTES];
   char unterminated[MAX_PATH];

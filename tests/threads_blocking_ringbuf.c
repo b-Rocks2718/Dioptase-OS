@@ -40,19 +40,19 @@ static void fail_uint(char* msg, unsigned got, unsigned expected){
   panic(msg);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* msg){
+static void expect_uint(unsigned got, unsigned expected, char* msg){ /* Check uint. */
   if (got != expected){
     fail_uint(msg, got, expected);
   }
 }
 
-static void expect_byte(char got, unsigned expected, char* msg){
+static void expect_byte(char got, unsigned expected, char* msg){ /* Check byte. */
   if ((unsigned char)got != expected){
     fail_uint(msg, (unsigned char)got, expected);
   }
 }
 
-static void reset_workload_state(void){
+static void reset_workload_state(void){ /* Reset workload state. */
   produced = 0;
   consumed = 0;
   consumers_done = 0;

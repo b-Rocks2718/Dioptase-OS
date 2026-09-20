@@ -3,23 +3,23 @@
 
 #include "../crt/stddef.h"
 
-// Purpose: Represent a single source coordinate in the original input.
-// Inputs/Outputs: Stored alongside preprocessed output for error reporting.
-// Invariants/Assumptions: line/column are 1-based; filename points to stable storage.
+// Map one preprocessed byte position to its original file coordinate.
+// Stored alongside preprocessed output for error reporting.
+// Line/column are 1-based; filename points to stable storage.
 struct SourceMappingEntry {
   char* filename;
   size_t line;
   size_t column;
 };
 
-// Purpose: Map preprocessed output offsets back to original source coordinates.
-// Inputs/Outputs: entries has one element per output byte (excluding NUL).
-// Invariants/Assumptions: length matches the preprocessed buffer length.
+// Map preprocessed output offsets back to original source coordinates.
+// Length matches the preprocessed buffer length.
 struct SourceMapping {
   struct SourceMappingEntry* entries;
   size_t length;
 };
 
+// Store a source line, column, and byte offset for diagnostics.
 struct SourceLocation {
   size_t line;
   size_t column;

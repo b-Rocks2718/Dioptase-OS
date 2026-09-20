@@ -38,7 +38,7 @@
 #define BLOCKS_MARKER "BLOCK1-MARKER\n"
 #define FILE_END_MARKER "FILE-END\n"
 
-struct ConcurrentReadArgs {
+struct ConcurrentReadArgs { /* Shares the fixture inode anchor and block geometry with a reader. */
   unsigned block_size;
   // The main test thread owns this wrapper until every worker has exited.
   // Workers may clone it but must never release the anchor reference itself.

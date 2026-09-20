@@ -25,7 +25,7 @@
 #define CHILD_YIELD_COUNT 256
 #define CHILD_SHOULD_NOT_EXIT_STATUS 73
 
-static int child_main(void){
+static int child_main(void){ /* Yield until killed; returning means termination failed. */
   for (int i = 0; i < CHILD_YIELD_COUNT; ++i){
     yield();
   }
@@ -33,7 +33,7 @@ static int child_main(void){
   return CHILD_SHOULD_NOT_EXIT_STATUS;
 }
 
-int main(void){
+int main(void){ /* Verify kill terminates a child and wait reports its status. */
   int child = -1;
 
   user_test_expect_eq("signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE)", signal_child(INVALID_CHILD_DESCRIPTOR_LOW, SIGNAL_TERMINATE), -1);

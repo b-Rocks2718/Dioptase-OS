@@ -13,7 +13,7 @@
 
 extern void sleep_with_stale_r2(unsigned jiffies);
 
-int main(void){
+int main(void){ /* Exercise the user sleep wrapper from a process. */
   unsigned start = get_current_jiffies();
   sleep_with_stale_r2(REQUESTED_SLEEP_JIFFIES);
   unsigned elapsed = get_current_jiffies() - start;

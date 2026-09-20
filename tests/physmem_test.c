@@ -38,7 +38,7 @@
 #define TEST_FRAME_SIZE 4096 // Must match kernel FRAME_SIZE.
 #define TEST_FRAME_WORDS 1024 // TEST_FRAME_SIZE / sizeof(unsigned)
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies the allocator worker used to tag owned frames. */
   int id;
 };
 
@@ -51,11 +51,11 @@ static bool go = false;
 
 static unsigned char live_owner[PHYS_FRAME_COUNT];
 
-static unsigned char owner_for_tid(int tid) {
+static unsigned char owner_for_tid(int tid) { /* Encode the allocating thread as a block-owner marker. */
   return (unsigned char)(tid + OWNER_TID_OFFSET);
 }
 
-static int owner_for_log(unsigned char owner) {
+static int owner_for_log(unsigned char owner) { /* Convert an owner marker into the value used in diagnostics. */
   return owner == OWNER_NONE ? NO_OWNER_FOR_LOG : (int)owner - OWNER_TID_OFFSET;
 }
 
@@ -75,11 +75,11 @@ static int frame_index(void* page) {
   return (addr - FRAMES_ADDR_START) / TEST_FRAME_SIZE;
 }
 
-static unsigned block_page_count(int order) {
+static unsigned block_page_count(int order) { /* Count block page. */
   return 1u << order;
 }
 
-static void check_block_alignment(void* block, int order) {
+static void check_block_alignment(void* block, int order) { /* Check block alignment. */
   int idx = frame_index(block);
   unsigned page_count = block_page_count(order);
   if ((idx & (page_count - 1)) != 0) {
@@ -121,7 +121,7 @@ static void check_page(void* page, int tid, int round, int slot) {
   }
 }
 
-static void stamp_block(void* block, int order) {
+static void stamp_block(void* block, int order) { /* Fill an allocated block with its order-specific test pattern. */
   unsigned page_count = block_page_count(order);
   unsigned base_addr = (unsigned)block;
   stamp_page((void*)base_addr, 0x40 + order, order, 0);
@@ -133,7 +133,7 @@ static void stamp_block(void* block, int order) {
   }
 }
 
-static void check_block(void* block, int order) {
+static void check_block(void* block, int order) { /* Check block. */
   unsigned page_count = block_page_count(order);
   unsigned base_addr = (unsigned)block;
   check_page((void*)base_addr, 0x40 + order, order, 0);
@@ -243,7 +243,7 @@ static void higher_order_smoke_test(void) {
   }
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Exercise physical-page allocation, stamping, and coalescing. */
   say("***testing concurrent small allocations\n", NULL);
 
   spin_lock_init(&owner_lock);

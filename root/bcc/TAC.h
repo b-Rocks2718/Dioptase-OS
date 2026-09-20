@@ -9,18 +9,21 @@
 struct TopLevel;
 struct TACInstr;
 
+// Own the TAC top-level list and file-scope static values.
 struct TACProg {
   struct TopLevel* head;    // Function top-levels in source order.
   struct TopLevel* tail;    // Tail of the function list for append operations.
   struct TopLevel* statics; // Static variable entries collected from symbols.
 };
 
+// Classify function, global, and static TAC top-level items.
 enum TopLevelType {
   FUNC,
   STATIC_VAR,
   STATIC_CONST,
 };
 
+// Describe one TAC global, function, or static top-level item.
 struct TopLevel {
   enum TopLevelType type;
   struct Slice* name;
@@ -36,22 +39,26 @@ struct TopLevel {
   struct TopLevel* next;
 };
 
+// Distinguish constant and variable TAC operands.
 enum ValType {
   CONSTANT,
   VARIABLE
 };
 
+// Select constant or variable-name payload for a TAC value.
 union ValVariant {
   uint64_t const_value; // stores raw constant bits for 32/64-bit integers
   struct Slice* var_name;
 };
 
+// Store TAC value kind, payload, and static type.
 struct Val {
   enum ValType val_type;
   union ValVariant val;
   struct Type* type;
 };
 
+// Classify the TAC instruction variants.
 enum TACInstrType {
   TACRETURN,
   TACUNARY,
@@ -73,6 +80,7 @@ enum TACInstrType {
   TACEXTEND,
 };
 
+// Enumerate conditions used by TAC conditional jumps.
 enum TACCondition {
   CondE,
   CondNE,
@@ -86,16 +94,19 @@ enum TACCondition {
   CondBE
 };
 
+// Store the optional return operand.
 struct TACReturn {
   struct Val* dst;
 };
 
+// Store unary operation, destination, and source operands.
 struct TACUnary {
   enum UnOp op;
   struct Val* dst;
   struct Val* src;
 };
 
+// Enumerate arithmetic and bitwise TAC ALU operations.
 enum ALUOp {
   ALU_ADD,
   ALU_SUB,
@@ -115,6 +126,7 @@ enum ALUOp {
   ALU_MOV, // ignore first arg, copy second arg to dst
 };
 
+// Store ALU operation and its destination/source operands.
 struct TACBinary {
   enum ALUOp alu_op;
   struct Val* dst;
@@ -122,29 +134,35 @@ struct TACBinary {
   struct Val* src2;
 };
 
+// Store a branch condition and target label.
 struct TACCondJump {
   enum TACCondition condition;
   struct Slice* label;
 };
 
+// Store the two operands compared by a TAC comparison.
 struct TACCmp {
   struct Val* src1;
   struct Val* src2;
 };
 
+// Store the unconditional jump target label.
 struct TACJump {
   struct Slice* label;
 };
 
+// Store the label defined by this TAC instruction.
 struct TACLabel {
   struct Slice* label;
 };
 
+// Store source and destination operands for a copy.
 struct TACCopy {
   struct Val* dst;
   struct Val* src;
 };
 
+// Store direct call target, result destination, and arguments.
 struct TACCall {
   struct Slice* func_name;
   struct Val* dst;
@@ -152,6 +170,7 @@ struct TACCall {
   size_t num_args;
 };
 
+// Store indirect call target, result destination, and arguments.
 struct TACCallIndirect {
   struct Val* func;
   struct Val* dst;
@@ -159,21 +178,25 @@ struct TACCallIndirect {
   size_t num_args;
 };
 
+// Store source object and destination pointer for address calculation.
 struct TACGetAddress {
   struct Val* dst;
   struct Val* src;
 };
 
+// Store destination value and source address for a load.
 struct TACLoad {
   struct Val* dst;
   struct Val* src_ptr;
 };
 
+// Store destination address and source value for a store.
 struct TACStore {
   struct Val* dst_ptr;
   struct Val* src;
 };
 
+// Describe an aggregate copy into a destination byte offset.
 struct TACCopyToOffset {
   struct Slice* dst;
   struct Val* src;
@@ -181,28 +204,33 @@ struct TACCopyToOffset {
   struct Type* dst_type;
 };
 
+// Describe an aggregate copy from a source byte offset.
 struct TACCopyFromOffset {
   struct Val* dst;
   struct Slice* src;
   int offset;
 };
 
+// Store the source location associated with a debug boundary.
 struct TACBoundary {
   char* loc; // start of the statement for debug line markers
 };
 
+// Describe narrowing conversion from src to target_size.
 struct TACTrunc {
   struct Val* dst;
   struct Val* src;
   size_t target_size; // in bytes
 };
 
+// Describe widening conversion from src_size to destination type.
 struct TACExtend {
   struct Val* dst;
   struct Val* src;
   size_t src_size; // in bytes
 };
 
+// Select the concrete TAC instruction payload identified by TacInstrType.
 union TACInstrVariant {
   struct TACReturn tac_return;
   struct TACUnary tac_unary;
@@ -224,6 +252,7 @@ union TACInstrVariant {
   struct TACExtend tac_extend;
 };
 
+// Link one TAC instruction with its kind and list-tail pointer.
 struct TACInstr {
   enum TACInstrType type;
   union TACInstrVariant instr;
@@ -231,12 +260,14 @@ struct TACInstr {
   struct TACInstr* last; // for convenience in building lists
 };
 
+// Classify whether an expression result is a value or aggregate location.
 enum ExprResultType {
   PLAIN_OPERAND,
   DEREFERENCED_POINTER,
   SUB_OBJECT,
 };
 
+// Store lowered expression value and optional aggregate subobject metadata.
 struct ExprResult {
   enum ExprResultType type;
   struct Val* val;
@@ -246,10 +277,8 @@ struct ExprResult {
 
 // ----- Main TAC conversion functions -----
 
-// Purpose: Lower a full program into TAC, optionally emitting debug boundaries.
-// Inputs: program is the typed AST; emit_debug_info controls boundary emission.
-// Outputs: Returns a TAC program with top-level lists or NULL on failure.
-// Invariants/Assumptions: Program declarations are in source order.
+// Lower a full program into TAC, optionally emitting debug boundaries.
+// Returns a TAC program with top-level lists or NULL on failure.
 struct TACProg* prog_to_TAC(struct Program* program, bool emit_debug_info);
 
 struct TopLevel* file_scope_dclr_to_TAC(struct Declaration* declaration);
@@ -320,10 +349,8 @@ void print_tac_prog(struct TACProg* prog);
 
 // ----- TAC interpreter -----
 
-// Purpose: Execute a TAC program and return the integer result of main().
-// Inputs: prog is the TAC program to interpret.
-// Outputs: Returns the integer result produced by the main function.
-// Invariants/Assumptions: main takes no parameters in this interpreter.
+// Execute a TAC program and return the integer result of main().
+// Returns the integer result produced by the main function.
 int tac_interpret_prog(struct TACProg* prog);
 
 #ifdef TAC_INTERNAL

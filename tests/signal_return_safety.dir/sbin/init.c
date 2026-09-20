@@ -43,7 +43,7 @@ static int* shared_phase = NULL;
 static int primary_fault_started = 0;
 static int handler_completed = 0;
 
-static int page_faulting_handler(int signal){
+static int page_faulting_handler(int signal){ /* Trigger and record a page fault while returning from a handler. */
   // primary_fault_started is written immediately before the shared phase
   // publication and first mapping access, with no intervening syscall. It
   // distinguishes an unexpected pre-phase delivery from the intended fault.
@@ -56,7 +56,7 @@ static int page_faulting_handler(int signal){
   sigreturn(0);
 }
 
-static int child_main(void){
+static int child_main(void){ /* Install the page-faulting handler and await the parent signal. */
   int primary_fd = open("/primary-data");
   int handler_fd = open("/handler-data");
   if (primary_fd < 0 || handler_fd < 0){
@@ -97,7 +97,7 @@ static int child_main(void){
   return handler_completed ? 0 : CHILD_HANDLER_FAILED;
 }
 
-static int run_once(int iteration){
+static int run_once(int iteration){ /* Run once. */
   __atomic_store_n(shared_phase, 0);
 
   int child = fork();
@@ -128,7 +128,7 @@ static int run_once(int iteration){
   return failures;
 }
 
-int main(void){
+int main(void){ /* Verify safe return from signal handlers after faults and nesting. */
   int sync_fd = open("/sync-state");
   if (sync_fd < 0){
     user_test_expect_eq("signals wait for the final kernel-to-user return",

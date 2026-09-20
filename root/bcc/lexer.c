@@ -12,10 +12,9 @@
 #include "lexer.h"
 #include "source_location.h"
 
-// Purpose: Tokenize preprocessed source into a stream of tokens.
-// Inputs: Uses the global cursor to walk the NUL-terminated source buffer.
-// Outputs: Produces Token structures appended to a TokenArray.
-// Invariants/Assumptions: Whitespace is skipped; no comments remain (preprocessed).
+// Tokenize preprocessed source into a stream of tokens.
+// Uses the global cursor to walk the NUL-terminated source buffer.
+// Whitespace is skipped; no comments remain (preprocessed).
 
 static char * program;
 static char * current;
@@ -24,19 +23,15 @@ static size_t last_token_len;
 
 static void print_error_at(char* ptr, char* message);
 
-// Purpose: Report an unsupported long-only literal spelling in the bootstrap compiler.
-// Inputs: start identifies the beginning of the literal for diagnostics.
-// Outputs: Emits an actionable lexer error and terminates compilation.
-// Invariants/Assumptions: This root/bcc copy intentionally rejects long literals.
+// Report an unsupported long-only literal spelling in the bootstrap compiler.
+// Emits an actionable lexer error and terminates compilation.
 static void reject_long_literal(char* start, char* reason) {
   print_error_at(start, reason);
   exit(1);
 }
 
-// Purpose: Convert one hexadecimal digit into its numeric value.
-// Inputs: c is an ASCII character from source text.
-// Outputs: Returns 0-15 for hexadecimal digits, or -1 for any other character.
-// Invariants/Assumptions: Only ASCII hex escapes are supported in source code.
+// Convert one hexadecimal digit into its numeric value.
+// Returns 0-15 for hexadecimal digits, or -1 for any other character.
 static int hex_digit_value(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
@@ -44,11 +39,11 @@ static int hex_digit_value(char c) {
   return -1;
 }
 
-// Purpose: Decode a byte-valued \x hexadecimal escape.
-// Inputs: digits points at the first character after \x.
-// Outputs: On success, writes the byte value to out_value, the number of consumed
+// Decode a byte-valued \x hexadecimal escape.
+// Digits points at the first character after \x.
+// On success, writes the byte value to out_value, the number of consumed
 // hex digits to consumed_digits, and returns true.
-// Invariants/Assumptions: The Dioptase C compiler models \x escapes as single-byte
+// The Dioptase C compiler models \x escapes as single-byte
 // values, so anything above 0xff is rejected instead of silently truncating.
 static bool decode_hex_escape(char* digits, size_t* consumed_digits,
                               unsigned char* out_value) {
@@ -75,10 +70,8 @@ static bool decode_hex_escape(char* digits, size_t* consumed_digits,
   return true;
 }
 
-// Purpose: Emit a lexer error diagnostic at an explicit source pointer.
-// Inputs: ptr identifies the source byte to report; message is a static string.
-// Outputs: Writes an error message and the remaining source line to stderr.
-// Invariants/Assumptions: source context has been initialized for ptr.
+// Emit a lexer error diagnostic at an explicit source pointer.
+// Writes an error message and the remaining source line to stderr.
 static void print_error_at(char* ptr, char* message) {
   int args[3];
   int line_args[1];
@@ -95,10 +88,9 @@ static void print_error_at(char* ptr, char* message) {
   fdprintf(STDERR, "%s\n", line_args);
 }
 
-// Purpose: Emit a lexer error diagnostic for the current cursor.
-// Inputs: current points to the byte where tokenization failed.
-// Outputs: Writes an error message to stdout.
-// Invariants/Assumptions: source context has been initialized for locations.
+// Emit a lexer error diagnostic for the current cursor.
+// Current points to the byte where tokenization failed.
+// Writes an error message to stdout.
 static void print_error() {
   int args[4];
   int line_args[1];
@@ -122,20 +114,19 @@ static void print_error() {
   fdprintf(STDERR, "%s\n", line_args);
 }
 
-// Purpose: Measure the byte length of a source span for token bookkeeping.
-// Inputs: start/end point into the same source buffer, with end >= start.
-// Outputs: Returns the span length in bytes.
-// Invariants/Assumptions: The Dioptase ABI defines pointers as 4-byte values in
+// Measure the byte length of a source span for token bookkeeping.
+// Start/end point into the same source buffer, with end >= start.
+// Returns the span length in bytes.
+// The Dioptase ABI defines pointers as 4-byte values in
 // docs/abi.md, so the bootstrap compiler can safely materialize the difference
 // through unsigned arithmetic even though it rejects direct pointer subtraction.
 static size_t span_len(char* start, char* end) {
   return (size_t)((unsigned)end - (unsigned)start);
 }
 
-// Purpose: Determine whether the lexer has reached the end of input.
-// Inputs: Uses the global cursor and skips trailing whitespace.
-// Outputs: Returns true when no more non-space characters remain.
-// Invariants/Assumptions: current points into the same buffer as program.
+// Determine whether the lexer has reached the end of input.
+// Returns true when no more non-space characters remain.
+// Current points into the same buffer as program.
 static bool is_at_end() {
   while (isspace((unsigned char)*current)) {
     current += 1;
@@ -144,20 +135,16 @@ static bool is_at_end() {
   else return true;
 }
 
-// Purpose: Skip over ASCII whitespace characters.
-// Inputs: Uses the global cursor pointer.
-// Outputs: Advances current past whitespace.
-// Invariants/Assumptions: Whitespace is not emitted as tokens.
+// Skip over ASCII whitespace characters.
+// Advances current past whitespace.
 static void skip() {
   while (isspace((unsigned char)*current)) {
     current += 1;
   }
 }
 
-// Purpose: Consume a fixed string token at the current cursor.
-// Inputs: str is the literal to match.
-// Outputs: Returns true on match and updates last_token_* metadata.
-// Invariants/Assumptions: Skips leading whitespace before matching.
+// Consume a fixed string token at the current cursor.
+// Returns true on match and updates last_token_* metadata.
 static bool consume(char* str) {
   skip();
   char* start = current;
@@ -180,10 +167,8 @@ static bool consume(char* str) {
   } 
 }
 
-// Purpose: Consume a keyword token, enforcing a word boundary.
-// Inputs: str is the keyword literal to match.
-// Outputs: Returns true on match and updates last_token_* metadata.
-// Invariants/Assumptions: Rejects identifiers that merely prefix the keyword.
+// Consume a keyword token, enforcing a word boundary.
+// Returns true on match and updates last_token_* metadata.
 static bool consume_keyword(char* str) {
   skip();
   char* start = current;
@@ -212,10 +197,9 @@ static bool consume_keyword(char* str) {
   } 
 }
 
-// Purpose: Consume an identifier token and allocate its slice.
-// Inputs: token is the destination Token to populate.
-// Outputs: Returns true on success and advances current past the identifier.
-// Invariants/Assumptions: Identifier slices point into the source buffer.
+// Consume an identifier token and allocate its slice.
+// Returns true on success and advances current past the identifier.
+// Identifier slices point into the source buffer.
 static bool consume_identifier(struct Token* token) {
   skip();
   if (isalpha((unsigned char)*current) || *current == '_') {
@@ -238,10 +222,9 @@ static bool consume_identifier(struct Token* token) {
   }
 }
 
-// Purpose: Consume a decimal or hex integer literal token.
-// Inputs: token is the destination Token to populate.
-// Outputs: Returns true on success and advances current past the literal.
-// Invariants/Assumptions: Supports optional u/U and l/L suffixes; accepts .0
+// Consume a decimal or hex integer literal token.
+// Returns true on success and advances current past the literal.
+// Supports optional u/U and l/L suffixes; accepts .0
 // fractional forms as integer literals for integer-only parsing.
 static bool consume_literal(struct Token* token) {
   skip();
@@ -478,10 +461,8 @@ static bool consume_literal(struct Token* token) {
   }
 }
 
-// Purpose: Finalize a token that was consumed via a fixed string match.
-// Inputs: token is the allocated Token; type is the token type to assign.
-// Outputs: Returns token after populating its type/start/len fields.
-// Invariants/Assumptions: last_token_* was set by consume/consume_keyword.
+// Finalize a token that was consumed via a fixed string match.
+// Returns token after populating its type/start/len fields.
 static struct Token* finish_simple_token(struct Token* token, enum TokenType type) {
   token->type = type;
   token->start = last_token_start;
@@ -489,10 +470,8 @@ static struct Token* finish_simple_token(struct Token* token, enum TokenType typ
   return token;
 }
 
-// Purpose: Consume the next available token.
-// Inputs: Uses the global cursor to scan the next token.
-// Outputs: Returns a heap-allocated Token or NULL if no token matches.
-// Invariants/Assumptions: Caller frees the returned token when destroying arrays.
+// Consume the next available token.
+// Returns a heap-allocated Token or NULL if no token matches.
 static struct Token* consume_any(){
   struct Token* token = malloc(sizeof(struct Token));
 
@@ -576,10 +555,10 @@ static struct Token* consume_any(){
   return NULL;
 }
 
-// Purpose: Tokenize a preprocessed source buffer into a TokenArray.
-// Inputs: prog is the NUL-terminated source buffer to lex.
-// Outputs: Returns a TokenArray or NULL on error.
-// Invariants/Assumptions: prog remains valid for the lifetime of token slices.
+// Tokenize a preprocessed source buffer into a TokenArray.
+// Prog is the NUL-terminated source buffer to lex.
+// Returns a TokenArray or NULL on error.
+// Prog remains valid for the lifetime of token slices.
 struct TokenArray* lex(char* prog){
   program = prog;
   current = prog;

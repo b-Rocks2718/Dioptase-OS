@@ -5,6 +5,7 @@
 #include "../crt/sys/wait.h"
 #include "../crt/sys.h"
 
+// Establish userland stdio, launch the terminal and shell, and reap children.
 int main(void) {
   puts("| Hello from init process!\n");
 

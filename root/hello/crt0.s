@@ -2,6 +2,7 @@
   .align 4
 	
 	.global _start
+# Call main, then repeatedly trap with its return status in r1.
 _start:
 
 	call main
@@ -12,6 +13,7 @@ _start_exit_loop:
   jmp _start_exit_loop
 
   .global write
+# Enter the hello program's write syscall wrapper.
 write:
   push r20
   push r21
@@ -44,4 +46,3 @@ write:
   pop r20
 
   ret
-  

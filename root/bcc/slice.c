@@ -10,6 +10,7 @@
 // bootstrap lexer's fragile handling of '\'' character literals.
 #define K_ASCII_SINGLE_QUOTE 39
 
+// Compare a non-NUL-terminated slice with a NUL-terminated string.
 bool compare_slice_to_pointer(struct Slice* s, char *p) {
   for (size_t i = 0; i < s->len; i++) {
     if (p[i] != s->start[i])
@@ -18,6 +19,7 @@ bool compare_slice_to_pointer(struct Slice* s, char *p) {
   return p[s->len] == 0;
 }
 
+// Compare two source spans by length and byte contents.
 bool compare_slice_to_slice(struct Slice* self, struct Slice* other) {
   if (self->len != other->len)
     return false;
@@ -28,6 +30,7 @@ bool compare_slice_to_slice(struct Slice* self, struct Slice* other) {
   return true;
 }
 
+// Return whether a slice matches the compiler's identifier character rules.
 bool is_identifier(struct Slice* slice) {
   if (slice->len == 0)
     return false;
@@ -39,6 +42,7 @@ bool is_identifier(struct Slice* slice) {
   return true;
 }
 
+// Allocate an arena-owned slice containing a slice followed by a string.
 struct Slice* slice_concat(struct Slice* a, char* b) {
   size_t b_len = 0;
   while (b[b_len] != 0) {
@@ -59,12 +63,14 @@ struct Slice* slice_concat(struct Slice* a, char* b) {
   return slice;
 }
 
+// Write a slice without assuming NUL termination.
 void print_slice(struct Slice* slice) {
   for (size_t i = 0; i < slice->len; i++) {
     putchar(slice->start[i]);
   }
 }
 
+// Write a slice with C-style escapes for control and non-printable bytes.
 void print_slice_with_escapes(struct Slice* slice) {
   for (size_t i = 0; i < slice->len; i++) {
     char c = slice->start[i];
@@ -128,6 +134,7 @@ void print_slice_with_escapes(struct Slice* slice) {
   }
 }
 
+// Hash a slice with the compiler's deterministic djb2 variant.
 size_t hash_slice(struct Slice* key) {
   // djb2
   size_t out = 5381;

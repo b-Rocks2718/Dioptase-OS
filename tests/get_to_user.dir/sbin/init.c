@@ -1,6 +1,6 @@
 #include "../../../root/crt/sys.h"
 
-int main(void){
+int main(void){ /* Verify the user get-to-user syscall fixture. */
   int x = test_syscall(1);
   test_syscall(x);
 

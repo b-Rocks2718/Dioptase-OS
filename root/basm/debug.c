@@ -15,12 +15,14 @@ static struct Slice* duplicate_slice(struct Slice* slice){
   return copy;
 }
 
+// Free a heap-backed slice and its descriptor.
 static void destroy_owned_slice(struct Slice* slice){
   if (slice == NULL) return;
   free(slice->start);
   free(slice);
 }
 
+// Allocate an empty list of assembler debug records.
 struct DebugInfoList* create_debug_info_list(void){
   struct DebugInfoList* list = malloc(sizeof(struct DebugInfoList));
   list->head = NULL;
@@ -28,6 +30,7 @@ struct DebugInfoList* create_debug_info_list(void){
   return list;
 }
 
+// Append one local-variable record to the debug list.
 void add_debug_local(struct DebugInfoList* debug_list, struct Slice* name, int offset, unsigned size, unsigned addr){
   // create new DebugLocal
   struct DebugLocal* local = malloc(sizeof(struct DebugLocal));
@@ -50,6 +53,7 @@ void add_debug_local(struct DebugInfoList* debug_list, struct Slice* name, int o
   }
 }
 
+// Append one source-line record to the debug list.
 void add_debug_line(struct DebugInfoList* debug_list, struct Slice* file_name, int line_number, unsigned addr){
   // create new DebugLine
   struct DebugLine* line = malloc(sizeof(struct DebugLine));
@@ -71,6 +75,7 @@ void add_debug_line(struct DebugInfoList* debug_list, struct Slice* file_name, i
   }
 }
 
+// Serialize debug records in the assembler's line-oriented format.
 void fprint_debug_info_list(int file, struct DebugInfoList* debug_list){
   struct DebugEntry* current = debug_list->head;
   while (current != NULL){
@@ -96,6 +101,7 @@ void fprint_debug_info_list(int file, struct DebugInfoList* debug_list){
   }
 }
 
+// Free all source-location entries and filenames in a debug-information list.
 void destroy_debug_info_list(struct DebugInfoList* debug_list){
   struct DebugEntry* current = debug_list->head;
   while (current != NULL){

@@ -2,6 +2,7 @@
   .align 4
 
   .global exit
+# Marshal arguments and issue the exit system-call wrapper.
 exit:
   push r20
   push r21
@@ -68,6 +69,7 @@ test_syscall:
   ret
 
   .global get_current_jiffies
+# Marshal arguments and issue the get current jiffies system-call wrapper.
 get_current_jiffies:
   push r20
   push r21
@@ -99,6 +101,7 @@ get_current_jiffies:
   ret
 
   .global getkey
+# Marshal arguments and issue the getkey system-call wrapper.
 getkey:
   push r20
   push r21
@@ -130,6 +133,7 @@ getkey:
   ret
 
   .global set_tile_scale
+# Marshal arguments and issue the set tile scale system-call wrapper.
 set_tile_scale:
   push r20
   push r21
@@ -163,6 +167,7 @@ set_tile_scale:
   ret
 
   .global set_vscroll
+# Marshal arguments and issue the set vscroll system-call wrapper.
 set_vscroll:
   push r20
   push r21
@@ -196,6 +201,7 @@ set_vscroll:
   ret
 
   .global set_hscroll
+# Marshal arguments and issue the set hscroll system-call wrapper.
 set_hscroll:
   push r20
   push r21
@@ -229,6 +235,7 @@ set_hscroll:
   ret
 
   .global load_text_tiles
+# Marshal arguments and issue the load text tiles system-call wrapper.
 load_text_tiles:
   push r20
   push r21
@@ -260,6 +267,7 @@ load_text_tiles:
   ret
 
   .global clear_screen
+# Marshal arguments and issue the clear screen system-call wrapper.
 clear_screen:
   push r20
   push r21
@@ -291,6 +299,7 @@ clear_screen:
   ret
 
   .global get_tilemap
+# Marshal arguments and issue the get tilemap system-call wrapper.
 get_tilemap:
   push r20
   push r21
@@ -322,6 +331,7 @@ get_tilemap:
   ret
 
   .global get_tile_fb
+# Marshal arguments and issue the get tile fb system-call wrapper.
 get_tile_fb:
   push r20
   push r21
@@ -353,6 +363,7 @@ get_tile_fb:
   ret
 
   .global get_vga_status
+# Marshal arguments and issue the get VGA status system-call wrapper.
 get_vga_status:
   push r20
   push r21
@@ -384,6 +395,7 @@ get_vga_status:
   ret
 
   .global get_vga_frame_counter
+# Marshal arguments and issue the get VGA frame counter system-call wrapper.
 get_vga_frame_counter:
   push r20
   push r21
@@ -415,6 +427,7 @@ get_vga_frame_counter:
   ret
 
   .global sleep
+# Marshal arguments and issue the sleep system-call wrapper.
 sleep:
   push r20
   push r21
@@ -447,6 +460,7 @@ sleep:
   ret
 
   .global open
+# Marshal arguments and issue the open system-call wrapper.
 open:
   push r20
   push r21
@@ -479,6 +493,7 @@ open:
   ret
 
   .global open_existing
+# Marshal arguments and issue the open existing system-call wrapper.
 open_existing:
   push r20
   push r21
@@ -515,6 +530,7 @@ open_existing:
   ret
 
   .global read
+# Marshal arguments and issue the read system-call wrapper.
 read:
   push r20
   push r21
@@ -549,6 +565,7 @@ read:
   ret
 
   .global write
+# Marshal arguments and issue the write system-call wrapper.
 write:
   push r20
   push r21
@@ -583,6 +600,7 @@ write:
   ret
 
   .global close
+# Marshal arguments and issue the close system-call wrapper.
 close:
   push r20
   push r21
@@ -615,6 +633,7 @@ close:
   ret
 
   .global sem_open
+# Marshal arguments and issue the sem open system-call wrapper.
 sem_open:
   push r20
   push r21
@@ -647,6 +666,7 @@ sem_open:
   ret
 
   .global sem_up
+# Marshal arguments and issue the sem up system-call wrapper.
 sem_up:
   push r20
   push r21
@@ -679,6 +699,7 @@ sem_up:
   ret
 
   .global sem_down
+# Marshal arguments and issue the sem down system-call wrapper.
 sem_down:
   push r20
   push r21
@@ -711,6 +732,7 @@ sem_down:
   ret
 
   .global sem_close
+# Marshal arguments and issue the sem close system-call wrapper.
 sem_close:
   push r20
   push r21
@@ -743,6 +765,7 @@ sem_close:
   ret
 
   .global mmap
+# Marshal arguments and issue the mmap system-call wrapper.
 mmap:
   push r20
   push r21
@@ -778,6 +801,7 @@ mmap:
   ret
 
   .global fork
+# Marshal arguments and issue the fork system-call wrapper.
 fork:
   push r20
   push r21
@@ -809,6 +833,7 @@ fork:
   ret
 
   .global execv
+# Marshal arguments and issue the execv system-call wrapper.
 execv:
   push r20
   push r21
@@ -843,6 +868,7 @@ execv:
   ret
 
   .global play_audio_file
+# Marshal arguments and issue the play audio file system-call wrapper.
 play_audio_file:
   push r20
   push r21
@@ -875,6 +901,7 @@ play_audio_file:
   ret
 
   .global set_text_color
+# Marshal arguments and issue the set text color system-call wrapper.
 set_text_color:
   push r20
   push r21
@@ -907,6 +934,7 @@ set_text_color:
   ret
 
   .global wait_child
+# Marshal arguments and issue the wait child system-call wrapper.
 wait_child:
   push r20
   push r21
@@ -938,6 +966,7 @@ wait_child:
   ret
 
   .global chdir
+# Marshal arguments and issue the chdir system-call wrapper.
 chdir:
   push r20
   push r21
@@ -970,6 +999,7 @@ chdir:
   ret
 
   .global pipe
+# Marshal arguments and issue the pipe system-call wrapper.
 pipe:
   push r20
   push r21
@@ -1002,6 +1032,7 @@ pipe:
   ret
 
   .global dup
+# Marshal arguments and issue the dup system-call wrapper.
 dup:
   push r20
   push r21
@@ -1034,6 +1065,7 @@ dup:
   ret
 
   .global seek
+# Marshal arguments and issue the seek system-call wrapper.
 seek:
   push r20
   push r21
@@ -1068,6 +1100,7 @@ seek:
   ret
 
   .global yield
+# Marshal arguments and issue the yield system-call wrapper.
 yield:
   push r20
   push r21
@@ -1099,6 +1132,7 @@ yield:
   ret
 
   .global getdents
+# Marshal arguments and issue the getdents system-call wrapper.
 getdents:
   push r20
   push r21
@@ -1133,6 +1167,7 @@ getdents:
   ret
 
   .global getcwd
+# Marshal arguments and issue the getcwd system-call wrapper.
 getcwd:
   push r20
   push r21
@@ -1166,6 +1201,7 @@ getcwd:
   ret
 
   .global readlink
+# Marshal arguments and issue the readlink system-call wrapper.
 readlink:
   push r20
   push r21
@@ -1200,6 +1236,7 @@ readlink:
   ret
 
   .global move_vscroll
+# Marshal arguments and issue the move vscroll system-call wrapper.
 move_vscroll:
   push r20
   push r21
@@ -1232,6 +1269,7 @@ move_vscroll:
   ret
 
   .global move_hscroll
+# Marshal arguments and issue the move hscroll system-call wrapper.
 move_hscroll:
   push r20
   push r21
@@ -1264,6 +1302,7 @@ move_hscroll:
   ret
   
   .global fd_bytes_available
+# Marshal arguments and issue the fd bytes available system-call wrapper.
 fd_bytes_available:
   push r20
   push r21
@@ -1296,6 +1335,7 @@ fd_bytes_available:
   ret
 
   .global truncate
+# Marshal arguments and issue the truncate system-call wrapper.
 truncate:
   push r20
   push r21
@@ -1329,6 +1369,7 @@ truncate:
   ret
 
   .global mkdir
+# Marshal arguments and issue the mkdir system-call wrapper.
 mkdir:
   push r20
   push r21
@@ -1361,6 +1402,7 @@ mkdir:
   ret
 
   .global rmdir
+# Marshal arguments and issue the rmdir system-call wrapper.
 rmdir:
   push r20
   push r21
@@ -1393,6 +1435,7 @@ rmdir:
   ret
 
 .global unlink
+# Marshal arguments and issue the unlink system-call wrapper.
 unlink:
   push r20
   push r21
@@ -1425,6 +1468,7 @@ unlink:
   ret
 
   .global set_sprite_scale
+# Marshal arguments and issue the set sprite scale system-call wrapper.
 set_sprite_scale:
   push r20
   push r21
@@ -1458,6 +1502,7 @@ set_sprite_scale:
   ret
 
   .global set_sprite_coords
+# Marshal arguments and issue the set sprite coords system-call wrapper.
 set_sprite_coords:
   push r20
   push r21
@@ -1492,6 +1537,7 @@ set_sprite_coords:
   ret
 
   .global load_text_tiles_colored
+# Marshal arguments and issue the load text tiles colored system-call wrapper.
 load_text_tiles_colored:
   push r20
   push r21
@@ -1525,6 +1571,7 @@ load_text_tiles_colored:
   ret
 
   .global get_spritemap
+# Marshal arguments and issue the get spritemap system-call wrapper.
 get_spritemap:
   push r20
   push r21
@@ -1556,6 +1603,7 @@ get_spritemap:
   ret
 
   .global signal_child
+# Marshal arguments and issue the signal child system-call wrapper.
 signal_child:
   push r20
   push r21
@@ -1589,6 +1637,7 @@ signal_child:
   ret
 
   .global request_priority
+# Marshal arguments and issue the request priority system-call wrapper.
 request_priority:
   push r20
   push r21
@@ -1621,6 +1670,7 @@ request_priority:
   ret
 
   .global set_foreground_child
+# Marshal arguments and issue the set foreground child system-call wrapper.
 set_foreground_child:
   push r20
   push r21
@@ -1653,6 +1703,7 @@ set_foreground_child:
   ret
 
   .global signal_foreground
+# Marshal arguments and issue the signal foreground system-call wrapper.
 signal_foreground:
   push r20
   push r21
@@ -1685,6 +1736,7 @@ signal_foreground:
   ret
 
   .global register_handler
+# Marshal arguments and issue the register handler system-call wrapper.
 register_handler:
   push r20
   push r21
@@ -1737,6 +1789,7 @@ sigreturn:
   ret # only returns with -1 when called outside a signal handler
 
   .global mask_signal
+# Marshal arguments and issue the mask signal system-call wrapper.
 mask_signal:
   push r20
   push r21
@@ -1769,6 +1822,7 @@ mask_signal:
   ret
 
   .global unmask_signal
+# Marshal arguments and issue the unmask signal system-call wrapper.
 unmask_signal:
   push r20
   push r21

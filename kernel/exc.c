@@ -6,12 +6,14 @@
 #include "sys.h"
 #include "threads.h"
 
+// Register handlers for the synchronous processor exceptions.
 void exc_init(void){
   register_handler((void*)invalid_instr_exc_handler_, (void*)INVALID_INSTR_IVT_ENTRY);
   register_handler((void*)priv_exc_handler_, (void*)PRIV_EXC_IVT_ENTRY);
   register_handler((void*)misaligned_pc_exc_handler_, (void*)MISALIGNED_PC_IVT_ENTRY);
 }
 
+// Report an illegal instruction and select the kernel/user return path.
 int invalid_instr_handler(bool* return_to_user, unsigned epc){
   // The assembly wrapper initializes this out-parameter's stack slot to zero.
   // A handled user exception must explicitly select rfe so sigreturn retries
@@ -38,6 +40,7 @@ int invalid_instr_handler(bool* return_to_user, unsigned epc){
   panic("Invalid instruction exception\n");
 }
 
+// Report a privileged-instruction fault from user mode.
 int priv_instr_handler(bool* return_to_user, unsigned epc){
   // See invalid_instr_handler(): successful sigreturn resumes the exact saved
   // user frame through rfe, while an unhandled fault returns to the enclosing
@@ -63,6 +66,7 @@ int priv_instr_handler(bool* return_to_user, unsigned epc){
   panic("Privileged instruction exception\n");
 }
 
+// Report a misaligned instruction address and select the return path.
 int misaligned_pc_handler(bool* return_to_user, unsigned epc){
   // A handled alignment exception must retry the saved EPC through rfe. The
   // unhandled user path below changes this to false before returning.

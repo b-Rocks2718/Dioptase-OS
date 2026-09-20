@@ -2,21 +2,16 @@
 
 #include "arena.h"
 
-// Purpose: Generate unique identifier and label slices.
-// Inputs: Original names and suffixes are provided by the caller.
-// Outputs: New slices are allocated in the arena.
-// Invariants/Assumptions: unique_id_counter is incremented on each call.
+// Generate unique identifier and label slices.
+// Returns New slices are allocated in the arena.
 
-// Purpose: Monotonic counter to keep generated names unique.
-// Inputs: Incremented by make_unique and make_unique_label.
-// Outputs: Used to format numeric suffixes.
-// Invariants/Assumptions: Single-threaded use; not reset between functions.
+// Monotonic counter to keep generated names unique.
+// Used to format numeric suffixes.
+// Single-threaded use; not reset between functions.
 static int unique_id_counter = 0;
 
-// Purpose: Compute the decimal digit length of a counter value.
-// Inputs: counter is the integer to measure.
-// Outputs: Returns the number of digits needed in base-10.
-// Invariants/Assumptions: counter is treated as non-negative.
+// Compute the decimal digit length of a counter value.
+// Returns the number of digits needed in base-10.
 unsigned counter_len(int counter) {
   unsigned len = 0;
   do {
@@ -26,10 +21,8 @@ unsigned counter_len(int counter) {
   return len;
 }
 
-// Purpose: Create a unique identifier by appending ".<id>".
-// Inputs: original_name is the base identifier.
-// Outputs: Returns a newly allocated Slice with the suffix applied.
-// Invariants/Assumptions: Storage is arena-allocated and permanent.
+// Create a unique identifier by appending ".<id>".
+// Returns a newly allocated Slice with the suffix applied.
 struct Slice* make_unique(struct Slice* original_name) {
   unsigned id_len = counter_len(unique_id_counter);
   size_t new_len = original_name->len + 1 + id_len; // +1 for period
@@ -56,10 +49,8 @@ struct Slice* make_unique(struct Slice* original_name) {
   return unique_name;
 }
 
-// Purpose: Create a unique function-scoped label with a suffix.
-// Inputs: func_name is the function name; suffix is a label category string.
-// Outputs: Returns a newly allocated Slice "func.suffix.<id>".
-// Invariants/Assumptions: Storage is arena-allocated and permanent.
+// Create a unique function-scoped label with a suffix.
+// Returns a newly allocated Slice "func.suffix.<id>".
 struct Slice* make_unique_label(struct Slice* func_name, char* suffix) {
   size_t suffix_len = 0;
   while (suffix[suffix_len] != '\0') {

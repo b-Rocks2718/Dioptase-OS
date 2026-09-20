@@ -55,6 +55,7 @@ unsigned DEFAULT_INTERRUPT_MASK =
   IPI_INT_ENABLE |
   AUDIO_INT_ENABLE;
 
+// Free a thread callback wrapper and its optional argument storage.
 static void free_fun(struct Fun* fun) {
   if (fun->arg != NULL) {
     free(fun->arg);
@@ -84,11 +85,13 @@ static void publish_exit(struct TCB* child, unsigned rc) {
   child_descriptor_release(descriptor);
 }
 
+// Carry the selected user signal handler and signal number across return setup.
 struct SignalDelivery {
   void* handler;
   int signal;
 };
 
+// Select one pending signal for delivery or report that the thread must exit.
 static bool has_unhandled_signal(struct TCB* child,
     struct SignalDelivery* delivery) {
   struct ChildDescriptor* descriptor = child->parent_promise;
@@ -149,6 +152,7 @@ static bool has_unhandled_signal(struct TCB* child,
   return terminate;
 }
 
+// Release a stopped TCB's stack, address space, descriptors, and node storage.
 static void free_tcb(struct TCB* tcb) {
   assert(tcb != NULL, "trying to free resources of a NULL TCB.\n");
   assert(tcb->stack != NULL, "TCB stack is already NULL.\n");
@@ -325,6 +329,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
   scheduler_wake_thread(tcb);
 }
 
+// Hold the shutdown barrier while a TCB-owned async operation runs elsewhere.
 void kernel_async_work_begin(void){
   struct TCB* current = get_current_tcb();
   int active_threads = __atomic_load_n(&n_active);
@@ -347,6 +352,7 @@ void kernel_async_work_begin(void){
   }
 }
 
+// Complete one async operation and release its shutdown barrier reference.
 void kernel_async_work_finish(void){
   int previous = __atomic_fetch_add(&kernel_async_work_count, -1);
   if (previous <= 0){
@@ -377,13 +383,11 @@ void threads_init(void){
   setup_thread(reaper_fun, LOW_PRIORITY, ANY_CORE);
 }
 
-// switch away from the current thread and run a completion callback
-// Inputs: was is the interrupt mask to restore when this thread is resumed
-// func/arg execute on the next context after the switch
-// run_with_interrupts indicates whether to restore interrupts before running the callback
-// If false, they are enabled after the callback returns
-// Assumes callback doesn't modify the 'next' TCB
-// Preconditions: interrupts are disabled; current thread is core->current_thread
+// Switch away from the current thread and run func(arg) in the next context.
+// `was` is restored when this thread resumes. The callback runs with interrupts
+// enabled only when run_with_interrupts requests it; otherwise they are enabled
+// after it returns. Interrupts must be disabled on entry, the current thread must
+// be core->current_thread, and the callback must not modify the next TCB.
 void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrupts) {
   struct PerCore* core = get_per_core();
   struct TCB* me = core->current_thread;
@@ -506,6 +510,7 @@ static void run_user_signal_handler(void* handler, unsigned arg1,
   }
 }
 
+// Arrange a user return through the current thread's selected signal handler.
 bool try_run_current_signal_handler(int signal, unsigned arg1, unsigned arg2) {
   if (signal < 0 || signal >= MAX_SIGNALS){
     return false;

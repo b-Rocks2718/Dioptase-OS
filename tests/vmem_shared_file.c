@@ -62,15 +62,15 @@
 static struct Barrier phase_barrier;
 static int finished = 0;
 
-struct WorkerArg {
+struct WorkerArg { /* Identifies one writer to the shared file-backed mapping. */
   int id;
 };
 
-static char shared_worker_byte(int id, int round) {
+static char shared_worker_byte(int id, int round) { /* Produce the byte each shared-mapping worker writes for this round. */
   return 'A' + ((round * WORKER_COUNT + id) % 26);
 }
 
-static void build_shared_expected(char* dest, int round) {
+static void build_shared_expected(char* dest, int round) { /* Build shared expected. */
   memcpy(dest, (void*)SHARED_BASE_TEXT, SHARED_FILE_BYTES);
   if (round < 0) {
     return;
@@ -81,7 +81,7 @@ static void build_shared_expected(char* dest, int round) {
   }
 }
 
-static void read_file_bytes(char* dest) {
+static void read_file_bytes(char* dest) { /* Read file bytes. */
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL,
     "vmem shared file thread: failed to reopen fixture file.\n");
@@ -103,7 +103,7 @@ static void read_file_bytes(char* dest) {
   node_free(file);
 }
 
-static void expect_bytes(char* got, char* expected, int worker_id,
+static void expect_bytes(char* got, char* expected, int worker_id, /* Check bytes. */
   int round, int phase) {
   for (unsigned i = 0; i < SHARED_FILE_BYTES; ++i) {
     if (got[i] != expected[i]) {
@@ -268,7 +268,7 @@ static void check_truncate_cache_serialization(void){
   node_free(file);
 }
 
-static void shared_file_worker(void* arg) {
+static void shared_file_worker(void* arg) { /* Run the shared file worker. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   int id = worker->id;
   char expected[SHARED_FILE_BYTES];
@@ -309,7 +309,7 @@ static void shared_file_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify shared file mappings observe cross-thread writes. */
   say("***vmem shared file thread test start\n", NULL);
 
   barrier_init(&phase_barrier, WORKER_COUNT + 1);

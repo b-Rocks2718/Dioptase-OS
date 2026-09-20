@@ -60,19 +60,19 @@
 
 extern int raw_trap_preserves_ra(void);
 
-static void write_u16_le(char* bytes, unsigned value){
+static void write_u16_le(char* bytes, unsigned value){ /* Write u16 le. */
   bytes[0] = value & 0xFF;
   bytes[1] = (value >> 8) & 0xFF;
 }
 
-static void write_u32_le(char* bytes, unsigned value){
+static void write_u32_le(char* bytes, unsigned value){ /* Write u32 le. */
   bytes[0] = value & 0xFF;
   bytes[1] = (value >> 8) & 0xFF;
   bytes[2] = (value >> 16) & 0xFF;
   bytes[3] = (value >> 24) & 0xFF;
 }
 
-static void fill_test_wav(char* wav_bytes){
+static void fill_test_wav(char* wav_bytes){ /* Fill test wav. */
   wav_bytes[0] = 'R';
   wav_bytes[1] = 'I';
   wav_bytes[2] = 'F';
@@ -103,7 +103,7 @@ static void fill_test_wav(char* wav_bytes){
   wav_bytes[45] = 0;
 }
 
-int main(void){
+int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   int sems[100];
   int sem;
   char wav_bytes[TEST_WAV_BYTES];

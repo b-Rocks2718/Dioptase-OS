@@ -92,14 +92,14 @@
 #define WORKER_ARG_MAGIC 0x4C42564C
 #define CORE_UNASSIGNED -1
 
-enum VisualLocationKind {
+enum VisualLocationKind { /* Tracks where a worker's marker is currently displayed. */
   VISUAL_HIDDEN = 0,
   VISUAL_GLOBAL = 1,
   VISUAL_LOCAL = 2,
   VISUAL_SLEEP = 3
 };
 
-struct LoadWorkerArg {
+struct LoadWorkerArg { /* Configures one worker's affinity, MLFQ load pattern, and marker. */
   int magic;
   int worker_id;
   char token;
@@ -113,7 +113,7 @@ struct LoadWorkerArg {
   int show_global_on_resume;
 };
 
-struct WorkerDisplayState {
+struct WorkerDisplayState { /* Records the last scheduler location rendered for one worker. */
   int active;
   int token;
   int color;
@@ -122,7 +122,7 @@ struct WorkerDisplayState {
   int mlfq_level;
 };
 
-struct QueueSnapshot {
+struct QueueSnapshot { /* Capture ready-queue counts for the load visualization. */
   char token[MLFQ_LEVELS][MAX_SNAPSHOT_SLOTS];
   int color[MLFQ_LEVELS][MAX_SNAPSHOT_SLOTS];
   int count[MLFQ_LEVELS];
@@ -622,7 +622,7 @@ static void draw_all_boxes(void) {
   }
 }
 
-int kernel_main(void) {
+int kernel_main(void) { /* Exercise scheduler load balancing across worker cores. */
   int i;
   int wait_count;
   int key;

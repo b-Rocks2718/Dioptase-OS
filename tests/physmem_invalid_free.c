@@ -13,7 +13,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify freeing an invalid physical page is rejected. */
   say("***physmem invalid free negative start\n", NULL);
 
   physmem_free((void*)4);

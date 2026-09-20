@@ -53,6 +53,7 @@ static void print_usage(char* program_name) {
   fdprintf(STDOUT, "usage: %s [-s] [-g] [-o <file>] [-DNAME[=value]] <file>\n", args);
 }
 
+// Write a compiler diagnostic message to stdout.
 static void print_message(char* message) {
   int args[1];
 
@@ -60,6 +61,7 @@ static void print_message(char* message) {
   fdprintf(STDOUT, "bcc: %s\n", args);
 }
 
+// Write a diagnostic naming a path that could not be opened or created.
 static void print_path_error(char* message, char* path) {
   int args[2];
 
@@ -68,6 +70,7 @@ static void print_path_error(char* message, char* path) {
   fdprintf(STDOUT, "bcc: %s: %s\n", args);
 }
 
+// Free an array of separately allocated command-line strings.
 static void free_string_array(char** strings, int count) {
   int i;
 
@@ -84,6 +87,7 @@ static void free_string_array(char** strings, int count) {
   free(strings);
 }
 
+// Build the temporary assembly filename used between compiler stages.
 static char* make_temp_asm_path(char* output_path, char* tag) {
   unsigned output_len;
   unsigned tag_len;
@@ -106,6 +110,7 @@ static char* make_temp_asm_path(char* output_path, char* tag) {
   return temp_path;
 }
 
+// Build the command-line define argument passed to the assembler.
 static char* make_define_arg(char* def) {
   unsigned def_len;
   char* arg;
@@ -123,6 +128,7 @@ static char* make_define_arg(char* def) {
   return arg;
 }
 
+// Return whether a path has the assembler-source suffix.
 static bool has_asm_suffix(char* path) {
   unsigned len;
 
@@ -134,6 +140,7 @@ static bool has_asm_suffix(char* path) {
   return path[len - 2] == '.' && path[len - 1] == 's';
 }
 
+// Return whether a path has the compiler-generated assembly suffix.
 static bool has_generated_asm_suffix(char* path) {
   unsigned len;
 
@@ -147,6 +154,7 @@ static bool has_generated_asm_suffix(char* path) {
     && path[len - 2] == '.' && path[len - 1] == 's';
 }
 
+// Return whether two assembly paths should be swapped for stage ordering.
 static bool should_swap_asm_paths(char* left, char* right, char* startup_path) {
   if (startup_path != NULL && strcmp(left, startup_path) == 0) {
     return false;
@@ -157,6 +165,7 @@ static bool should_swap_asm_paths(char* left, char* right, char* startup_path) {
   return strcmp(left, right) > 0;
 }
 
+// Sort assembly inputs so generated and user sources are processed in order.
 static void sort_asm_paths(char** paths, int count, char* startup_path) {
   int i;
   int j;
@@ -172,6 +181,7 @@ static void sort_asm_paths(char** paths, int count, char* startup_path) {
   }
 }
 
+// Collect assembly source paths from a directory argument.
 static char** load_asm_paths_from_dir(char* dir_path, char* startup_path,
                                       bool generated_only, int* out_count) {
   int dir_fd;
@@ -271,6 +281,7 @@ static char** load_asm_paths_from_dir(char* dir_path, char* startup_path,
   return paths;
 }
 
+// Add the CRT and linker assembly inputs required for the selected target.
 static char** load_linker_crt_asm_paths(int* out_count) {
   char** crt_paths;
   char** build_paths;
@@ -314,7 +325,7 @@ static char** load_linker_crt_asm_paths(int* out_count) {
 }
 
 /*
- * Purpose: Spawn `/sbin/bcc -s ...` in a child process so each translation unit
+ * Spawn `/sbin/bcc -s ...` in a child process so each translation unit
  * gets a fresh compiler instance. This avoids reusing global compiler state
  * before the driver hands the resulting assembly to `basm`.
  */
@@ -391,6 +402,7 @@ static bool compile_source_with_child_bcc(char* source_path, char* asm_path,
   return true;
 }
 
+// Invoke basm to assemble generated assembly into a binary image.
 static bool exec_basm_for_binary(char* output_path, char* user_asm_path,
                                  char** crt_asm_paths, int crt_asm_count) {
   char** args;
@@ -427,6 +439,7 @@ static bool exec_basm_for_binary(char* output_path, char* user_asm_path,
   return true;
 }
 
+// Compile the requested sources and execute the resulting user binary.
 static bool compile_and_exec_binary(char* source_path, char* output_path,
                                     bool emit_debug_info,
                                     int num_defines, char** cli_defines) {
@@ -461,6 +474,7 @@ static bool compile_and_exec_binary(char* source_path, char* output_path,
   return true;
 }
 
+// Read one C source file into a compiler-owned buffer.
 static char* load_source_file(char* file_path) {
   int fd;
   int file_size;
@@ -525,6 +539,7 @@ static char* load_source_file(char* file_path) {
   return bytes;
 }
 
+// Run preprocessing, parsing, lowering, and assembly for the requested inputs.
 int main(int argc, char** argv) {
   char* filename;
   char* output_path;

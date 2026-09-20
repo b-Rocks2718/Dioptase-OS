@@ -14,10 +14,12 @@ static unsigned capacity;
 #define K_MAX_UNSIGNED_DECIMAL_DIGITS 10
 #define K_MAX_UNSIGNED_HEX_DIGITS 8
 
+// Print preprocessor memory error.
 static void print_preprocessor_memory_error(void) {
   puts("Preprocessor memory error\n");
 }
 
+// Grow the macro-expansion output buffer to fit additional bytes.
 static bool expand_capacity(unsigned minimum_extra_bytes) {
   unsigned new_capacity;
   char* new_result;
@@ -40,11 +42,13 @@ static bool expand_capacity(unsigned minimum_extra_bytes) {
   return true;
 }
 
+// Ensure the expansion buffer can accept the requested additional bytes.
 static bool ensure_capacity(unsigned minimum_extra_bytes) {
   if (result_index + minimum_extra_bytes < capacity - 1) return true;
   return expand_capacity(minimum_extra_bytes);
 }
 
+// Append one character to the macro-expansion output.
 static bool append_char(char c) {
   if (!ensure_capacity(2)) return false;
   result[result_index] = c;
@@ -52,6 +56,7 @@ static bool append_char(char c) {
   return true;
 }
 
+// Append a NUL-terminated expansion fragment.
 static bool append_cstr(char* str) {
   unsigned len;
   if (str == NULL) return false;
@@ -62,6 +67,7 @@ static bool append_cstr(char* str) {
   return true;
 }
 
+// Append a non-NUL-terminated source slice to the expansion.
 static bool append_slice(struct Slice* slice) {
   if (slice == NULL) return false;
   if (!ensure_capacity(slice->len + 1)) return false;
@@ -70,6 +76,7 @@ static bool append_slice(struct Slice* slice) {
   return true;
 }
 
+// Append an unsigned integer using decimal digits.
 static bool append_unsigned_decimal(unsigned value) {
   char digits[K_MAX_UNSIGNED_DECIMAL_DIGITS];
   unsigned digit_count;
@@ -92,6 +99,7 @@ static bool append_unsigned_decimal(unsigned value) {
   return true;
 }
 
+// Append an unsigned integer using uppercase hexadecimal digits.
 static bool append_unsigned_hex(unsigned value) {
   char digits[K_MAX_UNSIGNED_HEX_DIGITS];
   unsigned digit_count;
@@ -120,31 +128,37 @@ static bool append_unsigned_hex(unsigned value) {
   return true;
 }
 
+// Append a general-purpose register spelling such as r3.
 static bool append_register_name(int reg) {
   if (!append_char('r')) return false;
   return append_unsigned_decimal((unsigned)reg);
 }
 
+// Append a control-register spelling such as cr1.
 static bool append_control_register_name(int reg) {
   if (!append_cstr("cr")) return false;
   return append_unsigned_decimal((unsigned)reg);
 }
 
+// Print invalid register error.
 static void print_invalid_register_error(void) {
   print_error();
   puts("Invalid register\n");
   puts("Valid registers are r0 - r31\n");
 }
 
+// Print expected immediate error.
 static void print_expected_immediate_error(void) {
   print_error();
   puts("Expected immediate\n");
 }
 
+// Reserve space for the next preprocessor token and its terminator.
 static bool check_capacity(void) {
   return ensure_capacity(2);
 }
 
+// Skip a line comment beginning at the current source cursor.
 static bool skip_comments(void) {
   if (*current == '#') {
     while (*current != '\n') {
@@ -155,14 +169,17 @@ static bool skip_comments(void) {
   return true;
 }
 
+// Expand nop into the canonical zero-register instruction.
 static bool expand_nop(void) {
   return append_cstr("and  r0, r0, r0");
 }
 
+// Expand ret into a jump through the link register.
 static bool expand_ret(void) {
   return append_cstr("jmp  r29");
 }
 
+// Expand push into a pre-decrement word store.
 static void expand_push(bool* success) {
   int ra;
 
@@ -179,6 +196,7 @@ static void expand_push(bool* success) {
     append_cstr(" [sp, -4]!");
 }
 
+// Expand pop into a post-increment word load.
 static void expand_pop(bool* success) {
   int ra;
 
@@ -195,6 +213,7 @@ static void expand_pop(bool* success) {
     append_cstr(", [sp], 4");
 }
 
+// Expand pshd into a pre-decrement double-byte store.
 static void expand_pshd(bool* success) {
   int ra;
 
@@ -211,6 +230,7 @@ static void expand_pshd(bool* success) {
     append_cstr(" [sp, -2]!");
 }
 
+// Expand popd into a post-increment double-byte load.
 static void expand_popd(bool* success) {
   int ra;
 
@@ -227,6 +247,7 @@ static void expand_popd(bool* success) {
     append_cstr(", [sp], 2");
 }
 
+// Expand pshb into a pre-decrement byte store.
 static void expand_pshb(bool* success) {
   int ra;
 
@@ -243,6 +264,7 @@ static void expand_pshb(bool* success) {
     append_cstr(" [sp, -1]!");
 }
 
+// Expand popb into a post-increment byte load.
 static void expand_popb(bool* success) {
   int ra;
 
@@ -259,6 +281,7 @@ static void expand_popb(bool* success) {
     append_cstr(", [sp], 1");
 }
 
+// Expand movi into upper/lower immediate loads for a full address.
 static void expand_movi(bool* success) {
   int ra;
   enum ConsumeResult c_result;
@@ -306,6 +329,7 @@ static void expand_movi(bool* success) {
   free(label);
 }
 
+// Expand mov across general and control register combinations.
 static void expand_mov(bool* success) {
   int ra;
   int rb;
@@ -369,6 +393,7 @@ static void expand_mov(bool* success) {
     append_cstr(", r0");
 }
 
+// Expand call into an address load followed by an indirect branch.
 static void expand_call(bool* success) {
   enum ConsumeResult c_result;
   int imm;
@@ -402,6 +427,7 @@ static void expand_call(bool* success) {
   free(label);
 }
 
+// Recognize and expand one assembler pseudo-instruction at the cursor.
 static bool expand_macros(void) {
   bool success;
 
@@ -424,6 +450,7 @@ static bool expand_macros(void) {
   return success;
 }
 
+// Preprocess each source buffer, expanding macros and preserving line structure.
 char** preprocess(int num_files, int* file_names, bool is_kernel, char** argv, char** files) {
   char** result_list;
 

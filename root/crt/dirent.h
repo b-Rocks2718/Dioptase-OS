@@ -11,6 +11,7 @@
 #define DT_SOCK 12
 #define DT_WHT 14
 
+// Describes one directory entry returned by the OS directory interface.
 struct linux_dirent {
     unsigned d_ino; // i-node number.
     unsigned d_off;

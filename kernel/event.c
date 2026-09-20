@@ -28,11 +28,13 @@ void event_signal(struct Event* event){
   blocking_lock_release(&event->lock);
 }
 
+// Destroy an event's condition variable and lock without freeing the event.
 void event_destroy(struct Event* event){
   cond_var_destroy(&event->cv);
   blocking_lock_destroy(&event->lock);
 }
 
+// Destroy and free a heap-allocated event.
 void event_free(struct Event* event){
   event_destroy(event);
   free(event);

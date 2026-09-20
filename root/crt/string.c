@@ -35,6 +35,7 @@ bool strneq(char* str1, char* str2, unsigned n){
   return i == n || (str1[i] == '\0' && str2[i] == '\0');
 }
 
+// Compare two null-terminated strings lexicographically.
 int strcmp(char* str1, char* str2){
   unsigned i = 0;
   while (str1[i] != '\0' && str2[i] != '\0'){
@@ -46,6 +47,7 @@ int strcmp(char* str1, char* str2){
   return (int)((unsigned char)str1[i]) - (int)((unsigned char)str2[i]);
 }
 
+// Compare at most n characters from two strings lexicographically.
 int strncmp(char* str1, char* str2, unsigned n){
   unsigned i = 0;
   while (i < n && str1[i] != '\0' && str2[i] != '\0'){
@@ -60,6 +62,7 @@ int strncmp(char* str1, char* str2, unsigned n){
   return (int)((unsigned char)str1[i]) - (int)((unsigned char)str2[i]);
 }
 
+// Find the first occurrence of a character in a string.
 char* strchr(char* str, int c){
   char needle = (char)c;
   while (*str != '\0'){
@@ -74,6 +77,7 @@ char* strchr(char* str, int c){
   return NULL;
 }
 
+// Find the last occurrence of a character in a string.
 char* strrchr(char* str, int c){
   char needle;
   char* last;

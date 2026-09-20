@@ -20,7 +20,7 @@
 #define INCLUDE_LINE_BUFFER_BYTES 23
 #define DEPTH_FILE_COUNT 32
 
-static bool write_fixture(char* path, char* contents) {
+static bool write_fixture(char* path, char* contents) { /* Write fixture. */
   int fd = open(path);
   if (fd < 0) return false;
 
@@ -53,7 +53,7 @@ static void make_depth_path(char* path, unsigned index) {
   path[10] = '\0';
 }
 
-static void make_include_line(char* line, unsigned next_index) {
+static void make_include_line(char* line, unsigned next_index) { /* Create include line. */
   char path[DEPTH_PATH_BUFFER_BYTES];
   make_depth_path(path, next_index);
   memcpy(line, "#include \"", 10);
@@ -63,7 +63,7 @@ static void make_include_line(char* line, unsigned next_index) {
   line[22] = '\0';
 }
 
-static bool prepare_depth_chain(void) {
+static bool prepare_depth_chain(void) { /* Prepare depth chain. */
   char path[DEPTH_PATH_BUFFER_BYTES];
   char line[INCLUDE_LINE_BUFFER_BYTES];
 
@@ -79,7 +79,7 @@ static bool prepare_depth_chain(void) {
   return true;
 }
 
-int main(void) {
+int main(void) { /* Verify the BCC preprocessor rejects excessive include depth. */
   bool fixtures_ok = prepare_depth_chain();
   fixtures_ok = fixtures_ok &&
     write_fixture("/cycle_a.h", "#include \"/cycle_b.h\"\n");

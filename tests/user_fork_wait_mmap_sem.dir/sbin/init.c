@@ -57,7 +57,7 @@
 #define LIFETIME_WAKER_STATUS_BAD_TRIGGER 55
 #define LIFETIME_WAKER_STATUS_BAD_UP 56
 
-static int mapping_ok(char* mapping){
+static int mapping_ok(char* mapping){ /* Verify that the mapped page contains the expected child-visible data. */
   return mapping != 0 && (int)mapping != -1;
 }
 
@@ -140,7 +140,7 @@ static int lifetime_waker_main(int target_sem, int trigger_sem){
   return LIFETIME_WAKER_STATUS_OK;
 }
 
-int main(void){
+int main(void){ /* Exercise fork, wait, mmap, and semaphore interactions. */
   int sem = sem_open(0);
   int private_fd = open(PRIVATE_FILE_NAME);
   int shared_fd = open(SHARED_FILE_NAME);

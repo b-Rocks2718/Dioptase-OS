@@ -22,7 +22,7 @@
 #define NUM_THREADS 32
 #define YIELD_ROUNDS 200
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies a yielding worker and its iteration budget. */
   int id;
   int rounds;
 };

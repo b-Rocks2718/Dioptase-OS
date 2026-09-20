@@ -34,7 +34,7 @@
 #define MIDDLE_PAGES 2
 #define RIGHT_PAGES 1
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies one writer to a private anonymous mapping. */
   int id;
 };
 
@@ -43,11 +43,11 @@ static int go = 0;
 static int finished = 0;
 static int completed_rounds = 0;
 
-static unsigned words_per_page(void) {
+static unsigned words_per_page(void) { /* Return the number of test words in one page. */
   return FRAME_SIZE / sizeof(unsigned);
 }
 
-static unsigned sample_offset(unsigned sample) {
+static unsigned sample_offset(unsigned sample) { /* Map a sample number to a stable page offset. */
   unsigned words = words_per_page();
   switch (sample) {
     case 0: return 0;
@@ -57,7 +57,7 @@ static unsigned sample_offset(unsigned sample) {
   }
 }
 
-static unsigned pattern_word(int tid, int round, int region, unsigned index) {
+static unsigned pattern_word(int tid, int round, int region, unsigned index) { /* Generate the per-worker page pattern. */
   unsigned base = 0x51A70000u;
   base ^= ((unsigned)tid << 20);
   base ^= ((unsigned)round << 8);
@@ -65,7 +65,7 @@ static unsigned pattern_word(int tid, int round, int region, unsigned index) {
   return base ^ index;
 }
 
-static void expect_ptr_eq(void* got, void* expected, int tid, int round, int step) {
+static void expect_ptr_eq(void* got, void* expected, int tid, int round, int step) { /* Assert that a mapping operation returned the expected address. */
   if (got != expected) {
     int args[5] = {tid, round, step, (int)got, (int)expected};
     say("***vmem private thread stress FAIL id=%d round=%d step=%d got=0x%X expect=0x%X\n", args);
@@ -73,7 +73,7 @@ static void expect_ptr_eq(void* got, void* expected, int tid, int round, int ste
   }
 }
 
-static void expect_zeroed(unsigned* base, unsigned pages, int tid, int round, int region) {
+static void expect_zeroed(unsigned* base, unsigned pages, int tid, int round, int region) { /* Assert newly allocated anonymous pages are zero-filled. */
   unsigned words = words_per_page();
   for (unsigned page = 0; page < pages; page++) {
     unsigned* page_base = base + page * words;
@@ -88,7 +88,7 @@ static void expect_zeroed(unsigned* base, unsigned pages, int tid, int round, in
   }
 }
 
-static void fill_region(unsigned* base, unsigned pages, int tid, int round, int region) {
+static void fill_region(unsigned* base, unsigned pages, int tid, int round, int region) { /* Fill region. */
   unsigned words = words_per_page();
   for (unsigned page = 0; page < pages; page++) {
     unsigned* page_base = base + page * words;
@@ -100,7 +100,7 @@ static void fill_region(unsigned* base, unsigned pages, int tid, int round, int 
   }
 }
 
-static void check_region(unsigned* base, unsigned pages, int tid, int round, int region) {
+static void check_region(unsigned* base, unsigned pages, int tid, int round, int region) { /* Verify every sampled word in a private region. */
   unsigned words = words_per_page();
   for (unsigned page = 0; page < pages; page++) {
     unsigned* page_base = base + page * words;
@@ -117,7 +117,7 @@ static void check_region(unsigned* base, unsigned pages, int tid, int round, int
   }
 }
 
-static void vmem_worker(void* arg) {
+static void vmem_worker(void* arg) { /* Exercise private mappings for one worker and round set. */
   struct ThreadArg* a = (struct ThreadArg*)arg;
   int tid = a->id;
 
@@ -184,7 +184,7 @@ static void vmem_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify private anonymous mappings are isolated and zeroed. */
   say("***vmem private thread stress test start\n", NULL);
 
   for (int i = 0; i < NUM_THREADS; i++) {

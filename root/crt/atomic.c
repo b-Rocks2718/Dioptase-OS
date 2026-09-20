@@ -2,6 +2,7 @@
 
 #include "sys.h"
 
+// Mark a spin lock as unowned.
 void spin_lock_init(struct SpinLock* lock){
   lock->the_lock = 0;
 }

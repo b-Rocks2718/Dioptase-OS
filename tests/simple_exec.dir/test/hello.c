@@ -7,7 +7,7 @@
 #include "../../../root/crt/print.h"
 #include "../../../root/crt/sys.h"
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) { /* Provide the child executable for exec testing. */
   puts("***hello from execed program\n");
   puts("***argc = ");
   print_signed(argc);

@@ -15,6 +15,7 @@ struct LinkedDirent* sbin_entries = 0;
 
 #define PRINT_BUFFER_SIZE 256
 
+// Copy a variable-length kernel directory entry into a standalone list node.
 struct LinkedDirent* create_linked_dirent(struct linux_dirent* dirent) {
   struct LinkedDirent* entry = malloc(sizeof(struct LinkedDirent) + dirent->d_reclen - sizeof(struct linux_dirent));
   memcpy(&entry->dirent, dirent, dirent->d_reclen);
@@ -23,6 +24,7 @@ struct LinkedDirent* create_linked_dirent(struct linux_dirent* dirent) {
   return entry;
 }
 
+// Free every copied directory entry in the linked result list.
 void destroy_linked_dirents(struct LinkedDirent* head) {
   struct LinkedDirent* current = head;
   while (current != 0){
@@ -32,6 +34,7 @@ void destroy_linked_dirents(struct LinkedDirent* head) {
   }
 }
 
+// Read a directory while translating the error sentinel to an empty result.
 struct LinkedDirent* read_directory_no_error(char* path) {
   struct LinkedDirent* entries = read_directory(path);
   if (entries == (struct LinkedDirent*) -1) {
@@ -105,11 +108,13 @@ unsigned add_to_print_buffer(char* print_buffer, unsigned index, char* to_add, u
   return index;
 }
 
+// Print print buffer.
 void print_print_buffer(char* print_buffer, unsigned index) {
   print_buffer[index] = 0;
   puts(print_buffer);
 }
 
+// Measure listing columns and return the number of entries that will be shown.
 unsigned get_column_widths(struct LinkedDirent* head, unsigned entries_per_line, unsigned* longest, bool skip_current_and_parent) {
   unsigned count = 0;
 
@@ -141,6 +146,7 @@ unsigned get_column_widths(struct LinkedDirent* head, unsigned entries_per_line,
   return count;
 }
 
+// Format copied directory entries into aligned terminal columns.
 void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   if (head == 0) {
     return;
@@ -265,6 +271,7 @@ void print_directory(struct LinkedDirent* head, bool skip_current_and_parent) {
   }
 }
 
+// Complete a directory prefix and return the matching entry name.
 struct LinkedDirent* tab_complete_directory(char* prefix, bool include_commands) {
   // Find last '/' in prefix.
   int last_slash = -1;

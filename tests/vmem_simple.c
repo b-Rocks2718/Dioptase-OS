@@ -7,7 +7,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/ext.h"
 
-void private_anonymous_test(void){
+void private_anonymous_test(void){ /* Test private anonymous. */
   int* p = mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
   say("***    mmap'd a page at virtual address 0x%X\n", &p);
 
@@ -21,7 +21,7 @@ void private_anonymous_test(void){
   say("***    munmap'd the page\n", NULL);
 }
 
-void private_file_backed_test(void){
+void private_file_backed_test(void){ /* Test private file backed. */
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
@@ -39,12 +39,12 @@ void private_file_backed_test(void){
   say("***    munmap'd the file-backed page\n", NULL);
 }
 
-void shared_anonymous_test(void){
+void shared_anonymous_test(void){ /* Test shared anonymous. */
   // might be hard to test without processes
   say("***    TODO: implement shared anonymous mmap test\n", NULL);
 }
 
-void shared_file_backed_test(void){
+void shared_file_backed_test(void){ /* Test shared file backed. */
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
@@ -62,7 +62,7 @@ void shared_file_backed_test(void){
   node_free(file);
 }
 
-int kernel_main(void) {
+int kernel_main(void) { /* Exercise basic mapping, protection, and unmapping paths. */
   say("***Hello from vmem_simple test!\n", NULL);
 
   say("***Running private anonymous mmap test...\n", NULL);

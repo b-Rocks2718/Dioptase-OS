@@ -5,6 +5,7 @@
 
 struct Slice;
 
+// Classify lexical tokens produced by the C lexer.
 enum TokenType {
   // tokens with data
   INT_LIT, // contains int
@@ -89,6 +90,7 @@ enum TokenType {
   ARROW_TOK,
 };
 
+// Store the literal or identifier payload selected by TokenType.
 union TokenVariant {
   int int_val;
   unsigned uint_val;
@@ -99,6 +101,7 @@ union TokenVariant {
   struct Slice* ident_name;
 };
 
+// Store token kind, payload, and its source span.
 struct Token {
   enum TokenType type;
   union TokenVariant data;

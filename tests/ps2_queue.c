@@ -31,29 +31,29 @@
 // corresponding nonzero low-byte guest keycode.
 #define RELEASE_EVENT_FLAG 0x100
 
-static void fail_uint(char* operation, unsigned got, unsigned expected){
+static void fail_uint(char* operation, unsigned got, unsigned expected){ /* Report a queue assertion with both observed and expected values. */
   int args[2] = {(int)got, (int)expected};
   say("***ps2 queue FAIL got=%u expected=%u\n", args);
   panic(operation);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* operation){
+static void expect_uint(unsigned got, unsigned expected, char* operation){ /* Check uint. */
   if (got != expected){
     fail_uint(operation, got, expected);
   }
 }
 
-static void expect_bool(bool got, bool expected, char* operation){
+static void expect_bool(bool got, bool expected, char* operation){ /* Check bool. */
   expect_uint((unsigned)got, (unsigned)expected, operation);
 }
 
-static void drain_preexisting_events(void){
+static void drain_preexisting_events(void){ /* Drain preexisting events. */
   while (getkey() != 0){
     // Return any externally injected event element before deterministic checks.
   }
 }
 
-void kernel_main(void){
+void kernel_main(void){ /* Exercise PS/2 event ordering, drops, and bounded capacity. */
   say("***ps2 queue test start\n", NULL);
 
   drain_preexisting_events();

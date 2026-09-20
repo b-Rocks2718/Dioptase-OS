@@ -13,6 +13,7 @@
 // Every Dioptase instruction is one 32-bit word according to docs/ISA.md.
 #define DIOPTASE_INSTRUCTION_SIZE 4
 
+// Return whether an ELF header fits entirely within the supplied image.
 static bool elf_header_bytes_in_range(unsigned image_size, unsigned offset,
     unsigned size){
   if (offset > image_size){
@@ -71,6 +72,7 @@ static bool elf_load_memory_range(struct ElfProgramHeader* ph,
   return true;
 }
 
+// Return whether two half-open virtual-address ranges overlap.
 static bool elf_ranges_overlap(unsigned first_start, unsigned first_end,
     unsigned second_start, unsigned second_end){
   return first_start < second_end && second_start < first_end;
@@ -92,6 +94,7 @@ static bool elf_load_overlaps_initial_stacks(unsigned load_start,
   return elf_ranges_overlap(load_start, load_end, stack_start, stack_end);
 }
 
+// Validate ELF headers and PT_LOAD ranges before mapping the image.
 bool elf_validate_image(void* elf_image, unsigned image_size){
   struct ElfHeader header;
   unsigned ph_table_bytes = 0;

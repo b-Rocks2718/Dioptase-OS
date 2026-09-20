@@ -72,7 +72,7 @@ static void spawn_worker(void) {
   thread(fun);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify toggling preemption preserves thread progress. */
   say("***preemption toggle test start\n", NULL);
 
   sem_init(&placement_sem, 0);

@@ -65,6 +65,7 @@
 #define SD_WATCHDOG_POLL_JIFFIES 30
 #define SD_BOOT_POLL_OPERATION_LIMIT 16777216
 
+// Identify the SD commands issued by the filesystem and boot paths.
 enum SdOperation {
   SD_OPERATION_INIT = 0,
   SD_OPERATION_READ = 1,
@@ -86,6 +87,7 @@ struct SdStateLock {
   int held;
 };
 
+// Track one SD controller's request generation, deadline, and quarantine state.
 struct SdDriveContext {
   struct BlockingLock command_lock;
   struct SdStateLock state_lock;
@@ -124,40 +126,48 @@ struct SdDriveContext {
 
 static struct SdDriveContext sd_contexts[2];
 
+// Return the MMIO memory-address register for one SD controller.
 static unsigned* sd_mem_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_MEM_ADDR;
   return (unsigned*)SD1_DMA_MEM_ADDR;
 }
 
+// Return the MMIO block-number register for one SD controller.
 static unsigned* sd_block_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_BLOCK_ADDR;
   return (unsigned*)SD1_DMA_BLOCK_ADDR;
 }
 
+// Return the MMIO transfer-length register for one SD controller.
 static unsigned* sd_len_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_LEN_ADDR;
   return (unsigned*)SD1_DMA_LEN_ADDR;
 }
 
+// Return the MMIO command/control register for one SD controller.
 static unsigned* sd_ctrl_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_CTRL_ADDR;
   return (unsigned*)SD1_DMA_CTRL_ADDR;
 }
 
+// Return the MMIO status register for one SD controller.
 static unsigned* sd_status_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_STATUS_ADDR;
   return (unsigned*)SD1_DMA_STATUS_ADDR;
 }
 
+// Return the MMIO error register for one SD controller.
 static unsigned* sd_error_reg(enum SdDrive drive){
   if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_ERR_ADDR;
   return (unsigned*)SD1_DMA_ERR_ADDR;
 }
 
+// Return whether drive selects one of the implemented SD controllers.
 static bool sd_drive_is_valid(enum SdDrive drive){
   return drive == SD_DRIVE_0 || drive == SD_DRIVE_1;
 }
 
+// Map an SD operation code to its diagnostic name.
 static char* sd_operation_name(enum SdOperation operation){
   if (operation == SD_OPERATION_INIT) return "init";
   if (operation == SD_OPERATION_READ) return "read";
@@ -165,6 +175,7 @@ static char* sd_operation_name(enum SdOperation operation){
   return "invalid-operation";
 }
 
+// Initialize request state before the first controller generation.
 void sd_request_state_init(struct SdRequestState* state){
   assert(state != NULL,
     "sd request state init: state pointer is NULL.\n");
@@ -174,6 +185,7 @@ void sd_request_state_init(struct SdRequestState* state){
   state->result = 0;
 }
 
+// Begin a new request generation unless the state is active or quarantined.
 unsigned sd_request_state_begin(struct SdRequestState* state){
   assert(state != NULL,
     "sd request state begin: state pointer is NULL.\n");
@@ -194,6 +206,7 @@ unsigned sd_request_state_begin(struct SdRequestState* state){
   return next_generation;
 }
 
+// Publish a request's terminal result and wake its waiter.
 bool sd_request_state_finish(struct SdRequestState* state,
     unsigned generation, int result, bool quarantine){
   assert(state != NULL,
@@ -210,6 +223,7 @@ bool sd_request_state_finish(struct SdRequestState* state,
   return true;
 }
 
+// Finish controller state while preserving generation/quarantine ordering.
 bool sd_request_state_finish_controller(struct SdRequestState* state,
     unsigned generation, int result, bool controller_busy){
   /*
@@ -219,6 +233,7 @@ bool sd_request_state_finish_controller(struct SdRequestState* state,
   return sd_request_state_finish(state, generation, result, controller_busy);
 }
 
+// Acknowledge a timed-out controller and permit a new generation.
 bool sd_request_state_acknowledge_quarantine(struct SdRequestState* state,
     unsigned generation){
   assert(state != NULL,
@@ -259,16 +274,19 @@ static void sd_state_lock_release(struct SdStateLock* lock, unsigned was){
   interrupts_restore(was);
 }
 
+// Clear the controller's latched status and error registers.
 static void sd_clear_status(enum SdDrive drive){
   // Per docs/mem_map.md, any status write clears DONE, ERR, and DMA_ERR only.
   *sd_status_reg(drive) = 0;
 }
 
+// Return whether status/error indicate a completed SD request.
 static bool sd_status_is_terminal(unsigned status, unsigned error){
   return (status & (SD_DMA_STATUS_DONE | SD_DMA_STATUS_ERR)) != 0 ||
     error != 0;
 }
 
+// Translate terminal SD status and error registers to an OS result code.
 static int sd_result_from_status(unsigned status, unsigned error){
   if ((status & ~SD_DMA_STATUS_KNOWN_MASK) != 0){
     return SD_DRIVER_ERR_UNEXPECTED_STATUS;
@@ -290,6 +308,7 @@ static int sd_result_from_status(unsigned status, unsigned error){
   return 0;
 }
 
+// Record and report a request rejected before controller submission.
 static void sd_report_request_rejection(char* operation,
     enum SdDrive drive, int start_block, int num_blocks, void* buffer,
     char* reason){
@@ -304,6 +323,7 @@ static void sd_report_request_rejection(char* operation,
     args);
 }
 
+// Convert an SD result code into the public diagnostic string.
 static void sd_report_result(enum SdDrive drive,
     struct SdDriveContext* context, int result){
   void* args[11];
@@ -504,6 +524,7 @@ static int sd_execute_boot_command(enum SdDrive drive,
   return result;
 }
 
+// Hold the block range and buffer passed to an SD worker thread.
 struct SdBlockArgs {
   enum SdDrive drive;
   struct TCB* thread;
@@ -531,6 +552,7 @@ static void sd_block_thread(void* arg){
   }
 }
 
+// Wait for one runtime SD command to complete or time out.
 static int sd_wait_runtime_command(enum SdDrive drive,
     struct SdDriveContext* context, unsigned generation){
   unsigned was = interrupts_disable();
@@ -553,6 +575,7 @@ static int sd_wait_runtime_command(enum SdDrive drive,
   return result;
 }
 
+// Execute one serialized SD command and publish its terminal state.
 static int sd_execute_runtime_command(enum SdDrive drive,
     struct SdDriveContext* context, enum SdOperation operation,
     unsigned start_block, unsigned num_blocks, unsigned caller_buffer_addr,
@@ -727,6 +750,7 @@ static void sd_watchdog(void* unused){
   }
 }
 
+// Initialize one controller context and its request synchronization.
 static void sd_context_init(struct SdDriveContext* context){
   blocking_lock_init(&context->command_lock);
   __atomic_store_n(&context->state_lock.held, false);
@@ -750,6 +774,7 @@ static void sd_context_init(struct SdDriveContext* context){
     "sd driver init: failed to allocate one aligned ordinary-RAM bounce page.\n");
 }
 
+// Initialize both SD controllers, watchdog state, and interrupt handlers.
 void sd_init(void){
   sd_context_init(&sd_contexts[SD_DRIVE_0]);
   sd_context_init(&sd_contexts[SD_DRIVE_1]);
@@ -783,6 +808,7 @@ void sd_init(void){
   setup_thread(watchdog_fun, HIGH_PRIORITY, ANY_CORE);
 }
 
+// Stop SD workers and release controller synchronization during shutdown.
 void sd_destroy(void){
   /*
    * Preconditions:
@@ -799,6 +825,7 @@ void sd_destroy(void){
   sd_request_state_init(&sd_contexts[SD_DRIVE_1].request);
 }
 
+// Validate and execute one block transfer on the selected controller.
 static int sd_transfer(enum SdDrive drive, int start_block, int num_blocks,
     void* buffer, enum SdOperation operation, unsigned command){
   char* operation_name = sd_operation_name(operation);
@@ -839,18 +866,21 @@ static int sd_transfer(enum SdDrive drive, int start_block, int num_blocks,
   return result;
 }
 
+// Read complete SD sectors into a kernel buffer.
 int sd_read_blocks(enum SdDrive drive, int start_block, int num_blocks,
     void* dest){
   return sd_transfer(drive, start_block, num_blocks, dest,
     SD_OPERATION_READ, SD_DMA_CTRL_START);
 }
 
+// Write complete SD sectors from a kernel buffer.
 int sd_write_blocks(enum SdDrive drive, int start_block, int num_blocks,
     void* src){
   return sd_transfer(drive, start_block, num_blocks, src,
     SD_OPERATION_WRITE, SD_DMA_CTRL_START | SD_DMA_CTRL_DIR_RAM_TO_SD);
 }
 
+// Consume one controller interrupt and advance its request state machine.
 void sd_handler(enum SdDrive drive){
   if (!sd_drive_is_valid(drive)){
     int arg = (int)drive;

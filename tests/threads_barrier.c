@@ -99,7 +99,7 @@ static void spawn_worker(int id) {
   thread(fun);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify barrier release after every worker arrives. */
   say("***barrier test start\n", NULL);
 
   barrier_init(&barrier, NUM_THREADS);

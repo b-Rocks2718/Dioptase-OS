@@ -24,13 +24,11 @@ extern bool bootstrapping;
 // initialize thread structures; should only be called once on one core
 void threads_init(void);
 
-// switch away from the current thread and run a completion callback
-// Inputs: was is the interrupt mask to restore when this thread is resumed
-// func/arg execute on the next context after the switch
-// run_with_interrupts indicates whether to restore interrupts before running the callback
-// If false, they are enabled after the callback returns
-// Assumes callback doesn't modify the 'next' TCB
-// Preconditions: interrupts are disabled; current thread is core->current_thread
+// Switch away from the current thread and run func(arg) in the next context.
+// `was` is restored when this thread resumes. The callback runs with interrupts
+// enabled only when run_with_interrupts requests it; otherwise they are enabled
+// after it returns. Interrupts must be disabled on entry, the current thread must
+// be core->current_thread, and the callback must not modify the next TCB.
 void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrupts);
 
 // Perform a context switch from the current thread (me) to the next thread (next)

@@ -20,6 +20,7 @@
 char cmd_buf[SHELL_COMMAND_BUFFER_SIZE];
 unsigned cmd_buf_len = 0;
 
+// Print line prefix.
 void print_line_prefix(void){
   // machine name in green
   puts("\x1b[32mdioptase");
@@ -41,11 +42,13 @@ void print_line_prefix(void){
   puts("\x1b[37m$ ");
 }
 
+// Print cmd buf.
 void print_cmd_buf(void){
   cmd_buf[cmd_buf_len] = '\0';
   puts(cmd_buf);
 }
 
+// Split the current command buffer on spaces into newly allocated arguments.
 void parse_command(unsigned* argc_out, char*** argv_out){
   // split command into argv by spaces, ignoring multiple spaces
   char** argv = malloc(sizeof(char*) * MAX_ARGV);
@@ -81,6 +84,7 @@ void parse_command(unsigned* argc_out, char*** argv_out){
   *argv_out = argv;
 }
 
+// Free every parsed argument string and its pointer array.
 void free_argv(unsigned argc, char** argv){
   for (unsigned i = 0; i < argc; i++){
     free(argv[i]);
@@ -151,6 +155,7 @@ static bool append_normalized_components(char* path, char* normalized,
   return true;
 }
 
+// Normalize a path spelling before comparing it with another path.
 static bool normalize_path_for_comparison(char* path, char* cwd,
                                           char* normalized){
   unsigned normalized_length = 1;
@@ -210,6 +215,7 @@ static int compare_lexical_paths(char* left, char* right){
   return equal;
 }
 
+// Read and print directory entries for the shell's `ls` implementation.
 void list_dir(char* path, bool print_header, bool is_last_dir, char* command) {
   struct LinkedDirent* entries = read_directory(path);
   if (entries == (struct LinkedDirent*) -1) {
@@ -233,6 +239,7 @@ void list_dir(char* path, bool print_header, bool is_last_dir, char* command) {
   }
 }
 
+// Parse and execute the shell's directory-listing command.
 void handle_ls(int argc, char** argv) {
   if (argc == 1) {
     // List current directory.
@@ -246,6 +253,7 @@ void handle_ls(int argc, char** argv) {
   }
 }
 
+// Open each named file and write its contents to standard output.
 void handle_cat(int argc, char** argv){
   if (argc < 2){
     puts("cat: expected file argument\n");
@@ -268,6 +276,7 @@ void handle_cat(int argc, char** argv){
   }
 }
 
+// Copy bytes from the source file into the destination file.
 bool handle_cp(int argc, char** argv){
   // copy file: cp source dest
   if (argc < 3){
@@ -375,6 +384,7 @@ bool handle_cp(int argc, char** argv){
   return success;
 }
 
+// Parse one command line and dispatch its builtin or external command.
 void handle_command(void){
   unsigned argc;
   char** argv;
@@ -510,13 +520,14 @@ void handle_command(void){
     }
   }
 
-  // free argv
+  // Discard the parsed command name and arguments after dispatch.
   free_argv(argc, argv);
 }
 
 // Focused shell tests compile the command handlers into a guest test program;
 // production builds leave SHELL_LIBRARY_ONLY undefined and use this entrypoint.
 #ifndef SHELL_LIBRARY_ONLY
+// Read and dispatch commands from the interactive shell prompt.
 int main(void){
   while (true) { 
     print_line_prefix();

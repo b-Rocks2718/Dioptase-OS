@@ -20,12 +20,12 @@
 
 static struct SpinLock lock;
 
-static void block_callback_should_not_run(void* arg) {
+static void block_callback_should_not_run(void* arg) { /* Mark an unexpected callback invocation while a spinlock is held. */
   (void)arg;
   panic("threads block spinlock negative: block callback unexpectedly ran.\n");
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify blocking while holding a spin lock is rejected. */
   say("***threads block spinlock negative start\n", NULL);
 
   spin_lock_init(&lock);

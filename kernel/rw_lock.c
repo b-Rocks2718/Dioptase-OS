@@ -37,6 +37,7 @@ static void rw_add_reader(void* arg){
   }
 }
 
+// Acquire shared ownership, blocking behind an active or waiting writer.
 void rw_lock_acquire_read(struct RwLock* rwlock){
   assert(rwlock != NULL, "rw_lock_acquire_read: lock is NULL.\n");
 
@@ -68,6 +69,7 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
+// Release shared ownership and wake the next writer when the last reader leaves.
 void rw_lock_release_read(struct RwLock* rwlock){
   assert(rwlock != NULL, "rw_lock_release_read: lock is NULL.\n");
   __atomic_fetch_add(&rwlock->active_operations, 1);
@@ -114,6 +116,7 @@ static void rw_add_writer(void* arg){
   }
 }
 
+// Acquire exclusive ownership after all existing readers and writers leave.
 void rw_lock_acquire_write(struct RwLock* rwlock){
   assert(rwlock != NULL, "rw_lock_acquire_write: lock is NULL.\n");
   __atomic_fetch_add(&rwlock->active_operations, 1);
@@ -138,6 +141,7 @@ void rw_lock_acquire_write(struct RwLock* rwlock){
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
+// Release exclusive ownership, preferring the next queued writer.
 void rw_lock_release_write(struct RwLock* rwlock){
   assert(rwlock != NULL, "rw_lock_release_write: lock is NULL.\n");
   __atomic_fetch_add(&rwlock->active_operations, 1);
@@ -173,6 +177,7 @@ void rw_lock_release_write(struct RwLock* rwlock){
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
+// Destroy an idle reader-writer lock after all holders and waiters leave.
 void rw_lock_destroy(struct RwLock* rwlock) {
   assert(rwlock != NULL, "rw_lock_destroy: lock is NULL.\n");
   clh_lock_acquire(&rwlock->lock);
@@ -201,6 +206,7 @@ void rw_lock_destroy(struct RwLock* rwlock) {
   clh_lock_destroy(&rwlock->lock);
 }
 
+// Destroy and free a heap-allocated reader-writer lock.
 void rw_lock_free(struct RwLock* rwlock){
   rw_lock_destroy(rwlock);
   free(rwlock);

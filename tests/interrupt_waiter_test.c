@@ -21,7 +21,7 @@
 
 static struct TCB waiter_thread;
 
-static void expect_thread(char* message, struct TCB* got,
+static void expect_thread(char* message, struct TCB* got, /* Check thread. */
     struct TCB* expected){
   if (got != expected){
     int args[2] = { (int)got, (int)expected };
@@ -30,7 +30,7 @@ static void expect_thread(char* message, struct TCB* got,
   }
 }
 
-static void test_signal_before_publish(void){
+static void test_signal_before_publish(void){ /* Test signal before publish. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -44,7 +44,7 @@ static void test_signal_before_publish(void){
     interrupt_waiter_publish(&waiter, &waiter_thread), &waiter_thread);
 }
 
-static void test_publish_before_signal(void){
+static void test_publish_before_signal(void){ /* Test publish before signal. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -58,7 +58,7 @@ static void test_publish_before_signal(void){
     interrupt_waiter_signal(&waiter), &waiter_thread);
 }
 
-static void test_prepare_clears_stale_signal(void){
+static void test_prepare_clears_stale_signal(void){ /* Test prepare clears stale signal. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -75,7 +75,7 @@ static void test_prepare_clears_stale_signal(void){
     interrupt_waiter_signal(&waiter), &waiter_thread);
 }
 
-static void test_prepublication_signals_coalesce(void){
+static void test_prepublication_signals_coalesce(void){ /* Test prepublication signals coalesce. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -92,7 +92,7 @@ static void test_prepublication_signals_coalesce(void){
     interrupt_waiter_publish(&waiter, &waiter_thread), &waiter_thread);
 }
 
-void kernel_main(void){
+void kernel_main(void){ /* Exercise interrupt-wait publication and race arbitration. */
   say("***interrupt waiter test start\n", NULL);
 
   test_signal_before_publish();

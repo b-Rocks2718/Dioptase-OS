@@ -20,6 +20,7 @@
 
 struct Ext2;
 
+// Hold an inode's shared cache state, reference count, and on-disk metadata.
 struct CachedInode {
   unsigned inumber;
   struct Inode inode;

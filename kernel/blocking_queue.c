@@ -8,6 +8,7 @@ void blocking_queue_init(struct BlockingQueue* b) {
   sem_init(&b->sem, 0);
 }
 
+// Destroy the queue after all producers and consumers have stopped.
 void blocking_queue_destroy(struct BlockingQueue* b) {
   assert(b != NULL, "blocking_queue_destroy: queue is NULL.\n");
 
@@ -46,6 +47,7 @@ struct GenericQueueElement* blocking_queue_remove(struct BlockingQueue* b) {
   return element;
 }
 
+// Remove an item without blocking, returning NULL when the queue is empty.
 struct GenericQueueElement* blocking_queue_try_remove(struct BlockingQueue* b) {
   if (!sem_try_down(&b->sem)) {
     return NULL;
@@ -57,6 +59,7 @@ struct GenericQueueElement* blocking_queue_try_remove(struct BlockingQueue* b) {
   return element;
 }
 
+// Detach and return every currently queued item.
 struct GenericQueueElement* blocking_queue_remove_all(struct BlockingQueue* b){
   struct GenericQueueElement* head = NULL;
   struct GenericQueueElement* tail = NULL;
@@ -77,6 +80,7 @@ struct GenericQueueElement* blocking_queue_remove_all(struct BlockingQueue* b){
   return head;
 }
 
+// Return the number of elements currently published to the queue.
 unsigned blocking_queue_size(struct BlockingQueue* b) {
   return generic_spin_queue_size(&b->queue);
 }

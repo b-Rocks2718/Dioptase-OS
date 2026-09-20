@@ -1,6 +1,7 @@
 #include "../crt/sys.h"
 #include "../crt/print.h"
 
+// Print text one character at a time, treating '%' as a longer pause.
 void print_dramatically(char* str, unsigned delay){
   for (unsigned i = 0; str[i] != '\0'; i++){
     if (str[i] == '%'){
@@ -17,6 +18,7 @@ void print_dramatically(char* str, unsigned delay){
 
 char lyrics[LYRICS_BUFFER_BYTES];
 
+// Load the lyrics and animate them on the terminal with timed pauses.
 int main(void){
   // clear the screen
   puts("\x1b[2J");

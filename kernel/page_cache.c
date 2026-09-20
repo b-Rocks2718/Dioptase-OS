@@ -92,6 +92,7 @@ struct PageCacheEntry* page_cache_acquire(struct PageCache* cache,
   return entry;
 }
 
+// Mark a cached file page dirty so its contents are written back later.
 void page_cache_mark_dirty(struct PageCache* cache, struct Node* node,
     unsigned offset, unsigned exposed_bytes){
   if (exposed_bytes == 0 || exposed_bytes > FRAME_SIZE){
@@ -130,6 +131,7 @@ void page_cache_mark_dirty(struct PageCache* cache, struct Node* node,
   panic("page_cache_mark_dirty: missing cache entry for dirty page.\n");
 }
 
+// Drop cached pages beyond a truncated file's new end offset.
 bool page_cache_shrink_file(struct PageCache* cache, struct Node* node,
     unsigned target_size){
   assert(cache != NULL, "page_cache_shrink_file: cache is NULL.\n");

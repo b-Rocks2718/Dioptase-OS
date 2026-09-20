@@ -45,19 +45,19 @@ static int ill_retry_count = 0;
 static int child_ready_sem = -1;
 static int child_continue_sem = -1;
 
-static int masked_hello_handler(int signal){
+static int masked_hello_handler(int signal){ /* Verify masked delivery by recording the deferred hello signal. */
   masked_hello_count += 1;
   user_test_expect_eq("masked handler signal number", signal, SIGNAL_HELLO);
   sigreturn(0);
 }
 
-static int async_exit_handler(int signal){
+static int async_exit_handler(int signal){ /* Record asynchronous delivery and request the test process exit. */
   user_test_expect_eq("terminating handler signal number", signal,
     SIGNAL_HELLO);
   exit(ASYNC_EXIT_STATUS);
 }
 
-static int spinning_handler(int signal){
+static int spinning_handler(int signal){ /* Keep the handler busy to exercise signal interruption behavior. */
   if (signal != SIGNAL_HELLO){
     exit(-1);
   }
@@ -69,18 +69,18 @@ static int spinning_handler(int signal){
   while (1){ }
 }
 
-static int seg_handler(void* vpn){
+static int seg_handler(void* vpn){ /* Record the page-fault address delivered with the signal. */
   user_test_expect_eq("segmentation handler fault VPN", (int)vpn,
     EXPECTED_SEG_FAULT_VPN);
   exit(SEG_EXIT_STATUS);
 }
 
-static int ill_handler(unsigned pc){
+static int ill_handler(unsigned pc){ /* Record the illegal-instruction address delivered by the kernel. */
   user_test_expect_eq("illegal-instruction handler PC alignment", pc & 3, 0);
   exit(ILL_EXIT_STATUS);
 }
 
-static int ill_retry_handler(unsigned pc){
+static int ill_retry_handler(unsigned pc){ /* Record an illegal instruction while requesting the retry path. */
   if ((pc & 3) != 0){
     exit(-1);
   }
@@ -95,12 +95,12 @@ static int ill_retry_handler(unsigned pc){
   exit(ill_retry_count == 2 ? ILL_RETRY_EXIT_STATUS : -1);
 }
 
-static int algn_handler(unsigned pc){
+static int algn_handler(unsigned pc){ /* Record the address of the misaligned instruction fault. */
   user_test_expect_eq("misaligned-PC handler PC remainder", pc & 3, 2);
   exit(ALGN_EXIT_STATUS);
 }
 
-static int masked_child(void){
+static int masked_child(void){ /* Run the masked child process. */
   user_test_expect_eq("register masked hello handler",
     register_handler(SIGNAL_HELLO, (void*)masked_hello_handler), 0);
   user_test_expect_eq("mask hello in child", mask_signal(SIGNAL_HELLO), 0);
@@ -128,20 +128,20 @@ static int masked_child(void){
   return CHILD_READY_STATUS;
 }
 
-static int waiting_child(void){
+static int waiting_child(void){ /* Run the waiting child process. */
   sem_up(child_ready_sem);
   while (1){
     yield();
   }
 }
 
-static int parse_three_digit_decimal(char* text){
+static int parse_three_digit_decimal(char* text){ /* Parse three digit decimal. */
   return (text[0] - '0') * DECIMAL_HUNDREDS +
     (text[1] - '0') * DECIMAL_TENS +
     (text[2] - '0');
 }
 
-static int exec_check_main(char* ready_sem_text){
+static int exec_check_main(char* ready_sem_text){ /* Report post-exec readiness, then remain available for signaling. */
   int ready_sem = parse_three_digit_decimal(ready_sem_text);
   sem_up(ready_sem);
   while (1){
@@ -149,7 +149,7 @@ static int exec_check_main(char* ready_sem_text){
   }
 }
 
-int main(int argc, char** argv){
+int main(int argc, char** argv){ /* Exercise basic signal delivery and masking. */
   if (argc == 3 && argv[1][0] == 'e'){
     return exec_check_main(argv[2]);
   }

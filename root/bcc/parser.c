@@ -18,20 +18,18 @@ static struct Token * current;
 static size_t max_consumed_index;
 static bool max_consumed_valid;
 
-// Purpose: Convert one token pointer into its index within the token array.
-// Inputs: token points into the same contiguous array as program.
-// Outputs: Returns the zero-based token index.
-// Invariants/Assumptions: docs/abi.md defines pointers as 4-byte values, so
+// Convert one token pointer into its index within the token array.
+// Token points into the same contiguous array as program.
+// Returns the zero-based token index.
+// Docs/abi.md defines pointers as 4-byte values, so
 // the bootstrap compiler can recover indices through unsigned byte arithmetic
 // even though it rejects direct typed-pointer subtraction.
 static size_t token_index(struct Token* token) {
   return ((size_t)((unsigned)token - (unsigned)program)) / sizeof(struct Token);
 }
 
-// Purpose: Record the furthest token consumed for error reporting.
-// Inputs: token is the most recently consumed token.
-// Outputs: Updates max_consumed_index/max_consumed_valid.
-// Invariants/Assumptions: token points into the program token array.
+// Record the furthest token consumed for error reporting.
+// Token points into the program token array.
 static void record_consumed_token(struct Token* token) {
   size_t index = token_index(token);
   if (!max_consumed_valid || index > max_consumed_index) {
@@ -40,10 +38,9 @@ static void record_consumed_token(struct Token* token) {
   }
 }
 
-// Purpose: Compute a pointer into the source text for error reporting.
-// Inputs: Uses parser state to select the most informative location.
-// Outputs: Returns a pointer into the source text or source_text_end().
-// Invariants/Assumptions: source context has been initialized before parsing.
+// Compute a pointer into the source text for error reporting.
+// Returns a pointer into the source text or source_text_end().
+// Source context has been initialized before parsing.
 static char* parser_error_ptr(void) {
   if (max_consumed_valid) {
     if (max_consumed_index < prog_size) {
@@ -57,10 +54,9 @@ static char* parser_error_ptr(void) {
   return source_text_end();
 }
 
-// Purpose: Emit a formatted parse error at a source pointer.
-// Inputs: ptr locates the error; message is a fixed diagnostic string.
-// Outputs: Writes an error message to stdout.
-// Invariants/Assumptions: ptr is within the current source buffer.
+// Emit a formatted parse error at a source pointer.
+// Writes an error message to stdout.
+// Ptr is within the current source buffer.
 static void parse_error_at(char* ptr, char* message) {
   int args[4];
   struct SourceLocation loc = source_location_from_ptr(ptr);
@@ -73,18 +69,14 @@ static void parse_error_at(char* ptr, char* message) {
   fdprintf(STDOUT, "Parse error at %s:%zu:%zu: %s\n", args);
 }
 
-// Purpose: Emit a generic parse error using the current parser location.
-// Inputs: Uses internal parser state to locate the failure.
-// Outputs: Writes a diagnostic message to stdout.
-// Invariants/Assumptions: parser_error_ptr handles end-of-input safely.
+// Emit a generic parse error using the current parser location.
+// Writes a diagnostic message to stdout.
 static void print_error() {
   parse_error_at(parser_error_ptr(), "unexpected token");
 }
 
-// Purpose: Convert one hexadecimal digit into its numeric value.
-// Inputs: c is an ASCII character from source text.
-// Outputs: Returns 0-15 for hexadecimal digits, or -1 for any other character.
-// Invariants/Assumptions: String and character escapes are parsed from raw source bytes.
+// Convert one hexadecimal digit into its numeric value.
+// Returns 0-15 for hexadecimal digits, or -1 for any other character.
 static int hex_digit_value(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
@@ -92,11 +84,11 @@ static int hex_digit_value(char c) {
   return -1;
 }
 
-// Purpose: Decode a byte-valued \x hexadecimal escape from raw source text.
-// Inputs: digits points at the first character after \x in the source buffer.
-// Outputs: On success, writes the byte value to out_value, the number of consumed
+// Decode a byte-valued \x hexadecimal escape from raw source text.
+// Digits points at the first character after \x in the source buffer.
+// On success, writes the byte value to out_value, the number of consumed
 // hex digits to consumed_digits, and returns true.
-// Invariants/Assumptions: The compiler treats \x escapes in strings as single-byte
+// The compiler treats \x escapes in strings as single-byte
 // values and rejects anything above 0xff rather than truncating.
 static bool decode_hex_escape(char* digits, size_t* consumed_digits,
                               unsigned char* out_value) {
@@ -123,10 +115,9 @@ static bool decode_hex_escape(char* digits, size_t* consumed_digits,
   return true;
 }
 
-// Purpose: Allocate a new expression node in the arena.
-// Inputs: type is the expression kind; loc is the source location pointer.
-// Outputs: Returns an initialized Expr with no type assigned yet.
-// Invariants/Assumptions: loc points into the preprocessed source buffer.
+// Allocate a new expression node in the arena.
+// Returns an initialized Expr with no type assigned yet.
+// Loc points into the preprocessed source buffer.
 static struct Expr* alloc_expr(enum ExprType type, char* loc) {
   struct Expr* expr = arena_alloc(sizeof(struct Expr));
   expr->loc = loc;
@@ -135,10 +126,9 @@ static struct Expr* alloc_expr(enum ExprType type, char* loc) {
   return expr;
 }
 
-// Purpose: Allocate a new statement node in the arena.
-// Inputs: type is the statement kind; loc is the source location pointer.
-// Outputs: Returns an initialized Statement node.
-// Invariants/Assumptions: loc points into the preprocessed source buffer.
+// Allocate a new statement node in the arena.
+// Returns an initialized Statement node.
+// Loc points into the preprocessed source buffer.
 static struct Statement* alloc_stmt(enum StatementType type, char* loc) {
   struct Statement* stmt = arena_alloc(sizeof(struct Statement));
   stmt->loc = loc;
@@ -146,10 +136,9 @@ static struct Statement* alloc_stmt(enum StatementType type, char* loc) {
   return stmt;
 }
 
-// Purpose: Consume a token of the expected type.
-// Inputs: expected is the token type to match.
-// Outputs: Returns true on match and advances the cursor.
-// Invariants/Assumptions: current points into the program array.
+// Consume a token of the expected type.
+// Returns true on match and advances the cursor.
+// Current points into the program array.
 static bool consume(enum TokenType expected) {
   if (token_index(current) < prog_size && expected == current->type) {
     current++;
@@ -160,10 +149,9 @@ static bool consume(enum TokenType expected) {
   }
 }
 
-// Purpose: Consume a token with associated data and return its variant.
-// Inputs: expected is the token type to match.
-// Outputs: Returns a pointer to the token variant on success, else NULL.
-// Invariants/Assumptions: current points into the program array.
+// Consume a token with associated data and return its variant.
+// Returns a pointer to the token variant on success, else NULL.
+// Current points into the program array.
 static union TokenVariant* consume_with_data(enum TokenType expected) {
   if (token_index(current) < prog_size && expected == current->type) {
     current++;
@@ -174,10 +162,8 @@ static union TokenVariant* consume_with_data(enum TokenType expected) {
   }
 }
 
-// Purpose: Consume a unary operator token and map it to an UnOp.
-// Inputs: Uses the current token stream position.
-// Outputs: Returns the matching UnOp or 0 if no unary operator matches.
-// Invariants/Assumptions: Tokens are produced by the lexer without comments.
+// Consume a unary operator token and map it to an UnOp.
+// Returns the matching UnOp or 0 if no unary operator matches.
 static enum UnOp consume_unary_op(){
   if (consume(TILDE)) return COMPLEMENT;
   if (consume(MINUS)) return NEGATE;
@@ -186,10 +172,8 @@ static enum UnOp consume_unary_op(){
   return 0;
 }
 
-// Purpose: Consume a binary operator token and map it to a BinOp.
-// Inputs: Uses the current token stream position.
-// Outputs: Returns the matching BinOp or 0 if no binary operator matches.
-// Invariants/Assumptions: Token precedence is handled by the Pratt parser.
+// Consume a binary operator token and map it to a BinOp.
+// Returns the matching BinOp or 0 if no binary operator matches.
 static enum BinOp consume_binary_op(){
   if (consume(PLUS)) return ADD_OP;
   if (consume(MINUS)) return SUB_OP;
@@ -225,10 +209,8 @@ static enum BinOp consume_binary_op(){
   return 0;
 }
 
-// Purpose: Parse a parenthesized variable expression for ++/-- handling.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a VAR expression (possibly wrapped in parentheses) or NULL.
-// Invariants/Assumptions: Only identifiers and parentheses are accepted here.
+// Parse a parenthesized variable expression for ++/-- handling.
+// Returns a VAR expression (possibly wrapped in parentheses) or NULL.
 struct Expr* parse_paren_var(){
   struct Expr* expr;
   if ((expr = parse_var())) return expr;
@@ -246,10 +228,8 @@ struct Expr* parse_paren_var(){
   } else return NULL;
 }
 
-// Purpose: Parse prefix ++/-- by translating to compound assignments.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an expression node or NULL if no prefix op matches.
-// Invariants/Assumptions: Operand parsing is deferred to parse_factor.
+// Parse prefix ++/-- by translating to compound assignments.
+// Returns an expression node or NULL if no prefix op matches.
 struct Expr* parse_pre_op(){
   if (consume(INC_TOK)){
     char* op_loc = (current - 1)->start;
@@ -292,10 +272,8 @@ struct Expr* parse_pre_op(){
   }
 }
 
-// Purpose: Parse an identifier expression.
-// Inputs: Consumes IDENT tokens from the current cursor.
-// Outputs: Returns a VAR expression or NULL if no identifier matches.
-// Invariants/Assumptions: The identifier slice refers into the token stream.
+// Parse an identifier expression.
+// Returns a VAR expression or NULL if no identifier matches.
 struct Expr* parse_var(){
   union TokenVariant* data;
   if ((data = consume_with_data(IDENT))){
@@ -308,10 +286,8 @@ struct Expr* parse_var(){
   } else return NULL;
 }
 
-// Purpose: Parse a single type specifier token.
-// Inputs: Consumes type specifier tokens from the current cursor.
-// Outputs: Returns the parsed TypeSpecifier or 0 if none matched.
-// Invariants/Assumptions: Caller handles combinations of specifiers.
+// Parse a single type specifier token.
+// Returns the parsed TypeSpecifier or 0 if none matched.
 struct TypeSpecifier parse_type_spec(){
   if (consume(INT_TOK)) {
     struct TypeSpecifier spec = { INT_SPEC, NULL };
@@ -380,10 +356,8 @@ struct TypeSpecifier parse_type_spec(){
   }
 }
 
-// Purpose: Parse a list of type specifiers.
-// Inputs: Consumes a sequence of type specifier tokens.
-// Outputs: Returns a linked list of TypeSpecList nodes or NULL.
-// Invariants/Assumptions: Caller validates duplicates and compatibility.
+// Parse a list of type specifiers.
+// Returns a linked list of TypeSpecList nodes or NULL.
 struct TypeSpecList* parse_type_specs(){
   struct TypeSpecifier spec = parse_type_spec();
   if (spec.type == -1) return NULL;
@@ -393,20 +367,16 @@ struct TypeSpecList* parse_type_specs(){
   return specs;
 }
 
-// Purpose: Test whether a type specifier list contains a specific specifier.
-// Inputs: types is the list; spec is the specifier to search for.
-// Outputs: Returns true if spec is present.
-// Invariants/Assumptions: types is a well-formed linked list.
+// Test whether a type specifier list contains a specific specifier.
+// Returns true if spec is present.
 struct TypeSpecifier* spec_list_contains(struct TypeSpecList* types, enum TypeSpecifierType spec){
   if (types->spec.type == spec) return &types->spec;
   else if (types->next == NULL) return NULL;
   else return spec_list_contains(types->next, spec);
 }
 
-// Purpose: Detect duplicate or contradictory type specifiers in a list.
-// Inputs: types is the list of parsed specifiers.
-// Outputs: Returns true if the specifier list is valid.
-// Invariants/Assumptions: types is a well-formed linked list.
+// Detect duplicate or contradictory type specifiers in a list.
+// Returns true if the specifier list is valid.
 bool spec_list_valid(struct TypeSpecList* types){
   unsigned num_ints = 0;
   unsigned num_unsigneds = 0;
@@ -486,6 +456,7 @@ bool spec_list_valid(struct TypeSpecList* types){
   return true;
 }
 
+// Combine parsed type specifiers into one type-specifier descriptor.
 struct Type* type_spec_to_type(struct TypeSpecList* types){
   struct TypeSpecifier* found = NULL;
   if (types == NULL) return NULL;
@@ -570,19 +541,15 @@ struct Type* type_spec_to_type(struct TypeSpecList* types){
   }
 }
 
-// Purpose: Parse a parameter type (base specifiers plus abstract declarator).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Type or NULL on failure.
-// Invariants/Assumptions: Handles pointer declarators via parse_abstract_declarator.
+// Parse a parameter type (base specifiers plus abstract declarator).
+// Returns a Type or NULL on failure.
 struct Type* parse_param_type(){
   struct TypeSpecList* types = parse_type_specs();
   return type_spec_to_type(types);
 }
 
-// Purpose: Parse an integer literal token usable as an array bound.
-// Inputs: Consumes a single integer literal token.
-// Outputs: Returns true and writes the size on success; false otherwise.
-// Invariants/Assumptions: Only integer literal tokens are accepted.
+// Parse an integer literal token usable as an array bound.
+// Returns true and writes the size on success; false otherwise.
 static bool parse_array_size_literal(size_t* size_out){
   union TokenVariant* data = consume_with_data(INT_LIT);
   if (data != NULL){
@@ -597,17 +564,14 @@ static bool parse_array_size_literal(size_t* size_out){
   return false;
 }
 
-// Purpose: Convert an abstract declarator into a concrete type.
-// Inputs: declarator is the parsed abstract declarator; base_type is the core type.
-// Outputs: Returns the derived type or NULL on failure.
+// Convert an abstract declarator into a concrete type.
+// Returns the derived type or NULL on failure.
 struct Type* process_abstract_declarator(
     struct AbstractDeclarator* declarator,
     struct Type* base_type);
 
-// Purpose: Parse parameters for an abstract function declarator.
-// Inputs: Consumes tokens after the opening '('.
-// Outputs: Returns true on success and writes the param list (NULL for empty).
-// Invariants/Assumptions: Caller already consumed the opening '(' token.
+// Parse parameters for an abstract function declarator.
+// Returns true on success and writes the param list (NULL for empty).
 static bool parse_abstract_params_after_open(struct ParamTypeList** params_out,
                                              struct Token* rewind_to){
   struct Token* before_void = current;
@@ -651,10 +615,8 @@ static bool parse_abstract_params_after_open(struct ParamTypeList** params_out,
   return true;
 }
 
-// Purpose: Parse a direct abstract declarator (base or parenthesized).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an AbstractDeclarator or NULL if absent.
-// Invariants/Assumptions: Only pointer/identifier-free declarators are allowed.
+// Parse a direct abstract declarator (base or parenthesized).
+// Returns an AbstractDeclarator or NULL if absent.
 struct AbstractDeclarator* parse_direct_abstract_declarator(){
   struct Token* old_current = current;
   struct AbstractDeclarator* declarator = NULL;
@@ -706,10 +668,8 @@ struct AbstractDeclarator* parse_direct_abstract_declarator(){
   return declarator;
 }
 
-// Purpose: Parse an abstract declarator (pointer chains).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an AbstractDeclarator or NULL if absent.
-// Invariants/Assumptions: Used for casts and parameter type parsing.
+// Parse an abstract declarator (pointer chains).
+// Returns an AbstractDeclarator or NULL if absent.
 struct AbstractDeclarator* parse_abstract_declarator(){
   struct Token* old_current = current;
   if (consume(ASTERISK)){
@@ -735,6 +695,7 @@ struct AbstractDeclarator* parse_abstract_declarator(){
   }
 }
 
+// Parse pointer, array, and function layers of an abstract declarator.
 struct Type* process_abstract_declarator(
     struct AbstractDeclarator* declarator, 
     struct Type* base_type){
@@ -795,10 +756,8 @@ struct Type* parse_local_type(){
   return derived_type;
 }
 
-// Purpose: Parse a cast expression.
-// Inputs: Consumes tokens starting at '(' type ')' and a cast operand.
-// Outputs: Returns a CAST expression or NULL if the pattern does not match.
-// Invariants/Assumptions: Uses parse_param_type to parse the target type.
+// Parse a cast expression.
+// Returns a CAST expression or NULL if the pattern does not match.
 struct Expr* parse_cast(){
   struct Token* old_current = current;
   if (!consume(OPEN_P)) return NULL;
@@ -823,10 +782,8 @@ struct Expr* parse_cast(){
   return result;
 }
 
-// Purpose: Parse a parenthesized expression.
-// Inputs: Consumes '(' expr ')' from the token stream.
-// Outputs: Returns the inner expression or NULL on failure.
-// Invariants/Assumptions: Used to group expressions in the Pratt parser.
+// Parse a parenthesized expression.
+// Returns the inner expression or NULL on failure.
 struct Expr* parse_parens(){
   struct Token* old_current = current;
   if (!consume(OPEN_P)) {
@@ -860,10 +817,8 @@ struct Expr* parse_parens(){
   return inner;
 }
 
-// Purpose: Parse a comma-separated argument list.
-// Inputs: Consumes expressions until a closing ')'.
-// Outputs: Returns a linked list of ArgList nodes or NULL on failure.
-// Invariants/Assumptions: Caller already consumed the opening '('.
+// Parse a comma-separated argument list.
+// Returns a linked list of ArgList nodes or NULL on failure.
 struct ArgList* parse_args(){
   struct Expr* arg;
   struct Token* old_current = current;
@@ -880,10 +835,8 @@ struct ArgList* parse_args(){
   } else return NULL;
 }
 
-// Purpose: Parse prefix unary operators and address/deref expressions.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an expression node or NULL if no unary form matches.
-// Invariants/Assumptions: Handles ++/-- via parse_pre_op.
+// Parse prefix unary operators and address/deref expressions.
+// Returns an expression node or NULL if no unary form matches.
 struct Expr* parse_unary(){
   enum UnOp op;
   struct Token* old_current = current;
@@ -931,6 +884,7 @@ struct Expr* parse_unary(){
   return NULL;
 }
 
+// Parse a numeric or character literal expression.
 struct LitExpr parse_lit_expr(void){
   union TokenVariant* data;
   if ((data = consume_with_data(INT_LIT))){
@@ -959,10 +913,8 @@ struct LitExpr parse_lit_expr(void){
   }
 }
 
-// Purpose: Append a raw string literal slice into an output buffer, honoring escapes.
-// Inputs: out is the destination buffer; out_index is the current write offset; raw is the source slice.
-// Outputs: Returns the updated out_index after appending the escaped characters.
-// Invariants/Assumptions: out has enough capacity for raw->len characters.
+// Append a raw string literal slice into an output buffer, honoring escapes.
+// Returns the updated out_index after appending the escaped characters.
 static size_t append_escaped_string(char* out, size_t out_index,
                                     struct Slice* raw) {
   for (size_t i = 0; i < raw->len; i++) {
@@ -1033,6 +985,7 @@ static size_t append_escaped_string(char* out, size_t out_index,
   return out_index;
 }
 
+// Parse a string literal and decode its escapes into a source slice.
 struct Expr* parse_string(void){
   union TokenVariant* data;
   if ((data = consume_with_data(STRING_LIT))){
@@ -1071,6 +1024,7 @@ struct Expr* parse_string(void){
   }
 }
 
+// Parse postfix calls, subscripts, member access, and increments.
 struct Expr* parse_postfix() {
   // postfix can be a primary expr followed by
   // function calls, array subscripts, postfix ++/--
@@ -1149,6 +1103,7 @@ struct Expr* parse_postfix() {
   return expr;
 }
 
+// Parse sizeof applied to an expression or type name.
 struct Expr* parse_sizeof(){
   struct Token* start = current;
   if (!consume(SIZEOF_TOK)) return NULL;
@@ -1188,6 +1143,7 @@ struct Expr* parse_sizeof(){
   return sizeof_t_expr;
 }
 
+// Parse a parenthesized or unary subexpression used as a factor.
 struct Expr* parse_sub_factor(){
   // same as factor but without casts
   // used because sizeof accepts this as an argument, but not casts
@@ -1198,16 +1154,15 @@ struct Expr* parse_sub_factor(){
   else return NULL;
 }
 
+// Parse the next factor, including prefix operators and sizeof.
 struct Expr* parse_factor(){
   struct Expr* expr = NULL;
   if ((expr = parse_cast())) return expr;
   else return parse_sub_factor();
 }
 
-// Purpose: Parse a primary expression or literal.
-// Inputs: Consumes literals, casts, unary ops, calls, or variables.
-// Outputs: Returns an expression node or NULL if parsing fails.
-// Invariants/Assumptions: This is the base case for the Pratt parser.
+// Parse a primary expression or literal.
+// Returns an expression node or NULL if parsing fails.
 struct Expr* parse_primary_expr(){
   
   struct LitExpr lit_expr = parse_lit_expr();
@@ -1224,10 +1179,8 @@ struct Expr* parse_primary_expr(){
   else return NULL;
 }
 
-// Purpose: Map a binary operator to its precedence level.
-// Inputs: op is the binary operator enum.
-// Outputs: Returns a numeric precedence value (higher binds tighter).
-// Invariants/Assumptions: Precedence values match the parser's associativity rules.
+// Map a binary operator to its precedence level.
+// Returns a numeric precedence value (higher binds tighter).
 static unsigned get_prec(enum BinOp op){
   switch (op){
     case DIV_OP:
@@ -1278,10 +1231,8 @@ static unsigned get_prec(enum BinOp op){
   return 0;
 }
 
-// Purpose: Parse binary and ternary expressions with Pratt parsing.
-// Inputs: min_prec is the current binding power threshold.
-// Outputs: Returns an expression tree or NULL on failure.
-// Invariants/Assumptions: Assignment and ternary operators are right-associative.
+// Parse binary and ternary expressions with Pratt parsing.
+// Returns an expression tree or NULL on failure.
 struct Expr* parse_bin_expr(unsigned min_prec){
   struct Token* old_current = current;
   struct Expr* lhs = parse_factor();
@@ -1348,27 +1299,22 @@ struct Expr* parse_bin_expr(unsigned min_prec){
   return lhs;
 }
 
-// Purpose: Parse a full expression, including comma operators.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an expression tree or NULL on failure.
-// Invariants/Assumptions: Delegates precedence handling to parse_assignment_expr.
+// Parse a full expression, including comma operators.
+// Returns an expression tree or NULL on failure.
 struct Expr* parse_expr(){
   return parse_bin_expr(0);
 }
 
-// Purpose: Parse an expression but treats commas as separators.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an expression tree or NULL on failure.
-// Invariants/Assumptions: Delegates precedence handling to parse_bin_expr.
+// Parse an expression but treats commas as separators.
+// Returns an expression tree or NULL on failure.
 struct Expr* parse_assignment_expr(){
   return parse_bin_expr(4); // comma has precedence 3
 }
 
 
-// Purpose: Parse a return statement.
-// Inputs: Consumes 'return' expr ';' from the token stream.
-// Outputs: Returns a RETURN_STMT node or NULL on failure.
-// Invariants/Assumptions: Expression parsing must succeed for valid returns.
+// Parse a return statement.
+// Returns a RETURN_STMT node or NULL on failure.
+// Expression parsing must succeed for valid returns.
 struct Statement* parse_return_stmt(){
   struct Token* old_current = current;
   if (!consume(RETURN_TOK)) return NULL;
@@ -1387,10 +1333,8 @@ struct Statement* parse_return_stmt(){
   return result;
 }
 
-// Purpose: Parse an expression statement.
-// Inputs: Consumes an expression followed by ';'.
-// Outputs: Returns an EXPR_STMT node or NULL on failure.
-// Invariants/Assumptions: Empty statements are handled elsewhere.
+// Parse an expression statement.
+// Returns an EXPR_STMT node or NULL on failure.
 struct Statement* parse_expr_stmt(){
   struct Token* old_current = current;
   struct Expr* expr = parse_expr();
@@ -1405,10 +1349,8 @@ struct Statement* parse_expr_stmt(){
   return result;
 }
 
-// Purpose: Parse an if/else statement.
-// Inputs: Consumes 'if' '(' expr ')' stmt ['else' stmt].
-// Outputs: Returns an IF_STMT node or NULL on failure.
-// Invariants/Assumptions: Nested statements are parsed via parse_statement.
+// Parse an if/else statement.
+// Returns an IF_STMT node or NULL on failure.
 struct Statement* parse_if_stmt(){
   struct Token* old_current = current;
   if (!consume(IF_TOK)) return NULL;
@@ -1447,10 +1389,8 @@ struct Statement* parse_if_stmt(){
   return result;
 }
 
-// Purpose: Parse a user-defined label statement.
-// Inputs: Consumes IDENT ':' stmt.
-// Outputs: Returns a LABELED_STMT node or NULL on failure.
-// Invariants/Assumptions: Label resolution happens in a later pass.
+// Parse a user-defined label statement.
+// Returns a LABELED_STMT node or NULL on failure.
 struct Statement* parse_labeled_stmt(){
   struct Token* old_current = current;
   union TokenVariant* data = consume_with_data(IDENT);
@@ -1473,10 +1413,8 @@ struct Statement* parse_labeled_stmt(){
   return result;
 }
 
-// Purpose: Parse a goto statement.
-// Inputs: Consumes 'goto' IDENT ';'.
-// Outputs: Returns a GOTO_STMT node or NULL on failure.
-// Invariants/Assumptions: Label resolution happens in a later pass.
+// Parse a goto statement.
+// Returns a GOTO_STMT node or NULL on failure.
 struct Statement* parse_goto_stmt(){
   struct Token* old_current = current;
   if (!consume(GOTO_TOK)) return NULL;
@@ -1495,10 +1433,8 @@ struct Statement* parse_goto_stmt(){
 }
 
 // Block items are either a statement or a declaration.
-// Purpose: Parse one block item (declaration or statement).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a BlockItem or NULL when parsing fails.
-// Invariants/Assumptions: Declaration parsing is attempted before statements.
+// Parse one block item (declaration or statement).
+// Returns a BlockItem or NULL when parsing fails.
 struct BlockItem* parse_block_item(){
   struct Statement* stmt = parse_statement();
   if (stmt != NULL){
@@ -1518,10 +1454,8 @@ struct BlockItem* parse_block_item(){
 }
 
 // Parse a { ... } block into a linked list of items.
-// Purpose: Parse a sequence of block items until a closing brace.
-// Inputs: success is set to false on parse failure.
-// Outputs: Returns a linked list of Block nodes or NULL.
-// Invariants/Assumptions: Caller handles scope entry/exit.
+// Parse a sequence of block items until a closing brace.
+// Returns a linked list of Block nodes or NULL.
 struct Block* parse_block(bool* success){
   *success = true;
   struct Token* old_current = current;
@@ -1558,10 +1492,8 @@ struct Block* parse_block(bool* success){
   return block;
 }
 
-// Purpose: Parse a compound statement (block).
-// Inputs: Consumes '{' block '}'.
-// Outputs: Returns a COMPOUND_STMT node or NULL on failure.
-// Invariants/Assumptions: Blocks may contain both declarations and statements.
+// Parse a compound statement (block).
+// Returns a COMPOUND_STMT node or NULL on failure.
 struct Statement* parse_compound_stmt(){
   bool success;
   if (token_index(current) >= prog_size || current->type != OPEN_B) {
@@ -1577,10 +1509,8 @@ struct Statement* parse_compound_stmt(){
   return result;
 }
 
-// Purpose: Parse a break statement.
-// Inputs: Consumes 'break' ';'.
-// Outputs: Returns a BREAK_STMT node or NULL on failure.
-// Invariants/Assumptions: Loop/switch validation occurs in later passes.
+// Parse a break statement.
+// Returns a BREAK_STMT node or NULL on failure.
 struct Statement* parse_break_stmt(){
   struct Token* old_current = current;
   if (!consume(BREAK_TOK)) return NULL;
@@ -1595,10 +1525,8 @@ struct Statement* parse_break_stmt(){
   return result;
 }
 
-// Purpose: Parse a continue statement.
-// Inputs: Consumes 'continue' ';'.
-// Outputs: Returns a CONTINUE_STMT node or NULL on failure.
-// Invariants/Assumptions: Loop validation occurs in later passes.
+// Parse a continue statement.
+// Returns a CONTINUE_STMT node or NULL on failure.
 struct Statement* parse_continue_stmt(){
   struct Token* old_current = current;
   if (!consume(CONTINUE_TOK)) return NULL;
@@ -1613,10 +1541,8 @@ struct Statement* parse_continue_stmt(){
   return result;
 }
 
-// Purpose: Parse a while loop.
-// Inputs: Consumes 'while' '(' expr ')' stmt.
-// Outputs: Returns a WHILE_STMT node or NULL on failure.
-// Invariants/Assumptions: Loop labeling happens in a later pass.
+// Parse a while loop.
+// Returns a WHILE_STMT node or NULL on failure.
 struct Statement* parse_while_stmt(){
   struct Token* old_current = current;
   if (!consume(WHILE_TOK)) return NULL;
@@ -1646,10 +1572,8 @@ struct Statement* parse_while_stmt(){
   return result;
 }
 
-// Purpose: Parse a do-while loop.
-// Inputs: Consumes 'do' stmt 'while' '(' expr ')' ';'.
-// Outputs: Returns a DO_WHILE_STMT node or NULL on failure.
-// Invariants/Assumptions: Loop labeling happens in a later pass.
+// Parse a do-while loop.
+// Returns a DO_WHILE_STMT node or NULL on failure.
 struct Statement* parse_do_while_stmt(){
   struct Token* old_current = current;
   if (!consume(DO_TOK)) return NULL;
@@ -1683,6 +1607,7 @@ struct Statement* parse_do_while_stmt(){
   return result;
 }
 
+// Return whether a token begins a declaration type specifier.
 bool is_type_specifier(enum TokenType type){
   switch (current->type) {
     case INT_TOK:
@@ -1703,10 +1628,8 @@ bool is_type_specifier(enum TokenType type){
   }
 }
 
-// Purpose: Parse the declaration form of a for-loop initializer.
-// Inputs: Consumes a type/specifier sequence and declarator.
-// Outputs: Returns a VariableDclr or NULL if no declaration is found.
-// Invariants/Assumptions: Only simple variable declarators are accepted here.
+// Parse the declaration form of a for-loop initializer.
+// Returns a VariableDclr or NULL if no declaration is found.
 struct VariableDclr* parse_for_dclr(){
   struct Token* old_current = current;
   if (token_index(current) >= prog_size) {
@@ -1776,10 +1699,8 @@ struct VariableDclr* parse_for_dclr(){
 }
 
 // Parse for-loop initializer, preferring a declaration when possible.
-// Purpose: Parse the initializer portion of a for-loop.
-// Inputs: Consumes either a declaration or an optional expression.
-// Outputs: Returns a ForInit node or NULL on failure.
-// Invariants/Assumptions: The semicolon after init is consumed here.
+// Parse the initializer portion of a for-loop.
+// Returns a ForInit node or NULL on failure.
 struct ForInit* parse_for_init(){
   struct Token* old_current = current;
   struct VariableDclr* var_dclr = parse_for_dclr();
@@ -1801,10 +1722,8 @@ struct ForInit* parse_for_init(){
   }
 }
 
-// Purpose: Parse a for loop statement.
-// Inputs: Consumes 'for' '(' init ';' cond ';' end ')' stmt.
-// Outputs: Returns a FOR_STMT node or NULL on failure.
-// Invariants/Assumptions: init parsing consumes the first semicolon.
+// Parse a for loop statement.
+// Returns a FOR_STMT node or NULL on failure.
 struct Statement* parse_for_stmt(){
   struct Token* old_current = current;
   if (!consume(FOR_TOK)) return NULL;
@@ -1840,10 +1759,8 @@ struct Statement* parse_for_stmt(){
   return result;
 }
 
-// Purpose: Parse a switch statement.
-// Inputs: Consumes 'switch' '(' expr ')' stmt.
-// Outputs: Returns a SWITCH_STMT node or NULL on failure.
-// Invariants/Assumptions: Case collection and labeling happen later.
+// Parse a switch statement.
+// Returns a SWITCH_STMT node or NULL on failure.
 struct Statement* parse_switch_stmt(){
   struct Token* old_current = current;
   if (!consume(SWITCH_TOK)) return NULL;
@@ -1872,10 +1789,8 @@ struct Statement* parse_switch_stmt(){
   return result;
 }
 
-// Purpose: Parse a case label statement.
-// Inputs: Consumes 'case' expr ':' stmt.
-// Outputs: Returns a CASE_STMT node or NULL on failure.
-// Invariants/Assumptions: Case validity is checked in later passes.
+// Parse a case label statement.
+// Returns a CASE_STMT node or NULL on failure.
 struct Statement* parse_case_stmt(){
   struct Token* old_current = current;
   if (!consume(CASE_TOK)) return NULL;
@@ -1900,10 +1815,8 @@ struct Statement* parse_case_stmt(){
   return result;
 }
 
-// Purpose: Parse a default label statement.
-// Inputs: Consumes 'default' ':' stmt.
-// Outputs: Returns a DEFAULT_STMT node or NULL on failure.
-// Invariants/Assumptions: Default validity is checked in later passes.
+// Parse a default label statement.
+// Returns a DEFAULT_STMT node or NULL on failure.
 struct Statement* parse_default_stmt(){
   struct Token* old_current = current;
   if (!consume(DEFAULT_TOK)) return NULL;
@@ -1923,10 +1836,8 @@ struct Statement* parse_default_stmt(){
   return result;
 }
 
-// Purpose: Parse an empty statement.
-// Inputs: Consumes a single ';' token.
-// Outputs: Returns a NULL_STMT node or NULL on failure.
-// Invariants/Assumptions: Empty statements are distinct from expression statements.
+// Parse an empty statement.
+// Returns a NULL_STMT node or NULL on failure.
 struct Statement* parse_null_stmt(){
   if (consume(SEMI)){
     struct NullStmt null_stmt;
@@ -1937,10 +1848,8 @@ struct Statement* parse_null_stmt(){
 }
 
 // Statement dispatcher; order matters to resolve ambiguities.
-// Purpose: Parse any statement form.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Statement node or NULL on failure.
-// Invariants/Assumptions: Statement parsing is ordered by keyword precedence.
+// Parse any statement form.
+// Returns a Statement node or NULL on failure.
 struct Statement* parse_statement(){
   struct Statement* stmt;
   if ((stmt = parse_return_stmt())) return stmt;
@@ -1961,10 +1870,9 @@ struct Statement* parse_statement(){
   else return NULL;
 }
 
-// Purpose: Parse an initializer without relying on type information.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns an Initializer node or NULL on failure.
-// Invariants/Assumptions: Does not enforce type validity; caller must validate.
+// Parse an initializer without relying on type information.
+// Returns an Initializer node or NULL on failure.
+// Does not enforce type validity; caller must validate.
 static struct Initializer* parse_initializer_any(void) {
   struct Token* old_current = current;
 
@@ -2019,10 +1927,8 @@ static struct Initializer* parse_initializer_any(void) {
   return compound_init;
 }
 
-// Purpose: Parse a variable initializer with a known target type.
-// Inputs: type is the target type for the initializer.
-// Outputs: Returns an Initializer node or NULL on failure.
-// Invariants/Assumptions: Only array/struct/union types allow compound initializers.
+// Parse a variable initializer with a known target type.
+// Returns an Initializer node or NULL on failure.
 struct Initializer* parse_var_init(struct Type* type){
   struct Token* old_current = current;
   struct Initializer* init = parse_initializer_any();
@@ -2043,10 +1949,8 @@ struct Initializer* parse_var_init(struct Type* type){
   return init;
 }
 
-// Purpose: Parse a variable declarator with optional initializer.
-// Inputs: type/storage/name come from earlier declarator parsing.
-// Outputs: Returns a VariableDclr node or NULL on failure.
-// Invariants/Assumptions: name is a valid identifier slice.
+// Parse a variable declarator with optional initializer.
+// Returns a VariableDclr node or NULL on failure.
 struct VariableDclr* parse_var_dclr(struct Type* type, enum StorageClass storage, struct Slice* name){
   struct Token* old_current = current;
   struct Initializer* init = NULL;
@@ -2066,10 +1970,8 @@ struct VariableDclr* parse_var_dclr(struct Type* type, enum StorageClass storage
   return var_dclr;
 }
 
-// Purpose: Parse a type or storage-class prefix specifier.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a DclrPrefix node or NULL if no prefix matches.
-// Invariants/Assumptions: Only single specifiers are parsed per call.
+// Parse a type or storage-class prefix specifier.
+// Returns a DclrPrefix node or NULL if no prefix matches.
 struct DclrPrefix* parse_type_or_storage_class(){
   if (consume(STATIC_TOK)){
     struct DclrPrefix* dclr_prefix = arena_alloc(sizeof(struct DclrPrefix));
@@ -2147,10 +2049,8 @@ void parse_type_and_storage_class(struct Type** type, enum StorageClass* class){
 
 // Parse a declarator (possibly pointer-qualified).
 // Recurses on leading '*' to build nested pointer declarators.
-// Purpose: Parse a declarator with possible pointer and function syntax.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Declarator node or NULL on failure.
-// Invariants/Assumptions: Base type parsing happens separately.
+// Parse a declarator with possible pointer and function syntax.
+// Returns a Declarator node or NULL on failure.
 struct Declarator* parse_declarator(){
   struct Token* old_current = current;
   if (consume(ASTERISK)){
@@ -2169,10 +2069,8 @@ struct Declarator* parse_declarator(){
 }
 
 // Parse an identifier or parenthesized declarator for grouping.
-// Purpose: Parse a simple declarator (identifier or pointer chain).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Declarator node or NULL on failure.
-// Invariants/Assumptions: Function declarators are handled by parse_direct_declarator.
+// Parse a simple declarator (identifier or pointer chain).
+// Returns a Declarator node or NULL on failure.
 struct Declarator* parse_simple_declarator(){
   struct Token* old_current = current;
   union TokenVariant* data = consume_with_data(IDENT);
@@ -2200,10 +2098,8 @@ struct Declarator* parse_simple_declarator(){
 
 // Parse function parameter list into ParamInfo nodes.
 // "(void)" and "()" both map to an empty parameter list sentinel.
-// Purpose: Parse a parameter info list for function declarators.
-// Inputs: Consumes parameter type/declarator tokens.
-// Outputs: Returns a linked list of ParamInfoList nodes or NULL.
-// Invariants/Assumptions: Parameter lists end with ')'.
+// Parse a parameter info list for function declarators.
+// Returns a linked list of ParamInfoList nodes or NULL.
 struct ParamInfoList* parse_params(){
   struct Token* old_current = current;
   if (!consume(OPEN_P)) return NULL;
@@ -2274,10 +2170,8 @@ struct ParamInfoList* parse_params(){
 }
 
 // Parse direct declarators and wrap in FUN_DEC when params follow.
-// Purpose: Parse a direct declarator (identifier or function declarator).
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Declarator node or NULL on failure.
-// Invariants/Assumptions: Nested declarators use parentheses.
+// Parse a direct declarator (identifier or function declarator).
+// Returns a Declarator node or NULL on failure.
 struct Declarator* parse_direct_declarator(){
   struct Token* old_current = current;
 
@@ -2333,6 +2227,7 @@ struct Declarator* parse_direct_declarator(){
   return decl;
 }
 
+// Apply a function declarator's parameter list to its base type.
 struct ParamTypeList* params_to_types(struct ParamList* params){
   struct ParamTypeList* head = NULL;
   struct ParamTypeList* tail = head;
@@ -2351,10 +2246,8 @@ struct ParamTypeList* params_to_types(struct ParamList* params){
   return head;
 }
 
-// Purpose: Convert a parameter declarator into a VariableDclr entry.
-// Inputs: param describes the parameter; name_out/type_out capture results.
-// Outputs: Returns true on success and updates output pointers.
-// Invariants/Assumptions: Parameter declarators follow the same rules as variables.
+// Convert a parameter declarator into a VariableDclr entry.
+// Returns true on success and updates output pointers.
 static bool process_param_info(struct ParamInfo* param, struct Slice** name_out,
                                struct Type** type_out){
   struct ParamList* ignored_params = NULL;
@@ -2362,10 +2255,8 @@ static bool process_param_info(struct ParamInfo* param, struct Slice** name_out,
                             &ignored_params);
 }
 
-// Purpose: Convert a parsed parameter list into VariableDclr nodes.
-// Inputs: params is the parsed ParamInfo list; params_out receives the result.
-// Outputs: Returns true on success and builds a ParamList chain.
-// Invariants/Assumptions: Parameter parsing order is preserved.
+// Convert a parsed parameter list into VariableDclr nodes.
+// Returns true on success and builds a ParamList chain.
 bool process_params_info(struct ParamInfoList* params, struct ParamList** params_out){
   if (params == NULL){
     *params_out = NULL;
@@ -2405,6 +2296,7 @@ bool process_params_info(struct ParamInfoList* params, struct ParamList** params
   return true;
 }
 
+// Build a declaration node from its parsed declarator and type prefix.
 bool process_declarator(struct Declarator* decl, struct Type* base_type,
                         struct Slice** name_out, struct Type** derived_type_out,
                         struct ParamList** params_out){
@@ -2461,10 +2353,8 @@ bool process_declarator(struct Declarator* decl, struct Type* base_type,
   return false;
 }
 
-// Purpose: Build a placeholder block for an empty function body.
-// Inputs: loc is the location to associate with the empty statement.
-// Outputs: Returns a Block containing a NULL_STMT item.
-// Invariants/Assumptions: Used only when parsing a function body with "{}".
+// Build a placeholder block for an empty function body.
+// Returns a Block containing a NULL_STMT item.
 static struct Block* make_empty_block(char* loc) {
   struct Statement* null_stmt = arena_alloc(sizeof(struct Statement));
   null_stmt->loc = loc;
@@ -2480,10 +2370,8 @@ static struct Block* make_empty_block(char* loc) {
   return block;
 }
 
-// Purpose: Parse the trailing ';' or function body after a declarator.
-// Inputs: success is set false on parse failure.
-// Outputs: Returns a Block pointer for a function body or NULL for a prototype.
-// Invariants/Assumptions: Caller handles function declaration construction.
+// Parse the trailing ';' or function body after a declarator.
+// Returns a Block pointer for a function body or NULL for a prototype.
 struct Block* parse_end_of_func(bool* success){
   bool success2;
   struct Block* body = parse_block(&success2);
@@ -2502,10 +2390,8 @@ struct Block* parse_end_of_func(bool* success){
   return NULL;
 }
 
-// Purpose: Parse a function declaration or definition.
-// Inputs: ret_type/storage come from earlier specifier parsing.
-// Outputs: Returns a FunctionDclr node or NULL on failure.
-// Invariants/Assumptions: Declarator parsing determines function name and params.
+// Parse a function declaration or definition.
+// Returns a FunctionDclr node or NULL on failure.
 struct FunctionDclr* parse_function(struct Type* ret_type, enum StorageClass storage, 
                                     struct Slice* name, struct ParamList* params){
   struct Type* fun_type = arena_alloc(sizeof(struct Type));
@@ -2525,6 +2411,7 @@ struct FunctionDclr* parse_function(struct Type* ret_type, enum StorageClass sto
   return result;
 }
 
+// Parse var attributes.
 struct VarAttributes* parse_var_attributes(){
   // only supports __attribute__((cleanup(...))) for now
   struct VarAttributes* attrs = arena_alloc(sizeof(struct VarAttributes));
@@ -2567,6 +2454,7 @@ struct VarAttributes* parse_var_attributes(){
   return attrs;
 }
 
+// Parse member declarations.
 struct MemberDclr* parse_member_declarations(){
   struct MemberDclr* head = NULL;
   struct MemberDclr** tail = &head;
@@ -2609,6 +2497,7 @@ struct MemberDclr* parse_member_declarations(){
   return head;
 }
 
+// Parse enumerator list.
 struct EnumMemberDclr* parse_enumerator_list(){
   struct EnumMemberDclr* head = NULL;
   struct EnumMemberDclr** tail = &head;
@@ -2645,10 +2534,8 @@ struct EnumMemberDclr* parse_enumerator_list(){
 }
 
 // Parse a full declaration (function or variable).
-// Purpose: Parse a declaration (function or variable) at any scope.
-// Inputs: Consumes tokens from the current cursor.
-// Outputs: Returns a Declaration node or NULL on failure.
-// Invariants/Assumptions: Storage class and type specifiers precede declarators.
+// Parse a declaration (function or variable) at any scope.
+// Returns a Declaration node or NULL on failure.
 struct Declaration* parse_declaration(){
   struct Token* old_current = current;
 
@@ -2828,10 +2715,8 @@ struct Declaration* parse_declaration(){
 }
 
 // Top-level parser entry; consumes all declarations in the token stream.
-// Purpose: Parse the entire token array into a Program node.
-// Inputs: arr is the token array produced by the lexer.
-// Outputs: Returns a Program node or NULL on failure.
-// Invariants/Assumptions: Parsing errors are reported via print_error.
+// Parse the entire token array into a Program node.
+// Returns a Program node or NULL on failure.
 struct Program* parse_prog(struct TokenArray* arr){
   if (arena == NULL) {
     fdputs(STDERR, "Parser requires an arena\n");

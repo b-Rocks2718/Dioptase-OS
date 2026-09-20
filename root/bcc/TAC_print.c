@@ -6,20 +6,15 @@
 #include "slice.h"
 #include "source_location.h"
 
-// Purpose: Emit indentation for TAC output formatting.
-// Inputs: tabs is the indentation level in 4-space units.
-// Outputs: Writes spaces to stdout.
-// Invariants/Assumptions: tabs is small enough to avoid excessive output.
+// Emit indentation for TAC output formatting.
 static void print_tabs(unsigned tabs) {
   for (unsigned i = 0; i < tabs; ++i) {
     printf("    ");
   }
 }
 
-// Purpose: Print a TAC value (constant or variable).
-// Inputs: val may be NULL; otherwise points to a TAC value.
-// Outputs: Writes a compact value representation to stdout.
-// Invariants/Assumptions: Constants are stored as 64-bit raw values.
+// Print a TAC value (constant or variable).
+// Val may be NULL; otherwise points to a TAC value.
 static void print_tac_val(struct Val* val) {
   if (val == NULL) {
     printf("<null>");
@@ -45,10 +40,7 @@ static void print_tac_val(struct Val* val) {
   }
 }
 
-// Purpose: Print a TAC condition mnemonic.
-// Inputs: cond is the TAC condition enum to print.
-// Outputs: Writes the mnemonic to stdout.
-// Invariants/Assumptions: cond is a valid TACCondition.
+// Print a TAC condition mnemonic.
 static void print_tac_condition(enum TACCondition cond) {
   switch (cond) {
     case CondE:
@@ -87,10 +79,7 @@ static void print_tac_condition(enum TACCondition cond) {
   }
 }
 
-// Purpose: Print a binary operator mnemonic used in TAC.
-// Inputs: op is the AST binary operator enum.
-// Outputs: Writes the operator mnemonic to stdout.
-// Invariants/Assumptions: op is a valid BinOp.
+// Print a binary operator mnemonic used in TAC.
 static void print_tac_bin_op(enum ALUOp op) {
   switch (op) {
     case ALU_ADD:
@@ -138,10 +127,7 @@ static void print_tac_bin_op(enum ALUOp op) {
   }
 }
 
-// Purpose: Print a unary operator mnemonic used in TAC.
-// Inputs: op is the AST unary operator enum.
-// Outputs: Writes the operator mnemonic to stdout.
-// Invariants/Assumptions: op is a valid UnOp.
+// Print a unary operator mnemonic used in TAC.
 static void print_tac_un_op(enum UnOp op) {
   switch (op) {
     case COMPLEMENT:
@@ -162,6 +148,7 @@ static void print_tac_un_op(enum UnOp op) {
   }
 }
 
+// Print static init.
 void print_static_init(struct InitList* init) {
   struct InitList* cur = init;
   bool first = true;
@@ -217,10 +204,9 @@ void print_static_init(struct InitList* init) {
   }
 }
 
-// Purpose: Print a single TAC instruction at a given indentation level.
-// Inputs: instr points to the instruction; tabs is the indentation level.
-// Outputs: Writes one formatted instruction line to stdout.
-// Invariants/Assumptions: instr is non-NULL and variants are populated.
+// Print a single TAC instruction at a given indentation level.
+// Instr points to the instruction; tabs is the indentation level.
+// Instr is non-NULL and variants are populated.
 static void print_tac_instr(struct TACInstr* instr, unsigned tabs) {
   if (instr == NULL) {
     return;
@@ -386,20 +372,16 @@ static void print_tac_instr(struct TACInstr* instr, unsigned tabs) {
   }
 }
 
-// Purpose: Print a linked list of TAC instructions.
-// Inputs: instrs is the head of the TAC list; tabs is the indentation level.
-// Outputs: Writes all instructions to stdout in order.
-// Invariants/Assumptions: List links are well-formed (acyclic).
+// Print a linked list of TAC instructions.
 static void print_tac_instrs(struct TACInstr* instrs, unsigned tabs) {
   for (struct TACInstr* cur = instrs; cur != NULL; cur = cur->next) {
     print_tac_instr(cur, tabs);
   }
 }
 
-// Purpose: Print a top-level TAC node (function or static variable).
-// Inputs: top points to the TopLevel node; tabs is the indentation level.
-// Outputs: Writes the top-level representation to stdout.
-// Invariants/Assumptions: top points to a valid TopLevel node.
+// Print a top-level TAC node (function or static variable).
+// Top points to the TopLevel node; tabs is the indentation level.
+// Top points to a valid TopLevel node.
 static void print_tac_top_level(struct TopLevel* top, unsigned tabs) {
   if (top == NULL) {
     return;
@@ -465,10 +447,8 @@ static void print_tac_top_level(struct TopLevel* top, unsigned tabs) {
   }
 }
 
-// Purpose: Print an entire TAC program for debugging.
-// Inputs: prog points to the TAC program to print.
-// Outputs: Writes the TAC program to stdout.
-// Invariants/Assumptions: Program top-level list is well-formed.
+// Print an entire TAC program for debugging.
+// Prog points to the TAC program to print.
 void print_tac_prog(struct TACProg* prog) {
   if (prog == NULL) {
     printf("TACProg <null>\n");

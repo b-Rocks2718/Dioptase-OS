@@ -19,7 +19,7 @@
 static struct BlockingLock lock;
 static int owner_ready = 0;
 
-static void owner_thread(void* unused){
+static void owner_thread(void* unused){ /* Run the owner thread. */
   (void)unused;
   blocking_lock_acquire(&lock);
   __atomic_store_n(&owner_ready, 1);
@@ -28,7 +28,7 @@ static void owner_thread(void* unused){
   }
 }
 
-void kernel_main(void){
+void kernel_main(void){ /* Verify releasing a blocking lock from a non-owner faults. */
   say("***blocking-lock nonowner-release negative start\n", NULL);
   assert(CONFIG.num_cores >= 2,
     "blocking-lock nonowner-release test: requires at least two cores.\n");

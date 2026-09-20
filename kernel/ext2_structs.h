@@ -207,6 +207,7 @@ struct DirEntry {
 #define EXT2_DT_SOCK    12
 #define EXT2_DT_WHT     14
 
+// Describe the variable-length directory record returned by getdents.
 struct linux_dirent {
     unsigned d_ino; // i-node number.
     unsigned d_off;

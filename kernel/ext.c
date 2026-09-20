@@ -54,26 +54,31 @@ static unsigned ext2_block_group_start(struct Ext2* fs, unsigned group_index){
   return fs->superblock.first_data_block + group_index * fs->superblock.blocks_per_group;
 }
 
+// Map an absolute filesystem block number to its block-group index.
 static unsigned ext2_block_group_index(struct Ext2* fs, unsigned block_num){
   assert(block_num >= fs->superblock.first_data_block,
     "ext2_block_group_index: block number is before first_data_block.\n");
   return (block_num - fs->superblock.first_data_block) / fs->superblock.blocks_per_group;
 }
 
+// Map an absolute filesystem block number to its index within its group.
 static unsigned ext2_block_local_index(struct Ext2* fs, unsigned block_num){
   assert(block_num >= fs->superblock.first_data_block,
     "ext2_block_local_index: block number is before first_data_block.\n");
   return (block_num - fs->superblock.first_data_block) % fs->superblock.blocks_per_group;
 }
 
+// Return whether a path component names the current directory.
 static bool ext2_name_is_dot(char* name){
   return name[0] == '.' && name[1] == '\0';
 }
 
+// Return whether a path component names the parent directory.
 static bool ext2_name_is_dot_dot(char* name){
   return name[0] == '.' && name[1] == '.' && name[2] == '\0';
 }
 
+// Return whether a name contains a path separator.
 static bool ext2_name_has_separator(char* name){
   unsigned name_len = strlen(name);
 
@@ -268,6 +273,7 @@ static unsigned node_scan_data_block_count(struct Node* node){
   return 0;
 }
 
+// Read the ext2 superblock, allocation metadata, caches, and root inode.
 void ext2_init(struct Ext2* fs){
   // Bootstrap the in-memory ext2 view from disk before any cache or node code
   // runs. After this, higher-level helpers can assume the descriptor table,
@@ -345,6 +351,7 @@ void ext2_init(struct Ext2* fs){
   fs->initialized = true;
 }
 
+// Flush and release all resources owned by an initialized filesystem.
 void ext2_destroy(struct Ext2* fs){
   // called on an Ext2 that didnt successfully initialize
   if (!fs->initialized) return;
@@ -367,19 +374,23 @@ void ext2_destroy(struct Ext2* fs){
   bcache_destroy(&fs->bcache);
 }
 
+// Destroy and free a heap-allocated filesystem object.
 void ext2_free(struct Ext2* fs){
   ext2_destroy(fs);
   free(fs);
 }
 
+// Decode the filesystem block size from the superblock.
 unsigned ext2_get_block_size(struct Ext2* fs){
   return 1024 << fs->superblock.log_block_size;
 }
 
+// Return the on-disk inode record size from the superblock.
 unsigned ext2_get_inode_size(struct Ext2* fs){
   return fs->superblock.inode_size;
 }
 
+// Split a path into components in traversal order, omitting separators.
 void ext2_expand_path(struct Ext2* fs, char* name, struct RingBuf* path){
   unsigned name_len = strlen(name);
   unsigned start = 0;
@@ -530,6 +541,7 @@ static void ext2_release_owned_node(struct Node* node, bool owned){
   }
 }
 
+// Resolve a path from a directory, expanding symlinks with bounded traversal.
 struct Node* node_find(struct Node* dir, char* name){
   if (dir == NULL || name == NULL) return NULL;
   assert(node_is_dir(dir) || node_is_symlink(dir), "node_find: not a directory or symlink.\n");
@@ -647,6 +659,7 @@ struct Node* node_find(struct Node* dir, char* name){
   return dir;
 }
 
+// Reserve an inode bitmap entry and persist the updated group accounting.
 unsigned alloc_inumber(struct Ext2* fs, short mode){
   unsigned inumber = 0;
   unsigned bitmap_bytes = ext2_bitmap_bytes(fs->superblock.inodes_per_group);
@@ -716,6 +729,7 @@ unsigned alloc_inumber(struct Ext2* fs, short mode){
   return inumber;
 }
 
+// Release an inode bitmap entry and persist the updated group accounting.
 void dealloc_inumber(struct Ext2* fs, unsigned inumber, short mode) {
   blocking_lock_acquire(&fs->metadata_lock);
 
@@ -747,6 +761,7 @@ void dealloc_inumber(struct Ext2* fs, unsigned inumber, short mode) {
   blocking_lock_release(&fs->metadata_lock);
 }
 
+// Reserve a data-block bitmap entry and zero the newly allocated block.
 unsigned alloc_block(struct Ext2* fs){
   unsigned block_num = -1;
   unsigned bitmap_bytes = ext2_bitmap_bytes(fs->superblock.blocks_per_group);
@@ -815,6 +830,7 @@ unsigned alloc_block(struct Ext2* fs){
   return block_num;
 }
 
+// Release a data-block bitmap entry and persist group accounting.
 void dealloc_block(struct Ext2* fs, unsigned block_num) {
   blocking_lock_acquire(&fs->metadata_lock);
 
@@ -899,6 +915,7 @@ static void node_dealloc_blocks(struct Node* node){
   node->cached->data_block_count = 0;
 }
 
+// Allocate and initialize a cached inode with the requested mode.
 struct CachedInode* make_inode(short mode, unsigned inumber){
   struct CachedInode* cached = malloc(sizeof(struct CachedInode));
   cached_inode_init(cached, inumber);
@@ -1081,6 +1098,7 @@ static bool node_materialize_block_locked(struct Node* node,
   return true;
 }
 
+// Materialize and attach a logical data block to an inode.
 bool node_add_block(struct Node* node, unsigned block_num){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned sectors_per_block = ext2_sectors_per_block(node->filesystem);
@@ -1752,6 +1770,7 @@ static struct Node* create_inode(struct Ext2* fs, struct Node* dir, char* name,
   return node;
 }
 
+// Release an inode's data blocks and bitmap entry after final unlink.
 static void dealloc_inode(struct Node* node){
   assert(node->cached->delete_pending,
     "dealloc_inode: inode must be pending delete before reclamation.\n");
@@ -1762,6 +1781,7 @@ static void dealloc_inode(struct Node* node){
   dealloc_inumber(node->filesystem, node->cached->inumber, node->cached->inode.mode);
 }
 
+// Initialize an inode-cache entry before publishing it to readers.
 static void cached_inode_init(struct CachedInode* cached, unsigned inumber){
   cached->inumber = inumber;
   // This derived value is initialized before valid_gate opens. New inodes keep
@@ -1774,16 +1794,19 @@ static void cached_inode_init(struct CachedInode* cached, unsigned inumber){
   gate_init(&cached->valid_gate);
 }
 
+// Destroy the locks and metadata of one cached inode.
 static void cached_inode_destroy(struct CachedInode* cached){
   gate_destroy(&cached->valid_gate);
   blocking_lock_destroy(&cached->lock);
 }
 
+// Destroy and free a heap-allocated cached inode.
 static void cached_inode_free(struct CachedInode* cached){
   cached_inode_destroy(cached);
   free(cached);
 }
 
+// Initialize the inode cache and its serialized lookup lock.
 void icache_init(struct InodeCache* cache){
   blocking_lock_init(&cache->lock);
   hash_map_init(&cache->cache, 1024);
@@ -1882,6 +1905,7 @@ struct CachedInode* icache_get(struct InodeCache* cache, unsigned inumber){
   return new_cache_entry;
 }
 
+// Publish a newly loaded cached inode under the cache lock.
 void icache_insert(struct InodeCache* cache, struct CachedInode* cached){
   blocking_lock_acquire(&cache->lock);
   struct CachedInode* old = hash_map_try_insert(&cache->cache, cached->inumber, cached);
@@ -1899,6 +1923,7 @@ void icache_insert(struct InodeCache* cache, struct CachedInode* cached){
   gate_signal(&cached->valid_gate);
 }
 
+// Write a cached inode's on-disk record back to the inode table.
 void icache_set(struct InodeCache* cache, struct CachedInode* cached){
   unsigned block_size = ext2_get_block_size(cache->fs);
   unsigned inode_size = ext2_get_inode_size(cache->fs);
@@ -1964,16 +1989,19 @@ void icache_release(struct InodeCache* cache, struct CachedInode* cached){
   }
 }
 
+// Destroy the inode cache after all cached references are gone.
 void icache_destroy(struct InodeCache* cache){
   hash_map_destroy(&cache->cache);
   blocking_lock_destroy(&cache->lock);
 }
 
+// Destroy and free a heap-allocated inode cache.
 void icache_free(struct InodeCache* cache){
   icache_destroy(cache);
   free(cache);
 }
 
+// Initialize the block cache with invalid tags and ordered replacement ages.
 void bcache_init(struct BlockCache* cache, unsigned block_size){
   blocking_lock_init(&cache->lock);
   cache->block_size = block_size;
@@ -2122,12 +2150,14 @@ void bcache_set(struct BlockCache* cache, unsigned block_num, char* src, unsigne
   free(block_buf);
 }
 
+// Destroy the block cache after all callers have stopped using it.
 void bcache_destroy(struct BlockCache* cache){
   assert(cache != NULL, "bcache_destroy: cache is NULL.\n");
   blocking_lock_destroy(&cache->lock);
   free(cache->block_cache);
 }
 
+// Initialize a lightweight node wrapper around a published cached inode.
 void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_inumber, struct Ext2* fs){
   assert(cached->valid,
     "node_init: cached inode record and derived state must be published before creating a wrapper.\n");
@@ -2141,6 +2171,7 @@ void node_init(struct Node* node, struct CachedInode* cached, unsigned parent_in
   // changed only by block-growth/reclamation paths under cached->lock.
 }
 
+// Clone a node wrapper and retain one independent inode-cache reference.
 struct Node* node_clone(struct Node* node){
   if (node == NULL){
     return NULL;
@@ -2167,20 +2198,24 @@ struct Node* node_clone(struct Node* node){
   return clone;
 }
 
+// Release this wrapper's reference to its cached inode.
 void node_destroy(struct Node* node){
   icache_release(&node->filesystem->icache, node->cached);
 }
 
+// Release and free a heap-allocated node wrapper.
 void node_free(struct Node* node){
   if (node == NULL || node == &fs.root) return;
   node_destroy(node);
   free(node);
 }
 
+// Return the inode's logical file size in bytes.
 unsigned node_size_in_bytes(struct Node* node){
   return node->cached->inode.size;
 }
 
+// Create and return a regular-file child in a directory.
 struct Node* node_make_file(struct Node* dir, char* name){
   assert(dir != NULL, "node_make_file: parent node is NULL.\n");
   // ensure dir is actually a dir
@@ -2208,6 +2243,7 @@ struct Node* node_make_file(struct Node* dir, char* name){
   return node;
 }
 
+// Create and return a directory child with dot entries.
 struct Node* node_make_dir(struct Node* dir, char* name){
   assert(dir != NULL, "node_make_dir: parent node is NULL.\n");
   // ensure dir is actually a dir
@@ -2229,6 +2265,7 @@ struct Node* node_make_dir(struct Node* dir, char* name){
   return create_inode(dir->filesystem, dir, name, EXT2_DEFAULT_DIR_MODE, NULL);
 }
 
+// Create and return a symbolic-link child containing target.
 struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
   assert(dir != NULL, "node_make_symlink: parent node is NULL.\n");
   // ensure dir is actually a dir
@@ -2253,6 +2290,7 @@ struct Node* node_make_symlink(struct Node* dir, char* name, char* target){
     EXT2_DEFAULT_SYMLINK_MODE, target);
 }
 
+// Atomically move a directory entry within the filesystem namespace.
 void node_rename(struct Node* dir, char* old_name, char* new_name){
   assert(dir != NULL, "node_rename: parent node is NULL.\n");
   assert(node_is_dir(dir), "node_rename: parent node is not a directory.\n");
@@ -2432,10 +2470,12 @@ int node_delete_typed(struct Node* dir, char* name,
   return 0;
 }
 
+// Remove a named child, applying type-independent unlink semantics.
 int node_delete(struct Node* dir, char* name){
   return node_delete_typed(dir, name, NODE_DELETE_ANY);
 }
 
+// Read one filesystem block through the coherent block cache.
 void read_sectors(struct Ext2* fs, unsigned index, char* buffer){
   bcache_get(&fs->bcache, index, buffer);
 }
@@ -2454,6 +2494,7 @@ static void read_sectors_or_zero(struct Node* node, unsigned block_num, char* bu
   read_sectors(node->filesystem, block_num, buffer);
 }
 
+// Print each live directory entry for kernel diagnostics.
 void node_print_dir(struct Node* node){
   unsigned index = 0;
   struct DirEntry entry;
@@ -2475,12 +2516,14 @@ void node_print_dir(struct Node* node){
   }
 }
 
+// Read a logical block addressed by the inode's direct pointers.
 void read_direct_block(struct Node* node, unsigned index, char* buffer){
   assert(index < 12, "read_direct_block: index out of bounds for direct block.\n");
 
   read_sectors_or_zero(node, node->cached->inode.block[index], buffer);
 }
 
+// Read a logical block addressed by the single-indirect pointer.
 void read_indirect_block(struct Node* node, unsigned index, char* buffer){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2503,6 +2546,7 @@ void read_indirect_block(struct Node* node, unsigned index, char* buffer){
   free(direct_pointers);
 }
 
+// Read a logical block addressed by the double-indirect pointer.
 void read_double_indirect_block(struct Node* node, unsigned index, char* buffer){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2536,6 +2580,7 @@ void read_double_indirect_block(struct Node* node, unsigned index, char* buffer)
   free(direct_pointers);
 }
 
+// Read a logical block addressed by the triple-indirect pointer.
 void read_triple_indirect_block(struct Node* node, unsigned index, char* buffer){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2603,16 +2648,19 @@ static void node_read_block_locked(struct Node* node, unsigned block_num, char* 
   }
 }
 
+// Read one logical file block while serializing inode metadata access.
 void node_read_block(struct Node* node, unsigned block_num, char* dest){
   blocking_lock_acquire(&node->cached->lock);
   node_read_block_locked(node, block_num, dest);
   blocking_lock_release(&node->cached->lock);
 }
   
+// Update a filesystem block through the write-through block cache.
 void write_sectors(struct Ext2* fs, unsigned index, char* buffer, unsigned offset, unsigned size){
   bcache_set(&fs->bcache, index, buffer, offset, size);
 }
 
+// Write bytes to a materialized direct data block.
 void write_direct_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   assert(index < 12, "write_direct_block: index out of bounds for direct block.\n");
   assert(node->cached->inode.block[index] != 0,
@@ -2621,6 +2669,7 @@ void write_direct_block(struct Node* node, unsigned index, char* buffer, unsigne
   write_sectors(node->filesystem, node->cached->inode.block[index], buffer, offset, size);
 }
 
+// Write bytes to a materialized single-indirect data block.
 void write_indirect_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2641,6 +2690,7 @@ void write_indirect_block(struct Node* node, unsigned index, char* buffer, unsig
   free(direct_pointers);
 }
 
+// Write bytes to a materialized double-indirect data block.
 void write_double_indirect_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2666,6 +2716,7 @@ void write_double_indirect_block(struct Node* node, unsigned index, char* buffer
   free(direct_pointers);
 }
 
+// Write bytes to a materialized triple-indirect data block.
 void write_triple_indirect_block(struct Node* node, unsigned index, char* buffer, unsigned offset, unsigned size){
   unsigned block_size = ext2_get_block_size(node->filesystem);
   unsigned entries_per_block = block_size / 4;
@@ -2717,6 +2768,7 @@ static void node_write_block_locked(struct Node* node, unsigned block_num, char*
   }
 }
 
+// Write one logical file block while serializing inode metadata access.
 void node_write_block(struct Node* node, unsigned block_num, char* src, unsigned offset, unsigned size){
   blocking_lock_acquire(&node->cached->lock);
   node_write_block_locked(node, block_num, src, offset, size);
@@ -2760,6 +2812,7 @@ static unsigned node_read_all_locked(struct Node* node, unsigned offset, unsigne
   return bytes_copied;
 }
 
+// Read a byte range, filling sparse holes with zeroes.
 unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* dest){
   unsigned cnt;
 
@@ -2770,6 +2823,7 @@ unsigned node_read_all(struct Node* node, unsigned offset, unsigned size, char* 
   return cnt;
 }
 
+// Write a byte range, growing and materializing blocks as needed.
 unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char* src){
   if (size == 0) return 0;
 
@@ -2844,6 +2898,7 @@ unsigned node_write_all(struct Node* node, unsigned offset, unsigned size, char*
   return size;
 }
 
+// Truncate an inode and release blocks beyond the new size.
 bool node_shrink(struct Node* node, unsigned target_size){
   assert(node != NULL, "node_shrink: node is NULL.\n");
   assert(node_is_file(node), "node_shrink: can only shrink regular files.\n");
@@ -2863,25 +2918,30 @@ bool node_shrink(struct Node* node, unsigned target_size){
   return true;
 }
 
+// Return the ext2 mode bits describing this node's type.
 unsigned short node_get_type(struct Node* node){
   return node->cached->inode.mode & EXT2_S_MASK;
 }
 
+// Return whether the node's mode identifies a directory.
 bool node_is_dir(struct Node* node){
   unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFDIR);
 }
 
+// Return whether the node's mode identifies a regular file.
 bool node_is_file(struct Node* node){
   unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFREG);
 }
 
+// Return whether the node's mode identifies a symbolic link.
 bool node_is_symlink(struct Node* node){
   unsigned short type = node->cached->inode.mode & EXT2_S_MASK;
   return (type == EXT2_S_IFLNK);
 }
 
+// Read a symbolic link target into a newly allocated string.
 void node_get_symlink_target(struct Node* node, char* dest){
   assert(node_is_symlink(node), "node_get_symlink_target: node is not a symlink.\n");
 
@@ -2949,10 +3009,12 @@ char* node_copy_symlink_target(struct Node* node, unsigned* target_size){
   return snapshot;
 }
 
+// Return the inode's current hard-link count.
 unsigned node_get_num_links(struct Node* node){
   return node->cached->inode.links_count;
 }
 
+// Count live directory entries matching a name.
 unsigned node_entry_count(struct Node* node){
   assert(node_is_dir(node), "node_entry_count: node is not a directory.\n");
 
@@ -3031,6 +3093,7 @@ int write_dirent(struct Ext2* fs, struct DirEntry entry, char* buffer_start, uns
   return reclen;
 }
 
+// Copy packed directory records into a caller-provided buffer.
 int node_getdents(struct Node* dir, unsigned offset, char* buffer, unsigned buffer_size, int* new_offset) {
   assert(node_is_dir(dir), "node_getdents: node is not a directory.\n");
   assert(new_offset != NULL, "node_getdents: new-offset output is NULL.\n");

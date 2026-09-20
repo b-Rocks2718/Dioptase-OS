@@ -12,7 +12,7 @@
 
 #include "../root/crt/print.h"
 
-static void user_test_expect_eq(char* operation, int actual, int expected){
+static void user_test_expect_eq(char* operation, int actual, int expected){ /* Report a user-test mismatch with operation and values. */
   int args[3] = {(int)operation, actual, expected};
 
   if (actual == expected){

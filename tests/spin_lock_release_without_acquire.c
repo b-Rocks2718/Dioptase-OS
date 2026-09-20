@@ -16,7 +16,7 @@
 
 static struct SpinLock lock;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify releasing a spin lock without acquisition is rejected. */
   say("***spin lock release negative start\n", NULL);
 
   spin_lock_init(&lock);

@@ -90,6 +90,7 @@
 #define KEY_QUIT 'q'
 #define KEY_QUIT_ALT 'Q'
 
+// Read a piped input byte when available, otherwise poll the keyboard device.
 static int read_input_event(void) {
   int available = fd_bytes_available(STDIN);
 
@@ -108,6 +109,7 @@ static int read_input_event(void) {
   return 0;
 }
 
+// Selects the direction in which the snake advances on its next tick.
 enum Direction {
   DIR_UP = 0,
   DIR_RIGHT = 1,
@@ -115,6 +117,7 @@ enum Direction {
   DIR_LEFT = 3,
 };
 
+// Owns the snake board, movement state, food, and score.
 struct SnakeGame {
   int snake_x[BOARD_CELLS];
   int snake_y[BOARD_CELLS];
@@ -897,6 +900,7 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
   return changed;
 }
 
+// Load high score.
 void load_high_score(void) {
   int fd = open_existing("/snake/high_score.txt");
   snake_high_score = 0;
@@ -913,6 +917,7 @@ void load_high_score(void) {
   }
 }
 
+// Save high score.
 void save_high_score(void) {
   int fd = open("/snake/high_score.txt");
   if (fd >= 0) {
@@ -933,6 +938,7 @@ void save_high_score(void) {
   }
 }
 
+// Initialize the display and game assets, then run rounds until the user exits.
 int main(void) {
   unsigned seed = INITIAL_RNG_STATE ^ get_current_jiffies();
   bool keep_running = true;

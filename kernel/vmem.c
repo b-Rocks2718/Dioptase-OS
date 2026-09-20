@@ -14,10 +14,12 @@
 
 struct PageCache page_cache;
 
+// Return the first virtual address allowed by mapping flags.
 static unsigned vmem_range_start(unsigned flags){
   return (flags & MMAP_USER) ? USER_VMEM_START : KERNEL_VMEM_START;
 }
 
+// Return the exclusive virtual-address limit allowed by mapping flags.
 static unsigned vmem_range_end(unsigned flags){
   return (flags & MMAP_USER) ? USER_VMEM_END : KERNEL_VMEM_END;
 }
@@ -61,6 +63,7 @@ static bool vmem_round_mapping_size(unsigned size, unsigned* rounded_size){
   return *rounded_size != 0;
 }
 
+// Initialize global VM synchronization and the shared zero page.
 void vmem_global_init(void){
   register_handler(tlb_miss_handler_, (void*)TLB_MISS_IVT_ENTRY);
 
@@ -72,6 +75,7 @@ void vmem_global_destroy(void){
   page_cache_destroy(&page_cache);
 }
 
+// Remove or shorten mappings of a file after it is truncated.
 bool vmem_truncate_file(struct Node* node, unsigned target_size){
   // Keep the concrete global cache private to the VM implementation. The page
   // cache performs the serialized page-cache -> inode transaction and adjusts
@@ -79,11 +83,13 @@ bool vmem_truncate_file(struct Node* node, unsigned target_size){
   return page_cache_shrink_file(&page_cache, node, target_size);
 }
 
+// Initialize per-core page-table/TLB state before scheduling starts.
 void vmem_core_init(void){
   tlb_flush();
   set_pid(0);
 }
 
+// Invalidate every local TLB entry covering the half-open page range.
 void tlb_invalidate_range(unsigned start, unsigned end){
   // invalidate entries on the current core's TLB
   for (unsigned va = start; va < end; va += FRAME_SIZE){
@@ -103,6 +109,7 @@ unsigned create_page_directory(void){
   return (unsigned)pd;
 }
 
+// Allocate and clear one page table for a new address space.
 unsigned create_page_table(void){
   unsigned* pt = (unsigned*)physmem_alloc();
   if (pt == NULL){
@@ -114,6 +121,7 @@ unsigned create_page_table(void){
   return (unsigned)pt;
 }
 
+// Allocate a physical page and clear it before user mapping.
 unsigned create_zeroed_page(void){
   unsigned* page = (unsigned*)physmem_alloc();
   if (page == NULL){
@@ -125,6 +133,7 @@ unsigned create_zeroed_page(void){
   return (unsigned)page;
 }
 
+// Allocate a virtual-memory-entry descriptor for a mapping.
 struct VME* vme_create(unsigned start, unsigned end, unsigned size,
     struct Node* file, unsigned file_offset, unsigned flags,
     bool maps_physmem, unsigned paddr){
@@ -400,6 +409,7 @@ static void vmem_destroy_address_space_impl(struct TCB* tcb) {
   physmem_free(pd);
 }
 
+// Unmap and free all page tables and VMEs owned by a TCB.
 void vmem_destroy_address_space(struct TCB* tcb) {
   vmem_destroy_address_space_impl(tcb);
 }
@@ -690,6 +700,7 @@ void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags){
   return (void*)start;
 }
 
+// Remove the mapping containing p and release its backing references.
 void munmap(void* p){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -726,6 +737,7 @@ void munmap(void* p){
   panic("munmap called with invalid address\n");
 }
 
+// Change a mapping's permissions and invalidate affected TLB entries.
 void vme_change_perms(struct VME* vme, unsigned new_flags){
   vme->flags = new_flags;
 
@@ -753,6 +765,7 @@ void vme_change_perms(struct VME* vme, unsigned new_flags){
   tlb_invalidate_range(vme->start, vme->end);
 }
 
+// Resolve a user page fault by materializing the mapped page or report failure.
 int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_to_user){
   // look up the VME corresponding to this faulting address
   int was = interrupts_disable();
@@ -943,6 +956,7 @@ physmem_exhausted:
   return -1;
 }
 
+// Service a TLB-shootdown or other inter-core notification.
 void ipi_handler(unsigned data){
   mark_ipi_handled();
 

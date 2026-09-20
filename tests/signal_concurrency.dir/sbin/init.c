@@ -51,7 +51,7 @@ static int sends_done_sem = -1;
 static int delivered_count = 0;
 static int delivery_order[2] = {-1, -1};
 
-static int recording_handler(int signal){
+static int recording_handler(int signal){ /* Record each signal delivered during the concurrency test. */
   if (delivered_count < 2){
     delivery_order[delivered_count] = signal;
   }
@@ -59,28 +59,28 @@ static int recording_handler(int signal){
   sigreturn(0);
 }
 
-static int blocking_handler(int signal){
+static int blocking_handler(int signal){ /* Block in the handler to test concurrent signal delivery. */
   sem_up(handler_entered_sem);
   while (1){
     yield();
   }
 }
 
-static int forbidden_nested_handler(int signal){
+static int forbidden_nested_handler(int signal){ /* Detect and report a nested handler invocation that should be impossible. */
   exit(NESTED_HANDLER_STATUS);
 }
 
-static int faulting_handler(int signal){
+static int faulting_handler(int signal){ /* Deliberately fault in a handler to test signal cleanup. */
   trigger_invalid_instruction();
   exit(NESTED_HANDLER_STATUS);
 }
 
-static int counting_handler(int signal){
+static int counting_handler(int signal){ /* Increment the delivery count for the selected signal. */
   delivered_count += 1;
   sigreturn(0);
 }
 
-static int pending_order_child(void){
+static int pending_order_child(void){ /* Run the pending order child process. */
   if (register_handler(SIGNAL_HELLO, (void*)recording_handler) != 0 ||
       register_handler(SIGNAL_TERMINATE, (void*)recording_handler) != 0 ||
       mask_signal(SIGNAL_HELLO) != 0 ||
@@ -108,7 +108,7 @@ static int pending_order_child(void){
   return 0;
 }
 
-static int active_handler_child(void){
+static int active_handler_child(void){ /* Run the active handler child process. */
   if (register_handler(SIGNAL_HELLO, (void*)blocking_handler) != 0 ||
       register_handler(SIGNAL_ILL, (void*)forbidden_nested_handler) != 0){
     return NESTED_HANDLER_STATUS;
@@ -120,7 +120,7 @@ static int active_handler_child(void){
   }
 }
 
-static int fault_in_handler_child(void){
+static int fault_in_handler_child(void){ /* Run the fault in handler child process. */
   if (register_handler(SIGNAL_HELLO, (void*)faulting_handler) != 0 ||
       register_handler(SIGNAL_ILL, (void*)forbidden_nested_handler) != 0){
     return NESTED_HANDLER_STATUS;
@@ -132,7 +132,7 @@ static int fault_in_handler_child(void){
   }
 }
 
-static int mask_send_race_child(void){
+static int mask_send_race_child(void){ /* Run the mask send race child process. */
   if (register_handler(SIGNAL_HELLO, (void*)counting_handler) != 0){
     return MASK_RACE_FAILURE_STATUS;
   }
@@ -167,13 +167,13 @@ static int mask_send_race_child(void){
   return 0;
 }
 
-static int exiting_child(void){
+static int exiting_child(void){ /* Run the exiting child process. */
   sem_up(ready_sem);
   sem_down(continue_sem);
   return NORMAL_EXIT_STATUS;
 }
 
-static int test_pending_order(void){
+static int test_pending_order(void){ /* Test pending order. */
   ready_sem = sem_open(0);
   continue_sem = sem_open(0);
 
@@ -195,7 +195,7 @@ static int test_pending_order(void){
   return failures;
 }
 
-static int test_nonmaskable_during_handler(void){
+static int test_nonmaskable_during_handler(void){ /* Test nonmaskable during handler. */
   ready_sem = sem_open(0);
   handler_entered_sem = sem_open(0);
 
@@ -216,7 +216,7 @@ static int test_nonmaskable_during_handler(void){
   return failures;
 }
 
-static int test_fault_during_handler(void){
+static int test_fault_during_handler(void){ /* Test fault during handler. */
   ready_sem = sem_open(0);
 
   int child = fork();
@@ -233,7 +233,7 @@ static int test_fault_during_handler(void){
   return failures;
 }
 
-static int test_mask_send_race(void){
+static int test_mask_send_race(void){ /* Test mask send race. */
   ready_sem = sem_open(0);
   sends_done_sem = sem_open(0);
 
@@ -256,7 +256,7 @@ static int test_mask_send_race(void){
   return failures;
 }
 
-static int test_send_exit_race(void){
+static int test_send_exit_race(void){ /* Test send exit race. */
   ready_sem = sem_open(0);
   continue_sem = sem_open(0);
   int failures = 0;
@@ -298,7 +298,7 @@ static int test_send_exit_race(void){
   return failures;
 }
 
-int main(void){
+int main(void){ /* Exercise concurrent signal ordering, masking, and exit races. */
   user_test_expect_eq("test_pending_order()", test_pending_order(), 0);
   user_test_expect_eq("test_nonmaskable_during_handler()", test_nonmaskable_during_handler(), 0);
   user_test_expect_eq("test_fault_during_handler()", test_fault_during_handler(), 0);

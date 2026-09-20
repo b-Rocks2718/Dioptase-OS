@@ -5,6 +5,7 @@
 
 #include "token.h"
 
+// Own the token storage and track its used and allocated lengths.
 struct TokenArray {
   struct Token* tokens;
   size_t size;

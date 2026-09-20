@@ -3,6 +3,7 @@
 
 #include "../crt/stdbool.h"
 
+// View a non-NUL-terminated span of source text without owning it.
 struct Slice {
   char* start; // where does the string start in memory?
   unsigned len;        // How many characters in the string?

@@ -22,7 +22,7 @@
 #include "../kernel/print.h"
 #include "../kernel/debug.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify the heap rejects a duplicate allocation claim. */
   say("***slab heap double allocation negative start\n", NULL);
 
   heap_init();

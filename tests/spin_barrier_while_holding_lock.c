@@ -18,7 +18,7 @@
 static struct SpinLock lock;
 static int barrier = 1;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify a barrier cannot be entered while holding a spin lock. */
   say("***spin barrier negative start\n", NULL);
 
   spin_lock_init(&lock);

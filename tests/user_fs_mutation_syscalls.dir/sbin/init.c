@@ -46,7 +46,7 @@ static void fill_basename(char* dest, unsigned size){
   dest[size] = '\0';
 }
 
-static int write_one_byte_file(char* path, char value){
+static int write_one_byte_file(char* path, char value){ /* Write one byte file. */
   int fd = open(path);
   int rc;
 
@@ -68,7 +68,7 @@ static int write_one_byte_file(char* path, char value){
   return 0;
 }
 
-static int read_one_byte_file(char* path, char* out){
+static int read_one_byte_file(char* path, char* out){ /* Read one byte file. */
   int fd = open(path);
   int rc;
 
@@ -84,7 +84,7 @@ static int read_one_byte_file(char* path, char* out){
   return rc;
 }
 
-int main(void){
+int main(void){ /* Exercise user create, rename, link, and deletion syscalls. */
   char byte = 0;
   char exact_name[EXT2_BASENAME_BUFFER_BYTES];
   char overlong_name[EXT2_OVERLONG_BASENAME_BUFFER_BYTES];

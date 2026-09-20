@@ -8,34 +8,25 @@
 #include "../crt/print.h"
 #include "../crt/stdint.h"
 
-// Purpose: Resolve control-flow labels (loops/switches/gotos/cases) in the AST.
-// Inputs: Traverses Program, Block, and Statement nodes produced by parsing.
-// Outputs: Annotates statements with unique labels and case lists.
-// Invariants/Assumptions: Labels are slices allocated from the arena.
+// Resolve control-flow labels (loops/switches/gotos/cases) in the AST.
+// Annotates statements with unique labels and case lists.
 
-// Purpose: Track the innermost loop/switch labels for break/continue/case.
-// Inputs: Updated on entry/exit of loop or switch statements.
-// Outputs: Referenced when labeling break/continue/case/default nodes.
-// Invariants/Assumptions: Only one active loop and one active switch are tracked.
+// Track the innermost loop/switch labels for break/continue/case.
+// Referenced when labeling break/continue/case/default nodes.
 struct Slice* cur_loop_label = NULL;
 struct Slice* cur_switch_label = NULL;
 enum LabelType cur_label_type = -1;
 
-// Purpose: Map user goto labels to unique labels within a function.
-// Inputs: Populated during label_stmt traversal of labeled statements.
-// Outputs: Used by resolve_gotos to rewrite goto targets.
-// Invariants/Assumptions: Recreated per function and destroyed after labeling.
+// Map user goto labels to unique labels within a function.
+// Used by resolve_gotos to rewrite goto targets.
 struct LabelMap* goto_labels = NULL;
-// Purpose: Collects case/default labels for the current switch statement.
-// Inputs: Appended during collect_cases traversal.
-// Outputs: Stored on the switch statement node.
-// Invariants/Assumptions: Reset when entering/leaving a switch statement.
+// Collects case/default labels for the current switch statement.
+// Returns Stored on the switch statement node.
+// Reset when entering/leaving a switch statement.
 struct CaseList* current_case_list = NULL;
 
-// Purpose: Emit the shared label-resolution prefix at a source location.
-// Inputs: prefix identifies the pass; loc points into source text and may be NULL.
-// Outputs: Writes a best-effort message prefix to stderr.
-// Invariants/Assumptions: source_location_from_ptr handles NULL/unknown locations.
+// Emit the shared label-resolution prefix at a source location.
+// Prefix identifies the pass; loc points into source text and may be NULL.
 static void label_error_prefix(char* prefix, char* loc) {
   int args[3];
   struct SourceLocation where = source_location_from_ptr(loc);
@@ -54,20 +45,18 @@ static void label_error_prefix(char* prefix, char* loc) {
   }
 }
 
-// Purpose: Emit a label-resolution error with a fixed message.
-// Inputs: prefix identifies the pass; loc points into source text and may be NULL.
-// Outputs: Writes a diagnostic message to stderr.
-// Invariants/Assumptions: Used when no formatted arguments are needed.
+// Emit a label-resolution error with a fixed message.
+// Prefix identifies the pass; loc points into source text and may be NULL.
+// Writes a diagnostic message to stderr.
 static void label_error_at(char* prefix, char* loc, char* message) {
   label_error_prefix(prefix, loc);
   fdputs(STDERR, message);
   fdputs(STDERR, "\n");
 }
 
-// Purpose: Emit a label-resolution error that names one slice.
-// Inputs: prefix identifies the pass; loc points into source text; slice may be NULL.
-// Outputs: Writes a diagnostic message to stderr.
-// Invariants/Assumptions: fmt uses one %.*s placeholder pair.
+// Emit a label-resolution error that names one slice.
+// Prefix identifies the pass; loc points into source text; slice may be NULL.
+// Writes a diagnostic message to stderr.
 static void label_error_at1_slice(char* prefix, char* loc, char* fmt, struct Slice* slice) {
   int args[2];
 
@@ -83,10 +72,9 @@ static void label_error_at1_slice(char* prefix, char* loc, char* fmt, struct Sli
   fdputs(STDERR, "\n");
 }
 
-// Purpose: Emit a label-resolution error that names one integer value.
-// Inputs: prefix identifies the pass; loc points into source text and may be NULL.
-// Outputs: Writes a diagnostic message to stderr.
-// Invariants/Assumptions: fmt uses one %d placeholder.
+// Emit a label-resolution error that names one integer value.
+// Prefix identifies the pass; loc points into source text and may be NULL.
+// Writes a diagnostic message to stderr.
 static void label_error_at1_int(char* prefix, char* loc, char* fmt, int value) {
   int args[1];
 
@@ -96,10 +84,9 @@ static void label_error_at1_int(char* prefix, char* loc, char* fmt, int value) {
   fdputs(STDERR, "\n");
 }
 
-// Purpose: Compute the decimal digit length of a 32-bit unsigned value.
-// Inputs: value is the unsigned integer to measure.
-// Outputs: Returns the number of base-10 digits needed.
-// Invariants/Assumptions: Always returns at least 1.
+// Compute the decimal digit length of a 32-bit unsigned value.
+// Returns the number of base-10 digits needed.
+// Always returns at least 1.
 static unsigned u32_len(uint32_t value) {
   unsigned len = 0;
   do {
@@ -109,10 +96,8 @@ static unsigned u32_len(uint32_t value) {
   return len;
 }
 
-// Purpose: Label all functions in a program and resolve gotos/cases.
-// Inputs: prog is the AST for the full translation unit.
-// Outputs: Returns true on success; false on any labeling error.
-// Invariants/Assumptions: Each function body is labeled independently.
+// Label all functions in a program and resolve gotos/cases.
+// Returns true on success; false on any labeling error.
 bool label_loops(struct Program* prog) {
   for (struct DeclarationList* decl = prog->dclrs; decl != NULL; decl = decl->next) {
     // only need to label functions, not global variables
@@ -265,10 +250,8 @@ bool label_expr(struct Slice* func_name, struct Expr* expr){
   return true;
 }
 
-// Purpose: Label any statement expressions embedded in an initializer tree.
-// Inputs: func_name is the enclosing function name; init is the initializer node.
-// Outputs: Returns true on success; false on any labeling error.
-// Invariants/Assumptions: Compound initializers may nest arbitrarily.
+// Label any statement expressions embedded in an initializer tree.
+// Returns true on success; false on any labeling error.
 static bool label_initializer(struct Slice* func_name, struct Initializer* init) {
   if (init == NULL) {
     return true;
@@ -294,10 +277,8 @@ static bool label_initializer(struct Slice* func_name, struct Initializer* init)
   }
 }
 
-// Purpose: Label statement expressions referenced by a local declaration.
-// Inputs: func_name is the enclosing function name; dclr is the declaration node.
-// Outputs: Returns true on success; false on any labeling error.
-// Invariants/Assumptions: Local function declarations do not have bodies.
+// Label statement expressions referenced by a local declaration.
+// Returns true on success; false on any labeling error.
 static bool label_local_dclr(struct Slice* func_name, struct Declaration* dclr) {
   switch (dclr->type) {
     case VAR_DCLR:
@@ -315,10 +296,8 @@ static bool label_local_dclr(struct Slice* func_name, struct Declaration* dclr) 
   }
 }
 
-// Purpose: Label statement expressions used in a for-loop initializer.
-// Inputs: func_name is the enclosing function name; init is the for initializer.
-// Outputs: Returns true on success; false on any labeling error.
-// Invariants/Assumptions: The initializer is either a declaration or expression.
+// Label statement expressions used in a for-loop initializer.
+// Returns true on success; false on any labeling error.
 static bool label_for_init(struct Slice* func_name, struct ForInit* init) {
   if (init == NULL) {
     return true;
@@ -339,10 +318,8 @@ static bool label_for_init(struct Slice* func_name, struct ForInit* init) {
   }
 }
 
-// Purpose: Apply label assignment to a statement subtree.
-// Inputs: func_name is the enclosing function name; stmt is the node to label.
-// Outputs: Returns true on success; false on any invalid label usage.
-// Invariants/Assumptions: Uses global label state to handle nesting.
+// Apply label assignment to a statement subtree.
+// Returns true on success; false on any invalid label usage.
 bool label_stmt(struct Slice* func_name, struct Statement* stmt) {
   switch (stmt->type) {
     case WHILE_STMT: {
@@ -605,10 +582,8 @@ bool label_stmt(struct Slice* func_name, struct Statement* stmt) {
 }
     
 
-// Purpose: Label each statement item inside a block.
-// Inputs: func_name is the enclosing function name; block is the block list.
-// Outputs: Returns true on success; false on any labeling error.
-// Invariants/Assumptions: Initializers may contain statement expressions.
+// Label each statement item inside a block.
+// Returns true on success; false on any labeling error.
 bool label_block(struct Slice* func_name, struct Block* block) {
   for (struct Block* item = block; item != NULL; item = item->next) {
     switch (item->item->type) {
@@ -631,10 +606,8 @@ bool label_block(struct Slice* func_name, struct Block* block) {
   return true;
 }
 
-// Purpose: Resolve goto labels inside expression subtrees with statement expressions.
-// Inputs: expr is the expression to traverse.
-// Outputs: Returns true on success; false on unresolved goto targets.
-// Invariants/Assumptions: Statement expressions contain block lists.
+// Resolve goto labels inside expression subtrees with statement expressions.
+// Returns true on success; false on unresolved goto targets.
 static bool resolve_gotos_expr(struct Expr* expr) {
   if (expr == NULL) {
     return true;
@@ -686,10 +659,8 @@ static bool resolve_gotos_expr(struct Expr* expr) {
   }
 }
 
-// Purpose: Resolve goto labels inside initializer trees.
-// Inputs: init is the initializer node to traverse.
-// Outputs: Returns true on success; false on unresolved goto targets.
-// Invariants/Assumptions: Compound initializers may nest arbitrarily.
+// Resolve goto labels inside initializer trees.
+// Returns true on success; false on unresolved goto targets.
 static bool resolve_gotos_initializer(struct Initializer* init) {
   if (init == NULL) {
     return true;
@@ -712,10 +683,8 @@ static bool resolve_gotos_initializer(struct Initializer* init) {
   }
 }
 
-// Purpose: Resolve goto labels inside a declaration initializer.
-// Inputs: dclr is the declaration node to traverse.
-// Outputs: Returns true on success; false on unresolved goto targets.
-// Invariants/Assumptions: Local function declarations do not have bodies.
+// Resolve goto labels inside a declaration initializer.
+// Returns true on success; false on unresolved goto targets.
 static bool resolve_gotos_dclr(struct Declaration* dclr) {
   switch (dclr->type) {
     case VAR_DCLR:
@@ -733,10 +702,8 @@ static bool resolve_gotos_dclr(struct Declaration* dclr) {
   }
 }
 
-// Purpose: Resolve nested statements while rewriting goto targets.
-// Inputs: stmt is the statement subtree to traverse.
-// Outputs: Returns true on success; false if a goto target is missing.
-// Invariants/Assumptions: goto_labels is populated for this function.
+// Resolve nested statements while rewriting goto targets.
+// Returns true on success; false if a goto target is missing.
 static bool resolve_stmt(struct Statement* stmt) {
   if (stmt->type == LABELED_STMT) {
     struct LabeledStmt* labeled_stmt = &stmt->statement.labeled_stmt;
@@ -850,10 +817,8 @@ static bool resolve_stmt(struct Statement* stmt) {
   return true;
 }
 
-// Purpose: Resolve goto statements within a block by replacing their labels.
-// Inputs: block is the block list containing statements.
-// Outputs: Returns true on success; false on unresolved labels.
-// Invariants/Assumptions: Labeling pass created the goto label map.
+// Resolve goto statements within a block by replacing their labels.
+// Returns true on success; false on unresolved labels.
 bool resolve_gotos(struct Block* block) {
   for (struct Block* item = block; item != NULL; item = item->next) {
     // only need to resolve statements
@@ -872,10 +837,8 @@ bool resolve_gotos(struct Block* block) {
 
 // -------------------------------- case collection -------------------------------- //
 
-// Purpose: Traverse expressions to collect cases within statement expressions.
-// Inputs: expr is the expression subtree to inspect.
-// Outputs: Returns true on success; false on case collection errors.
-// Invariants/Assumptions: Statement expressions contain block lists.
+// Traverse expressions to collect cases within statement expressions.
+// Returns true on success; false on case collection errors.
 static bool collect_cases_expr(struct Expr* expr) {
   if (expr == NULL) {
     return true;
@@ -929,10 +892,8 @@ static bool collect_cases_expr(struct Expr* expr) {
   }
 }
 
-// Purpose: Collect cases within initializer trees that may contain statement expressions.
-// Inputs: init is the initializer node to inspect.
-// Outputs: Returns true on success; false on case collection errors.
-// Invariants/Assumptions: Compound initializers may nest arbitrarily.
+// Collect cases within initializer trees that may contain statement expressions.
+// Returns true on success; false on case collection errors.
 static bool collect_cases_initializer(struct Initializer* init) {
   if (init == NULL) {
     return true;
@@ -955,10 +916,8 @@ static bool collect_cases_initializer(struct Initializer* init) {
   }
 }
 
-// Purpose: Collect cases within declaration initializers.
-// Inputs: dclr is the declaration node to inspect.
-// Outputs: Returns true on success; false on case collection errors.
-// Invariants/Assumptions: Local function declarations do not have bodies.
+// Collect cases within declaration initializers.
+// Returns true on success; false on case collection errors.
 static bool collect_cases_dclr(struct Declaration* dclr) {
   switch (dclr->type) {
     case VAR_DCLR:
@@ -976,10 +935,8 @@ static bool collect_cases_dclr(struct Declaration* dclr) {
   }
 }
 
-// Purpose: Traverse statements to collect case/default labels per switch.
-// Inputs: stmt is the statement subtree to inspect.
-// Outputs: Returns true on success; false on duplicate/invalid cases.
-// Invariants/Assumptions: current_case_list tracks the active switch.
+// Traverse statements to collect case/default labels per switch.
+// Returns true on success; false on duplicate/invalid cases.
 bool collect_cases_stmt(struct Statement* stmt){
   switch (stmt->type) {
     case WHILE_STMT: {
@@ -1118,10 +1075,9 @@ bool collect_cases_stmt(struct Statement* stmt){
   }
 }
 
-// Purpose: Collect case/default labels for every switch in a block.
-// Inputs: block is the block list containing statements.
-// Outputs: Returns true on success; false on case collection errors.
-// Invariants/Assumptions: Case expressions must be literal integers.
+// Collect case/default labels for every switch in a block.
+// Returns true on success; false on case collection errors.
+// Case expressions must be literal integers.
 bool collect_cases(struct Block* block) {
   for (struct Block* item = block; item != NULL; item = item->next) {
     // only need to process statements
@@ -1138,10 +1094,8 @@ bool collect_cases(struct Block* block) {
   return true;
 }
 
-// Purpose: Synthesize a unique label for a switch case value.
-// Inputs: switch_label is the base switch label; case_value is the integer literal.
-// Outputs: Returns a new Slice containing "switch.case.N".
-// Invariants/Assumptions: Uses arena allocation for the label buffer.
+// Synthesize a unique label for a switch case value.
+// Returns a new Slice containing "switch.case.N".
 struct Slice* make_case_label(struct Slice* switch_label, int case_value) {
   // append ".case.<u32>" to current switch label, using unsigned digits to keep labels valid
   uint32_t unsigned_value = (uint32_t)case_value;

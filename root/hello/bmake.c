@@ -3,6 +3,7 @@
 #include "../crt/stdlib.h"
 #include "../crt/sys/wait.h"
 
+// Compile, assemble, and launch the bundled hello program.
 int main(void){
   puts("Compiling...\n");
   

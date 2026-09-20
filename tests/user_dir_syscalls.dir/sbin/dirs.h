@@ -6,7 +6,7 @@
 
 #define BUFFER_SIZE 1024
 
-struct LinkedDirent {
+struct LinkedDirent { /* Link one directory-entry record into the test's expected listing. */
     struct LinkedDirent *next;
     char d_type;
     struct linux_dirent dirent;
