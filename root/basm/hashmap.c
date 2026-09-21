@@ -3,6 +3,7 @@
 #include "hashmap.h"
 #include "slice.h"
 
+// Allocate an empty separate-chaining symbol hash map.
 struct HashMap* create_hash_map(size_t num_buckets){
   struct HashEntry** arr = malloc(num_buckets * sizeof(struct HashEntry*));
   struct HashMap* hmap = malloc(sizeof(struct HashMap));
@@ -17,11 +18,13 @@ struct HashMap* create_hash_map(size_t num_buckets){
   return hmap;
 }
 
+// Update a symbol entry's section-relative metadata.
 static void set_entry_section_info(struct HashEntry* entry, int section_index, bool is_section_relative){
   entry->section_index = section_index;
   entry->is_section_relative = is_section_relative;
 }
 
+// Allocate one symbol entry for a bucket chain.
 static struct HashEntry* create_hash_entry(
   struct Slice* key,
   int value,
@@ -42,6 +45,7 @@ static struct HashEntry* create_hash_entry(
   return entry;
 }
 
+// Insert or replace a symbol in one bucket chain.
 static void hash_entry_insert(
   struct HashEntry* entry,
   struct Slice* key,
@@ -64,10 +68,12 @@ static void hash_entry_insert(
   }
 }
 
+// Insert or replace a symbol in the map.
 void hash_map_insert(struct HashMap* hmap, struct Slice* key, int value, bool is_def, bool is_data){
   hash_map_insert_with_section(hmap, key, value, is_def, is_data, -1, false);
 }
 
+// Insert or replace a section-relative symbol in the map.
 void hash_map_insert_with_section(
   struct HashMap* hmap,
   struct Slice* key,
@@ -101,6 +107,7 @@ void hash_map_insert_with_section(
   }
 }
 
+// Look up a key within one collision chain.
 static int hash_entry_get(struct HashEntry* entry, struct Slice* key){
   if (compare_slice_to_slice(entry->key, key)){
     return entry->value;
@@ -111,6 +118,7 @@ static int hash_entry_get(struct HashEntry* entry, struct Slice* key){
   }
 }
 
+// Return the chain entry matching a key, if present.
 static struct HashEntry* find_hash_entry(struct HashEntry* entry, struct Slice* key){
   if (compare_slice_to_slice(entry->key, key)){
     return entry;
@@ -121,6 +129,7 @@ static struct HashEntry* find_hash_entry(struct HashEntry* entry, struct Slice* 
   }
 }
 
+// Look up a symbol value in the map.
 int hash_map_get(struct HashMap* hmap, struct Slice* key){
   size_t hash = hash_slice(key) % hmap->size;
 
@@ -131,6 +140,7 @@ int hash_map_get(struct HashMap* hmap, struct Slice* key){
   }
 }
 
+// Return the map entry matching a key, if present.
 struct HashEntry* hash_map_find_entry(struct HashMap* hmap, struct Slice* key){
   size_t hash = hash_slice(key) % hmap->size;
 
@@ -141,6 +151,7 @@ struct HashEntry* hash_map_find_entry(struct HashMap* hmap, struct Slice* key){
   }
 }
 
+// Test whether one collision chain contains a key.
 bool hash_entry_contains(struct HashEntry* entry, struct Slice* key){
   if (compare_slice_to_slice(entry->key, key)){
     return true;
@@ -151,6 +162,7 @@ bool hash_entry_contains(struct HashEntry* entry, struct Slice* key){
   }
 }
 
+// Test whether one chain contains a defined symbol.
 bool hash_entry_contains_def(struct HashEntry* entry, struct Slice* key){
   if (compare_slice_to_slice(entry->key, key) && entry->is_defined){
     return true;
@@ -161,6 +173,7 @@ bool hash_entry_contains_def(struct HashEntry* entry, struct Slice* key){
   }
 }
 
+// Test whether the map contains a key.
 bool hash_map_contains(struct HashMap* hmap, struct Slice* key){
   size_t hash = hash_slice(key) % hmap->size;
 
@@ -171,6 +184,7 @@ bool hash_map_contains(struct HashMap* hmap, struct Slice* key){
   }
 }
 
+// Return whether a label map contains a resolved definition.
 bool label_has_definition(struct HashMap* hmap, struct Slice* key){
   size_t hash = hash_slice(key) % hmap->size;
 
@@ -181,6 +195,7 @@ bool label_has_definition(struct HashMap* hmap, struct Slice* key){
   }
 }
 
+// Allocate an entry for a symbol with a resolved definition.
 static void make_entry_defined(
   struct HashEntry* entry,
   struct Slice* key,
@@ -198,10 +213,12 @@ static void make_entry_defined(
   }
 }
 
+// Insert or update a fully resolved symbol definition.
 void make_defined(struct HashMap* hmap, struct Slice* key, int value){
   make_defined_with_section(hmap, key, value, -1, false);
 }
 
+// Insert or update a section-relative symbol definition.
 void make_defined_with_section(
   struct HashMap* hmap,
   struct Slice* key,
@@ -216,12 +233,14 @@ void make_defined_with_section(
   make_entry_defined(hmap->arr[hash], key, value, section_index, is_section_relative);
 }
 
+// Recursively free an entry and the rest of its collision chain.
 void destroy_hash_entry(struct HashEntry* entry){
   if (entry->next !=  NULL) destroy_hash_entry(entry->next);
   free(entry->key);
   free(entry);
 }
 
+// Free every collision chain and the hash map's bucket storage.
 void destroy_hash_map(struct HashMap* hmap){
   for (int i = 0; i < hmap->size; ++i){
     if (hmap->arr[i] != NULL) destroy_hash_entry(hmap->arr[i]);

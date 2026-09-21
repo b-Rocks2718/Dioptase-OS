@@ -39,7 +39,7 @@
 
 // Generate deterministic pseudo-random values for the stress pattern.
 static unsigned rng_state = 0xC0FFEE01u;
-static unsigned rnd_u32(void) {
+static unsigned rnd_u32(void) { /* Generate the deterministic pseudo-random value used by the stress test. */
   unsigned x = rng_state;
   x ^= x << 13;
   x ^= x >> 17;
@@ -77,7 +77,7 @@ static void shuffle(unsigned* a, unsigned n) {
   }
 }
 
-struct BlockInfo {
+struct BlockInfo { /* Record an allocated block's address, order, and owner. */
   void* ptr;
   unsigned size;
   unsigned seed;

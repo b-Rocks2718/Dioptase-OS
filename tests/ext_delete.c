@@ -57,7 +57,7 @@
 #define DELETE_TEST_TYPED_DIR_NAME "typed-dir"
 #define DELETE_TEST_TYPED_CHILD_NAME "typed-child"
 
-struct ConcurrentDeleteFileArgs {
+struct ConcurrentDeleteFileArgs { /* Coordinates unlink with a live file reference held by another worker. */
   struct Barrier* start;
   int* ready_to_release;
   int* release;
@@ -65,7 +65,7 @@ struct ConcurrentDeleteFileArgs {
   unsigned block_size;
 };
 
-struct ConcurrentDeleteDirArgs {
+struct ConcurrentDeleteDirArgs { /* Coordinates directory deletion with a concurrent holder. */
   struct Barrier* start;
   int* delete_done;
   int* ready_to_release;

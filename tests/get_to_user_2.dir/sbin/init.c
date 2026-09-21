@@ -1,7 +1,7 @@
 #include "../../../root/crt/sys.h"
 #include "lib.h"
 
-int main(void){
+int main(void){ /* Verify the second get-to-user userland fixture. */
   int y = lib_function(3, 4);
   test_syscall(y);
 

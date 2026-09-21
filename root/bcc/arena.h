@@ -3,6 +3,7 @@
 
 #include "../crt/stddef.h"
 
+// Own one linked arena allocation block and its used capacity.
 struct ArenaBlock {
   struct ArenaBlock* next;
   size_t used;
@@ -10,6 +11,7 @@ struct ArenaBlock {
   unsigned char data[1];
 };
 
+// Own the arena block chain and default block size.
 struct Arena {
   struct ArenaBlock* head;
   size_t block_size;

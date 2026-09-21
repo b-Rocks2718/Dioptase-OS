@@ -16,7 +16,7 @@
 
 static struct RwLock rwlock;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify releasing a reader lock without ownership is rejected. */
   say("***rw lock read release negative start\n", NULL);
 
   rw_lock_init(&rwlock);

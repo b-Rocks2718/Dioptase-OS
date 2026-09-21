@@ -21,6 +21,7 @@ struct InstructionArrayList* create_instruction_array_list(void){
   return list;
 }
 
+// Link an instruction array at the end of the origin-ordered list.
 void instruction_array_list_append(struct InstructionArrayList* list, struct InstructionArray* arr){
   if (list->head == NULL){
     list->head = arr;
@@ -32,23 +33,24 @@ void instruction_array_list_append(struct InstructionArrayList* list, struct Ins
   }
 }
 
+// Free all instruction-array nodes and their list wrapper.
 void destroy_instruction_array_list(struct InstructionArrayList* list){
   destroy_instruction_array(list->head);
   free(list);
 }
 
+// Print every instruction array using the human-readable formatter.
 void print_instruction_array_list(struct InstructionArrayList* list){
   print_instruction_array(list->head);
 }
 
+// Write every instruction array using the selected raw/debug format.
 void fprint_instruction_array_list(int file, struct InstructionArrayList* list, bool raw){
   fprint_instruction_array(file, list->head, raw);
 }
 
-// Purpose: Write a 32-bit word in little-endian byte order.
-// Inputs: ptr is the output file; value is the word to write.
-// Outputs: Writes exactly 4 bytes to ptr.
-// Invariants/Assumptions: ptr is open for binary output.
+// Write one instruction word as four little-endian bytes.
+// Ptr is open for binary output.
 static void write_all(int file, uint8_t* bytes, size_t len){
   size_t offset = 0;
   while (offset < len){
@@ -58,6 +60,7 @@ static void write_all(int file, uint8_t* bytes, size_t len){
   }
 }
 
+// Encode and write one unsigned 32-bit little-endian value.
 static void write_u32_le(int file, uint32_t value){
   uint8_t bytes[kWordBytes];
   bytes[0] = (uint8_t)(value & kByteMask);
@@ -67,10 +70,8 @@ static void write_u32_le(int file, uint32_t value){
   write_all(file, bytes, kWordBytes);
 }
 
-// Purpose: Emit zero padding bytes.
-// Inputs: ptr is the output file; count is the number of zero bytes to write.
-// Outputs: Writes count zero bytes to ptr.
-// Invariants/Assumptions: ptr is open for binary output.
+// Emit zero padding bytes.
+// Ptr is open for binary output.
 static void write_zero_bytes(int file, size_t count){
   #define kZeroChunkBytes 256u
   static uint8_t zeros[kZeroChunkBytes] = {0};
@@ -81,16 +82,15 @@ static void write_zero_bytes(int file, size_t count){
   }
 }
 
-// Purpose: Write instruction words for a single array.
-// Inputs: ptr is the output file; arr is the instruction array to emit.
-// Outputs: Writes arr->size words as raw bytes to ptr.
-// Invariants/Assumptions: ptr is open for binary output.
+// Serialize all words in one instruction array without padding.
+// Ptr is open for binary output.
 static void write_instruction_array_words(int file, struct InstructionArray* arr){
   for (size_t i = 0; i < arr->size; ++i){
     write_u32_le(file, (uint32_t)arr->instructions[i]);
   }
 }
 
+// Serialize arrays in order, optionally inserting origin gaps as zero bytes.
 void fwrite_instruction_array_list(int file, struct InstructionArrayList* list, bool include_origin_padding){
   uint32_t cursor = 0;
   for (struct InstructionArray* arr = list->head; arr != NULL; arr = arr->next){
@@ -125,6 +125,7 @@ struct InstructionArray* create_instruction_array(unsigned capacity, int origin)
   return arr;
 }
 
+// Double an instruction array's storage while retaining existing words.
 static int* grow_instruction_storage(int* old_instructions, unsigned old_capacity){
   unsigned new_capacity = old_capacity * 2;
   int* new_instructions = malloc(sizeof(int) * new_capacity);
@@ -135,6 +136,7 @@ static int* grow_instruction_storage(int* old_instructions, unsigned old_capacit
   return new_instructions;
 }
 
+// Append one machine word, growing storage when the array is full.
 void instruction_array_append(struct InstructionArray* arr, int value){
   if (arr->size == arr->capacity){
     arr->instructions = grow_instruction_storage(arr->instructions, arr->capacity);
@@ -145,22 +147,22 @@ void instruction_array_append(struct InstructionArray* arr, int value){
   arr->size++;
 }
 
-// Purpose: Update a byte within an existing 32-bit word.
-// Inputs: word points to the word to update; byte_index is 0..3; value is the byte payload.
-// Outputs: None.
-// Invariants/Assumptions: byte_index is less than kWordBytes.
+// Update a byte within an existing 32-bit word.
+// Word points to the word to update; byte_index is 0..3; value is the byte payload.
 static void set_word_byte(int* word, int byte_index, uint8_t value){
   uint32_t mask = (uint32_t)kByteMask << (8 * byte_index);
   uint32_t updated = ((uint32_t)(*word) & ~mask) | ((uint32_t)value << (8 * byte_index));
   *word = (int)updated;
 }
 
+// Append a 16-bit value at the requested byte address.
 void instruction_array_append_double(struct InstructionArray* arr, unsigned short value, int pc){
   // Little-endian: low byte goes at the lowest address.
   instruction_array_append_byte(arr, (uint8_t)(value & kByteMask), pc);
   instruction_array_append_byte(arr, (uint8_t)((value >> 8) & kByteMask), pc + kByteStride);
 }
 
+// Append an 8-bit value at the requested byte address.
 void instruction_array_append_byte(struct InstructionArray* arr, char value, int pc){
   int byte_index = pc % kWordBytes;
   if (byte_index == 0){
@@ -170,17 +172,20 @@ void instruction_array_append_byte(struct InstructionArray* arr, char value, int
   set_word_byte(&arr->instructions[arr->size - 1], byte_index, value);
 }
 
+// Read the byte-addressed word containing the requested program counter.
 int instruction_array_get(struct InstructionArray* arr, unsigned i){
   // no checks on i, might regret this later
   return arr->instructions[i];
 }
 
+// Recursively free an instruction-array node and its successors.
 void destroy_instruction_array(struct InstructionArray* arr){
   if (arr->next != NULL) destroy_instruction_array(arr->next);
   free(arr->instructions);
   free(arr);
 }
 
+// Print one instruction array in numeric word form.
 void print_instruction_array(struct InstructionArray* arr){
   int header_args[1];
   header_args[0] = arr->origin;
@@ -193,6 +198,7 @@ void print_instruction_array(struct InstructionArray* arr){
   if (arr->next != NULL) print_instruction_array(arr->next);
 }
 
+// Write one instruction array as raw words or formatted text.
 void fprint_instruction_array(int file, struct InstructionArray* arr, bool raw){
   // raw => no ELF structure => put origin markers
   if (raw) {
@@ -208,6 +214,7 @@ void fprint_instruction_array(int file, struct InstructionArray* arr, bool raw){
   if (arr->next != NULL) fprint_instruction_array(file, arr->next, raw);
 }
 
+// Return the total serialized byte size of all arrays in the list.
 unsigned instruction_array_list_size(struct InstructionArrayList* list){
   unsigned total_size = 0;
   struct InstructionArray* curr = list->head;

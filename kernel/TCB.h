@@ -29,6 +29,7 @@ enum ThreadPriority {
   HIGH_PRIORITY = 2,
 };
 
+// Enumerate the scheduler's multilevel-feedback-queue bands.
 enum MLFQ_LEVEL {
   LEVEL_ZERO = 0,
   LEVEL_ONE = 1,

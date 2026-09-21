@@ -6,6 +6,7 @@
   .data
   .align 4
   .global SUNSHEET_DATA
+# Define the sun asset data used by the dinosaur game.
 SUNSHEET_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
@@ -1543,4 +1544,3 @@ SUNSHEET_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
-  

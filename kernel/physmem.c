@@ -30,24 +30,29 @@ static bool physmem_is_frame_address(unsigned phys_addr) {
   return (phys_addr & (FRAME_SIZE - 1)) == 0;
 }
 
+// Convert a validated physical frame address to its frame-table index.
 unsigned frame_index_from_address(unsigned phys_addr) {
   assert_always(physmem_is_frame_address(phys_addr), "physmem: invalid frame address.\n");
   return (phys_addr - FRAMES_ADDR_START) / FRAME_SIZE;
 }
 
+// Convert a physical frame-table index to its byte address.
 unsigned address_from_frame_index(unsigned frame_index) {
   assert_always(frame_index < PHYS_FRAME_COUNT, "physmem: invalid frame index.\n");
   return FRAMES_ADDR_START + frame_index * FRAME_SIZE;
 }
 
+// Return whether a buddy block's allocation bitmap marks it free.
 static bool is_block_free(unsigned block_index) {
   return free_page_bitmap[block_index / 8] & (1u << (block_index % 8));
 }
 
+// Mark a buddy block allocated in the physical-memory bitmap.
 static void mark_block_allocated(unsigned block_index) {
   free_page_bitmap[block_index / 8] &= ~(1u << (block_index % 8));
 }
 
+// Mark a buddy block free in the physical-memory bitmap.
 static void mark_block_free(unsigned block_index) {
   free_page_bitmap[block_index / 8] |= (1u << (block_index % 8));
 }
@@ -165,6 +170,7 @@ void physmem_init(void){
   }
 }
 
+// Initialize physical-memory locks after the free lists are built.
 void physmem_sync_init(void){
   blocking_lock_init(&physmem_lock);
   for (int i = 0; i < MAX_CORES; i++) {
@@ -238,6 +244,7 @@ void* physmem_alloc_order(int order){
   return node;
 }
 
+// Allocate a physical block of the requested order for a permanent owner.
 void* physmem_leak_order(int order){
   void* page = physmem_alloc_order(order);
   assert_always(page != NULL,
@@ -342,6 +349,7 @@ void* physmem_alloc(void){
   return page;
 }
 
+// Allocate one permanent physical page for boot-lifetime state.
 void* physmem_leak(void){
   void* page = physmem_alloc();
   assert_always(page != NULL,
@@ -382,6 +390,7 @@ void physmem_free(void* page){
   core_unpin(prev);
 }
 
+// Verify that every frame marked permanently allocated is accounted for.
 void physmem_check_leaks(void){
   bool all_good = true;
 

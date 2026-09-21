@@ -6,10 +6,9 @@
 #include "stdlib.h"
 
 /*
- * Purpose: Provide the tiny FILE shim used by bootstrap userland tools.
- * Inputs: Streams are represented as storage for one Dioptase fd.
- * Outputs: fopen/fclose/fputc/fputs/fwrite behave on those fd-backed streams.
- * Invariants/Assumptions: FILE remains a single int and unistd.h/fcntl.h own
+ * Provide the tiny FILE shim used by bootstrap userland tools.
+ * Fopen/fclose/fputc/fputs/fwrite behave on those fd-backed streams.
+ * FILE remains a single int and unistd.h/fcntl.h own
  * the fd constants plus open/read/write/seek/truncate semantics.
  */
 
@@ -17,6 +16,7 @@ FILE __stdin_storage = STDIN;
 FILE __stdout_storage = STDOUT;
 FILE __stderr_storage = STDERR;
 
+// Return the file descriptor backing a standard stream.
 static int stream_fd(FILE* stream) {
   if (stream == NULL) {
     return -1;
@@ -24,14 +24,14 @@ static int stream_fd(FILE* stream) {
   return *stream;
 }
 
+// Return whether the stream is one of stdin, stdout, or stderr.
 static int is_std_stream(FILE* stream) {
   return stream == stdin || stream == stdout || stream == stderr;
 }
 
-// Purpose: Open one Dioptase path and wrap its fd in FILE storage.
-// Inputs: path names the file; mode only distinguishes write-truncate vs read.
-// Outputs: Returns a heap-allocated FILE wrapper or NULL on failure.
-// Invariants/Assumptions: A leading `w` intentionally uses creating open(),
+// Open one Dioptase path and wrap its fd in FILE storage.
+// Returns a heap-allocated FILE wrapper or NULL on failure.
+// A leading `w` intentionally uses creating open(),
 // then truncates and rewinds. Every other mode is this CRT's read behavior and
 // uses open_existing(), so a missing input cannot be created as a side effect.
 FILE* fopen(char* path, char* mode) {
@@ -67,10 +67,10 @@ FILE* fopen(char* path, char* mode) {
   return stream;
 }
 
-// Purpose: Close one FILE shim stream.
-// Inputs: stream may be a heap stream or one of stdin/stdout/stderr.
-// Outputs: Returns the underlying close result or 0 for standard streams.
-// Invariants/Assumptions: Standard stream storage is static and must not be freed.
+// Close one FILE shim stream.
+// Stream may be a heap stream or one of stdin/stdout/stderr.
+// Returns the underlying close result or 0 for standard streams.
+// Standard stream storage is static and must not be freed.
 int fclose(FILE* stream) {
   int fd;
   int result;
@@ -88,10 +88,9 @@ int fclose(FILE* stream) {
   return result;
 }
 
-// Purpose: Write one byte to a FILE shim stream.
-// Inputs: c is converted to one byte; stream must reference a writable fd.
-// Outputs: Returns the byte value on success or -1 on write failure.
-// Invariants/Assumptions: write() returns 1 for one successful byte.
+// Write one byte to a FILE shim stream.
+// C is converted to one byte; stream must reference a writable fd.
+// Returns the byte value on success or -1 on write failure.
 int fputc(int c, FILE* stream) {
   char ch;
 
@@ -102,10 +101,9 @@ int fputc(int c, FILE* stream) {
   return (unsigned char)ch;
 }
 
-// Purpose: Write one NUL-terminated string to a FILE shim stream.
-// Inputs: str may be NULL; stream must reference a writable fd.
-// Outputs: Returns the fdputs result or -1 for NULL input.
-// Invariants/Assumptions: print.h fdputs already handles ordinary string output.
+// Write one NUL-terminated string to a FILE shim stream.
+// Str may be NULL; stream must reference a writable fd.
+// Returns the fdputs result or -1 for NULL input.
 int fputs(char* str, FILE* stream) {
   if (str == NULL) {
     return -1;
@@ -113,10 +111,10 @@ int fputs(char* str, FILE* stream) {
   return (int)fdputs(stream_fd(stream), str);
 }
 
-// Purpose: Read raw bytes from a FILE shim stream.
-// Inputs: ptr points to size*count writable bytes; stream must reference a readable fd.
-// Outputs: Returns the number of whole items read before EOF or read failure.
-// Invariants/Assumptions: The syscall layer may short-read, so this helper
+// Read raw bytes from a FILE shim stream.
+// Ptr points to size*count writable bytes; stream must reference a readable fd.
+// Returns the number of whole items read before EOF or read failure.
+// The syscall layer may short-read, so this helper
 // loops until the request completes or read() stops making progress. An item
 // extent that is not representable by the 32-bit size_t contract is rejected
 // before pointer arithmetic or descriptor I/O.
@@ -146,10 +144,10 @@ size_t fread(void* ptr, size_t size, size_t count, FILE* stream) {
   return read_total / size;
 }
 
-// Purpose: Write raw bytes to a FILE shim stream.
-// Inputs: ptr points to size*count bytes; stream must reference a writable fd.
-// Outputs: Returns the number of whole items written before any short write.
-// Invariants/Assumptions: The syscall layer may short-write, so this helper
+// Write raw bytes to a FILE shim stream.
+// Ptr points to size*count bytes; stream must reference a writable fd.
+// Returns the number of whole items written before any short write.
+// The syscall layer may short-write, so this helper
 // loops until the transfer completes or write() stops making progress. An item
 // extent that is not representable by the 32-bit size_t contract is rejected
 // before pointer arithmetic or descriptor I/O.
@@ -179,10 +177,8 @@ size_t fwrite(void* ptr, size_t size, size_t count, FILE* stream) {
   return written / size;
 }
 
-// Purpose: Reposition one FILE shim stream.
-// Inputs: offset/whence follow the Dioptase seek() syscall contract.
-// Outputs: Returns 0 on success or -1 on failure.
-// Invariants/Assumptions: seek() returns the new offset, mirroring sys.h.
+// Reposition one FILE shim stream.
+// Returns 0 on success or -1 on failure.
 int fseek(FILE* stream, int offset, int whence) {
   if (stream == NULL) {
     return -1;
@@ -193,10 +189,9 @@ int fseek(FILE* stream, int offset, int whence) {
   return 0;
 }
 
-// Purpose: Report the current offset of one FILE shim stream.
-// Inputs: stream must reference an open seekable fd.
-// Outputs: Returns the current offset, or -1 on failure.
-// Invariants/Assumptions: seek(fd, 0, SEEK_CUR) exposes the current position.
+// Report the current offset of one FILE shim stream.
+// Stream must reference an open seekable fd.
+// Returns the current offset, or -1 on failure.
 int ftell(FILE* stream) {
   if (stream == NULL) {
     return -1;

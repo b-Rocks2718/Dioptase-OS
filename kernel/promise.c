@@ -21,10 +21,12 @@ void* promise_get(struct Promise* promise){
   return tmp;
 }
 
+// Destroy a promise's wait queue without freeing the promise object.
 void promise_destroy(struct Promise* promise){
   sem_destroy(&promise->sem);
 }
 
+// Destroy and free a heap-allocated promise.
 void promise_free(struct Promise* promise){
   promise_destroy(promise);
   free(promise);

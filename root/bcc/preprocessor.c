@@ -8,17 +8,15 @@
 
 #include "preprocessor.h"
 
-// Purpose: Implement a minimal preprocessor with comment stripping, object-like
+// Implement a minimal preprocessor with comment stripping, object-like
 //          macro expansion, and basic conditional/include handling.
-// Inputs: NUL-terminated source buffers and CLI define strings.
-// Outputs: Newly allocated, NUL-terminated preprocessed source on success.
-// Invariants/Assumptions: Supports #include "path" and #include <path>, plus
+// NUL-terminated source buffers and CLI define strings.
+// Newly allocated, NUL-terminated preprocessed source on success.
+// Supports #include "path" and #include <path>, plus
 //                         #define, #ifdef/#ifndef/#else/#endif; no
 //                         function-like macros or #undef.
 
-// Purpose: Track a growable output buffer and source mapping during preprocessing.
-// Inputs/Outputs: Mutated in-place by buffer helpers.
-// Invariants/Assumptions: cap >= len; data/map are heap-allocated or NULL.
+// Track a growable output buffer and source mapping during preprocessing.
 struct Buffer {
   char* data;
   struct SourceMappingEntry* map;
@@ -26,9 +24,8 @@ struct Buffer {
   size_t cap;
 };
 
-// Purpose: Represent object-like macros as a linked list.
-// Inputs/Outputs: Owned by the preprocessor and freed at teardown.
-// Invariants/Assumptions: name/value are heap strings; no function-like macros.
+// Store one object-like macro's copied name/value in the macro chain.
+// Owned by the preprocessor and freed at teardown.
 struct Macro {
   char* name;
   size_t name_len;
@@ -37,9 +34,7 @@ struct Macro {
   struct Macro* next;
 };
 
-// Purpose: Identify builtin macro names with special expansion behavior.
-// Inputs/Outputs: Read-only names, no state changes.
-// Invariants/Assumptions: Names are ASCII and compared case-sensitively.
+// Identify builtin macro names with special expansion behavior.
 static char kBuiltinFileMacro[9] = "__FILE__";
 static char kBuiltinLineMacro[9] = "__LINE__";
 #define K_BUILTIN_FILE_MACRO_LEN 8
@@ -52,10 +47,10 @@ static char kBuiltinLineMacro[9] = "__LINE__";
 // public nested-include count.
 #define PREPROCESSOR_ACTIVE_FILE_CAP 33
 
-// Purpose: Bound recursive include processing and identify ordinary cycles.
-// Inputs/Outputs: The public entrypoint installs the root file. Each include
+// Bound recursive include processing and identify ordinary cycles.
+// The public entrypoint installs the root file. Each include
 //                 pushes its resolved path only for the recursive call.
-// Invariants/Assumptions: count is at least one and never exceeds
+// Count is at least one and never exceeds
 //                         PREPROCESSOR_ACTIVE_FILE_CAP. Path storage is owned
 //                         by the root caller or the active include frame.
 struct IncludeStack {
@@ -63,33 +58,26 @@ struct IncludeStack {
   size_t count;
 };
 
-// Purpose: Store preprocessed output and source mapping together.
-// Inputs/Outputs: Filled by preprocess_buffer and consumed by callers.
-// Invariants/Assumptions: map.length matches strlen(text).
+// Store preprocessed output and source mapping together.
 struct PreprocessOutput {
   char* text;
   struct SourceMapping map;
 };
 
-// Purpose: Forward declarations for file table helpers used before definition.
-// Inputs/Outputs: See file_table_* implementations below.
-// Invariants/Assumptions: Filename storage is owned by the file table.
+// Forward declarations for file table helpers used before definition.
+// Filename storage is owned by the file table.
 static void file_table_init(struct FileTable* table);
 static char* file_table_intern(struct FileTable* table, char* name);
 static void file_table_destroy(struct FileTable* table);
 
-// Purpose: Track one level of #ifdef/#ifndef state.
-// Inputs/Outputs: Stored in the conditional stack; updated by directives.
-// Invariants/Assumptions: parent_active reflects the outer active state.
+// Track one level of #ifdef/#ifndef state.
 struct IfState {
   bool parent_active;
   bool condition_true;
   bool in_else;
 };
 
-// Purpose: Maintain a stack of nested #if states with current activity.
-// Inputs/Outputs: Mutated by ifstack_* helpers.
-// Invariants/Assumptions: current_active mirrors the top-of-stack evaluation.
+// Maintain a stack of nested #if states with current activity.
 struct IfStack {
   struct IfState* items;
   size_t count;
@@ -97,10 +85,8 @@ struct IfStack {
   bool current_active;
 };
 
-// Purpose: Report a fixed preprocessor error with filename and line context.
-// Inputs: filename and line_no describe the error location; message is fixed text.
-// Outputs: Writes a formatted message to stderr.
-// Invariants/Assumptions: filename is non-NULL when reporting a file-backed input.
+// Report a fixed preprocessor error with filename and line context.
+// Filename is non-NULL when reporting a file-backed input.
 static void preprocessor_error0(char* filename, size_t line_no, char* message) {
   int args[3];
 
@@ -110,6 +96,7 @@ static void preprocessor_error0(char* filename, size_t line_no, char* message) {
   fdprintf(STDERR, "Preprocessor error at %s:%zu: %s\n", args);
 }
 
+// Format and terminate after a preprocessor error naming one string.
 static void preprocessor_error1_str(char* filename, size_t line_no,
                                     char* fmt, char* arg0) {
   int args[3];
@@ -120,6 +107,7 @@ static void preprocessor_error1_str(char* filename, size_t line_no,
   fdprintf(STDERR, fmt, args);
 }
 
+// Format and terminate after a preprocessor error naming one slice.
 static void preprocessor_error1_slice(char* filename, size_t line_no,
                                       char* fmt, size_t arg0_len, char* arg0_text) {
   int args[4];
@@ -131,20 +119,19 @@ static void preprocessor_error1_slice(char* filename, size_t line_no,
   fdprintf(STDERR, fmt, args);
 }
 
-// Purpose: Measure one byte span inside a source buffer.
-// Inputs: start/end point into the same underlying character array.
-// Outputs: Returns the number of bytes between start and end.
-// Invariants/Assumptions: docs/abi.md defines pointers as 4-byte values, so
+// Measure one byte span inside a source buffer.
+// Start/end point into the same underlying character array.
+// Returns the number of bytes between start and end.
+// Docs/abi.md defines pointers as 4-byte values, so
 // the bootstrap compiler can materialize char-pointer differences through
 // unsigned arithmetic even though it rejects direct pointer subtraction.
 static size_t span_len(char* start, char* end) {
   return (size_t)((unsigned)end - (unsigned)start);
 }
 
-// Purpose: Initialize a buffer with the requested capacity.
-// Inputs: buf is the buffer to initialize; cap is the initial capacity.
-// Outputs: Returns true on success and zeroes buf length.
-// Invariants/Assumptions: buf is non-NULL; caller frees buf->data and buf->map.
+// Reset output bytes and source mappings with the requested initial capacity.
+// Returns true on success and zeroes buf length.
+// Buf is non-NULL; caller frees buf->data and buf->map.
 static bool buffer_init(struct Buffer* buf, size_t cap) {
   buf->data = malloc(cap);
   if (buf->data == NULL) return false;
@@ -159,10 +146,8 @@ static bool buffer_init(struct Buffer* buf, size_t cap) {
   return true;
 }
 
-// Purpose: Ensure the buffer can append add bytes plus a trailing NUL.
-// Inputs: buf is the target buffer; add is additional bytes to reserve.
-// Outputs: Returns true on success and grows the buffer if needed.
-// Invariants/Assumptions: buffer_init was called and buf->data/map are heap-allocated.
+// Ensure the buffer can append add bytes plus a trailing NUL.
+// Returns true on success and grows the buffer if needed.
 static bool buffer_reserve(struct Buffer* buf, size_t add) {
   if (buf->len + add + 1 <= buf->cap) return true;
   size_t new_cap = buf->cap == 0 ? 64 : buf->cap;
@@ -177,10 +162,9 @@ static bool buffer_reserve(struct Buffer* buf, size_t add) {
   return true;
 }
 
-// Purpose: Append a single character and mapping entry to the buffer.
-// Inputs: buf is the target buffer; c is the character; loc is the source mapping.
-// Outputs: Returns true on success and increments buf->len.
-// Invariants/Assumptions: buffer_reserve must succeed for append.
+// Append a single character and mapping entry to the buffer.
+// Returns true on success and increments buf->len.
+// Buffer_reserve must succeed for append.
 static bool buffer_append_char(struct Buffer* buf, char c, struct SourceMappingEntry loc) {
   if (!buffer_reserve(buf, 1)) return false;
   buf->data[buf->len++] = c;
@@ -188,10 +172,9 @@ static bool buffer_append_char(struct Buffer* buf, char c, struct SourceMappingE
   return true;
 }
 
-// Purpose: Append a string slice with a single source location.
-// Inputs: buf is the target buffer; s/len describe bytes; loc is the source mapping.
-// Outputs: Returns true on success and increments buf->len.
-// Invariants/Assumptions: s may be non-NUL-terminated; loc applies to all bytes.
+// Append a string slice with a single source location.
+// Returns true on success and increments buf->len.
+// S may be non-NUL-terminated; loc applies to all bytes.
 static bool buffer_append_str_with_loc(struct Buffer* buf, char* s, size_t len,
                                        struct SourceMappingEntry loc) {
   if (!buffer_reserve(buf, len)) return false;
@@ -203,10 +186,9 @@ static bool buffer_append_str_with_loc(struct Buffer* buf, char* s, size_t len,
   return true;
 }
 
-// Purpose: Append a string slice with per-byte source mappings.
-// Inputs: buf is the target buffer; s/len describe bytes; map supplies mappings.
-// Outputs: Returns true on success and increments buf->len.
-// Invariants/Assumptions: map has at least len entries.
+// Append a string slice with per-byte source mappings.
+// Returns true on success and increments buf->len.
+// Map has at least len entries.
 static bool buffer_append_str_with_map(struct Buffer* buf, char* s, size_t len,
                                        struct SourceMappingEntry* map) {
   if (!buffer_reserve(buf, len)) return false;
@@ -216,36 +198,29 @@ static bool buffer_append_str_with_map(struct Buffer* buf, char* s, size_t len,
   return true;
 }
 
-// Purpose: NUL-terminate the buffer content.
-// Inputs: buf is the target buffer.
-// Outputs: Returns true on success and writes a trailing '\0'.
-// Invariants/Assumptions: buffer_reserve ensures space for the terminator.
+// NUL-terminate the buffer content.
+// Returns true on success and writes a trailing '\0'.
 static bool buffer_finish(struct Buffer* buf) {
   if (!buffer_reserve(buf, 0)) return false;
   buf->data[buf->len] = '\0';
   return true;
 }
 
-// Purpose: Test whether a character can start an identifier.
-// Inputs: c is the candidate character.
-// Outputs: Returns true when c can begin an identifier.
-// Invariants/Assumptions: Uses ASCII character classes.
+// Test whether a character can start an identifier.
+// Returns true when c can begin an identifier.
 static bool is_ident_start(char c) {
   return isalpha((unsigned char)c) || c == '_';
 }
 
-// Purpose: Test whether a character can appear inside an identifier.
-// Inputs: c is the candidate character.
-// Outputs: Returns true when c is a valid identifier character.
-// Invariants/Assumptions: Uses ASCII character classes.
+// Test whether a character can appear inside an identifier.
+// Returns true when c is a valid identifier character.
 static bool is_ident_char(char c) {
   return isalnum((unsigned char)c) || c == '_';
 }
 
-// Purpose: Check if the identifier matches a reserved builtin macro name.
-// Inputs: name/len describe the identifier to test.
-// Outputs: Returns true when the name is a builtin macro.
-// Invariants/Assumptions: name may be non-NUL-terminated.
+// Check if the identifier matches a reserved builtin macro name.
+// Returns true when the name is a builtin macro.
+// Name may be non-NUL-terminated.
 static bool is_builtin_macro_name(char* name, size_t len) {
   if (len == K_BUILTIN_FILE_MACRO_LEN && strncmp(name, kBuiltinFileMacro, K_BUILTIN_FILE_MACRO_LEN) == 0) {
     return true;
@@ -256,10 +231,9 @@ static bool is_builtin_macro_name(char* name, size_t len) {
   return false;
 }
 
-// Purpose: Look up a macro by name in the linked list.
-// Inputs: macros is the head of the list; name/len describe the lookup key.
-// Outputs: Returns a pointer to the macro or NULL if not found.
-// Invariants/Assumptions: Macro names are stored as NUL-terminated copies.
+// Look up a macro by name in the linked list.
+// Returns a pointer to the macro or NULL if not found.
+// Macro names are stored as NUL-terminated copies.
 static struct Macro* macro_find(struct Macro* macros, char* name, size_t len) {
   for (struct Macro* macro = macros; macro != NULL; macro = macro->next) {
     if (macro->name_len == len && strncmp(macro->name, name, len) == 0) {
@@ -269,19 +243,15 @@ static struct Macro* macro_find(struct Macro* macros, char* name, size_t len) {
   return NULL;
 }
 
-// Purpose: Check whether a macro name is defined either as builtin or user macro.
-// Inputs: macros is the list head; name/len describe the lookup key.
-// Outputs: Returns true when a macro is considered defined.
-// Invariants/Assumptions: Builtin macros are always treated as defined.
+// Check whether a macro name is defined either as builtin or user macro.
+// Returns true when a macro is considered defined.
 static bool is_macro_defined(struct Macro* macros, char* name, size_t len) {
   if (is_builtin_macro_name(name, len)) return true;
   return macro_find(macros, name, len) != NULL;
 }
 
-// Purpose: Define or replace an object-like macro with a raw string value.
-// Inputs: macros is the list head; name/value define the macro contents.
-// Outputs: Returns true on success and updates the list in place.
-// Invariants/Assumptions: Names are treated as case-sensitive byte strings.
+// Define or replace an object-like macro with a raw string value.
+// Returns true on success and updates the list in place.
 static bool macro_define(struct Macro** macros, char* name, size_t name_len, char* value, size_t value_len) {
   struct Macro* existing = macro_find(*macros, name, name_len);
   char* value_copy = malloc(value_len + 1);
@@ -320,10 +290,7 @@ static bool macro_define(struct Macro** macros, char* name, size_t name_len, cha
   return true;
 }
 
-// Purpose: Free all macro storage owned by the preprocessor.
-// Inputs: macros is the head of the linked list.
-// Outputs: Releases all heap allocations for macros.
-// Invariants/Assumptions: macros was built via macro_define.
+// Free all macro storage owned by the preprocessor.
 static void destroy_macros(struct Macro* macros) {
   while (macros != NULL) {
     struct Macro* next = macros->next;
@@ -334,10 +301,8 @@ static void destroy_macros(struct Macro* macros) {
   }
 }
 
-// Purpose: Push a new conditional state for #ifdef/#ifndef.
-// Inputs: stack is the conditional stack; condition_true is the evaluated result.
-// Outputs: Returns true on success and updates stack->current_active.
-// Invariants/Assumptions: stack->current_active reflects outer conditionals.
+// Push a new conditional state for #ifdef/#ifndef.
+// Returns true on success and updates stack->current_active.
 static bool ifstack_push(struct IfStack* stack, bool condition_true) {
   if (stack->count == stack->cap) {
     size_t new_cap = stack->cap == 0 ? 8 : stack->cap * 2;
@@ -353,10 +318,9 @@ static bool ifstack_push(struct IfStack* stack, bool condition_true) {
   return true;
 }
 
-// Purpose: Toggle to the #else branch of the current conditional.
-// Inputs: stack is the conditional stack.
-// Outputs: Returns true on success and updates stack->current_active.
-// Invariants/Assumptions: Each conditional may have at most one #else.
+// Toggle to the #else branch of the current conditional.
+// Returns true on success and updates stack->current_active.
+// Each conditional may have at most one #else.
 static bool ifstack_else(struct IfStack* stack) {
   if (stack->count == 0) return false;
   struct IfState* state = &stack->items[stack->count - 1];
@@ -366,10 +330,8 @@ static bool ifstack_else(struct IfStack* stack) {
   return true;
 }
 
-// Purpose: Pop the current conditional state.
-// Inputs: stack is the conditional stack.
-// Outputs: Returns true on success and updates stack->current_active.
-// Invariants/Assumptions: stack->count tracks nested #if depth.
+// Pop the current conditional state.
+// Returns true on success and updates stack->current_active.
 static bool ifstack_pop(struct IfStack* stack) {
   if (stack->count == 0) return false;
   stack->count--;
@@ -382,10 +344,9 @@ static bool ifstack_pop(struct IfStack* stack) {
   return true;
 }
 
-// Purpose: Strip comments while preserving strings and character literals.
-// Inputs: prog is a NUL-terminated source buffer; filename identifies the source.
-// Outputs: Returns true on success and fills out with comment-stripped text and mappings.
-// Invariants/Assumptions: Comment delimiters inside strings/chars are ignored.
+// Strip comments while preserving strings and character literals.
+// Prog is a NUL-terminated source buffer; filename identifies the source.
+// Returns true on success and fills out with comment-stripped text and mappings.
 static bool strip_comments(char* prog, char* filename,
                            struct FileTable* files, struct Buffer* out) {
   char* interned = file_table_intern(files, filename);
@@ -485,10 +446,9 @@ fail:
   return false;
 }
 
-// Purpose: Read an entire file into a newly allocated buffer.
-// Inputs: path is the target file; include_from/line_no identify the include site.
-// Outputs: Returns a NUL-terminated buffer or NULL on failure.
-// Invariants/Assumptions: Caller owns the returned buffer and must free it.
+// Read an entire file into a newly allocated buffer.
+// Returns a NUL-terminated buffer or NULL on failure.
+// Caller owns the returned buffer and must free it.
 static char* read_file(char* path, char* include_from, size_t line_no) {
   FILE* file = fopen(path, "rb");
   if (file == NULL) {
@@ -544,10 +504,10 @@ static char* read_file(char* path, char* include_from, size_t line_no) {
   return buffer;
 }
 
-// Purpose: Heap-allocate a copy of the provided string.
-// Inputs: src is a NUL-terminated string.
-// Outputs: Returns a heap-allocated duplicate or NULL on failure.
-// Invariants/Assumptions: Caller owns the returned string.
+// Heap-allocate a copy of the provided string.
+// Src is a NUL-terminated string.
+// Returns a heap-allocated duplicate or NULL on failure.
+// Caller owns the returned string.
 static char* copy_string(char* src) {
   size_t len = strlen(src);
   char* out = malloc(len + 1);
@@ -557,20 +517,17 @@ static char* copy_string(char* src) {
   return out;
 }
 
-// Purpose: Initialize a file table for storing unique filename strings.
-// Inputs: table is the table to initialize.
-// Outputs: Zeroes fields to a known empty state.
-// Invariants/Assumptions: Caller manages lifetime via file_table_destroy.
+// Reset the filename interning table used by source mappings.
+// Caller manages lifetime via file_table_destroy.
 static void file_table_init(struct FileTable* table) {
   table->names = NULL;
   table->count = 0;
   table->cap = 0;
 }
 
-// Purpose: Intern a filename string and return a stable pointer.
-// Inputs: table is the interning table; name is the filename to intern.
-// Outputs: Returns a pointer to a stored copy or NULL on allocation failure.
-// Invariants/Assumptions: Returned pointer remains valid until file_table_destroy.
+// Intern a filename string and return a stable pointer.
+// Returns a pointer to a stored copy or NULL on allocation failure.
+// Returned pointer remains valid until file_table_destroy.
 static char* file_table_intern(struct FileTable* table, char* name) {
   for (size_t i = 0; i < table->count; ++i) {
     if (strcmp(table->names[i], name) == 0) {
@@ -593,10 +550,8 @@ static char* file_table_intern(struct FileTable* table, char* name) {
   return copy;
 }
 
-// Purpose: Release all filenames stored in the file table.
-// Inputs: table was initialized by file_table_init.
-// Outputs: Frees all heap allocations and zeroes fields.
-// Invariants/Assumptions: Safe to call on empty tables.
+// Free every interned filename and the table's backing storage.
+// Safe to call on empty tables.
 static void file_table_destroy(struct FileTable* table) {
   for (size_t i = 0; i < table->count; ++i) {
     free(table->names[i]);
@@ -607,10 +562,8 @@ static void file_table_destroy(struct FileTable* table) {
   table->cap = 0;
 }
 
-// Purpose: Build one absolute or rooted include path from a directory prefix.
-// Inputs: dir is the directory prefix; include_name is the raw include string.
-// Outputs: Returns a heap-allocated resolved path.
-// Invariants/Assumptions: include_name is relative when this helper is used.
+// Build one absolute or rooted include path from a directory prefix.
+// Returns a heap-allocated resolved path.
 static char* prefix_include_path(char* dir, char* include_name) {
   size_t dir_len = strlen(dir);
   size_t inc_len = strlen(include_name);
@@ -623,11 +576,10 @@ static char* prefix_include_path(char* dir, char* include_name) {
   return out;
 }
 
-// Purpose: Resolve include paths for quoted and angle-bracket include directives.
-// Inputs: current_file is the including file; include_name is the raw include
+// Resolve include paths for quoted and angle-bracket include directives.
+// Current_file is the including file; include_name is the raw include
 //         string; system_include selects /crt lookup for <...> directives.
-// Outputs: Returns a heap-allocated resolved path.
-// Invariants/Assumptions: Absolute paths are passed through unchanged.
+// Returns a heap-allocated resolved path.
 static char* resolve_include_path(char* current_file, char* include_name,
                                   bool system_include) {
   if (include_name[0] == '/') return copy_string(include_name);
@@ -647,10 +599,8 @@ static char* resolve_include_path(char* current_file, char* include_name,
   return resolved;
 }
 
-// Purpose: Validate -D and #define names.
-// Inputs: name/len describe the candidate identifier.
-// Outputs: Returns true when the name is a valid identifier.
-// Invariants/Assumptions: Uses the preprocessor's identifier rules.
+// Validate -D and #define names.
+// Returns true when the name is a valid identifier.
 static bool is_valid_macro_name(char* name, size_t len) {
   if (len == 0 || !is_ident_start(name[0])) return false;
   for (size_t i = 1; i < len; ++i) {
@@ -659,10 +609,9 @@ static bool is_valid_macro_name(char* name, size_t len) {
   return true;
 }
 
-// Purpose: Apply -DNAME or -DNAME=value definitions from the command line.
-// Inputs: macros is the macro list head; defines is the CLI array.
-// Outputs: Returns true on success and updates the macro list.
-// Invariants/Assumptions: defines entries are NUL-terminated strings.
+// Apply -DNAME or -DNAME=value definitions from the command line.
+// Returns true on success and updates the macro list.
+// Defines entries are NUL-terminated strings.
 static bool apply_cli_defines(struct Macro** macros, int num_defines, char* * defines) {
   for (int i = 0; i < num_defines; ++i) {
     int args[2];
@@ -697,10 +646,8 @@ static bool apply_cli_defines(struct Macro** macros, int num_defines, char* * de
   return true;
 }
 
-// Purpose: Append a size_t as a decimal string.
-// Inputs: out is the target buffer; line_no is the numeric value to append; loc is the source mapping.
-// Outputs: Returns true on success and appends the decimal digits.
-// Invariants/Assumptions: Uses LINE_NUMBER_BUFFER_CAP as a safe upper bound.
+// Append a size_t as a decimal string.
+// Returns true on success and appends the decimal digits.
 static bool buffer_append_line_number(struct Buffer* out, size_t line_no, struct SourceMappingEntry loc) {
   char digits[LINE_NUMBER_BUFFER_CAP];
   size_t len = 0;
@@ -717,10 +664,8 @@ static bool buffer_append_line_number(struct Buffer* out, size_t line_no, struct
   return true;
 }
 
-// Purpose: Append a C string literal with minimal escaping.
-// Inputs: out is the target buffer; value is the raw string to quote; loc is the source mapping.
-// Outputs: Returns true on success and appends a quoted string literal.
-// Invariants/Assumptions: Escapes backslashes and double quotes only.
+// Append a C string literal with minimal escaping.
+// Returns true on success and appends a quoted string literal.
 static bool buffer_append_c_string_literal(struct Buffer* out, char* value, struct SourceMappingEntry loc) {
   if (!buffer_append_char(out, '"', loc)) return false;
   for (char* p = value; *p != '\0'; ++p) {
@@ -732,10 +677,7 @@ static bool buffer_append_c_string_literal(struct Buffer* out, char* value, stru
   return buffer_append_char(out, '"', loc);
 }
 
-// Purpose: Expand builtin macros that depend on file/line context.
-// Inputs: name/len describe the identifier; loc provides file/line context.
-// Outputs: Sets *matched when a builtin is expanded and appends to out.
-// Invariants/Assumptions: Builtins are object-like and non-recursive.
+// Expand builtin macros that depend on file/line context.
 static bool try_expand_builtin_macro(char* name, size_t len,
                                      struct SourceMappingEntry* loc,
                                      struct Buffer* out, bool* matched) {
@@ -751,10 +693,8 @@ static bool try_expand_builtin_macro(char* name, size_t len,
   return true;
 }
 
-// Purpose: Expand macros in a single line, skipping strings and char literals.
-// Inputs: line/len describe the line; line_map provides source mappings; macros is the macro list.
-// Outputs: Returns true on success and appends expanded content to out.
-// Invariants/Assumptions: Macro replacement is non-recursive and object-like only.
+// Expand macros in a single line, skipping strings and char literals.
+// Returns true on success and appends expanded content to out.
 static bool expand_macros_in_line(char* line, size_t len,
                                   struct SourceMappingEntry* line_map,
                                   struct Macro* macros, struct Buffer* out) {
@@ -831,10 +771,8 @@ static bool expand_macros_in_line(char* line, size_t len,
   return true;
 }
 
-// Purpose: Parse a #define line (object-like only) and store it in the macro list.
-// Inputs: line/line_end are the directive contents; filename/line_no for diagnostics.
-// Outputs: Returns true on success and updates the macro list.
-// Invariants/Assumptions: Function-like macros are not supported.
+// Parse a #define line (object-like only) and store it in the macro list.
+// Returns true on success and updates the macro list.
 static bool parse_define_line(char* line, char* line_end,
                               char* filename, size_t line_no,
                               struct Macro** macros) {
@@ -868,19 +806,17 @@ static bool parse_define_line(char* line, char* line_end,
   return true;
 }
 
-// Purpose: Preprocess a single source buffer (shared macro state).
-// Inputs: prog/filename identify the source; macros is the shared macro list.
-// Outputs: Returns a newly allocated preprocessed buffer or NULL on failure.
-// Invariants/Assumptions: The macros list is owned by the caller.
+// Preprocess a single source buffer (shared macro state).
+// Returns a newly allocated preprocessed buffer or NULL on failure.
+// The macros list is owned by the caller.
 static bool preprocess_buffer(char* prog, char* filename,
                               struct Macro** macros, struct FileTable* files,
                               struct IncludeStack* include_stack,
                               struct PreprocessOutput* out);
 
-// Purpose: Test whether a resolved include spelling is already being expanded.
-// Inputs: include_stack describes the complete active root-to-leaf chain.
-// Outputs: Returns true on an exact resolved-path match.
-// Invariants/Assumptions: The independent depth bound remains authoritative
+// Test whether a resolved include spelling is already being expanded.
+// Returns true on an exact resolved-path match.
+// The independent depth bound remains authoritative
 //                         for aliases such as `a.h` and `./a.h` that may name
 //                         the same inode with different strings.
 static bool include_stack_contains(struct IncludeStack* include_stack,
@@ -891,11 +827,10 @@ static bool include_stack_contains(struct IncludeStack* include_stack,
   return false;
 }
 
-// Purpose: Handle #include "path" and #include <path> by preprocessing the
+// Resolve and preprocess one #include directive, appending its output.
 //          included file in place.
-// Inputs: line/line_end describe the directive contents; macros/out are updated.
-// Outputs: Returns true on success and appends included text to out.
-// Invariants/Assumptions: Quoted includes resolve relative to the current file;
+// Returns true on success and appends included text to out.
+// Quoted includes resolve relative to the current file;
 //                         angle-bracket includes resolve under /crt.
 static bool handle_include_line(char* line, char* line_end, char* filename,
                                 size_t line_no, struct Macro** macros, struct FileTable* files,
@@ -985,10 +920,8 @@ static bool handle_include_line(char* line, char* line_end, char* filename,
   return ok;
 }
 
-// Purpose: Parse and validate the identifier in #ifdef/#ifndef directives.
-// Inputs: line/line_end describe the directive; directive names the keyword.
-// Outputs: Returns true on success and fills name_start/name_len.
-// Invariants/Assumptions: Only identifiers are accepted (no expressions).
+// Parse and validate the identifier in #ifdef/#ifndef directives.
+// Returns true on success and fills name_start/name_len.
 static bool parse_ifdef_name(char* line, char* line_end,
                              char* filename, size_t line_no,
                              char* directive,
@@ -1009,10 +942,8 @@ static bool parse_ifdef_name(char* line, char* line_end,
   return true;
 }
 
-// Purpose: Parse a "defined" term used in #if expressions.
-// Inputs: line/line_end describe the directive contents.
-// Outputs: Returns true on success and fills out_value/next.
-// Invariants/Assumptions: Supports optional leading '!' and optional parentheses.
+// Parse a "defined" term used in #if expressions.
+// Returns true on success and fills out_value/next.
 static bool parse_if_defined_term(char* line, char* line_end,
                                   char* filename, size_t line_no,
                                   struct Macro* macros,
@@ -1064,10 +995,8 @@ static bool parse_if_defined_term(char* line, char* line_end,
   return true;
 }
 
-// Purpose: Parse a limited #if condition with defined/!defined and &&.
-// Inputs: line/line_end describe the directive contents.
-// Outputs: Returns true on success and fills out_value.
-// Invariants/Assumptions: Only supports AND-combined defined checks.
+// Parse a limited #if condition with defined/!defined and &&.
+// Returns true on success and fills out_value.
 static bool parse_if_condition(char* line, char* line_end,
                                char* filename, size_t line_no,
                                struct Macro* macros, bool* out_value) {
@@ -1101,10 +1030,8 @@ static bool parse_if_condition(char* line, char* line_end,
   return true;
 }
 
-// Purpose: Process a single preprocessor directive line.
-// Inputs: line_start/line_end span the directive; if_stack tracks conditionals.
-// Outputs: Returns true on success and updates macros/output buffers as needed.
-// Invariants/Assumptions: Caller ensures line_start points just after '#'.
+// Parse and execute one preprocessor directive line.
+// Returns true on success and updates macros/output buffers as needed.
 static bool preprocess_directive(
     char* line_start,
     char* line_end,
@@ -1220,10 +1147,8 @@ static bool preprocess_directive(
   return false;
 }
 
-// Purpose: Strip comments, apply directives, and expand macros line-by-line.
-// Inputs: prog/filename identify the source; macros is the shared macro list.
-// Outputs: Returns true on success and fills out with preprocessed data.
-// Invariants/Assumptions: Conditional blocks only use #ifdef/#ifndef/#else/#endif.
+// Strip comments, apply directives, and expand macros line-by-line.
+// Returns true on success and fills out with preprocessed data.
 static bool preprocess_buffer(char* prog, char* filename,
                               struct Macro** macros, struct FileTable* files,
                               struct IncludeStack* include_stack,
@@ -1343,10 +1268,9 @@ static bool preprocess_buffer(char* prog, char* filename,
   return true;
 }
 
-// Purpose: Public entrypoint: apply CLI defines, then preprocess the buffer.
-// Inputs: prog is the source buffer; filename is used for diagnostics.
-// Outputs: Returns true on success and fills result; false on failure.
-// Invariants/Assumptions: Caller must free result via destroy_preprocess_result.
+// Public entrypoint: apply CLI defines, then preprocess the buffer.
+// Returns true on success and fills result; false on failure.
+// Caller must free result via destroy_preprocess_result.
 bool preprocess(char * prog, char* filename, int num_defines,
                 char* * defines, struct PreprocessResult* result) {
   if (result == NULL) return false;
@@ -1379,10 +1303,8 @@ bool preprocess(char * prog, char* filename, int num_defines,
   return true;
 }
 
-// Purpose: Free all storage owned by a PreprocessResult.
-// Inputs: result was filled by preprocess.
-// Outputs: Releases heap allocations and zeroes pointers/counts.
-// Invariants/Assumptions: Safe to call with partially initialized results.
+// Free all storage owned by a PreprocessResult.
+// Safe to call with partially initialized results.
 void destroy_preprocess_result(struct PreprocessResult* result) {
   if (result == NULL) return;
   free(result->text);

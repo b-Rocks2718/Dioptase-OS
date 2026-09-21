@@ -22,7 +22,7 @@
 #define NUM_THREADS 12
 #define LOCK_ROUNDS 100
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies a lock worker and its critical-section iteration count. */
   int id;
   int rounds;
 };

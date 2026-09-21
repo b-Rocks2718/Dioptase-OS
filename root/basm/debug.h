@@ -3,6 +3,7 @@
 
 #include "slice.h"
 
+// Describe one source-level local and its emitted address range.
 struct DebugLocal {
   struct Slice* name;          // Name of the local variable
   int offset;                 // Offset from base pointer (BP)
@@ -10,28 +11,33 @@ struct DebugLocal {
   unsigned addr;              // Address where this local becomes visible
 };
 
+// Associate an emitted address with its source filename and line.
 struct DebugLine {
   struct Slice* file_name;      // Source file name
   int line_number;            // Line number in the source file
   unsigned addr;              // Address of the next instruction for this line
 };
 
+// Own the local-variable and source-line tables for one assembled file.
 union DebugInfo {
   struct DebugLocal* locals;  // Linked list of local variables
   struct DebugLine* lines;    // Linked list of source lines
 };
 
+// Distinguish local and source-line records in the debug table.
 enum DebugInfoType {
   DEBUG_INFO_LOCALS,
   DEBUG_INFO_LINES,
 };
 
+// Link one tagged debug record to its payload.
 struct DebugEntry {
   enum DebugInfoType type;    // Type of debug information
   union DebugInfo info;       // Actual debug information
   struct DebugEntry* next;    // Next debug entry in the list
 };
 
+// Own the linked debug-record list and its tail pointer.
 struct DebugInfoList {
   struct DebugEntry* head;    // Head of the debug entries list
   struct DebugEntry* tail;    // Tail of the debug entries list

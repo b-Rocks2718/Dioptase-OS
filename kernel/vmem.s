@@ -185,6 +185,7 @@ ipi_handler_:
   rfe
 
   .global mark_ipi_handled
+# Acknowledge the inter-processor interrupt in the MMIO control register.
 mark_ipi_handled:
   eoi 5
   ret

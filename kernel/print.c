@@ -244,18 +244,21 @@ static void putchar_unlocked(char c){
   putchar_color_unlocked(c, current_text_color);
 }
 
+// Write one character while serializing console and VGA state.
 void putchar(char c){
   unsigned interrupt_state = console_lock_acquire();
   putchar_unlocked(c);
   console_lock_release(interrupt_state);
 }
 
+// Write one character using the requested RGB332 text color.
 void putchar_color(char c, int color){
   unsigned interrupt_state = console_lock_acquire();
   putchar_color_unlocked(c, color);
   console_lock_release(interrupt_state);
 }
 
+// Write up to count characters to the active console.
 unsigned console_write(char* buffer, unsigned count){
   unsigned interrupt_state = console_lock_acquire();
   for (unsigned i = 0; i < count; ++i){
@@ -265,30 +268,35 @@ unsigned console_write(char* buffer, unsigned count){
   return count;
 }
 
+// Set the active console's RGB332 foreground color.
 void console_set_text_color(int color){
   unsigned interrupt_state = console_lock_acquire();
   current_text_color = color;
   console_lock_release(interrupt_state);
 }
 
+// Set the VGA tile scale used by subsequent console output.
 void console_set_tile_scale(int scale){
   unsigned interrupt_state = console_lock_acquire();
   *TILE_SCALE = scale;
   console_lock_release(interrupt_state);
 }
 
+// Set the VGA tile vertical scroll offset.
 void console_set_tile_vscroll(int scroll){
   unsigned interrupt_state = console_lock_acquire();
   *TILE_VSCROLL = scroll;
   console_lock_release(interrupt_state);
 }
 
+// Set the VGA tile horizontal scroll offset.
 void console_set_tile_hscroll(int scroll){
   unsigned interrupt_state = console_lock_acquire();
   *TILE_HSCROLL = scroll;
   console_lock_release(interrupt_state);
 }
 
+// Adjust the VGA tile vertical scroll offset by delta.
 void console_move_tile_vscroll(int delta){
   unsigned interrupt_state = console_lock_acquire();
 
@@ -300,6 +308,7 @@ void console_move_tile_vscroll(int delta){
   console_lock_release(interrupt_state);
 }
 
+// Adjust the VGA tile horizontal scroll offset by delta.
 void console_move_tile_hscroll(int delta){
   unsigned interrupt_state = console_lock_acquire();
 
@@ -310,6 +319,7 @@ void console_move_tile_hscroll(int delta){
   console_lock_release(interrupt_state);
 }
 
+// Return the active console's current RGB332 text color.
 int console_get_text_color(void){
   unsigned interrupt_state = console_lock_acquire();
   int color = current_text_color;
@@ -317,6 +327,7 @@ int console_get_text_color(void){
   return color;
 }
 
+// Return whether c is an ASCII decimal digit.
 bool isnum(char c){
   return ('0' <= c && c <= '9');
 }
@@ -332,6 +343,7 @@ static unsigned puts_unlocked(char* str){
   return count;
 }
 
+// Write a null-terminated string while holding the console lock.
 unsigned puts(char* str){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = puts_unlocked(str);
@@ -427,6 +439,7 @@ static unsigned printf_unlocked(char* fmt, void* arr){
   return count;
 }
 
+// Format and write text to the active console.
 unsigned printf(char* fmt, void* arr){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = printf_unlocked(fmt, arr);
@@ -480,6 +493,7 @@ static unsigned printf_uart_unlocked(char* fmt, void* arr){
   return count;
 }
 
+// Format text directly to UART without consulting VGA state.
 unsigned printf_uart(char* fmt, void* arr){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = printf_uart_unlocked(fmt, arr);
@@ -522,6 +536,7 @@ static unsigned print_signed_unlocked(int n){
   return (n < 0) ? (count + 1) : count;
 }
 
+// Format one signed integer to the active console.
 unsigned print_signed(int n){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = print_signed_unlocked(n);
@@ -591,6 +606,7 @@ static unsigned print_unsigned_unlocked(unsigned n){
   return count;
 }
 
+// Format one unsigned integer to the active console.
 unsigned print_unsigned(unsigned n){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = print_unsigned_unlocked(n);
@@ -659,6 +675,7 @@ static unsigned print_hex_unlocked(unsigned n, bool uppercase){
   return count;
 }
 
+// Format one unsigned integer in hexadecimal on the active console.
 unsigned print_hex(unsigned n, bool uppercase){
   unsigned interrupt_state = console_lock_acquire();
   unsigned count = print_hex_unlocked(n, uppercase);
@@ -731,6 +748,7 @@ void clear_screen(void){
   console_lock_release(interrupt_state);
 }
 
+// Configure the active tile set so its transparent color is enabled.
 void console_make_tiles_transparent(void){
   unsigned interrupt_state = console_lock_acquire();
   make_tiles_transparent_unlocked();

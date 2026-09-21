@@ -13,7 +13,7 @@
 #include "../kernel/elf.h"
 #include "../kernel/sys.h"
 
-int kernel_main(void){
+int kernel_main(void){ /* Verify the user sleep wrapper preserves requested delays. */
   say("***Running /sbin/init\n", NULL);
 
   struct Node* init = node_find(&fs.root, "/sbin/init");

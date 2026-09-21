@@ -524,6 +524,7 @@ struct TCB* schedule_next_thread(void){
   return next;
 }
 
+// Update a TCB's priority and move it to the matching ready queue.
 void set_priority(enum ThreadPriority priority){
   int was = interrupts_disable();
   struct TCB* current = get_current_tcb();

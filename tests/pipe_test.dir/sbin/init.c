@@ -32,7 +32,7 @@
 #define CHILD_STATUS_PARTIAL_WRITE_FAILED 64
 #define CHILD_STATUS_CLOSE_WRITE_FAILED 65
 
-static int bytes_equal(char* lhs, char* rhs, unsigned count){
+static int bytes_equal(char* lhs, char* rhs, unsigned count){ /* Compare two byte ranges for exact equality. */
   for (unsigned i = 0; i < count; ++i){
     if (lhs[i] != rhs[i]){
       return 0;
@@ -41,7 +41,7 @@ static int bytes_equal(char* lhs, char* rhs, unsigned count){
   return 1;
 }
 
-static int blocked_writer_child(int read_fd, int write_fd, int ready_sem){
+static int blocked_writer_child(int read_fd, int write_fd, int ready_sem){ /* Run the blocked writer child process. */
   char suffix[BLOCKED_WRITE_BYTES];
   suffix[0] = 'X';
   suffix[1] = 'Y';
@@ -66,7 +66,7 @@ static int blocked_writer_child(int read_fd, int write_fd, int ready_sem){
   return CHILD_STATUS_OK;
 }
 
-int main(void){
+int main(void){ /* Verify pipe reads, writes, closure, and blocking behavior. */
   int fds[2] = {-1, -1};
   char payload[DELIVERY_BYTES];
   char drain[DRAIN_BUFFER_BYTES];

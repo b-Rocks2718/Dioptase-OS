@@ -2,6 +2,7 @@
 
 #include "AST.h"
 
+// Compare two AST types structurally, including nested declarators.
 bool compare_types(struct Type* a, struct Type* b) {
   if (a->type != b->type) {
     return false;

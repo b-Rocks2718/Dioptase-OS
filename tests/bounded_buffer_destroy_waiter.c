@@ -18,13 +18,13 @@
 
 static struct BoundedBuffer buffer;
 
-static void blocked_consumer(void* unused){
+static void blocked_consumer(void* unused){ /* Wait for the buffer operation that should be released by destruction. */
   (void)unused;
   bounded_buffer_remove(&buffer);
   panic("bounded-buffer destroy waiter test: consumer unexpectedly resumed.\n");
 }
 
-void kernel_main(void){
+void kernel_main(void){ /* Verify destroying a bounded buffer with a waiter is rejected. */
   say("***bounded-buffer destroy waiter negative start\n", NULL);
   bounded_buffer_init(&buffer, TEST_BUFFER_CAPACITY);
 

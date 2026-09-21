@@ -30,7 +30,7 @@
 #define IMMEDIATE_RETURN_YIELDS 128
 #define BLOCKED_CHECK_YIELDS 128
 
-struct GateWaitArgs {
+struct GateWaitArgs { /* Publishes one gate waiter's arrival and completion counters. */
   int* ready;
   int* done;
 };
@@ -73,7 +73,7 @@ static void spawn_waiter(int* ready, int* done) {
   thread(fun);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify a gate releases all waiters after opening. */
   say("***gate test start\n", NULL);
 
   gate_init(&gate);

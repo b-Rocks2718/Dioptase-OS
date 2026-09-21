@@ -52,13 +52,13 @@
 #define SLEEP_STAGGER_VARIANTS 2
 #define COUNTER_DIGITS 5
 
-enum WorkloadKind {
+enum WorkloadKind { /* Selects the scheduling behavior exercised by a worker. */
   WORKLOAD_INTERACTIVE = 0,
   WORKLOAD_BURSTY = 1,
   WORKLOAD_CPU_BOUND = 2,
 };
 
-struct TileWorkloadArg {
+struct TileWorkloadArg { /* Configures one displayed worker's scheduler workload and timing. */
   int panel_x;
   int panel_y;
   int worker_index;
@@ -319,7 +319,7 @@ static void spawn_workload_visual_worker(int panel_x, int panel_y,
   thread_(fun, NORMAL_PRIORITY, ANY_CORE);
 }
 
-int kernel_main(void) {
+int kernel_main(void) { /* Verify multilevel-feedback scheduling and priority aging. */
   int row;
   int col;
   int panel_x;

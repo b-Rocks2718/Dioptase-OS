@@ -4,7 +4,7 @@
 #include "../kernel/elf.h"
 #include "../kernel/sys.h"
 
-int kernel_main(void){
+int kernel_main(void){ /* Verify copying a kernel value into user memory. */
   say("***Running /sbin/init\n", NULL);
 
   struct Node* init = node_find(&fs.root, "/sbin/init");

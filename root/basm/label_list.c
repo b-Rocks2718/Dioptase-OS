@@ -3,6 +3,7 @@
 #include "../crt/string.h"
 #include "label_list.h"
 
+// Allocate an empty label list with the requested initial capacity.
 struct LabelList* create_label_list(unsigned capacity){
   struct LabelList* list = malloc(sizeof(struct LabelList));
   if (capacity == 0) capacity = 16;
@@ -12,6 +13,7 @@ struct LabelList* create_label_list(unsigned capacity){
   return list;
 }
 
+// Return whether a stored label has the same name, address, and data flag.
 static bool label_entry_matches(struct LabelEntry* entry, char* name, unsigned len, unsigned addr, bool is_data){
   if (entry->addr != addr) return false;
   if (entry->is_data != is_data) return false;
@@ -19,6 +21,7 @@ static bool label_entry_matches(struct LabelEntry* entry, char* name, unsigned l
   return strncmp(entry->name, name, len) == 0;
 }
 
+// Double the label-entry array while preserving owned name pointers.
 static struct LabelEntry* grow_label_entries(struct LabelEntry* old_entries, unsigned old_capacity){
   unsigned new_capacity = old_capacity * 2;
   struct LabelEntry* new_entries = malloc(sizeof(struct LabelEntry) * new_capacity);
@@ -27,6 +30,7 @@ static struct LabelEntry* grow_label_entries(struct LabelEntry* old_entries, uns
   return new_entries;
 }
 
+// Add a label unless an identical name/address/kind entry is already present.
 void label_list_append(struct LabelList* list, char* name, unsigned len, unsigned addr, bool is_data){
   for (unsigned i = 0; i < list->size; ++i){
     if (label_entry_matches(&list->entries[i], name, len, addr, is_data)) return;
@@ -47,6 +51,7 @@ void label_list_append(struct LabelList* list, char* name, unsigned len, unsigne
   list->size++;
 }
 
+// Free every owned label name and all list storage.
 void destroy_label_list(struct LabelList* list){
   if (list == NULL) return;
   for (unsigned i = 0; i < list->size; ++i){
@@ -56,6 +61,7 @@ void destroy_label_list(struct LabelList* list){
   free(list);
 }
 
+// Write labels in the debugger's tagged text format.
 void fprint_label_list(int file, struct LabelList* list){
   if (list == NULL) return;
   for (unsigned i = 0; i < list->size; ++i){
@@ -67,10 +73,8 @@ void fprint_label_list(int file, struct LabelList* list){
   }
 }
 
-// Purpose: Emit label metadata for kernel outputs (no data/text distinction).
-// Inputs: ptr is the output file; list contains label entries with addresses.
-// Outputs: Writes "#label <name> <addr>" lines, ignoring is_data.
-// Invariants/Assumptions: list entries are unique by name/address.
+// Emit label metadata for kernel outputs (no data/text distinction).
+// Writes "#label <name> <addr>" lines, ignoring is_data.
 void fprint_label_list_kernel(int file, struct LabelList* list){
   if (list == NULL) return;
   for (unsigned i = 0; i < list->size; ++i){

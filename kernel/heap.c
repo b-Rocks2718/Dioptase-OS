@@ -38,6 +38,7 @@ unsigned n_free = 0;
 unsigned n_leak = 0;
 #endif
 
+// Return whether an address is aligned and lies in the physical-frame heap.
 static bool heap_is_frame_aligned_phys_addr(unsigned addr) {
   if (addr < FRAMES_ADDR_START || addr >= FRAMES_ADDR_END) {
     return false;
@@ -45,6 +46,7 @@ static bool heap_is_frame_aligned_phys_addr(unsigned addr) {
   return (addr & (FRAME_SIZE - 1)) == 0;
 }
 
+// Return the buddy order needed to cover a large allocation.
 static int large_allocation_order_for_size(unsigned size) {
   int order = 0;
   unsigned block_size = FRAME_SIZE;
@@ -59,6 +61,7 @@ static int large_allocation_order_for_size(unsigned size) {
   return order;
 }
 
+// Record the buddy order in the header page of a large allocation.
 static void large_allocation_mark(void* page, int order) {
   unsigned frame_index = frame_index_from_address((unsigned)page);
 
@@ -71,6 +74,7 @@ static void large_allocation_mark(void* page, int order) {
   if (heap_sync_initialized) blocking_lock_release(&large_allocation_lock);
 }
 
+// Allocate a physically contiguous large block, optionally leak-tracked.
 static void* large_alloc(unsigned size, bool leaked) {
   int order = large_allocation_order_for_size(size);
   void* page = leaked ? physmem_leak_order(order) : physmem_alloc_order(order);
@@ -82,6 +86,7 @@ static void* large_alloc(unsigned size, bool leaked) {
   return page;
 }
 
+// Free a tracked large allocation and report whether it was recognized.
 static bool large_free_if_tracked(void* obj) {
   unsigned addr = (unsigned)obj;
   if (!heap_is_frame_aligned_phys_addr(addr)) {
@@ -109,6 +114,7 @@ static bool large_free_if_tracked(void* obj) {
   return true;
 }
 
+// Initialize slab caches and the per-core large-allocation metadata.
 void heap_init(){
   heap_large_alloc_init(large_allocation_orders,
     PHYS_FRAME_COUNT, HEAP_LARGE_ALLOC_NONE);
@@ -138,6 +144,7 @@ void heap_init(){
   }
 }
 
+// Initialize heap locks after all per-core heap state exists.
 void heap_sync_init(){
   for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
     blocking_lock_init(&slab_caches[i].lock);
@@ -146,6 +153,7 @@ void heap_sync_init(){
   heap_sync_initialized = true;
 }
 
+// Allocate and initialize one slab for objects of the requested size.
 struct Slab* slab_create(unsigned object_size) {
   struct Slab* slab = (struct Slab*)physmem_alloc();
   if (slab == NULL){
@@ -202,6 +210,7 @@ struct Slab* slab_create(unsigned object_size) {
 }
 
 #ifdef HEAP_DEBUG
+// Mark an object allocated in its slab bitmap.
 void bitmap_alloc(struct Slab* slab, void* obj) {
   // find slab cache for this slab
   struct SlabCache* cache = NULL;
@@ -235,6 +244,7 @@ void bitmap_alloc(struct Slab* slab, void* obj) {
 }
 #endif
 
+// Allocate one object from a suitable slab, creating a slab if needed.
 void* slab_alloc(unsigned size){
   // Find the appropriate slab cache for the requested size
   struct SlabCache* cache = NULL;
@@ -329,6 +339,7 @@ void* slab_alloc(unsigned size){
   }
 }
 
+// Allocate either reclaimable slab memory or a large physical block.
 static void* alloc(unsigned size, bool leaked) {
   assert(size > 0, "tried to alloc 0 bytes?\n");
 
@@ -396,6 +407,7 @@ static void* alloc(unsigned size, bool leaked) {
   return obj;
 }
 
+// Allocate kernel memory that may later be returned with free().
 void* malloc(unsigned size) {
   #ifdef HEAP_DEBUG
   __atomic_fetch_add((int*)&n_malloc, 1);
@@ -403,6 +415,7 @@ void* malloc(unsigned size) {
   return alloc(size, false);
 }
 
+// Allocate kernel memory whose lifetime extends until kernel shutdown.
 void* leak(unsigned size) {
   #ifdef HEAP_DEBUG
   __atomic_fetch_add((int*)&n_leak, 1);
@@ -411,6 +424,7 @@ void* leak(unsigned size) {
 }
 
 #ifdef HEAP_DEBUG
+// Clear an object's allocation bit in its slab bitmap.
 void bitmap_free(struct Slab* slab, void* obj) {
   struct SlabCache* cache = NULL;
   for (int i = 0; i < NUM_OBJECT_SIZES; i++) {
@@ -438,6 +452,7 @@ void bitmap_free(struct Slab* slab, void* obj) {
 }
 #endif
 
+// Return an object to its slab or free its tracked large allocation.
 void slab_free(void* obj) {
   struct Slab* slab = (struct Slab*)((unsigned)obj & ~(FRAME_SIZE - 1)); // Align down to slab boundary
 
@@ -513,6 +528,7 @@ void slab_free(void* obj) {
   if (heap_sync_initialized) blocking_lock_release(&cache->lock);
 }
 
+// Check whether a pointer identifies an allocated slab object.
 bool slab_free_sanity(void* obj){
   // check obj is within slab heap bounds
   if ((unsigned)obj < (unsigned)FRAMES_ADDR_START ||
@@ -528,6 +544,7 @@ bool slab_free_sanity(void* obj){
   return true;
 }
 
+// Free a reclaimable allocation and reject invalid or duplicate frees.
 void free(void* obj){
   #ifdef HEAP_DEBUG
   __atomic_fetch_add((int*)&n_free, 1);
@@ -614,6 +631,7 @@ void free(void* obj){
   }
 }
 
+// Tear down heap synchronization after all reclaimable allocations are gone.
 void heap_destroy() {
   bool locks_initialized = heap_sync_initialized;
 

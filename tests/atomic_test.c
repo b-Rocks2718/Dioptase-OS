@@ -109,7 +109,7 @@ static void spawn_worker(void (*func)(void*)) {
   thread(fun);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify atomic and lock primitives across cores. */
   say("***atomic test start\n", NULL);
 
   // First validate the single-threaded lock state and interrupt masking contract.

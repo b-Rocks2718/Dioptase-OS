@@ -25,14 +25,20 @@ struct SpinLock theLock;
 static void makeTaken(unsigned i, unsigned entries);
 static void makeAvail(unsigned i, unsigned entries);
 
+// Return whether an allocator block is marked as in use.
 static bool isTaken(unsigned i) { return array[i] & 1; }
+// Return whether an allocator block is available for reuse.
 static bool isAvail(unsigned i) { return !(array[i] & 1); }
+// Read the payload size encoded in a block header.
 static unsigned size(unsigned i) { return array[i] & ~(unsigned)(1); }
 
+// Recover the block header address from its footer metadata.
 unsigned headerFromFooter(unsigned i) { return i - size(i) + 1; }
 
+// Locate the footer corresponding to a block header.
 unsigned footerFromHeader(unsigned i) { return i + size(i) - 1; }
 
+// Validate allocator metadata before using a block.
 unsigned sanity(unsigned i) {
   if (safe) {
     if (i == 0)
@@ -61,16 +67,22 @@ unsigned sanity(unsigned i) {
   return i;
 }
 
+// Return the neighboring free block on the left, if present.
 static unsigned left(unsigned i) { return sanity(headerFromFooter(i - 1)); }
 
+// Return the neighboring free block on the right, if present.
 static unsigned right(unsigned i) { return sanity(i + size(i)); }
 
+// Return the next block in the free-list linkage.
 static unsigned next(unsigned i) { return sanity(array[i + 1]); }
 
+// Return the previous block in the free-list linkage.
 static unsigned prev(unsigned i) { return sanity(array[i + 2]); }
 
+// Update a free block's forward link.
 static void setNext(unsigned i, unsigned x) { array[i + 1] = x; }
 
+// Update a free block's backward link.
 static void setPrev(unsigned i, unsigned x) { array[i + 2] = x; }
 
 // detach one free block from the intrusive avail list
@@ -110,6 +122,7 @@ static void makeTaken(unsigned i, unsigned entry_count) {
   array[footerFromHeader(i)] = entry_count + 1;
 }
 
+// Map the process heap and seed its boundary-tag free list with one block.
 void heap_init(unsigned bytes) {
   void* base = mmap(bytes, MAP_ANON, 0, PROT_READ | PROT_WRITE);
 
@@ -143,6 +156,7 @@ void heap_init(unsigned bytes) {
   makeTaken(len - 2, 2);
 }
 
+// Allocate a suitably aligned block from the process heap.
 void *malloc(unsigned bytes) {
   // printf("malloc(%d)\n", &bytes);
   if (bytes == 0)
@@ -231,6 +245,7 @@ void *malloc(unsigned bytes) {
   return res;
 }
 
+// Allocate process memory that is intentionally never reclaimed.
 void* leak(unsigned bytes){
   __atomic_fetch_add((int*)&n_leak, 1);
   return malloc(bytes);
@@ -270,6 +285,7 @@ static unsigned payload_bytes_from_pointer(void* p) {
   return (size((unsigned)idx) - 4u) * HEAP_WORD_BYTES;
 }
 
+// Resize an allocation while preserving its existing contents.
 void* realloc(void* p, unsigned bytes) {
   void* new_ptr;
   unsigned old_bytes;
@@ -298,6 +314,7 @@ void* realloc(void* p, unsigned bytes) {
   return new_ptr;
 }
 
+// Return an allocation to the free list and coalesce adjacent free blocks.
 void free(void *p) {
   if (p == 0)
     return;

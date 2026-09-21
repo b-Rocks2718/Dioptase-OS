@@ -26,7 +26,7 @@
 
 #define NUM_WAITERS 6
 
-struct WaiterArg {
+struct WaiterArg { /* Passes the scoped semaphore to a blocked waiter thread. */
   struct Semaphore* sem;
 };
 
@@ -121,7 +121,7 @@ static void run_quiescent_cleanup_case(void) {
   // Scope exit triggers sem_cleanup -> sem_free only after quiescence.
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify semaphore destruction cleans queued waiters safely. */
   say("***semaphore destroy cleanup test start\n", NULL);
 
   run_quiescent_cleanup_case();

@@ -8,14 +8,9 @@
 #include "source_location.h"
 #include "TAC.h"
 
-// Purpose: Provide human-readable printing of ASM IR for debugging.
-// Inputs/Outputs: Functions emit text to stdout.
-// Invariants/Assumptions: The ASM IR lists are well-formed and acyclic.
+// Provide human-readable printing of ASM IR for debugging.
 
-// Purpose: Emit indentation for ASM output formatting.
-// Inputs: tabs is the indentation level in 4-space units.
-// Outputs: Writes spaces to stdout.
-// Invariants/Assumptions: tabs is small enough to avoid excessive output.
+// Emit indentation for ASM output formatting.
 static void print_tabs(unsigned tabs) {
   static char kIndent[] = "    ";
   for (unsigned i = 0; i < tabs; ++i) {
@@ -23,10 +18,8 @@ static void print_tabs(unsigned tabs) {
   }
 }
 
-// Purpose: Convert a register enum to its canonical name.
-// Inputs: reg is the register identifier to name.
-// Outputs: Returns a string literal describing the register.
-// Invariants/Assumptions: Unknown registers are reported as "R?".
+// Convert a register enum to its canonical name.
+// Returns a string literal describing the register.
 static char* reg_name(enum Reg reg) {
   static char* kRegNames[] = {
       "R0",  "R1",  "R2",  "R3",  "R4",  "R5",  "R6",  "R7",
@@ -41,10 +34,7 @@ static char* reg_name(enum Reg reg) {
   return kRegNames[idx];
 }
 
-// Purpose: Print a register with its architectural alias (if any).
-// Inputs: reg is the register to print.
-// Outputs: Writes a register name to stdout.
-// Invariants/Assumptions: BP/SP/RA match the constants in asm_gen.h.
+// Print a register with its architectural alias (if any).
 static void print_reg(enum Reg reg) {
   printf("%s", reg_name(reg));
   if (reg == BP) {
@@ -56,6 +46,7 @@ static void print_reg(enum Reg reg) {
   }
 }
 
+// Print asm type.
 static void print_asm_type(struct AsmType* type) {
   switch (type->type) {
     case BYTE:
@@ -79,10 +70,8 @@ static void print_asm_type(struct AsmType* type) {
   }
 }
 
-// Purpose: Print an ASM operand in a compact readable form.
-// Inputs: opr is the operand to print (may be NULL).
-// Outputs: Writes the operand representation to stdout.
-// Invariants/Assumptions: Operand fields match the operand type.
+// Print an ASM operand in a compact readable form.
+// Opr is the operand to print (may be NULL).
 static void print_operand(struct Operand* opr) {
   if (opr == NULL) {
     printf("<null>");
@@ -126,10 +115,7 @@ static void print_operand(struct Operand* opr) {
   }
 }
 
-// Purpose: Print a TAC condition mnemonic used by ASM conditional jumps.
-// Inputs: cond is the TAC condition enum to print.
-// Outputs: Writes the mnemonic to stdout.
-// Invariants/Assumptions: cond is a valid TACCondition.
+// Print a TAC condition mnemonic used by ASM conditional jumps.
 static void print_asm_condition(enum TACCondition cond) {
   switch (cond) {
     case CondE:
@@ -168,10 +154,7 @@ static void print_asm_condition(enum TACCondition cond) {
   }
 }
 
-// Purpose: Print a unary operator mnemonic used in ASM IR.
-// Inputs: op is the unary operator enum.
-// Outputs: Writes the operator mnemonic to stdout.
-// Invariants/Assumptions: op is a valid UnOp.
+// Print a unary operator mnemonic used in ASM IR.
 static void print_asm_un_op(enum UnOp op) {
   switch (op) {
     case COMPLEMENT:
@@ -192,10 +175,7 @@ static void print_asm_un_op(enum UnOp op) {
   }
 }
 
-// Purpose: Print a binary ALU operator mnemonic used in ASM IR.
-// Inputs: op is the ALU operator enum.
-// Outputs: Writes the operator mnemonic to stdout.
-// Invariants/Assumptions: op is a valid ALUOp.
+// Print a binary ALU operator mnemonic used in ASM IR.
 static void print_asm_alu_op(enum ALUOp op) {
   switch (op) {
     case ALU_ADD:
@@ -249,10 +229,9 @@ static void print_asm_alu_op(enum ALUOp op) {
   }
 }
 
-// Purpose: Print a single ASM instruction at a given indentation level.
-// Inputs: instr points to the instruction; tabs is the indentation level.
-// Outputs: Writes one formatted instruction line to stdout.
-// Invariants/Assumptions: instr is non-NULL and variants are populated.
+// Print a single ASM instruction at a given indentation level.
+// Instr points to the instruction; tabs is the indentation level.
+// Instr is non-NULL and variants are populated.
 static void print_asm_instr(struct AsmInstr* instr, unsigned tabs) {
   if (instr == NULL) {
     return;
@@ -394,20 +373,16 @@ static void print_asm_instr(struct AsmInstr* instr, unsigned tabs) {
   }
 }
 
-// Purpose: Print a linked list of ASM instructions.
-// Inputs: instrs is the head of the ASM list; tabs is the indentation level.
-// Outputs: Writes all instructions to stdout in order.
-// Invariants/Assumptions: List links are well-formed (acyclic).
+// Print a linked list of ASM instructions.
 static void print_asm_instrs(struct AsmInstr* instrs, unsigned tabs) {
   for (struct AsmInstr* cur = instrs; cur != NULL; cur = cur->next) {
     print_asm_instr(cur, tabs);
   }
 }
 
-// Purpose: Print a top-level ASM node (function or static variable).
-// Inputs: top points to the AsmTopLevel node; tabs is the indentation level.
-// Outputs: Writes the top-level representation to stdout.
-// Invariants/Assumptions: top points to a valid AsmTopLevel node.
+// Print a top-level ASM node (function or static variable).
+// Top points to the AsmTopLevel node; tabs is the indentation level.
+// Top points to a valid AsmTopLevel node.
 static void print_asm_top_level(struct AsmTopLevel* top, unsigned tabs) {
   if (top == NULL) {
     return;
@@ -470,10 +445,8 @@ static void print_asm_top_level(struct AsmTopLevel* top, unsigned tabs) {
   }
 }
 
-// Purpose: Print an entire ASM program for debugging.
-// Inputs: prog points to the ASM program to print.
-// Outputs: Writes the ASM program to stdout.
-// Invariants/Assumptions: Program top-level list is well-formed.
+// Print an entire ASM program for debugging.
+// Prog points to the ASM program to print.
 void print_asm_prog(struct AsmProg* prog) {
   if (prog == NULL) {
     printf("AsmProg <null>\n");

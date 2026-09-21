@@ -45,15 +45,15 @@
 static struct Barrier phase_barrier;
 static int finished = 0;
 
-struct WorkerArg {
+struct WorkerArg { /* Identifies one writer to a private file-backed mapping. */
   int id;
 };
 
-static char private_worker_byte(int id, int round) {
+static char private_worker_byte(int id, int round) { /* Produce the byte each private-mapping worker expects for this round. */
   return 'a' + ((round * WORKER_COUNT + id) % 26);
 }
 
-static void read_file_bytes(char* dest) {
+static void read_file_bytes(char* dest) { /* Read file bytes. */
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL,
     "vmem private file thread: failed to reopen fixture file.\n");
@@ -75,7 +75,7 @@ static void read_file_bytes(char* dest) {
   node_free(file);
 }
 
-static void expect_bytes(char* got, char* expected, int worker_id,
+static void expect_bytes(char* got, char* expected, int worker_id, /* Check bytes. */
   int round, int phase) {
   for (unsigned i = 0; i < PRIVATE_FILE_BYTES; ++i) {
     if (got[i] != expected[i]) {
@@ -92,12 +92,12 @@ static void expect_bytes(char* got, char* expected, int worker_id,
   }
 }
 
-static void build_private_expected(char* dest, int worker_id, int round) {
+static void build_private_expected(char* dest, int worker_id, int round) { /* Build private expected. */
   memcpy(dest, (void*)PRIVATE_BASE_TEXT, PRIVATE_FILE_BYTES);
   dest[worker_id] = private_worker_byte(worker_id, round);
 }
 
-static void private_file_worker(void* arg) {
+static void private_file_worker(void* arg) { /* Run the private file worker. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   int id = worker->id;
   char expected[PRIVATE_FILE_BYTES];
@@ -138,7 +138,7 @@ static void private_file_worker(void* arg) {
   __atomic_fetch_add(&finished, 1);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify private file mappings copy-on-write correctly. */
   say("***vmem private file thread test start\n", NULL);
 
   barrier_init(&phase_barrier, WORKER_COUNT + 1);

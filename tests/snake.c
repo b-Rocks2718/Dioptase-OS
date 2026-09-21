@@ -113,14 +113,14 @@
 #define KEY_QUIT 'q'
 #define KEY_QUIT_ALT 'Q'
 
-enum Direction {
+enum Direction { /* Selects the snake's movement for the next game tick. */
   DIR_UP = 0,
   DIR_RIGHT = 1,
   DIR_DOWN = 2,
   DIR_LEFT = 3,
 };
 
-struct SnakeGame {
+struct SnakeGame { /* Hold the snake board, body, score, and rendered HUD state. */
   int snake_x[BOARD_CELLS];
   int snake_y[BOARD_CELLS];
   char occupied[BOARD_CELLS];
@@ -1151,7 +1151,7 @@ static void run_interactive_game(void) {
   }
 }
 
-int kernel_main(void) {
+int kernel_main(void) { /* Run deterministic snake checks and the interactive VGA game. */
   if (CONFIG.use_vga) {
     run_interactive_game();
   } else {

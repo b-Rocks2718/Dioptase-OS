@@ -19,7 +19,7 @@ char* combine_path(char* base_path, char* rest, unsigned base_length, unsigned r
     return full_path;
 }
 
-struct LinkedDirent *create_linked_dirent(struct linux_dirent *dirent) {
+struct LinkedDirent *create_linked_dirent(struct linux_dirent *dirent) { /* Create linked dirent. */
     struct LinkedDirent *entry = (struct LinkedDirent*) malloc(sizeof(struct LinkedDirent) + dirent->d_reclen - sizeof(struct linux_dirent));
     memcpy(&entry->dirent, dirent, dirent->d_reclen);
     entry->d_type = *((char*)dirent + dirent->d_reclen - 1);
@@ -27,7 +27,7 @@ struct LinkedDirent *create_linked_dirent(struct linux_dirent *dirent) {
     return entry;
 }
 
-void destroy_linked_dirents(struct LinkedDirent *head) {
+void destroy_linked_dirents(struct LinkedDirent *head) { /* Free every copied entry in the result list. */
     struct LinkedDirent *current = head;
     while (current != 0) {
         struct LinkedDirent *next = current->next;
@@ -36,7 +36,7 @@ void destroy_linked_dirents(struct LinkedDirent *head) {
     }
 }
 
-struct LinkedDirent *read_directory(char* path) {
+struct LinkedDirent *read_directory(char* path) { /* Read directory. */
     int fd = open(path);
     if (fd < 0) {
         return 0;

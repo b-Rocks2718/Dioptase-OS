@@ -5,6 +5,7 @@
 
 #include "slice.h"
 
+// Store one symbol key, value, definition state, and section metadata.
 struct HashEntry{
   struct Slice* key;
   int value;
@@ -17,6 +18,7 @@ struct HashEntry{
   struct HashEntry* next;
 };
 
+// Own the bucket array used for assembler symbol lookup.
 struct HashMap{
 	unsigned size;
   struct HashEntry** arr;
@@ -26,11 +28,11 @@ struct HashMap* create_hash_map(unsigned numBuckets);
 
 void hash_map_insert(struct HashMap* hmap, struct Slice* key, int value, bool is_def, bool is_data);
 
-// Purpose: Insert a symbol whose value is section-relative during pass 1.
-// Inputs: section_index identifies the section owning value; is_section_relative
+// Insert a symbol whose value is section-relative during pass 1.
+// Section_index identifies the section owning value; is_section_relative
 //         distinguishes raw section offsets from already absolute values.
-// Outputs: Adds or updates the hashmap entry.
-// Invariants/Assumptions: section_index is only meaningful when
+// Insert or replace a symbol while preserving its definition metadata.
+// Section_index is only meaningful when
 // is_section_relative is true.
 void hash_map_insert_with_section(
   struct HashMap* hmap,

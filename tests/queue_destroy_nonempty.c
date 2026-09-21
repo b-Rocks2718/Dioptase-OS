@@ -13,7 +13,7 @@
 static struct BlockingQueue queue;
 static struct GenericQueueElement element;
 
-void kernel_main(void){
+void kernel_main(void){ /* Verify queue destruction rejects retained payloads. */
   say("***queue nonempty destroy negative start\n", NULL);
   blocking_queue_init(&queue);
   element.next = NULL;

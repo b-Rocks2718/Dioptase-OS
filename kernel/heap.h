@@ -5,6 +5,7 @@
 
 #define HEAP_POISON 0xABCDEFAA
 
+// Track one fixed-size object slab and its allocation bitmap.
 struct Slab {
   void* free_list; // Pointer to the first free object in the slab
   unsigned object_size;
@@ -18,6 +19,7 @@ struct Slab {
   #endif
 };
 
+// Track all slabs serving one object size on one core.
 struct SlabCache {
   struct BlockingLock lock;
   unsigned objects_per_slab;
@@ -27,6 +29,7 @@ struct SlabCache {
   unsigned num_empty_slabs;
 };
 
+// Link an unused slab object into its cache free list.
 struct FreeObject {
   struct FreeObject* next;
 };

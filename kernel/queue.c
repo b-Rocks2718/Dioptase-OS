@@ -22,6 +22,7 @@ static bool jiffies_before(unsigned a, unsigned b){
   return a != b && ((a - b) & (INT_MAX + 1U)) != 0;
 }
 
+// Initialize an interrupt-safe FIFO of TCB nodes and its CLH lock.
 void spin_queue_init(struct SpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
@@ -51,6 +52,7 @@ void spin_queue_destroy(struct SpinQueue* queue){
   __atomic_store_n(&queue->size, 0);
 }
 
+// Append one detached TCB to the FIFO while holding the CLH lock.
 void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
   assert(data != NULL, "spin_queue_add: data is NULL.\n");
   clh_lock_acquire(&queue->spinlock);
@@ -72,6 +74,7 @@ void spin_queue_add(struct SpinQueue* queue, struct TCB* data){
   clh_lock_release(&queue->spinlock);
 }
 
+// Remove and detach the oldest TCB, or return NULL when the queue is empty.
 struct TCB* spin_queue_remove(struct SpinQueue* queue){
   clh_lock_acquire(&queue->spinlock);
 
@@ -95,6 +98,7 @@ struct TCB* spin_queue_remove(struct SpinQueue* queue){
   return node;
 }
 
+// Detach the entire TCB FIFO and return its former head.
 struct TCB* spin_queue_remove_all(struct SpinQueue* queue){
   clh_lock_acquire(&queue->spinlock);
 
@@ -108,10 +112,12 @@ struct TCB* spin_queue_remove_all(struct SpinQueue* queue){
   return head;
 }
 
+// Return the atomically maintained number of TCBs in the FIFO.
 unsigned spin_queue_size(struct SpinQueue* queue){
   return __atomic_load_n(&queue->size);
 }
 
+// Return the current head without removing it.
 struct TCB* spin_queue_peek(struct SpinQueue* queue){
   clh_lock_acquire(&queue->spinlock);
 
@@ -123,12 +129,14 @@ struct TCB* spin_queue_peek(struct SpinQueue* queue){
 }
 
 
+// Initialize an unlocked FIFO of TCB nodes.
 void queue_init(struct Queue* queue){
   queue->head = NULL;
   queue->tail = NULL;
   queue->size = 0;
 }
 
+// Append one detached TCB to the FIFO; the caller supplies synchronization.
 void queue_add(struct Queue* queue, struct TCB* data){
   // Queue insertion always consumes a single detached node. Semaphore waiters
   // may have stale linkage from an earlier queue, so clear it before linking.
@@ -145,6 +153,7 @@ void queue_add(struct Queue* queue, struct TCB* data){
   __atomic_fetch_add(&queue->size, 1);
 }
 
+// Remove and detach the oldest TCB, or return NULL when empty.
 struct TCB* queue_remove(struct Queue* queue){
   if (queue->head == NULL){
     return NULL;
@@ -163,6 +172,7 @@ struct TCB* queue_remove(struct Queue* queue){
   return node;
 }
 
+// Detach every TCB in the FIFO and return the former head.
 struct TCB* queue_remove_all(struct Queue* queue){
   struct TCB* head = queue->head;
   queue->head = NULL;
@@ -172,15 +182,18 @@ struct TCB* queue_remove_all(struct Queue* queue){
   return head;
 }
 
+// Return the atomically maintained number of queued TCBs.
 unsigned queue_size(struct Queue* queue){
   return __atomic_load_n(&queue->size);
 }
 
+// Return the FIFO head without removing it.
 struct TCB* queue_peek(struct Queue* queue){
   return queue->head;
 }
 
 
+// Initialize the per-owner FIFO ordered by TCB wakeup deadline.
 void sleep_queue_init(struct SleepQueue* queue){
   queue->head = NULL;
   queue->size = 0;
@@ -256,10 +269,12 @@ struct TCB* sleep_queue_remove_at(struct SleepQueue* queue, unsigned now_jiffies
   }
 }
 
+// Remove the first TCB whose deadline has passed at current_jiffies.
 struct TCB* sleep_queue_remove(struct SleepQueue* queue){
   return sleep_queue_remove_at(queue, current_jiffies);
 }
 
+// Detach every sleeping TCB; the per-core owner must wake or reap them.
 struct TCB* sleep_queue_remove_all(struct SleepQueue* queue){
   assert(queue != NULL, "sleep_queue_remove_all: queue is NULL.\n");
 
@@ -272,17 +287,20 @@ struct TCB* sleep_queue_remove_all(struct SleepQueue* queue){
   return head;
 }
 
+// Return the atomically maintained number of sleeping TCBs.
 unsigned sleep_queue_size(struct SleepQueue* queue){
   return __atomic_load_n(&queue->size);
 }
 
 
+// Initialize an unlocked FIFO of caller-owned generic elements.
 void generic_queue_init(struct GenericQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
   queue->size = 0;
 }
 
+// Append one detached generic element; the caller supplies synchronization.
 void generic_queue_add(struct GenericQueue* queue, struct GenericQueueElement* data){
   assert(data != NULL, "generic_queue_add: data is NULL.\n");
 
@@ -301,6 +319,7 @@ void generic_queue_add(struct GenericQueue* queue, struct GenericQueueElement* d
   __atomic_fetch_add(&queue->size, 1);
 }
 
+// Remove and detach the oldest generic element, or return NULL when empty.
 struct GenericQueueElement* generic_queue_remove(struct GenericQueue* queue){
   if (queue->head == NULL){
     return NULL;
@@ -319,6 +338,7 @@ struct GenericQueueElement* generic_queue_remove(struct GenericQueue* queue){
   return node;
 }
 
+// Detach every generic element and return the former head.
 struct GenericQueueElement* generic_queue_remove_all(struct GenericQueue* queue){
   struct GenericQueueElement* head = queue->head;
   queue->head = NULL;
@@ -328,11 +348,13 @@ struct GenericQueueElement* generic_queue_remove_all(struct GenericQueue* queue)
   return head;
 }
 
+// Return the atomically maintained number of generic elements.
 unsigned generic_queue_size(struct GenericQueue* queue){
   return __atomic_load_n(&queue->size);
 }
 
 
+// Initialize a CLH-protected FIFO of generic elements.
 void generic_spin_queue_init(struct GenericSpinQueue* queue){
   queue->head = NULL;
   queue->tail = NULL;
@@ -341,6 +363,7 @@ void generic_spin_queue_init(struct GenericSpinQueue* queue){
   __atomic_store_n(&queue->active_operations, 0);
 }
 
+// Require that no operation or CLH waiter remains before lock destruction.
 void generic_spin_queue_assert_quiescent(struct GenericSpinQueue* queue){
   assert(queue != NULL,
     "generic_spin_queue_assert_quiescent: queue is NULL.\n");
@@ -362,6 +385,7 @@ void generic_spin_queue_assert_quiescent(struct GenericSpinQueue* queue){
   }
 }
 
+// Require that no payload remains before destroying the queue lock.
 void generic_spin_queue_assert_empty(struct GenericSpinQueue* queue){
   assert(queue != NULL, "generic_spin_queue_assert_empty: queue is NULL.\n");
 
@@ -389,6 +413,7 @@ void generic_spin_queue_destroy(struct GenericSpinQueue* queue){
   __atomic_store_n(&queue->size, 0);
 }
 
+// Append one detached generic element under the CLH lock.
 void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueElement* data){
   assert(data != NULL, "generic_spin_queue_add: data is NULL.\n");
   __atomic_fetch_add(&queue->active_operations, 1);
@@ -412,6 +437,7 @@ void generic_spin_queue_add(struct GenericSpinQueue* queue, struct GenericQueueE
   __atomic_fetch_add(&queue->active_operations, -1);
 }
 
+// Remove and detach the oldest generic element under the CLH lock.
 struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* queue){
   assert(queue != NULL, "generic_spin_queue_remove: queue is NULL.\n");
   __atomic_fetch_add(&queue->active_operations, 1);
@@ -439,6 +465,7 @@ struct GenericQueueElement* generic_spin_queue_remove(struct GenericSpinQueue* q
   return node;
 }
 
+// Detach the complete generic FIFO under the CLH lock.
 struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueue* queue){
   assert(queue != NULL, "generic_spin_queue_remove_all: queue is NULL.\n");
   __atomic_fetch_add(&queue->active_operations, 1);
@@ -455,6 +482,7 @@ struct GenericQueueElement* generic_spin_queue_remove_all(struct GenericSpinQueu
   return head;
 }
 
+// Read the number of generic elements while participating in teardown tracking.
 unsigned generic_spin_queue_size(struct GenericSpinQueue* queue){
   assert(queue != NULL, "generic_spin_queue_size: queue is NULL.\n");
   __atomic_fetch_add(&queue->active_operations, 1);
@@ -519,6 +547,7 @@ void* ringbuf_remove_back(struct RingBuf* rb){
   return c;
 }
 
+// Return the number of occupied slots in the circular buffer.
 unsigned ringbuf_size(struct RingBuf* rb){
   if (rb->head >= rb->tail){
     return rb->head - rb->tail;
@@ -527,6 +556,7 @@ unsigned ringbuf_size(struct RingBuf* rb){
   }
 }
 
+// Free a ring buffer's storage and reset its indices.
 void ringbuf_destroy(struct RingBuf* rb){
   // free dynamically allocated buffer
   free(rb->buf);
@@ -536,6 +566,7 @@ void ringbuf_destroy(struct RingBuf* rb){
   rb->tail = 0;
 }
 
+// Destroy and free a heap-allocated ring buffer.
 void ringbuf_free(struct RingBuf* rb){
   ringbuf_destroy(rb);
   free(rb);

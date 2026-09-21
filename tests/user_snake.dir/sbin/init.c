@@ -86,14 +86,14 @@
 #define KEY_QUIT 'q'
 #define KEY_QUIT_ALT 'Q'
 
-enum Direction {
+enum Direction { /* Selects the snake's movement for the next game tick. */
   DIR_UP = 0,
   DIR_RIGHT = 1,
   DIR_DOWN = 2,
   DIR_LEFT = 3,
 };
 
-struct SnakeGame {
+struct SnakeGame { /* Hold the userland snake board, body, score, and HUD state. */
   int snake_x[BOARD_CELLS];
   int snake_y[BOARD_CELLS];
   char occupied[BOARD_CELLS];
@@ -875,7 +875,7 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
   return changed;
 }
 
-void load_high_score(void) {
+void load_high_score(void) { /* Load high score. */
   int fd = open("high_score.txt");
   snake_high_score = 0;
   if (fd >= 0) {
@@ -891,7 +891,7 @@ void load_high_score(void) {
   }
 }
 
-void save_high_score(void) {
+void save_high_score(void) { /* Save high score. */
   int fd = open("high_score.txt");
   if (fd >= 0) {
     char buf[15];
@@ -911,7 +911,7 @@ void save_high_score(void) {
   }
 }
 
-int main(void) {
+int main(void) { /* Run the userland snake game and deterministic checks. */
   unsigned seed = INITIAL_RNG_STATE ^ get_current_jiffies();
   bool keep_running = true;
 

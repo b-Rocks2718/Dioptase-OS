@@ -58,6 +58,7 @@ static bool ext2_path_component_lengths_valid(char* path){
   return true;
 }
 
+// Implement the diagnostic trap syscall used to verify user/kernel entry.
 static unsigned trap_test_syscall_handler(int arg){
   say("***test_syscall arg = %d\n", &arg);
   return arg + 7;
@@ -152,6 +153,7 @@ static int copy_to_user(void* dest, void* src, unsigned n, struct TCB* tcb){
   return copy_user(dest, src, n, tcb);
 }
 
+// Copy a NUL-terminated user string, rejecting faults and overlong input.
 static int copy_cstr_from_user(char* dest, char* src, unsigned max,
     struct TCB* tcb){
   if (max == 0){
@@ -368,6 +370,7 @@ static int build_exec_argv_on_stack(unsigned stack_bottom, unsigned stack_top,
   return 0;
 }
 
+// Create a pipe and return its read and write descriptor numbers to userland.
 int handle_pipe(int* fds){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -423,6 +426,7 @@ int handle_pipe(int* fds){
   return 0;
 }
 
+// Resolve a path and open or create its file descriptor according to flags.
 int handle_open(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -640,6 +644,7 @@ static int handle_open_existing(char* path){
   return fd;
 }
 
+// Read bytes from a descriptor, copying results to the user buffer.
 int handle_read(int fd, char* buf, unsigned count){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -769,6 +774,7 @@ int handle_read(int fd, char* buf, unsigned count){
   return bytes_to_read;
 }
 
+// Write bytes from a user buffer to a descriptor.
 int handle_write(int fd, char* buf, unsigned count){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -875,6 +881,7 @@ int handle_write(int fd, char* buf, unsigned count){
   return count;
 }
 
+// Drop one descriptor-table reference and close its object at the final owner.
 int handle_close(int fd){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -887,6 +894,7 @@ int handle_close(int fd){
   return 0;
 }
 
+// Create a semaphore descriptor initialized with the requested count.
 int handle_sem_open(int sem_count){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -906,6 +914,7 @@ int handle_sem_open(int sem_count){
   return sem_d + SEM_DESCRIPTORS_START;
 }
 
+// Publish a permit to the semaphore named by a process descriptor.
 int handle_sem_up(int sem_d){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -922,6 +931,7 @@ int handle_sem_up(int sem_d){
   return sem_try_up(tcb->sem_descriptors[sem_d]->sem) ? 0 : -1;
 }
 
+// Consume a semaphore permit, blocking the calling thread when necessary.
 int handle_sem_down(int sem_d){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -936,6 +946,7 @@ int handle_sem_down(int sem_d){
   return 0;
 }
 
+// Close one process-visible semaphore descriptor.
 int handle_sem_close(int sem_d){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -972,6 +983,7 @@ static bool seek_target_ok(int base, int delta, int* out){
   return true;
 }
 
+// Adjust a file descriptor's offset relative to its selected origin.
 int handle_seek(int fd, int offset, int whence){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1036,6 +1048,7 @@ int handle_seek(int fd, int offset, int whence){
   return new_offset;
 }
 
+// Truncate a regular file and release blocks beyond the requested size.
 int handle_truncate(int fd, unsigned size){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1061,6 +1074,7 @@ int handle_truncate(int fd, unsigned size){
   return 0;
 }
 
+// Duplicate a file descriptor while retaining the underlying open-file object.
 int handle_dup(int fd){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1081,6 +1095,7 @@ int handle_dup(int fd){
   return new_fd;
 }
 
+// Submit a WAV file descriptor to the asynchronous audio daemon.
 int handle_play_audio(int fd){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1124,6 +1139,7 @@ int handle_play_audio(int fd){
   return audio_request_wait_until_ready(audio_request) ? 0 : -1;
 }
 
+// Hold one normalized path component while cleaning user input.
 struct CleanPathPart {
   char* start;
   unsigned length;
@@ -1217,6 +1233,7 @@ static char* clean_path(char* path){
   return cleaned;
 }
 
+// Resolve a directory path and install it as the current working directory.
 int handle_chdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1306,6 +1323,7 @@ int handle_chdir(char* path){
   return 0;
 }
 
+// Map file-backed or anonymous pages into the current address space.
 int handle_mmap(int size, int fd, int offset, int flags){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1358,6 +1376,7 @@ int handle_mmap(int size, int fd, int offset, int flags){
   return mmapped_file == NULL ? -1 : (int)mmapped_file;
 }
 
+// Enter the fork child with its copied user register state.
 int child_thread(unsigned* arg){
   unsigned pc = arg[0];
   unsigned sp = arg[1];
@@ -1369,6 +1388,7 @@ int child_thread(unsigned* arg){
   return jump_to_user(pc, sp, 0, 0);
 }
 
+// Construct the child TCB, address-space state, and descriptor references.
 struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned sp){
   struct TCB* child = malloc(sizeof(struct TCB));
   memset(child, 0, sizeof(struct TCB));
@@ -1472,6 +1492,7 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   return child;
 }
 
+// Duplicate the current process and return distinct parent and child results.
 int handle_fork(unsigned pc, unsigned sp){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1498,6 +1519,7 @@ int handle_fork(unsigned pc, unsigned sp){
   return child_desc + CHILD_DESCRIPTORS_START;
 }
 
+// Wait for a child descriptor to publish exit and return its status.
 int handle_wait_child(int child_desc){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1522,6 +1544,7 @@ int handle_wait_child(int child_desc){
   return rc;
 }
 
+// Replace the current user address space with a validated executable image.
 int handle_exec(char* path, int argc, char** argv){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1651,6 +1674,7 @@ int handle_exec(char* path, int argc, char** argv){
   return -1;
 }
 
+// Copy directory entries from an open directory descriptor to userland.
 int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1712,6 +1736,7 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
   return bytes_read;
 }
 
+// Copy the current working directory path to userland.
 int handle_getcwd(char* buffer, unsigned buffer_size) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1734,6 +1759,7 @@ int handle_getcwd(char* buffer, unsigned buffer_size) {
   return (unsigned) buffer;
 }
 
+// Read a symbolic-link target without following the final link.
 int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1791,6 +1817,7 @@ int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
   return read_bytes;
 }
 
+// Return the number of bytes immediately readable from a descriptor.
 int handle_fd_bytes_available(int fd){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1810,6 +1837,7 @@ int handle_fd_bytes_available(int fd){
   return blocking_ringbuf_size(&pipe->buf);
 }
 
+// Create a directory at the supplied path.
 int handle_mkdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1861,6 +1889,7 @@ int handle_mkdir(char* path){
   return rc;
 }
 
+// Remove an empty directory at the supplied path.
 int handle_rmdir(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -1908,6 +1937,7 @@ int handle_rmdir(char* path){
   return rc;
 }
 
+// Remove a non-directory path and update its inode link lifetime.
 int handle_unlink(char* path){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -2084,6 +2114,7 @@ int handle_set_foreground_child(int child_desc){
   return old_display_claimed;
 }
 
+// Queue a signal for a specific child after validating the descriptor.
 int handle_signal_child(int child_desc, int signal){
   int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
@@ -2098,6 +2129,7 @@ int handle_signal_child(int child_desc, int signal){
   return send_signal_to_child(child, signal);
 }
 
+// Queue a signal for the process currently owning the foreground display.
 int handle_signal_foreground(int signal){
   blocking_lock_acquire(&foreground_child_lock);
 
@@ -2107,10 +2139,12 @@ int handle_signal_foreground(int signal){
   return rc;
 }
 
+// Return whether a requested priority is in the scheduler's valid range.
 static bool is_valid_thread_priority(int priority){
   return priority >= LOW_PRIORITY && priority <= HIGH_PRIORITY;
 }
 
+// Change the current thread's priority after validating the request.
 int handle_request_priority(int priority){
   if (!is_valid_thread_priority(priority)){
     return -1;
@@ -2132,6 +2166,7 @@ int handle_request_priority(int priority){
   return 0;
 }
 
+// Install or clear one user signal handler in the current process.
 int handle_register_handler(int signal, void* handler){ 
   struct TCB* me = get_current_tcb();
 
@@ -2151,6 +2186,7 @@ int handle_register_handler(int signal, void* handler){
   return 0;
 }
 
+// Add one maskable signal to the current process's signal mask.
 int handle_mask_signal(int signal){
   if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
     return -1;
@@ -2167,6 +2203,7 @@ int handle_mask_signal(int signal){
   return 0;
 }
 
+// Remove one signal from the current process's signal mask.
 int handle_unmask_signal(int signal){
   if (signal < 0 || signal >= MAX_MASKABLE_SIGNAL){
     return -1;
@@ -2427,12 +2464,14 @@ int trap_handler(unsigned code,
   }
 }
 
+// Register syscall and exception entry points with the trap vector.
 void trap_init(void) {
   blocking_lock_init(&foreground_child_lock);
   foreground_child = NULL;
   register_handler((void*)trap_handler_, (void*)TRAP_IVT_ENTRY);
 }
 
+// Disable trap dispatch and release its handler state during shutdown.
 void trap_destroy(void) {
   // kernel_shutdown() calls this after every core has entered the shutdown
   // barrier with interrupts disabled, so no trap can concurrently access the
@@ -2562,6 +2601,7 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
   return jump_to_user(entry, initial_sp, argc, user_argv);
 }
 
+// Initialize a TCB's descriptor tables, optionally installing stdio entries.
 void init_descriptors(struct TCB* tcb, bool init_stdio){
   if (init_stdio){
     // User-entering threads need the conventional stdio descriptors from boot.
@@ -2602,6 +2642,7 @@ void init_descriptors(struct TCB* tcb, bool init_stdio){
   }
 }
 
+// Reserve a free descriptor-table slot and optionally initialize its object.
 int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
   switch (type){
     case DESCRIPTOR_FILE: {
@@ -2655,6 +2696,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
   return -1;
 }
 
+// Copy descriptor references from a parent TCB into a forked child.
 void copy_descriptors(struct TCB* src, struct TCB* dst,
     int parent_only_child_desc){
   for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
@@ -2753,6 +2795,7 @@ static void pipe_endpoint_release(struct FileDescriptor* descriptor){
   }
 }
 
+// Release one descriptor slot and its referenced kernel object.
 void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index){
   switch (type){
     case DESCRIPTOR_FILE: {

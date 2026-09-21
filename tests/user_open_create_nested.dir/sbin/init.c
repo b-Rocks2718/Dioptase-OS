@@ -48,7 +48,7 @@ static void make_overlong_nested_path(char* dest, char* name){
     EXT2_OVERLONG_BASENAME_BYTES + 1);
 }
 
-int main(void){
+int main(void){ /* Verify nested directory creation and open semantics. */
   char buf[1];
   char out = CREATED_FILE_BYTE;
   char exact_name[EXT2_BASENAME_BUFFER_BYTES];

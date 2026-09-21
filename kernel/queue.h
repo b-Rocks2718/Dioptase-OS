@@ -39,6 +39,7 @@ struct GenericQueueElement {
   struct GenericQueueElement* next;
 };
 
+// Store caller-owned elements in an unlocked FIFO list.
 struct GenericQueue {
   struct GenericQueueElement* head;
   struct GenericQueueElement* tail;

@@ -2,6 +2,7 @@
 
 #include "debug.h"
 
+// Initialize a waiter with no published thread or pending interrupt.
 void interrupt_waiter_init(struct InterruptWaiter* waiter){
   assert(waiter != NULL,
     "interrupt waiter init: waiter pointer is NULL.\n");
@@ -10,6 +11,7 @@ void interrupt_waiter_init(struct InterruptWaiter* waiter){
   __atomic_store_n(&waiter->event_pending, false);
 }
 
+// Clear stale interrupt state before a thread begins a new wait.
 void interrupt_waiter_prepare(struct InterruptWaiter* waiter){
   assert(waiter != NULL,
     "interrupt waiter prepare: waiter pointer is NULL.\n");
@@ -17,6 +19,7 @@ void interrupt_waiter_prepare(struct InterruptWaiter* waiter){
   __atomic_store_n(&waiter->event_pending, false);
 }
 
+// Publish the waiting thread, returning it when an interrupt won the race.
 struct TCB* interrupt_waiter_publish(struct InterruptWaiter* waiter,
     struct TCB* thread){
   assert(waiter != NULL,
@@ -40,6 +43,7 @@ struct TCB* interrupt_waiter_publish(struct InterruptWaiter* waiter,
   return (struct TCB*)__atomic_exchange_n((int*)&waiter->thread, (int)NULL);
 }
 
+// Record an interrupt and detach any thread that is already waiting.
 struct TCB* interrupt_waiter_signal(struct InterruptWaiter* waiter){
   /*
    * Publish the event first. If no thread is visible yet, the later publish

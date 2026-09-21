@@ -16,7 +16,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify a freed heap object cannot remain live. */
   say("***slab heap use after free negative start\n", NULL);
 
   heap_init();

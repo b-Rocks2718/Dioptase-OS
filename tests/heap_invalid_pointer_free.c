@@ -14,7 +14,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify freeing a non-heap pointer is rejected. */
   say("***slab heap invalid pointer negative start\n", NULL);
 
   heap_init();

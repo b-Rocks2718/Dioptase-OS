@@ -13,6 +13,7 @@ void bounded_buffer_init(struct BoundedBuffer* b, unsigned capacity) {
   b->capacity = capacity;
 }
 
+// Destroy the buffer's queue and semaphores after its users have stopped.
 void bounded_buffer_destroy(struct BoundedBuffer* b) {
   assert(b != NULL, "bounded_buffer_destroy: buffer is NULL.\n");
 
@@ -40,6 +41,7 @@ void bounded_buffer_destroy(struct BoundedBuffer* b) {
   b->capacity = 0;
 }
 
+// Destroy and free a heap-allocated bounded buffer.
 void bounded_buffer_free(struct BoundedBuffer* b) {
   bounded_buffer_destroy(b);
   free(b);
@@ -88,6 +90,7 @@ struct GenericQueueElement* bounded_buffer_remove(struct BoundedBuffer* b) {
   return element;
 }
 
+// Detach all currently queued elements and restore available capacity.
 struct GenericQueueElement* bounded_buffer_remove_all(struct BoundedBuffer* b){
   struct GenericQueueElement* head = NULL;
   struct GenericQueueElement* tail = NULL;
@@ -114,6 +117,7 @@ struct GenericQueueElement* bounded_buffer_remove_all(struct BoundedBuffer* b){
   return head;
 }
 
+// Return the number of elements currently buffered.
 unsigned bounded_buffer_size(struct BoundedBuffer* b) {
   return generic_spin_queue_size(&b->queue);
 }

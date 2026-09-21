@@ -16,7 +16,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify freeing one heap object twice is rejected. */
   say("***slab heap double free negative start\n", NULL);
 
   heap_init();

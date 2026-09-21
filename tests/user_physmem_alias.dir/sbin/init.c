@@ -37,7 +37,7 @@
 #define CHILD_STATUS_GETTER_CHANGED 51
 #define CHILD_STATUS_PARENT_VALUES_MISSING 52
 
-static int mapping_ok(short* mapping){
+static int mapping_ok(short* mapping){ /* Verify that the aliased mapping contains the expected test values. */
   return mapping != NULL && (int)mapping != -1;
 }
 
@@ -63,7 +63,7 @@ static int child_update_mappings(short* tilemap, short* tile_fb,
   return CHILD_STATUS_OK;
 }
 
-int main(void){
+int main(void){ /* Verify physical-memory aliases are visible with shared updates. */
   short* tilemap = get_tilemap();
   short* tile_fb = get_tile_fb();
   short* spritemap = get_spritemap();

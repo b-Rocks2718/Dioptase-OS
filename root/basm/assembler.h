@@ -23,6 +23,7 @@ struct ProgramDescriptor* assemble(int num_files, int* file_names, bool is_kerne
 
 void set_cli_defines(int count, char** defines);
 
+// Classify whether operand parsing found a value, found nothing, or failed.
 enum ConsumeResult {
   ERROR,
   NOT_FOUND,
@@ -31,6 +32,7 @@ enum ConsumeResult {
 
 #define SECTION_COUNT 6
 
+// Identify output sections and the implicit kernel section.
 enum UserSection {
   TEXT_SECTION = 0,
   RODATA_SECTION = 1,

@@ -10,7 +10,7 @@
 
 #define FIRST_CHILD_DESCRIPTOR 200
 
-int main(void) {
+int main(void) { /* Verify fork creates a child with independent return values. */
   puts("***hello from fork test\n");
 
   int child = fork();

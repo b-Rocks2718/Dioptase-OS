@@ -8,7 +8,7 @@
 
 #define BAD_LOW_PTR ((void*)0x1000)
 
-int main(void){
+int main(void){ /* Verify syscalls reject invalid user pointers. */
   char buf[2];
   char out = 'Z';
 

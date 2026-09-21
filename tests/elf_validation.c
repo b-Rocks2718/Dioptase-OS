@@ -38,7 +38,7 @@
 #define ELF_TEST_PROGRAM_HEADER_COUNT 3
 #define ELF_TEST_PAYLOAD_OFFSET (sizeof(struct ElfHeader) + 3 * sizeof(struct ElfProgramHeader))
 
-struct ElfTestImage {
+struct ElfTestImage { /* Own the mutable ELF bytes and segment fixtures for a case. */
   struct ElfHeader header;
   struct ElfProgramHeader ph[ELF_TEST_PROGRAM_HEADER_COUNT];
   unsigned text_word;
@@ -55,13 +55,13 @@ struct ElfHeaderLimitImage {
   unsigned text_word;
 };
 
-static void elf_test_require(bool condition, char* message){
+static void elf_test_require(bool condition, char* message){ /* Abort the test immediately when an ELF invariant is false. */
   if (!condition){
     panic(message);
   }
 }
 
-static void elf_test_set_load(struct ElfProgramHeader* ph, unsigned offset,
+static void elf_test_set_load(struct ElfProgramHeader* ph, unsigned offset, /* Set load on ELF test. */
     unsigned vaddr, unsigned filesz, unsigned memsz, unsigned flags){
   ph->p_type = PT_LOAD;
   ph->p_offset = offset;
@@ -73,7 +73,7 @@ static void elf_test_set_load(struct ElfProgramHeader* ph, unsigned offset,
   ph->p_align = FRAME_SIZE;
 }
 
-static void elf_test_init_valid(struct ElfTestImage* image){
+static void elf_test_init_valid(struct ElfTestImage* image){ /* Initialize a minimally valid ELF image for subsequent mutations. */
   memset(image, 0, sizeof(struct ElfTestImage));
 
   image->header.e_ident[0] = 0x7F;
@@ -110,7 +110,7 @@ static void elf_test_init_valid(struct ElfTestImage* image){
   image->data_word = ELF_TEST_DATA_WORD;
 }
 
-static void elf_test_init_header_limit(struct ElfHeaderLimitImage* image,
+static void elf_test_init_header_limit(struct ElfHeaderLimitImage* image, /* Initialize ELF test header limit. */
     unsigned header_count){
   memset(image, 0, sizeof(struct ElfHeaderLimitImage));
 
@@ -140,12 +140,12 @@ static void elf_test_init_header_limit(struct ElfHeaderLimitImage* image,
   image->text_word = ELF_TEST_TEXT_WORD;
 }
 
-static void elf_test_expect_invalid(struct ElfTestImage* image, char* message){
+static void elf_test_expect_invalid(struct ElfTestImage* image, char* message){ /* Assert that loading the supplied image rejects it. */
   elf_test_require(!elf_validate_image(image, sizeof(struct ElfTestImage)),
     message);
 }
 
-static void elf_test_load_and_verify(struct ElfTestImage* image){
+static void elf_test_load_and_verify(struct ElfTestImage* image){ /* Load ELF test and verify. */
   elf_test_require(elf_validate_image(image, sizeof(struct ElfTestImage)),
     "elf validation test: valid empty-segment fixture was rejected.\n");
 
@@ -163,7 +163,7 @@ static void elf_test_load_and_verify(struct ElfTestImage* image){
   munmap((void*)ELF_TEST_DATA_VADDR);
 }
 
-static void elf_test_empty_and_non_load_headers(struct ElfTestImage* image){
+static void elf_test_empty_and_non_load_headers(struct ElfTestImage* image){ /* Verify that empty and non-load program headers are accepted. */
   elf_test_init_valid(image);
   elf_test_load_and_verify(image);
 
@@ -179,7 +179,7 @@ static void elf_test_empty_and_non_load_headers(struct ElfTestImage* image){
   elf_test_load_and_verify(image);
 }
 
-static void elf_test_header_validation(struct ElfTestImage* image){
+static void elf_test_header_validation(struct ElfTestImage* image){ /* Exercise malformed ELF header fields and their rejection paths. */
   elf_test_init_valid(image);
   image->header.e_ident[0] = 0;
   elf_test_expect_invalid(image,
@@ -256,7 +256,7 @@ static void elf_test_header_validation(struct ElfTestImage* image){
     "elf validation test: wrapping program-header offset was accepted.\n");
 }
 
-static void elf_test_program_header_limit(void){
+static void elf_test_program_header_limit(void){ /* Verify the loader rejects an excessive program-header table. */
   // Keep this fixture off the kernel stack: 64 program headers already exceed
   // the assembler's signed 12-bit frame immediate when allocated as a local.
   struct ElfHeaderLimitImage* image = malloc(sizeof(struct ElfHeaderLimitImage));
@@ -276,7 +276,7 @@ static void elf_test_program_header_limit(void){
   free(image);
 }
 
-static void elf_test_load_range_validation(struct ElfTestImage* image){
+static void elf_test_load_range_validation(struct ElfTestImage* image){ /* Load ELF test range validation. */
   elf_test_init_valid(image);
   image->ph[0].p_filesz = sizeof(unsigned) + 1;
   image->ph[0].p_memsz = sizeof(unsigned);
@@ -333,7 +333,7 @@ static void elf_test_load_range_validation(struct ElfTestImage* image){
     "elf validation test: page-rounded overlapping PT_LOADs were accepted.\n");
 }
 
-static void elf_test_entry_validation(struct ElfTestImage* image){
+static void elf_test_entry_validation(struct ElfTestImage* image){ /* Verify that the entry point must lie in executable image data. */
   elf_test_init_valid(image);
   image->header.e_entry = ELF_TEST_TEXT_VADDR + 2;
   elf_test_expect_invalid(image,
@@ -363,7 +363,7 @@ static void elf_test_entry_validation(struct ElfTestImage* image){
     "elf validation test: entry in an empty executable segment was accepted.\n");
 }
 
-int kernel_main(void){
+int kernel_main(void){ /* Exercise ELF header, segment-range, and entry validation. */
   struct ElfTestImage image;
 
   say("***elf validation test start\n", NULL);

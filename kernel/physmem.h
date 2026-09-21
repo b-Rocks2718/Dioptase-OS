@@ -19,6 +19,7 @@
 #define LOCAL_CACHE_SIZE 64
 #define LOCAL_CACHE_REFILL 32
 
+// Cache physical pages locally to reduce contention on global buddy lists.
 struct PhysmemLocalCache {
   void* pages[LOCAL_CACHE_SIZE];
   unsigned count;

@@ -6,6 +6,7 @@
   .data
   .align 4
   .global TILEMAP_DATA
+# Define the tile-map asset data consumed by the dinosaur game.
 TILEMAP_DATA:
   .fill 0x08CD08CC
   .fill 0x08CD08CD
@@ -4103,4 +4104,3 @@ TILEMAP_DATA:
   .fill 0x0FFF0FFF
   .fill 0x0FFF0FFF
   .fill 0x0FFF0FFF
-  

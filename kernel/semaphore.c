@@ -7,6 +7,7 @@
 #include "print.h"
 #include "debug.h"
 
+// Initialize a semaphore with a non-negative count and empty waiter queue.
 void sem_init(struct Semaphore* sem, int initial_count){
   assert(sem != NULL, "sem_init: semaphore is NULL.\n");
   if (initial_count < 0) {
@@ -40,6 +41,7 @@ static void sem_add(void* arg){
   }
 }
 
+// Decrement the semaphore or block until a permit exists.
 void sem_down(struct Semaphore* sem){
   assert(sem != NULL, "sem_down: semaphore is NULL.\n");
 
@@ -81,6 +83,7 @@ void sem_down(struct Semaphore* sem){
   __atomic_fetch_add(&sem->active_operations, -1);
 }
 
+// Decrement without blocking; return false when no permit is available.
 bool sem_try_down(struct Semaphore* sem){
   assert(sem != NULL, "sem_try_down: semaphore is NULL.\n");
   __atomic_fetch_add(&sem->active_operations, 1);
@@ -98,6 +101,7 @@ bool sem_try_down(struct Semaphore* sem){
   return false;
 }
 
+// Attempt to publish one permit without blocking.
 bool sem_try_up(struct Semaphore* sem){
   assert(sem != NULL, "sem_try_up: semaphore is NULL.\n");
   __atomic_fetch_add(&sem->active_operations, 1);
@@ -127,6 +131,7 @@ bool sem_try_up(struct Semaphore* sem){
   return success;
 }
 
+// Publish one permit or wake one queued waiter.
 void sem_up(struct Semaphore* sem){
   if (!sem_try_up(sem)) {
     int args[2] = {(int)sem, INT_MAX};
@@ -176,6 +181,7 @@ void sem_destroy(struct Semaphore* sem) {
   clh_lock_destroy(&sem->lock);
 }
 
+// Destroy a semaphore after its count and waiter queue are quiescent.
 void sem_free(struct Semaphore* sem) {
   sem_destroy(sem);
   free(sem);

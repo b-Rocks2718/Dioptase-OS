@@ -6,6 +6,7 @@
   .data
   .align 4
   .global SPRITEMAP_DATA
+# Define the sprite-map asset data consumed by the dinosaur game.
 SPRITEMAP_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
@@ -4103,4 +4104,3 @@ SPRITEMAP_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
-  

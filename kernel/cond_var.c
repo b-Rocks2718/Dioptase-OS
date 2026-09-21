@@ -14,6 +14,7 @@ struct CondVarWaiter {
   struct Semaphore semaphore;
 };
 
+// Initialize an empty condition-variable waiter queue.
 void cond_var_init(struct CondVar* cv){
   clh_lock_init(&cv->lock);
   generic_queue_init(&cv->wait_queue);
@@ -68,6 +69,7 @@ void cond_var_wait(struct CondVar* cv, struct BlockingLock* external_lock){
   __atomic_fetch_add(&cv->active_operations, -1);
 }
 
+// Wake one waiter while the caller holds the associated external lock.
 void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
   assert(cv != NULL, "cond_var signal: cv is NULL.\n");
   assert(external_lock != NULL, "cond_var signal: external lock is NULL.\n");
@@ -91,6 +93,7 @@ void cond_var_signal(struct CondVar* cv, struct BlockingLock* external_lock){
   __atomic_fetch_add(&cv->active_operations, -1);
 }
 
+// Wake every waiter while the caller holds the associated external lock.
 void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
   assert(cv != NULL, "cond_var broadcast: cv is NULL.\n");
   assert(external_lock != NULL, "cond_var broadcast: external lock is NULL.\n");
@@ -113,6 +116,7 @@ void cond_var_broadcast(struct CondVar* cv, struct BlockingLock* external_lock){
   __atomic_fetch_add(&cv->active_operations, -1);
 }
 
+// Destroy the waiter queue after all waiters have left.
 void cond_var_destroy(struct CondVar* cv){
   assert(cv != NULL, "cond_var destroy: cv is NULL.\n");
 
@@ -137,6 +141,7 @@ void cond_var_destroy(struct CondVar* cv){
   clh_lock_destroy(&cv->lock);
 }
 
+// Destroy and free a heap-allocated condition variable.
 void cond_var_free(struct CondVar* cv){
   assert(cv != NULL, "cond_var free: cv is NULL.\n");
   cond_var_destroy(cv);

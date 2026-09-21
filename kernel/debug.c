@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "print.h"
 
+// Halt the kernel after reporting an unrecoverable invariant violation.
 void panic(char* msg) {
   // print panic message
   puts_uart("| KERNEL PANIC (Core ");
@@ -18,6 +19,7 @@ void panic(char* msg) {
   }
 }
 
+// Report a failed condition and halt the kernel.
 void assert(bool condition, char* msg) {
 #ifdef OS_RELEASE
   (void)condition;
@@ -29,6 +31,7 @@ void assert(bool condition, char* msg) {
 #endif
 }
 
+// Halt unconditionally with the supplied diagnostic message.
 void assert_always(bool condition, char* msg) {
   if (!condition) {
     panic(msg);

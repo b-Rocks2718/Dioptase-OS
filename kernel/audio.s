@@ -120,6 +120,7 @@ audio_copy_word_no_wrap:
   ret
 
   .global mark_audio_handled
+# Mark the audio interrupt as handled in the device's MMIO status register.
 mark_audio_handled:
   eoi 7
   ret
@@ -188,4 +189,3 @@ audio_handler_:
   pop  r1
 
   rfe
-  

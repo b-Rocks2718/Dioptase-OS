@@ -3,12 +3,14 @@
 
 #include "instruction_array.h"
 
+// Describe assembled sections and the entry point needed for ELF emission.
 struct ProgramDescriptor {
   unsigned entry_point;
   struct InstructionArrayList* sections;
   unsigned bss_size;
 };
 
+// Store the fixed ELF header fields in host representation.
 struct ElfHeader {
   unsigned char e_ident[16];
   unsigned short e_type;
@@ -26,6 +28,7 @@ struct ElfHeader {
   unsigned short e_shstrndx;
 };
 
+// Store one ELF load-segment descriptor in host representation.
 struct ElfProgramHeader {
   unsigned int p_type;
   unsigned int p_offset;
@@ -53,14 +56,11 @@ void fprint_elf_header(int file, struct ElfHeader* header);
 
 void fprint_pht(int file, struct ElfProgramHeader* pht);
 
-// Purpose: Write the ELF header as raw little-endian bytes.
-// Inputs: ptr is the binary output; header describes the ELF header fields.
-// Outputs: Writes the ELF header bytes to ptr.
+// Write the ELF header as raw little-endian bytes.
 void fwrite_elf_header(int file, struct ElfHeader* header);
 
-// Purpose: Write the program header table as raw little-endian bytes.
-// Inputs: ptr is the binary output; pht points to 3 program header entries.
-// Outputs: Writes the program header table bytes to ptr.
+// Write the program header table as raw little-endian bytes.
+// Ptr is the binary output; pht points to 3 program header entries.
 void fwrite_pht(int file, struct ElfProgramHeader* pht);
 
 #endif  // ELF_H

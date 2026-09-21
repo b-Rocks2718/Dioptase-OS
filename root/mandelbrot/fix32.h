@@ -5,6 +5,7 @@
 
 #define FIXED_ONE 0x00010000
 
+// Stores a complex number as two fixed-point real and imaginary components.
 struct Complex {
   fix32 x;
   fix32 y;

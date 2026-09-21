@@ -15,7 +15,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify freeing an invalid slab address is rejected. */
   say("***slab heap invalid slab negative start\n", NULL);
 
   heap_init();

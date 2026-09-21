@@ -5,10 +5,12 @@
 
 struct Arena* arena = NULL;
 
+// Round a value up to the requested alignment.
 static size_t align_up(size_t value, size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
 
+// Start an arena with an empty block chain and the default block size.
 void arena_init(size_t block_size) {
   arena = (struct Arena*)malloc(sizeof(struct Arena));
   arena->head = NULL;
@@ -16,6 +18,7 @@ void arena_init(size_t block_size) {
   arena->block_size = block_size;
 }
 
+// Allocate aligned storage from the arena, growing its block chain as needed.
 void* arena_alloc(size_t size) {
   if (arena == NULL) return NULL;
   size_t alignment = sizeof(void*);
@@ -38,6 +41,7 @@ void* arena_alloc(size_t size) {
   return out;
 }
 
+// Free every allocation block owned by the compiler's global arena.
 void arena_destroy(void) {
   if (arena == NULL) return;
   struct ArenaBlock* block = arena->head;

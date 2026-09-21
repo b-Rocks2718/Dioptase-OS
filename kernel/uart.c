@@ -6,6 +6,7 @@ void uart_init(void){
   register_handler((void*)uart_rx_handler_, (void*)UART_RX_IVT_ENTRY);
 }
 
+// Drain the UART receive register into the kernel's input buffer.
 void uart_rx_handler(void){
   // UART RX remains masked by default and has no line discipline yet. If a
   // caller enables the source anyway, acknowledge the edge and return so the

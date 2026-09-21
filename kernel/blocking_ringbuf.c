@@ -17,6 +17,7 @@ static unsigned blocking_ringbuf_next_idx(struct BlockingRingBuf* b,
   return idx;
 }
 
+// Initialize a byte ring and the semaphores used by its two directions.
 void blocking_ringbuf_init(struct BlockingRingBuf* b, unsigned capacity){
   assert(b != NULL, "blocking_ringbuf_init: ring pointer was NULL.\n");
 
@@ -38,6 +39,7 @@ void blocking_ringbuf_init(struct BlockingRingBuf* b, unsigned capacity){
   b->consumers_open = true;
 }
 
+// Enqueue one byte, or report that producers or consumers have closed.
 bool blocking_ringbuf_add_fallible(struct BlockingRingBuf* b, char byte){
   assert(b != NULL, "blocking_ringbuf add: ring pointer was NULL.\n");
 
@@ -76,6 +78,7 @@ bool blocking_ringbuf_add_fallible(struct BlockingRingBuf* b, char byte){
   return true;
 }
 
+// Dequeue one byte, or report that producers or consumers have closed.
 bool blocking_ringbuf_remove_fallible(struct BlockingRingBuf* b, char* byte){
   assert(b != NULL, "blocking_ringbuf remove: ring pointer was NULL.\n");
   assert(byte != NULL, "blocking_ringbuf remove: destination pointer was NULL.\n");
@@ -112,11 +115,13 @@ bool blocking_ringbuf_remove_fallible(struct BlockingRingBuf* b, char* byte){
   return true;
 }
 
+// Enqueue one byte, blocking until capacity or closure is observed.
 void blocking_ringbuf_add(struct BlockingRingBuf* b, char byte){
   assert(blocking_ringbuf_add_fallible(b, byte),
     "blocking_ringbuf_add: a generic producer or consumer was closed during an invariant-enforcing add.\n");
 }
 
+// Dequeue one byte, blocking until data or closure is observed.
 char blocking_ringbuf_remove(struct BlockingRingBuf* b){
   char byte = 0;
   assert(blocking_ringbuf_remove_fallible(b, &byte),
@@ -124,6 +129,7 @@ char blocking_ringbuf_remove(struct BlockingRingBuf* b){
   return byte;
 }
 
+// Close the producer side and wake consumers waiting for more data.
 void blocking_ringbuf_close_producers(struct BlockingRingBuf* b){
   assert(b != NULL,
     "blocking_ringbuf close producers: ring pointer was NULL.\n");
@@ -138,6 +144,7 @@ void blocking_ringbuf_close_producers(struct BlockingRingBuf* b){
   blocking_lock_release(&b->lock);
 }
 
+// Close the consumer side and wake producers waiting for capacity.
 void blocking_ringbuf_close_consumers(struct BlockingRingBuf* b){
   assert(b != NULL,
     "blocking_ringbuf close consumers: ring pointer was NULL.\n");
@@ -153,10 +160,12 @@ void blocking_ringbuf_close_consumers(struct BlockingRingBuf* b){
   blocking_lock_release(&b->lock);
 }
 
+// Return the number of bytes currently buffered.
 unsigned blocking_ringbuf_size(struct BlockingRingBuf* b){
   return (unsigned)__atomic_load_n(&b->size);
 }
 
+// Destroy the ring and synchronization state after both sides quiesce.
 void blocking_ringbuf_destroy(struct BlockingRingBuf* b){
   assert(b != NULL, "blocking_ringbuf_destroy: ring pointer was NULL.\n");
 
@@ -179,6 +188,7 @@ void blocking_ringbuf_destroy(struct BlockingRingBuf* b){
   b->consumers_open = false;
 }
 
+// Destroy and free a heap-allocated blocking ring.
 void blocking_ringbuf_free(struct BlockingRingBuf* b){
   blocking_ringbuf_destroy(b);
   free(b);

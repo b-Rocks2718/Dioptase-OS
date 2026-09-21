@@ -16,7 +16,7 @@
 
 static struct BlockingLock lock;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify an unacquired blocking-lock release is rejected. */
   say("***blocking lock release negative start\n", NULL);
 
   blocking_lock_init(&lock);

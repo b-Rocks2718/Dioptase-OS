@@ -31,7 +31,7 @@
 #define YIELD_SPINS 1
 #define PATTERN_SEED 0x6D7A
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies a race-stress worker and its iteration budget. */
   int id;
   int rounds;
 };
@@ -162,7 +162,7 @@ static void verify_results(void) {
   }
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Stress shared counters and thread lifetime under contention. */
   say("***threads race stress test start\n", NULL);
 
   spawn_threads();

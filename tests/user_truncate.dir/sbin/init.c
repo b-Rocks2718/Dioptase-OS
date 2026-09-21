@@ -12,7 +12,7 @@
 #include "../../../root/crt/sys.h"
 #include "../../user_test.h"
 
-int main(void){
+int main(void){ /* Verify user truncate changes file size and visible contents. */
   char buf[8];
   char z = 'Z';
 

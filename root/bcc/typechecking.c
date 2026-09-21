@@ -8,15 +8,10 @@
 #include "../crt/print.h"
 #include "../crt/stdlib.h"
 
-// Purpose: Implement typechecking and symbol table utilities.
-// Inputs: Operates on AST nodes produced by parsing and resolution.
-// Outputs: Annotates expressions with types and validates declarations.
-// Invariants/Assumptions: Typechecker uses a single global symbol table.
+// Implement typechecking and symbol table utilities.
+// Annotates expressions with types and validates declarations.
 
-// Purpose: Global symbol table for the current typechecking pass.
-// Inputs: Initialized in typecheck_program and used by all helpers.
-// Outputs: Stores symbol entries for declarations and lookups.
-// Invariants/Assumptions: Only one typechecking pass runs at a time.
+// Global symbol table for the current typechecking pass.
 struct SymbolTable* global_symbol_table = NULL;
 struct TypeTable* global_type_table = NULL;
 
@@ -25,10 +20,8 @@ struct Type kUIntType = { UINT_TYPE };
 struct Type kCharType = { CHAR_TYPE };
 struct Type kVoidType = { VOID_TYPE };
 
-// Purpose: Identify compound assignment operators.
-// Inputs: op is the binary operator enum value.
-// Outputs: Returns true for +=, -=, etc.
-// Invariants/Assumptions: ASSIGN_OP is handled separately.
+// Identify compound assignment operators.
+// Returns true for +=, -=, etc.
 static bool is_compound_assign_op(enum BinOp op) {
   switch (op) {
     case PLUS_EQ_OP:
@@ -47,10 +40,9 @@ static bool is_compound_assign_op(enum BinOp op) {
   }
 }
 
-// Purpose: Map a compound assignment operator to its base binary operator.
-// Inputs: op must satisfy is_compound_assign_op(op).
-// Outputs: Returns the corresponding arithmetic/bitwise operator.
-// Invariants/Assumptions: Caller validates op.
+// Map a compound assignment operator to its base binary operator.
+// Op must satisfy is_compound_assign_op(op).
+// Returns the corresponding arithmetic/bitwise operator.
 static enum BinOp compound_assign_base_op(enum BinOp op) {
   switch (op) {
     case PLUS_EQ_OP:
@@ -78,10 +70,9 @@ static enum BinOp compound_assign_base_op(enum BinOp op) {
   }
 }
 
-// Purpose: Emit a formatted type error at a source location.
-// Inputs: loc points into source text; message is a fixed diagnostic string.
-// Outputs: Writes a diagnostic message to stdout.
-// Invariants/Assumptions: source_location_from_ptr handles NULL/unknown locations.
+// Emit a formatted type error at a source location.
+// Loc points into source text; message is a fixed diagnostic string.
+// Writes a diagnostic message to stdout.
 static void type_error_at(char* loc, char* message) {
   struct SourceLocation where = source_location_from_ptr(loc);
   char* filename = source_filename_for_ptr(loc);
@@ -100,6 +91,7 @@ static void type_error_at(char* loc, char* message) {
   fdputs(STDOUT, "\n");
 }
 
+// Format and terminate after a type error naming one slice.
 static void type_error_at1_slice(char* loc, char* fmt, size_t arg0_len, char* arg0_text) {
   int args[2];
   struct SourceLocation where = source_location_from_ptr(loc);
@@ -121,6 +113,7 @@ static void type_error_at1_slice(char* loc, char* fmt, size_t arg0_len, char* ar
   fdputs(STDOUT, "\n");
 }
 
+// Format and terminate after a type error naming two slices.
 static void type_error_at2_slice(char* loc, char* fmt,
                                  size_t arg0_len, char* arg0_text,
                                  size_t arg1_len, char* arg1_text) {
@@ -146,6 +139,7 @@ static void type_error_at2_slice(char* loc, char* fmt,
   fdputs(STDOUT, "\n");
 }
 
+// Format and terminate after a type error naming two sizes.
 static void type_error_at2_size(char* loc, char* fmt, size_t arg0, size_t arg1) {
   int args[2];
   struct SourceLocation where = source_location_from_ptr(loc);
@@ -167,10 +161,8 @@ static void type_error_at2_size(char* loc, char* fmt, size_t arg0, size_t arg1) 
   fdputs(STDOUT, "\n");
 }
 
-// Purpose: Merge storage classes across compatible declarations.
-// Inputs: existing is the prior storage; incoming is the new declaration storage.
-// Outputs: Returns the combined storage, preserving internal linkage if present.
-// Invariants/Assumptions: Caller has already validated linkage compatibility.
+// Merge storage classes across compatible declarations.
+// Returns the combined storage, preserving internal linkage if present.
 static enum StorageClass merge_storage_class(enum StorageClass existing,
                                              enum StorageClass incoming) {
   if (existing == STATIC || incoming == STATIC) {
@@ -184,10 +176,8 @@ static enum StorageClass merge_storage_class(enum StorageClass existing,
 
 // ------------------------- Typechecking Functions ------------------------- //
 
-// Purpose: Typecheck every declaration in a program.
-// Inputs: program is the Program AST.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Initializes global_symbol_table for this pass.
+// Typecheck every declaration in a program.
+// Returns true on success; false on any type error.
 bool typecheck_program(struct Program* program) {
   global_symbol_table = create_symbol_table(1024);
   global_type_table = create_type_table(1024);
@@ -201,10 +191,8 @@ bool typecheck_program(struct Program* program) {
   return true;
 }
 
-// Purpose: Typecheck a file-scope declaration.
-// Inputs: dclr is the declaration node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: File-scope symbols are stored in global_symbol_table.
+// Typecheck a file-scope declaration.
+// Returns true on success; false on any type error.
 bool typecheck_file_scope_dclr(struct Declaration* dclr) {
   switch (dclr->type) {
     case VAR_DCLR:
@@ -223,10 +211,9 @@ bool typecheck_file_scope_dclr(struct Declaration* dclr) {
   }
 }
 
-// Purpose: Typecheck a file-scope variable declaration/definition.
-// Inputs: var_dclr is the variable declaration node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Global initializers must be constant literals.
+// Typecheck a file-scope variable declaration/definition.
+// Returns true on success; false on any type error.
+// Global initializers must be constant literals.
 bool typecheck_file_scope_var(struct VariableDclr* var_dclr) {
   enum IdentInitType init_type = -1;
   // Infer file-scope initialization status from storage class and initializer.
@@ -352,6 +339,7 @@ bool validate_struct_definition(struct Slice* struct_name, struct MemberDclr* fi
   return true;
 }
 
+// Register and validate a struct definition's member layout.
 bool typecheck_struct(struct StructDclr* struct_dclr){
   if (struct_dclr->members == NULL){
     // forward declaration, nothing to typecheck
@@ -419,6 +407,7 @@ bool typecheck_struct(struct StructDclr* struct_dclr){
   return true;
 }
 
+// Register and validate a union definition's member types.
 bool typecheck_union(struct UnionDclr* union_dclr){
   if (union_dclr->members == NULL){
     // forward declaration, nothing to typecheck
@@ -484,6 +473,7 @@ bool typecheck_union(struct UnionDclr* union_dclr){
   return true;
 }
 
+// Register enumerators and validate their constant values.
 bool typecheck_enum(struct EnumDclr* enum_dclr){
   if (enum_dclr->members == NULL){
     // no forward declarations for enums
@@ -509,10 +499,7 @@ bool typecheck_enum(struct EnumDclr* enum_dclr){
   return true;
 }
 
-// Purpose: Apply array-to-pointer decay to function parameter types.
-// Inputs: func_dclr is the function declaration to update.
-// Outputs: Updates both parameter lists in-place.
-// Invariants/Assumptions: Param list and type list are in sync.
+// Apply array-to-pointer decay to function parameter types.
 static void decay_param_array_types(struct FunctionDclr* func_dclr) {
   if (func_dclr == NULL || func_dclr->type == NULL ||
       func_dclr->type->type != FUN_TYPE) {
@@ -543,10 +530,8 @@ static void decay_param_array_types(struct FunctionDclr* func_dclr) {
   }
 }
 
-// Purpose: Typecheck a function declaration or definition.
-// Inputs: func_dclr is the function declaration node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Parameters and body share the global symbol table.
+// Typecheck a function declaration or definition.
+// Returns true on success; false on any type error.
 bool typecheck_func(struct FunctionDclr* func_dclr) {
   // Parameters share the same symbol table as the body in this pass.
   // typecheck them before decaying array types, so that incomplete array
@@ -623,10 +608,8 @@ bool typecheck_func(struct FunctionDclr* func_dclr) {
   return true;
 }
 
-// Purpose: Typecheck and register each function parameter.
-// Inputs: params is the parameter list.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Parameters are inserted into global_symbol_table.
+// Typecheck and register each function parameter.
+// Returns true on success; false on any type error.
 bool typecheck_params(struct ParamList* params) {
   struct ParamList* cur = params;
   while (cur != NULL) {
@@ -654,10 +637,8 @@ bool typecheck_params(struct ParamList* params) {
   return true;
 }
 
-// Purpose: Typecheck each item in a block.
-// Inputs: block is the block list.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Symbol table is shared across the function body.
+// Typecheck each item in a block.
+// Returns true on success; false on any type error.
 bool typecheck_block(struct Block* block) {
   struct Block* cur = block;
   while (cur != NULL) {
@@ -683,10 +664,8 @@ bool typecheck_block(struct Block* block) {
   return true;
 }
 
-// Purpose: Typecheck a statement subtree.
-// Inputs: stmt is the statement node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Return statements reference the current function symbol.
+// Typecheck a statement subtree.
+// Returns true on success; false on any type error.
 bool typecheck_stmt(struct Statement* stmt) {
   switch (stmt->type) {
     // Placeholder implementation
@@ -890,10 +869,9 @@ bool typecheck_stmt(struct Statement* stmt) {
   return true;
 }
 
-// Purpose: Typecheck the initializer portion of a for statement.
-// Inputs: init_ is the ForInit node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: For-init may be a declaration or expression.
+// Typecheck the initializer portion of a for statement.
+// Returns true on success; false on any type error.
+// For-init may be a declaration or expression.
 bool typecheck_for_init(struct ForInit* init_) {
   switch (init_->type) {
     case DCLR_INIT:
@@ -914,10 +892,8 @@ bool typecheck_for_init(struct ForInit* init_) {
   }
 }
 
-// Purpose: Typecheck a local declaration (variable or function).
-// Inputs: dclr is the declaration node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Local declarations use the global symbol table.
+// Typecheck a local declaration (variable or function).
+// Returns true on success; false on any type error.
 bool typecheck_local_dclr(struct Declaration* dclr) {
   switch (dclr->type) {
     case VAR_DCLR:
@@ -936,10 +912,8 @@ bool typecheck_local_dclr(struct Declaration* dclr) {
   }
 }
 
-// Purpose: Typecheck a local variable declaration/definition.
-// Inputs: var_dclr is the variable declaration node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Enforces extern/static/local linkage rules.
+// Typecheck a local variable declaration/definition.
+// Returns true on success; false on any type error.
 bool typecheck_local_var(struct VariableDclr* var_dclr) {
   if (!is_complete_type(var_dclr->type)) {
     type_error_at1_slice(var_dclr->name->start, "incomplete type for variable %.*s", (int)var_dclr->name->len, var_dclr->name->start);
@@ -1099,6 +1073,7 @@ bool typecheck_local_var(struct VariableDclr* var_dclr) {
   return true;
 }
 
+// Allocate a pointer Type node referring to the target type.
 struct Type* make_pointer_type(struct Type* type) {
   struct Type* ptr_type = arena_alloc(sizeof(struct Type));
   ptr_type->type = POINTER_TYPE;
@@ -1106,10 +1081,8 @@ struct Type* make_pointer_type(struct Type* type) {
   return ptr_type;
 }
 
-// Purpose: Typecheck an expression and apply conversion rules.
-// Inputs: expr is the expression node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Currently delegates to typecheck_expr.
+// Typecheck an expression and apply conversion rules.
+// Returns true on success; false on any type error.
 bool typecheck_convert_expr(struct Expr** expr) {
   if (!typecheck_expr(*expr)) {
     return false;
@@ -1144,6 +1117,7 @@ bool typecheck_convert_expr(struct Expr** expr) {
   return true;
 }
 
+// Validate and typecheck an array initializer element by element.
 bool typecheck_array_init(struct Initializer* init, struct Type* type) {
   struct InitializerList* cur_init = init->init.compound_init;
   struct InitializerList* prev_init = NULL;
@@ -1187,6 +1161,7 @@ bool typecheck_array_init(struct Initializer* init, struct Type* type) {
   return true;
 }
 
+// Validate and typecheck a struct initializer against its members.
 bool typecheck_struct_init(struct Initializer* init, struct Type* type) {
   struct InitializerList* cur_init = init->init.compound_init;
   struct InitializerList* prev_init = NULL;
@@ -1229,6 +1204,7 @@ bool typecheck_struct_init(struct Initializer* init, struct Type* type) {
   return true;
 }
 
+// Validate and typecheck a union initializer for its selected member.
 bool typecheck_union_init(struct Initializer* init, struct Type* type) {
   struct InitializerList* cur_init = init->init.compound_init;
 
@@ -1258,10 +1234,8 @@ bool typecheck_union_init(struct Initializer* init, struct Type* type) {
   return true;
 }
 
-// Purpose: Typecheck and convert an initializer expression.
-// Inputs: init is the initializer pointer; type is the target type.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: May rewrite *init with a cast expression.
+// Typecheck and convert an initializer expression.
+// Returns true on success; false on any type error.
 bool typecheck_init(struct Initializer* init, struct Type* type) {
   if (init == NULL) {
     return true; // Nothing to typecheck
@@ -1320,6 +1294,7 @@ bool typecheck_init(struct Initializer* init, struct Type* type) {
   }
 }
 
+// Build a zero-valued initializer matching the requested type.
 struct Initializer* make_zero_initializer(struct Type* type) {
   struct Initializer* init = arena_alloc(sizeof(struct Initializer));
   init->loc = NULL;
@@ -1430,10 +1405,8 @@ struct Initializer* make_zero_initializer(struct Type* type) {
   return init;
 }
 
-// Purpose: Typecheck an expression subtree and set value_type.
-// Inputs: expr is the expression node.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: value_type is assigned for each expression node.
+// Typecheck an expression subtree and set value_type.
+// Returns true on success; false on any type error.
 bool typecheck_expr(struct Expr* expr) {
   switch (expr->type) {
     case BINARY: {
@@ -2056,10 +2029,8 @@ bool typecheck_expr(struct Expr* expr) {
   }
 }
 
-// Purpose: Typecheck a function call argument list.
-// Inputs: args are call arguments; types are parameter types; call_site for errors.
-// Outputs: Returns true on success; false on any type error.
-// Invariants/Assumptions: Arguments are converted by assignment.
+// Typecheck a function call argument list.
+// Returns true on success; false on any type error.
 bool typecheck_args(struct ArgList* args, struct ParamTypeList* types, struct Expr* call_site) {
   for (; args != NULL && types != NULL; args = args->next, types = types->next) {
     if (!typecheck_convert_expr(&args->arg)) {
@@ -2079,10 +2050,8 @@ bool typecheck_args(struct ArgList* args, struct ParamTypeList* types, struct Ex
 
 // ------------------------- Type Utility Functions ------------------------- //
 
-// Purpose: Check if a type is arithmetic.
-// Inputs: type is the Type node.
-// Outputs: Returns true for integer-like types.
-// Invariants/Assumptions: Pointer and function types are not arithmetic.
+// Check if a type is arithmetic.
+// Returns true for integer-like types.
 bool is_arithmetic_type(struct Type* type) {
   switch (type->type) {
     case INT_TYPE:
@@ -2101,6 +2070,7 @@ bool is_arithmetic_type(struct Type* type) {
   }
 }
 
+// Return whether a type is an unsigned integer type.
 bool is_unsigned_type(struct Type* type) {
   switch (type->type) {
     case UINT_TYPE:
@@ -2116,6 +2086,7 @@ bool is_unsigned_type(struct Type* type) {
   }
 }
 
+// Return whether a type is a scalar value usable in an expression.
 bool is_scalar_type(struct Type* type) {
   switch (type->type) {
     case VOID_TYPE:
@@ -2129,10 +2100,8 @@ bool is_scalar_type(struct Type* type) {
   }
 }
 
-// Purpose: Check if a type is signed.
-// Inputs: type is the Type node.
-// Outputs: Returns true for signed integer types.
-// Invariants/Assumptions: Unsigned types return false.
+// Check if a type is signed.
+// Returns true for signed integer types.
 bool is_signed_type(struct Type* type) {
   switch (type->type) {
     case INT_TYPE:
@@ -2146,22 +2115,19 @@ bool is_signed_type(struct Type* type) {
   }
 }
 
-// Purpose: Check if a type is a pointer type.
-// Inputs: type is the Type node.
-// Outputs: Returns true if type->type == POINTER_TYPE.
-// Invariants/Assumptions: Does not inspect referenced type.
+// Check if a type is a pointer type.
+// Returns true if type->type == POINTER_TYPE.
 bool is_pointer_type(struct Type* type) {
   return type->type == POINTER_TYPE;
 }
 
+// Return whether a type is one of the character integer types.
 bool is_char_type(struct Type* type) {
   return type->type == CHAR_TYPE || type->type == UCHAR_TYPE || type->type == SCHAR_TYPE;
 }
 
-// Purpose: Insert a cast expression to convert to a target type.
-// Inputs: expr is the expression pointer; target is the desired type.
-// Outputs: Rewrites *expr if a cast is needed.
-// Invariants/Assumptions: Uses arena allocation for the new cast node.
+// Insert a cast expression to convert to a target type.
+// Rewrites *expr if a cast is needed.
 void convert_expr_type(struct Expr** expr, struct Type* target) {
   if (!compare_types((*expr)->value_type, target)) {
     struct Expr* new_expr = arena_alloc(sizeof(struct Expr));
@@ -2174,10 +2140,8 @@ void convert_expr_type(struct Expr** expr, struct Type* target) {
   }
 }
 
-// Purpose: Compute the size of a type in bytes.
-// Inputs: type is the Type node.
-// Outputs: Returns the size in bytes or 0 for unknown types.
-// Invariants/Assumptions: Pointer size is treated as 4 bytes here.
+// Compute the size of a type in bytes.
+// Returns the size in bytes or 0 for unknown types.
 size_t get_type_size(struct Type* type) {
   switch (type->type) {
     case CHAR_TYPE:
@@ -2221,6 +2185,7 @@ size_t get_type_size(struct Type* type) {
   }
 }
 
+// Return type alignment.
 size_t get_type_alignment(struct Type* type) {
   switch (type->type){
     case ARRAY_TYPE:
@@ -2256,10 +2221,8 @@ size_t get_type_alignment(struct Type* type) {
   }
 }
 
-// Purpose: Determine the common arithmetic type of two operands.
-// Inputs: t1 and t2 are operand types.
-// Outputs: Returns a common type or NULL if incompatible.
-// Invariants/Assumptions: Pointer types are not handled here.
+// Determine the common arithmetic type of two operands.
+// Returns a common type or NULL if incompatible.
 struct Type* get_common_type(struct Type* t1, struct Type* t2) {
   // promote char types to int
   if (is_char_type(t1)) {
@@ -2289,7 +2252,7 @@ struct Type* get_common_type(struct Type* t1, struct Type* t2) {
   }
 }
 
-// Purpose: Determine if an expression is an lvalue
+// Determine if an expression is an lvalue
 bool is_lvalue(struct Expr* expr) {
   switch (expr->type) {
     case VAR:
@@ -2309,6 +2272,7 @@ bool is_lvalue(struct Expr* expr) {
   }
 }
 
+// Return whether an expression denotes a modifiable lvalue.
 bool is_assignable(struct Expr* expr) {
   if (expr->type == STRING) {
     return false; // string literals are not assignable, but are still lvalues
@@ -2316,10 +2280,8 @@ bool is_assignable(struct Expr* expr) {
   return is_lvalue(expr);
 }
 
-// Purpose: Check if an expression is a null pointer constant.
-// Inputs: expr is the expression node.
-// Outputs: Returns true for literal integer 0.
-// Invariants/Assumptions: Only INT_CONST zero is treated as null.
+// Check if an expression is a null pointer constant.
+// Returns true for literal integer 0.
 bool is_null_pointer_constant(struct Expr* expr) {
   if (expr->type == LIT) {
     struct LitExpr* lit_expr = &expr->expr.lit_expr;
@@ -2331,6 +2293,7 @@ bool is_null_pointer_constant(struct Expr* expr) {
   return false;
 }
 
+// Return whether a type is a pointer to void.
 bool is_void_pointer_type(struct Type* type) {
   if (type->type != POINTER_TYPE) {
     return false;
@@ -2339,6 +2302,7 @@ bool is_void_pointer_type(struct Type* type) {
   return referenced->type == VOID_TYPE;
 }
 
+// Return whether a type has a known object size.
 bool is_complete_type(struct Type* type) {
   switch (type->type) {
     case ARRAY_TYPE:
@@ -2359,6 +2323,7 @@ bool is_complete_type(struct Type* type) {
   }
 }
 
+// Return whether a pointer's referenced type is complete.
 bool is_pointer_to_complete_type(struct Type* type) {
   if (!is_pointer_type(type)) {
     return false;
@@ -2367,6 +2332,7 @@ bool is_pointer_to_complete_type(struct Type* type) {
   return is_complete_type(referenced);
 }
 
+// Return whether a type-specifier list is valid for a declaration.
 bool is_valid_type_specifier(struct Type* type) {
   switch (type->type) {
     case ARRAY_TYPE: {
@@ -2396,10 +2362,8 @@ bool is_valid_type_specifier(struct Type* type) {
   }
 }
 
-// Purpose: Determine a common pointer type for pointer comparisons/conditionals.
-// Inputs: expr1 and expr2 are the operand expressions.
-// Outputs: Returns a compatible pointer type or NULL if incompatible.
-// Invariants/Assumptions: Allows null pointer constants to match any pointer.
+// Determine a common pointer type for pointer comparisons/conditionals.
+// Returns a compatible pointer type or NULL if incompatible.
 struct Type* get_common_pointer_type(struct Expr* expr1, struct Expr* expr2) {
   struct Type* t1 = expr1->value_type;
   struct Type* t2 = expr2->value_type;
@@ -2414,10 +2378,8 @@ struct Type* get_common_pointer_type(struct Expr* expr1, struct Expr* expr2) {
   return NULL;
 }
 
-// Purpose: Apply assignment conversion rules to an expression.
-// Inputs: expr is the expression pointer; target is the target type.
-// Outputs: Returns true on success; false on invalid conversions.
-// Invariants/Assumptions: May rewrite *expr with a cast expression.
+// Apply assignment conversion rules to an expression.
+// Returns true on success; false on invalid conversions.
 bool convert_by_assignment(struct Expr** expr, struct Type* target) {
   if (compare_types((*expr)->value_type, target)) {
     return true;
@@ -2452,10 +2414,8 @@ bool convert_by_assignment(struct Expr** expr, struct Type* target) {
   return false;
 }
 
-// Purpose: Map a variable declaration to a static initializer kind.
-// Inputs: var_dclr is the variable declaration node.
-// Outputs: Returns a StaticInitType enum value.
-// Invariants/Assumptions: Only integer-like types are supported here.
+// Map a variable declaration to a static initializer kind.
+// Returns a StaticInitType enum value.
 enum StaticInitType get_var_init(struct Type* type) {
   switch (type->type) {
     case CHAR_TYPE:
@@ -2486,10 +2446,8 @@ enum StaticInitType get_var_init(struct Type* type) {
 
 // ------------------------- Symbol Table Functions ------------------------- //
 
-// Purpose: Allocate a symbol table with a given bucket count.
-// Inputs: numBuckets is the number of hash buckets.
-// Outputs: Returns a SymbolTable allocated in the arena.
-// Invariants/Assumptions: Entries are arena-allocated and persist for the pass.
+// Allocate a symbol table with a given bucket count.
+// Returns a SymbolTable allocated in the arena.
 struct SymbolTable* create_symbol_table(size_t numBuckets){
   struct SymbolTable* table = arena_alloc(sizeof(struct SymbolTable));
   table->size = numBuckets;
@@ -2500,10 +2458,7 @@ struct SymbolTable* create_symbol_table(size_t numBuckets){
   return table;
 }
 
-// Purpose: Insert a symbol entry into the table.
-// Inputs: hmap is the table; key/type/attrs define the symbol.
-// Outputs: Updates the table in place.
-// Invariants/Assumptions: Does not check for duplicates.
+// Insert a symbol entry into the table.
 void symbol_table_insert(struct SymbolTable* hmap, struct Slice* key, struct Type* type, struct IdentAttr* attrs){
   size_t label = hash_slice(key) % hmap->size;
   
@@ -2524,10 +2479,8 @@ void symbol_table_insert(struct SymbolTable* hmap, struct Slice* key, struct Typ
   }
 }
 
-// Purpose: Look up a symbol entry by identifier name.
-// Inputs: hmap is the table; key is the identifier slice.
-// Outputs: Returns the entry or NULL if missing.
-// Invariants/Assumptions: hash_slice is consistent with insertions.
+// Look up a symbol entry by identifier name.
+// Returns the entry or NULL if missing.
 struct SymbolEntry* symbol_table_get(struct SymbolTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -2541,10 +2494,8 @@ struct SymbolEntry* symbol_table_get(struct SymbolTable* hmap, struct Slice* key
   return NULL;
 }
 
-// Purpose: Check if a symbol exists in the table.
-// Inputs: hmap is the table; key is the identifier slice.
-// Outputs: Returns true if the symbol is present.
-// Invariants/Assumptions: Performs a full lookup in the bucket chain.
+// Check if a symbol exists in the table.
+// Returns true if the symbol is present.
 bool symbol_table_contains(struct SymbolTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -2558,20 +2509,15 @@ bool symbol_table_contains(struct SymbolTable* hmap, struct Slice* key){
   return false;
 }
 
-// Purpose: Print the symbol table contents for debugging.
-// Inputs: hmap is the table to print.
-// Outputs: Writes a human-readable dump to stdout.
-// Invariants/Assumptions: Intended for debugging only.
+// Print the symbol table contents for debugging.
 void print_symbol_table(struct SymbolTable* hmap){
   (void)hmap;
 }
 
 // ------------------------- Type Table Functions ------------------------- //
 
-// Purpose: Allocate a type table with a given bucket count.
-// Inputs: numBuckets is the number of hash buckets.
-// Outputs: Returns a TypeTable allocated in the arena.
-// Invariants/Assumptions: Entries are arena-allocated and persist for the pass.
+// Allocate a type table with a given bucket count.
+// Returns a TypeTable allocated in the arena.
 struct TypeTable* create_type_table(size_t numBuckets){
   struct TypeTable* table = arena_alloc(sizeof(struct TypeTable));
   table->size = numBuckets;
@@ -2582,10 +2528,7 @@ struct TypeTable* create_type_table(size_t numBuckets){
   return table;
 }
 
-// Purpose: Insert a type entry into the table.
-// Inputs: hmap is the table; key/type/data define the entry.
-// Outputs: Updates the table in place.
-// Invariants/Assumptions: Does not check for duplicates.
+// Insert a type entry into the table.
 void type_table_insert(struct TypeTable* hmap, struct Slice* key,
     enum TypeEntryType type, union TypeEntryVariant data){
   size_t label = hash_slice(key) % hmap->size;
@@ -2607,10 +2550,8 @@ void type_table_insert(struct TypeTable* hmap, struct Slice* key,
   }
 }
 
-// Purpose: Look up a type entry by identifier name.
-// Inputs: hmap is the table; key is the identifier slice.
-// Outputs: Returns the entry or NULL if missing.
-// Invariants/Assumptions: hash_slice is consistent with insertions.
+// Look up a type entry by identifier name.
+// Returns the entry or NULL if missing.
 struct TypeEntry* type_table_get(struct TypeTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -2624,10 +2565,8 @@ struct TypeEntry* type_table_get(struct TypeTable* hmap, struct Slice* key){
   return NULL;
 }
 
-// Purpose: Check if a type entry exists in the table.
-// Inputs: hmap is the table; key is the identifier slice.
-// Outputs: Returns true if the entry is present.
-// Invariants/Assumptions: Performs a full lookup in the bucket chain.
+// Check if a type entry exists in the table.
+// Returns true if the entry is present.
 bool type_table_contains(struct TypeTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -2641,30 +2580,22 @@ bool type_table_contains(struct TypeTable* hmap, struct Slice* key){
   return false;
 }
 
-// Purpose: Print member entries for debugging.
-// Inputs: members is the member chain to print.
-// Outputs: Writes a human-readable dump to stdout.
-// Invariants/Assumptions: Intended for debugging only.
+// Print member entries for debugging.
 void print_type_table(struct TypeTable* hmap){
   (void)hmap;
 }
 
-// Purpose: Print identifier attributes for debugging.
-// Inputs: attrs is the attribute structure.
-// Outputs: Writes a readable description to stdout.
-// Invariants/Assumptions: Intended for debugging only.
+// Print identifier attributes for debugging.
 void print_ident_attr(struct IdentAttr* attrs){
   (void)attrs;
 }
 
-// Purpose: Print initializer metadata for debugging.
-// Inputs: init is the initializer structure.
-// Outputs: Writes a readable description to stdout.
-// Invariants/Assumptions: Intended for debugging only.
+// Print initializer metadata for debugging.
 void print_ident_init(struct IdentInit* init){
   (void)init;
 }
 
+// Evaluate a constant expression for static-initializer validation.
 bool eval_const(struct Expr* expr, uint64_t* out_value) {
   if (expr == NULL || out_value == NULL) {
     return false;
@@ -2884,6 +2815,7 @@ bool eval_const(struct Expr* expr, uint64_t* out_value) {
   return false; // Not a literal expression
 }
 
+// Return whether an initializer expression is a compile-time constant.
 struct InitList* is_init_const(struct Type* type, struct Initializer* init) {
   switch (init->init_type){
     case SINGLE_INIT: {
@@ -3174,6 +3106,7 @@ struct InitList* is_init_const(struct Type* type, struct Initializer* init) {
   }
 }
 
+// Find a named member in a struct or union type entry.
 struct MemberEntry* get_struct_member(struct Type* type, struct Slice* member_name){
   if (type->type != STRUCT_TYPE && type->type != UNION_TYPE){
     return NULL;

@@ -24,6 +24,7 @@
 
 #define EM_DIOPTASE 0xD105
 
+// Describe the fixed-width ELF image header consumed by the kernel loader.
 struct ElfHeader {
   unsigned char e_ident[16];
   unsigned short e_type;
@@ -58,6 +59,7 @@ struct ElfHeader {
  */
 #define ELF_MAX_PROGRAM_HEADERS 64
 
+// Describe one ELF segment and its file-to-memory mapping requirements.
 struct ElfProgramHeader {
   unsigned p_type;
   unsigned p_offset;

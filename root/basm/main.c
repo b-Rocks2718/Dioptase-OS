@@ -11,10 +11,11 @@
 #include "elf.h"
 #include "debug.h"
 
-// Purpose: User/kernel read and write traps currently clamp each transfer to
+// User/kernel read and write traps currently clamp each transfer to
 // 1024 bytes, so large source files must be copied in chunks.
 #define K_MAX_FILE_IO_BYTES_PER_SYSCALL 1024
 
+// Print command-line usage and supported assembler modes.
 static void print_usage(char* program_name) {
   void* args[1];
   if (program_name == NULL) {
@@ -25,12 +26,14 @@ static void print_usage(char* program_name) {
   fdprintf(STDOUT, "usage: %s <file name>\n", args);
 }
 
+// Write a basm diagnostic message to stdout.
 static void print_basm_message(char* message) {
   void* args[1];
   args[0] = message;
   fdprintf(STDOUT, "basm: %s\n", args);
 }
 
+// Write a diagnostic naming a path that could not be opened.
 static void print_basm_path_error(char* message, char* path) {
   void* args[2];
   args[0] = message;
@@ -38,10 +41,8 @@ static void print_basm_path_error(char* message, char* path) {
   fdprintf(STDOUT, "basm: %s: %s\n", args);
 }
 
-// Purpose: Join two path components with a '/' separator when needed.
-// Inputs: left and right are path components.
-// Outputs: Returns a heap-allocated joined path or NULL on allocation failure.
-// Invariants/Assumptions: Paths in Dioptase-OS use '/' as the separator.
+// Join two path components with a '/' separator when needed.
+// Returns a heap-allocated joined path or NULL on allocation failure.
 static char* join_paths(char* left, char* right) {
   unsigned left_len;
   unsigned right_len;
@@ -71,6 +72,7 @@ static char* join_paths(char* left, char* right) {
   return path;
 }
 
+// Free each loaded source buffer and the array that owns their pointers.
 static void free_loaded_files(char** files, int count) {
   if (files == NULL) return;
   for (int i = 0; i < count; ++i) {
@@ -79,10 +81,9 @@ static void free_loaded_files(char** files, int count) {
   free(files);
 }
 
-// Purpose: Read the full source file into user-owned heap memory.
-// Inputs: file_path names the source file to copy.
-// Outputs: Returns a NUL-terminated heap buffer on success, NULL on failure.
-// Invariants/Assumptions: open_existing() distinguishes a missing source from
+// Read the full source file into user-owned heap memory.
+// Returns a NUL-terminated heap buffer on success, NULL on failure.
+// Open_existing() distinguishes a missing source from
 // an intentionally empty file without publishing any filesystem entry.
 static char* load_source_file(char* file_path) {
   int fd;
@@ -148,10 +149,9 @@ static char* load_source_file(char* file_path) {
   return bytes;
 }
 
-// Purpose: Open the output file as a fresh byte stream for assembly output.
-// Inputs: target_name names the destination file.
-// Outputs: Returns a writable fd positioned at offset 0, or -1 on failure.
-// Invariants/Assumptions: The syscall interface exposes `open()` plus
+// Open the output file as a fresh byte stream for assembly output.
+// Returns a writable fd positioned at offset 0, or -1 on failure.
+// The syscall interface exposes `open()` plus
 // shrink-only `truncate()`, so callers must explicitly clear old contents.
 static int open_output_file(char* target_name) {
   int fd;
@@ -177,6 +177,7 @@ static int open_output_file(char* target_name) {
   return fd;
 }
 
+// Assemble the requested sources and write the selected binary or ELF output.
 int main(int argc, char** argv) {
   int* file_names;
   int num_files;

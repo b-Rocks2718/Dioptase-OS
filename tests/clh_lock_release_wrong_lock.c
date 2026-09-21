@@ -13,7 +13,7 @@
 static struct CLHLock owned;
 static struct CLHLock other;
 
-void kernel_main(void){
+void kernel_main(void){ /* Verify a CLH lock cannot be released through another lock. */
   say("***CLH-lock wrong-release negative start\n", NULL);
   clh_lock_init(&owned);
   clh_lock_init(&other);

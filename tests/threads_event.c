@@ -32,7 +32,7 @@
 #define WAITER_WAIT_BUDGET 100000
 #define DONE_WAIT_BUDGET 100000
 
-struct EventWaitArgs {
+struct EventWaitArgs { /* Publishes one event waiter's arrival and completion counters. */
   int* ready;
   int* done;
 };
@@ -125,7 +125,7 @@ static void spawn_reuse_waiter(int id) {
   thread(fun);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify event publication wakes exactly the waiting thread. */
   say("***event test start\n", NULL);
 
   event_init(&event);

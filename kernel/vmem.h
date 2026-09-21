@@ -33,6 +33,7 @@
 // arithmetic; the highest valid physical byte address is 0x07FFFFFF.
 #define PHYS_ADDR_END_EXCLUSIVE 0x08000000
 
+// Describe one sorted virtual-memory mapping and its backing object.
 struct VME {
   struct VME* next;
 

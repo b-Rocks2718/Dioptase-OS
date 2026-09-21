@@ -49,10 +49,12 @@ bool input_ctrl_held = false;
 
 static void put_terminal_char(char c);
 
+// Return the minimum signed integer without overflowing its negation logic.
 static int min_int(int a, int b){
   return (a < b) ? a : b;
 }
 
+// Constrain an integer to an inclusive range.
 static int clamp_int(int value, int min_value, int max_value){
   if (value < min_value){
     return min_value;
@@ -63,18 +65,22 @@ static int clamp_int(int value, int min_value, int max_value){
   return value;
 }
 
+// Convert a visible terminal row into its framebuffer row after scrolling.
 static int visible_row_to_physical_row(int row){
   return (scroll_top_row + row) % TILE_COL_HEIGHT;
 }
 
+// Compute the framebuffer offset for a terminal cell position.
 static int fb_index_for_position(int row, int col){
   return visible_row_to_physical_row(row) * TILE_ROW_WIDTH + col;
 }
 
+// Convert the current visible cursor position to its scrolled framebuffer index.
 static int cursor_fb_index(void){
   return fb_index_for_position(cursor_row, cursor_col);
 }
 
+// Translate an unshifted printable key into its US keyboard shifted form.
 static char apply_shift_to_char(char c){
   if (c >= 'a' && c <= 'z'){
     return c - 'a' + 'A';
@@ -127,10 +133,12 @@ static char apply_shift_to_char(char c){
   return c;
 }
 
+// Forward one decoded keyboard byte to the terminal's foreground input pipe.
 static void write_terminal_input_char(char c){
   write(STDOUT, &c, 1);
 }
 
+// Dispatch a control key to the corresponding terminal editing action.
 static void handle_ctrl_key(short key){
   if (key == 'c'){
     if (signal_foreground(SIGNAL_TERMINATE) != 0){
@@ -144,6 +152,7 @@ static void handle_ctrl_key(short key){
   }
 }
 
+// Consume one keyboard event and update terminal input state.
 static void handle_keyboard_event(short key){
   if (key & 0xFF00){
     key = key & 0xFF;
@@ -186,6 +195,7 @@ static void handle_keyboard_event(short key){
   }
 }
 
+// Forward an accepted keyboard character to the foreground input stream.
 static void forward_keyboard_input(void){
   short key;
 
@@ -194,6 +204,7 @@ static void forward_keyboard_input(void){
   }
 }
 
+// Erase the currently drawn terminal cursor cell.
 static void erase_cursor(void){
   if (!cursor_drawn){
     return;
@@ -203,6 +214,7 @@ static void erase_cursor(void){
   cursor_drawn = false;
 }
 
+// Draw the terminal cursor at its current cell.
 static void draw_cursor(void){
   int index;
 
@@ -216,6 +228,7 @@ static void draw_cursor(void){
   cursor_drawn = true;
 }
 
+// Redraw the cursor immediately after terminal output changes its cell.
 static void show_cursor_now(void){
   if (!cursor_visible){
     erase_cursor();
@@ -227,6 +240,7 @@ static void show_cursor_now(void){
   draw_cursor();
 }
 
+// Toggle the software cursor after its configured blink interval elapses.
 static void blink_cursor(void){
   unsigned now = get_current_jiffies();
 
@@ -248,6 +262,7 @@ static void blink_cursor(void){
   }
 }
 
+// Clear all cells in one visible terminal row.
 static void clear_visible_row(int row){
   int base = fb_index_for_position(row, 0);
   for (int i = 0; i < TILE_ROW_WIDTH; ++i){
@@ -255,6 +270,7 @@ static void clear_visible_row(int row){
   }
 }
 
+// Copy visible row.
 static void copy_visible_row(int dst_row, int src_row){
   int dst_base = fb_index_for_position(dst_row, 0);
   int src_base = fb_index_for_position(src_row, 0);
@@ -264,6 +280,7 @@ static void copy_visible_row(int dst_row, int src_row){
   }
 }
 
+// Scroll the terminal framebuffer upward by one row.
 static void scroll_terminal_one_line(void){
   scroll_top_row = (scroll_top_row + 1) % TILE_COL_HEIGHT;
   move_vscroll(-TILE_HEIGHT);
@@ -272,22 +289,27 @@ static void scroll_terminal_one_line(void){
   cursor_col = 0;
 }
 
+// Move the cursor to the row above, preserving the current column.
 static void move_cursor_up(int rows){
   cursor_row -= min_int(cursor_row, rows);
 }
 
+// Move the cursor to the row below, preserving the current column.
 static void move_cursor_down(int rows){
   cursor_row += min_int(TILE_COL_HEIGHT - 1 - cursor_row, rows);
 }
 
+// Move the cursor one cell toward the end of the current row.
 static void move_cursor_forward(int cols){
   cursor_col += min_int(TILE_ROW_WIDTH - 1 - cursor_col, cols);
 }
 
+// Move the cursor one cell toward the start of the current row.
 static void move_cursor_backward(int cols){
   cursor_col -= min_int(cursor_col, cols);
 }
 
+// Move the cursor to the first cell of the current row.
 static void cursor_home(void){
   cursor_row = 0;
   cursor_col = 0;
@@ -339,6 +361,7 @@ static void reset_display_state(void){
   under_cursor = 0;
 }
 
+// Advance to the next row, scrolling when the cursor reaches the bottom.
 static void advance_cursor_newline(void){
   cursor_col = 0;
   if (cursor_row == TILE_COL_HEIGHT - 1){
@@ -348,10 +371,12 @@ static void advance_cursor_newline(void){
   }
 }
 
+// Cancel pending wrap.
 static void cancel_pending_wrap(void){
   wrap_pending = false;
 }
 
+// Advance to the next row after output filled the previous row's final cell.
 static void apply_pending_wrap(void){
   if (!wrap_pending){
     return;
@@ -361,6 +386,7 @@ static void apply_pending_wrap(void){
   advance_cursor_newline();
 }
 
+// Return the cursor to the first column without changing rows.
 static void handle_carriage_return(void){
   // move to column 0 on the current visible row 
   // and discard any delayed wrap
@@ -368,12 +394,14 @@ static void handle_carriage_return(void){
   cursor_col = 0;
 }
 
+// Erase the character before the cursor and move backward when possible.
 static void handle_backspace(void){
   // move cursor left within the current visible row
   cancel_pending_wrap();
   move_cursor_backward(1);
 }
 
+// Advance the cursor to the next configured tab stop.
 static void handle_tab(void){
   // expand tab into spaces until the next TAB_WIDTH-aligned
   // column. Reusing put_terminal_char() keeps wrapping and scrolling semantics
@@ -389,6 +417,7 @@ static void handle_tab(void){
   }
 }
 
+// Insert or display one character at the terminal cursor position.
 static void put_terminal_char(char c){
   if (c == '\n'){
     // A newline consumes any pending wrap once. Without this, writing a
@@ -429,6 +458,7 @@ static void put_terminal_char(char c){
   }
 }
 
+// Convert one decimal CSI argument substring to an integer.
 static int parse_escape_arg(char* arg, int len){
   int value = 0;
   for (int i = 0; i < len; ++i){
@@ -437,6 +467,7 @@ static int parse_escape_arg(char* arg, int len){
   return value;
 }
 
+// Apply one Select Graphic Rendition argument to the active text color.
 static void apply_sgr_arg(int arg){
   // color formal is 8 bit RRRGGGBB
   switch (arg){
@@ -537,6 +568,7 @@ static void apply_sgr_arg(int arg){
   }
 }
 
+// Parse and apply one terminal escape sequence.
 static bool handle_escape_sequence(char c){
   static char escape_buf[MAX_ESCAPE_SEQUENCE_LENGTH];
   static char escape_args[MAX_ESCAPE_ARGS][MAX_ESCAPE_ARG_LENGTH];
@@ -827,6 +859,7 @@ static bool handle_escape_sequence(char c){
   return false;
 }
 
+// Interpret output bytes, updating terminal cells and ANSI escape state.
 void render_bytes(int n){
   static bool in_escape_sequence = false;
 
@@ -850,6 +883,7 @@ void render_bytes(int n){
   show_cursor_now();
 }
 
+// Initialize terminal rendering and consume the input stream until it closes.
 int main(void){
   clear_screen();
   TILE_FB = get_tile_fb();

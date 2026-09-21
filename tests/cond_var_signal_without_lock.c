@@ -19,7 +19,7 @@
 static struct CondVar cv;
 static struct BlockingLock lock;
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify signaling without the associated lock is rejected. */
   say("***cond var signal negative start\n", NULL);
 
   cond_var_init(&cv);

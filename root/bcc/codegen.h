@@ -5,6 +5,7 @@
 
 struct MachineInstr;
 
+// Classify target machine instruction variants.
 enum MachineInstrType {
   // real instructions
   MACHINE_AND,
@@ -119,15 +120,18 @@ enum MachineInstrType {
   MACHINE_DEBUG_LOCAL,
 };
 
+// Enumerate machine exception codes emitted by diagnostics.
 enum Exception {
   EXC_EXIT,
 };
 
+// Own the linked list of generated machine instructions.
 struct MachineProg {
   struct MachineInstr* head;
   struct MachineInstr* tail;
 };
 
+// Store a machine opcode and its register/immediate operand payload.
 struct MachineInstr {
   enum MachineInstrType type;
 

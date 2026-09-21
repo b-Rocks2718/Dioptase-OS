@@ -16,7 +16,7 @@
 #include "../kernel/heap.h"
 #include "../kernel/print.h"
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify freeing an interior heap pointer is rejected. */
   say("***slab heap interior pointer negative start\n", NULL);
 
   heap_init();

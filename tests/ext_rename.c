@@ -27,7 +27,7 @@
 #define RENAME_WORKERS 2
 #define RENAME_ROUNDS 4
 
-struct RenameWorkerArgs {
+struct RenameWorkerArgs { /* Defines one synchronized rename race and its expected inode/data. */
   struct Barrier* start;
   struct Barrier* done;
   unsigned id;
@@ -73,7 +73,7 @@ static char* read_node_text(struct Node* node) {
   return text;
 }
 
-static void rename_worker_fail(unsigned id, unsigned round, char* message) {
+static void rename_worker_fail(unsigned id, unsigned round, char* message) { /* Record a worker failure with its iteration context. */
   int args[2] = { id, round };
   say("***ext_rename FAIL worker=%d round=%d\n", args);
   panic(message);

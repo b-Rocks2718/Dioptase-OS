@@ -3,12 +3,14 @@
 
 #include "../crt/stdbool.h"
 
+// Store a label's owned name, address, and data/text classification.
 struct LabelEntry {
   char* name;
   bool is_data;
   unsigned addr;
 };
 
+// Own the growable array of emitted label entries.
 struct LabelList {
   struct LabelEntry* entries;
   unsigned size;

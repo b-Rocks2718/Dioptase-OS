@@ -8,10 +8,10 @@
 #define MAX_SIGNED_DEC_CHARS 11
 
 /*
- * Purpose: Commit one complete byte span to a Dioptase descriptor.
- * Inputs: fd is the destination and buf owns at least count readable bytes.
- * Outputs: true only after all count bytes have been accepted by write().
- * Invariants/Assumptions: A positive short write commits that prefix, so the
+ * Commit one complete byte span to a Dioptase descriptor.
+ * Fd is the destination and buf owns at least count readable bytes.
+ * Returns true only after all count bytes have been accepted by write().
+ * A positive short write commits that prefix, so the
  * next call starts immediately after it. A zero or negative result means no
  * forward progress and terminates the operation. The syscall contract never
  * returns more bytes than requested; reject such a result defensively rather
@@ -32,6 +32,7 @@ static bool write_fd_all(int fd, char* buf, unsigned count){
   return true;
 }
 
+// Write one character to standard output.
 int putchar(char c){
   if (!write_fd_all(STDOUT, &c, 1)){
     return -1;
@@ -39,10 +40,12 @@ int putchar(char c){
   return (unsigned char)c;
 }
 
+// Write a null-terminated string to standard output.
 int puts(char* str){
   return fdputs(STDOUT, str);
 }
 
+// Write a null-terminated string to a file descriptor.
 int fdputs(int fd, char* str){
   int count = 0;
 
@@ -61,6 +64,7 @@ int fdputs(int fd, char* str){
   return count;
 }
 
+// Format and write text to standard output.
 int printf(char* fmt, void* arr){
   return fdprintf(STDOUT, fmt, arr);
 }
@@ -82,11 +86,13 @@ static int string_output_length(char* str){
   return len;
 }
 
+// Return the minimum unsigned value represented by the selected width.
 static unsigned min_unsigned(unsigned a, unsigned b){
   if (a < b) return a;
   return b;
 }
 
+// Add emitted count.
 static bool add_emitted_count(int* total, int emitted){
   if (emitted < 0 || *total > INT_MAX - emitted){
     return false;
@@ -95,6 +101,7 @@ static bool add_emitted_count(int* total, int emitted){
   return true;
 }
 
+// Write a repeated padding byte and return its emitted length.
 static int emit_padding(int fd, char pad, unsigned count){
   int emitted = 0;
 
@@ -111,6 +118,7 @@ static int emit_padding(int fd, char pad, unsigned count){
   return emitted;
 }
 
+// Write one byte span completely and return its emitted length.
 static int emit_span(int fd, char* start, unsigned len){
   if (len > (unsigned)INT_MAX || !write_fd_all(fd, start, len)){
     return -1;
@@ -118,6 +126,7 @@ static int emit_span(int fd, char* start, unsigned len){
   return (int)len;
 }
 
+// Emit unsigned base.
 static int emit_unsigned_base(int fd, unsigned value, unsigned base,
                               bool uppercase, unsigned min_width,
                               bool zero_pad){
@@ -158,6 +167,7 @@ static int emit_unsigned_base(int fd, unsigned value, unsigned base,
   return emit_span(fd, &digits[len], digit_count);
 }
 
+// Emit signed base10.
 static int emit_signed_base10(int fd, int value, unsigned min_width,
                               bool zero_pad){
   char digits[MAX_SIGNED_DEC_CHARS];
@@ -217,6 +227,7 @@ static int emit_signed_base10(int fd, int value, unsigned min_width,
   return emit_span(fd, &digits[len], digit_count);
 }
 
+// Format and write text to a file descriptor.
 int fdprintf(int fd, char* fmt, void* arr){
   int count = 0;
   unsigned i = 0;
@@ -375,14 +386,17 @@ int fdprintf(int fd, char* fmt, void* arr){
   return count;
 }
 
+// Print a signed decimal integer to standard output.
 int print_signed(int n){
   return emit_signed_base10(STDOUT, n, 0, false);
 }
 
+// Print an unsigned decimal integer to standard output.
 int print_unsigned(unsigned n){
   return emit_unsigned_base(STDOUT, n, DECIMAL_BASE, false, 0, false);
 }
 
+// Print an unsigned hexadecimal integer with the selected letter case.
 int print_hex(unsigned n, bool uppercase){
   return emit_unsigned_base(STDOUT, n, HEX_BASE, uppercase, 0, false);
 }

@@ -9,6 +9,7 @@
 
 #define LOCK_NO_OWNER_CORE (-1)
 
+// Initialize an interrupt-masking spin lock without an owner.
 void spin_lock_init(struct SpinLock* lock){
   assert(lock != NULL, "spin_lock_init: lock is NULL.\n");
   lock->the_lock = 0;
@@ -207,6 +208,7 @@ void clh_lock_release(struct CLHLock* lock){
   interrupts_restore(me->my_node->interrupt_state);
 }
 
+// Destroy an idle CLH lock and release its sentinel node.
 void clh_lock_destroy(struct CLHLock* lock){
   assert(lock != NULL, "clh_lock_destroy: lock is NULL.\n");
   assert_always(lock->owner == NULL,
@@ -217,6 +219,7 @@ void clh_lock_destroy(struct CLHLock* lock){
   lock->tail = NULL;
 }
 
+// Destroy a heap-allocated CLH lock after all users have stopped.
 void clh_lock_free(struct CLHLock* lock){
   clh_lock_destroy(lock);
   free(lock);

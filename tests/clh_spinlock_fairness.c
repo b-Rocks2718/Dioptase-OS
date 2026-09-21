@@ -47,7 +47,7 @@
 #define SEEN_SLOTS 4
 #define SUPPORTED_AFFINITY_CORES 4
 
-struct FairnessState {
+struct FairnessState { /* Captures arrivals and acquisition order for one lock implementation. */
   int ready;
   int attempting;
   int go;
@@ -57,7 +57,7 @@ struct FairnessState {
   struct TCB* worker_tcb[SEEN_SLOTS];
 };
 
-struct WorkerArg {
+struct WorkerArg { /* Selects a worker identity and the lock implementation it exercises. */
   int id;
   int lock_kind;
 };
@@ -76,7 +76,7 @@ static enum CoreAffinity core_affinities[SUPPORTED_AFFINITY_CORES] = {
   CORE_3
 };
 
-static void reset_state(struct FairnessState* state) {
+static void reset_state(struct FairnessState* state) { /* Reset state. */
   state->ready = 0;
   state->attempting = 0;
   state->go = 0;
@@ -99,14 +99,14 @@ static void record_owner(struct FairnessState* state, int owner) {
   state->event_count = index + 1;
 }
 
-static struct FairnessState* state_for_kind(int lock_kind) {
+static struct FairnessState* state_for_kind(int lock_kind) { /* Select the fairness counters for the lock implementation. */
   if (lock_kind == LOCK_KIND_CLH) {
     return &clh_state;
   }
   return &normal_state;
 }
 
-static void fairness_worker(void* arg) {
+static void fairness_worker(void* arg) { /* Run the fairness worker. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   struct FairnessState* state = state_for_kind(worker->lock_kind);
 
@@ -134,7 +134,7 @@ static void fairness_worker(void* arg) {
   __atomic_fetch_add(&state->done, 1);
 }
 
-static enum CoreAffinity worker_affinity(int worker_index) {
+static enum CoreAffinity worker_affinity(int worker_index) { /* Assign workers to cores in the fairness test pattern. */
   int cores = CONFIG.num_cores;
   if (cores > SUPPORTED_AFFINITY_CORES) {
     cores = SUPPORTED_AFFINITY_CORES;
@@ -144,7 +144,7 @@ static enum CoreAffinity worker_affinity(int worker_index) {
   return core_affinities[core];
 }
 
-static void spawn_worker(int lock_kind, int id) {
+static void spawn_worker(int lock_kind, int id) { /* Spawn worker. */
   struct WorkerArg* arg = malloc(sizeof(struct WorkerArg));
   assert(arg != NULL, "clh fairness test: WorkerArg allocation failed.\n");
   arg->id = id;
@@ -158,7 +158,7 @@ static void spawn_worker(int lock_kind, int id) {
   thread_(fun, HIGH_PRIORITY, worker_affinity(id - 1));
 }
 
-static void wait_for_count(int* value, int expected, int budget, char* panic_msg) {
+static void wait_for_count(int* value, int expected, int budget, char* panic_msg) { /* Wait for count. */
   for (int i = 0; i < budget && __atomic_load_n(value) != expected; i++) {
     yield();
   }
@@ -169,13 +169,13 @@ static void wait_for_count(int* value, int expected, int budget, char* panic_msg
   }
 }
 
-static void settle_waiters(void) {
+static void settle_waiters(void) { /* Allow queued lock waiters to reach a stable observation point. */
   for (int i = 0; i < SETTLE_PAUSE_ITERS; i++) {
     pause();
   }
 }
 
-static void wait_for_attempts(struct FairnessState* state, int waiters, char* panic_msg) {
+static void wait_for_attempts(struct FairnessState* state, int waiters, char* panic_msg) { /* Wait for attempts. */
   for (int i = 0; i < QUEUE_WAIT_BUDGET && __atomic_load_n(&state->attempting) != waiters; i++) {
     pause();
   }
@@ -186,7 +186,7 @@ static void wait_for_attempts(struct FairnessState* state, int waiters, char* pa
   }
 }
 
-static int clh_queued_count(int waiters) {
+static int clh_queued_count(int waiters) { /* Count clh queued. */
   int queued = 0;
   for (int i = 1; i <= waiters; i++) {
     struct TCB* worker_tcb =
@@ -199,7 +199,7 @@ static int clh_queued_count(int waiters) {
   return queued;
 }
 
-static void wait_for_clh_queue(int waiters) {
+static void wait_for_clh_queue(int waiters) { /* Wait for clh queue. */
   for (int i = 0; i < QUEUE_WAIT_BUDGET && clh_queued_count(waiters) != waiters; i++) {
     pause();
   }
@@ -212,7 +212,7 @@ static void wait_for_clh_queue(int waiters) {
   }
 }
 
-static void run_normal_phase(int waiters) {
+static void run_normal_phase(int waiters) { /* Run normal phase. */
   reset_state(&normal_state);
   spin_lock_init(&normal_lock);
 
@@ -241,7 +241,7 @@ static void run_normal_phase(int waiters) {
                  "clh fairness test: normal workers did not finish\n");
 }
 
-static void run_clh_phase(int waiters) {
+static void run_clh_phase(int waiters) { /* Run clh phase. */
   reset_state(&clh_state);
   clh_lock_init(&clh_lock);
 
@@ -270,7 +270,7 @@ static void run_clh_phase(int waiters) {
   clh_lock_destroy(&clh_lock);
 }
 
-static int waiters_before_owner(struct FairnessState* state) {
+static int waiters_before_owner(struct FairnessState* state) { /* Count waiters that acquired before the owner barged. */
   int count = 0;
   for (int i = 0; i < state->event_count && i < MAX_EVENTS; i++) {
     if (state->order[i] == OWNER_ID) {
@@ -281,7 +281,7 @@ static int waiters_before_owner(struct FairnessState* state) {
   return count;
 }
 
-static int owner_barges_before_all_waiters(struct FairnessState* state, int waiters) {
+static int owner_barges_before_all_waiters(struct FairnessState* state, int waiters) { /* Detect an owner reacquiring ahead of every queued waiter. */
   int seen[SEEN_SLOTS];
   int seen_waiters = 0;
   int barges = 0;
@@ -305,7 +305,7 @@ static int owner_barges_before_all_waiters(struct FairnessState* state, int wait
   return barges;
 }
 
-static void print_phase(int lock_kind, struct FairnessState* state, int waiters) {
+static void print_phase(int lock_kind, struct FairnessState* state, int waiters) { /* Print phase. */
   int args[2];
   args[0] = state->event_count;
   args[1] = waiters;
@@ -336,7 +336,7 @@ static void print_phase(int lock_kind, struct FairnessState* state, int waiters)
   }
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Compare FIFO CLH acquisition with barging spin-lock behavior. */
   say("clh fairness test start\n", NULL);
 
   if (CONFIG.num_cores < 2) {

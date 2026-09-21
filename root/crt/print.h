@@ -14,7 +14,7 @@ int fdputs(int fd, char* str);
 
 int printf(char* fmt, void* arr);
 
-// Purpose: Emit formatted text to an arbitrary file descriptor without
+// Emit formatted text to an arbitrary file descriptor without
 // variadics. The caller passes every argument as a 32-bit slot in arr.
 // Supported formats intentionally match the subset used by Dioptase userland:
 // %d, %u, %x, %X, %s, %.*s, %c, and %%.

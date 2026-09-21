@@ -32,7 +32,7 @@ int write_all(char* buffer, unsigned size) {
   return 0;
 }
 
-int main(void){
+int main(void){ /* Exercise directory enumeration and path-based syscalls. */
   // getcwd.
   char buffer[100];
   getcwd(buffer, 100);

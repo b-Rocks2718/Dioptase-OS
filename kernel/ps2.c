@@ -12,6 +12,7 @@
 #include "ivt.h"
 #include "interrupt_waiter.h"
 
+// Carry one decoded PS/2 key event through the bounded worker queue.
 struct KeyElement {
   struct GenericQueueElement link;
   short key;
@@ -50,6 +51,7 @@ static int ps2_dropped_events;
 // PS/2 MMIO address for keyboard input
 static short* ps2_in = (short*)0x7FE5800;
 
+// Block the PS/2 worker until an ISR-published event is available.
 static void ps2_worker_block(void* arg){
   struct TCB* tcb = (struct TCB*)arg;
   struct TCB* wakeup = interrupt_waiter_publish(&ps2_worker_waiter, tcb);
@@ -209,14 +211,17 @@ void ps2_destroy(void){
   __atomic_store_n(&ps2_dropped_events, 0);
 }
 
+// Return the number of PS/2 events dropped by per-core ISR buffers.
 unsigned ps2_dropped_event_count(void){
   return (unsigned)__atomic_load_n(&ps2_dropped_events);
 }
 
+// Return the number of event nodes available in the bounded pool.
 unsigned ps2_event_pool_capacity(void){
   return PS2_EVENT_POOL_CAPACITY;
 }
 
+// Publish a synthetic key event through the production worker path.
 bool ps2_test_publish_event(short key){
   assert(key != 0,
     "PS/2 test publish: zero cannot be injected as a keyboard event.\n");
@@ -274,6 +279,7 @@ short waitkey_raw(void){
   return key;
 }
 
+// Drain per-core PS/2 ISR buffers and publish their key events.
 void ps2_handler(void){
   struct PerCore* pc = get_per_core();
   struct KeyBuf* kb = &pc->keybuf;

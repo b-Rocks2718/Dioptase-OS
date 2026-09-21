@@ -5,6 +5,7 @@
 
 #include "token_array.h"
 
+// Double token storage while preserving the existing token values.
 static struct Token* grow_token_array(struct Token* tokens, size_t old_capacity) {
   size_t new_capacity = old_capacity * 2;
   struct Token* grown = malloc(sizeof(struct Token) * new_capacity);
@@ -18,6 +19,7 @@ static struct Token* grow_token_array(struct Token* tokens, size_t old_capacity)
   return grown;
 }
 
+// Allocate an empty token array with the requested initial capacity.
 struct TokenArray* create_token_array(size_t capacity){
   struct Token* tokens = malloc(sizeof(struct Token) * capacity);
 
@@ -30,6 +32,7 @@ struct TokenArray* create_token_array(size_t capacity){
   return arr;
 }
 
+// Copy one token into the array, taking ownership of its payload strings.
 void token_array_append(struct TokenArray* arr, struct Token* value){
   if (arr->size == arr->capacity){
     struct Token* grown = grow_token_array(arr->tokens, arr->capacity);
@@ -47,11 +50,13 @@ void token_array_append(struct TokenArray* arr, struct Token* value){
   free(value);
 }
 
+// Return the token at index without bounds checking.
 struct Token token_array_get(struct TokenArray* arr, size_t i){
   // no checks on i, might regret this later
   return arr->tokens[i];
 }
 
+// Free token payload strings, backing storage, and the array wrapper.
 void destroy_token_array(struct TokenArray* arr){
   for (int i = 0; i < arr->size; ++i){
     if (arr->tokens[i].type == IDENT) free(arr->tokens[i].data.ident_name);

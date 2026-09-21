@@ -28,12 +28,14 @@
 #define ASCII_ETX 0x03
 #define ASCII_DC3 0x13
 
+// Holds editable text, cursor position, and line-layout metadata for the editor.
 struct TextBuffer {
   char* bytes;
   unsigned length;
   unsigned capacity;
 };
 
+// Combines the document with its cursor, viewport, and status-line state.
 struct EditorState {
   struct TextBuffer text;
   unsigned cursor_index;
@@ -55,12 +57,14 @@ static char render_rows[BMACS_TEXT_ROWS][BMACS_TEXT_COLS];
 static unsigned cursor_fb_row = BMACS_TEXT_TOP_ROW;
 static unsigned cursor_fb_col = 0;
 
+// Initialize an empty text buffer with no allocation.
 static void init_text_buffer(struct TextBuffer* buffer){
   buffer->bytes = NULL;
   buffer->length = 0;
   buffer->capacity = 0;
 }
 
+// Read a piped input byte when available, otherwise poll the keyboard device.
 static int read_input_event(void){
   int available = fd_bytes_available(STDIN);
 
@@ -79,6 +83,7 @@ static int read_input_event(void){
   return 0;
 }
 
+// Initialize an editor with an empty document and a blank status line.
 static void init_editor_state(struct EditorState* editor){
   init_text_buffer(&editor->text);
   editor->cursor_index = 0;
@@ -88,11 +93,13 @@ static void init_editor_state(struct EditorState* editor){
   editor->status_text[BMACS_TEXT_COLS] = '\0';
 }
 
+// Free the text allocation and leave the buffer empty and reusable.
 static void free_text_buffer(struct TextBuffer* buffer){
   free(buffer->bytes);
   init_text_buffer(buffer);
 }
 
+// Free the loaded text and reset the editor's cursor and viewport state.
 static void free_editor_state(struct EditorState* editor){
   free_text_buffer(&editor->text);
   editor->cursor_index = 0;
@@ -100,6 +107,7 @@ static void free_editor_state(struct EditorState* editor){
   editor->top_display_row = 0;
 }
 
+// Print bmacs file error.
 static void print_bmacs_file_error(char* operation, char* filename){
   puts("bmacs: ");
   puts(operation);
@@ -108,11 +116,13 @@ static void print_bmacs_file_error(char* operation, char* filename){
   puts("\n");
 }
 
+// Clear the status message before redrawing the editor footer.
 static void clear_status_text(struct EditorState* editor){
   memset(editor->status_text, ' ', BMACS_TEXT_COLS);
   editor->status_text[BMACS_TEXT_COLS] = '\0';
 }
 
+// Append status segment.
 static void append_status_segment(
   struct EditorState* editor,
   unsigned* col,
@@ -125,6 +135,7 @@ static void append_status_segment(
   }
 }
 
+// Set status message.
 static void set_status_message(
   struct EditorState* editor,
   char* prefix,
@@ -143,6 +154,7 @@ static void set_status_message(
   append_status_segment(editor, &col, "Ctrl-S save | Ctrl-C exit");
 }
 
+// Set default status.
 static void set_default_status(struct EditorState* editor){
   set_status_message(
     editor,
@@ -151,23 +163,28 @@ static void set_default_status(struct EditorState* editor){
   );
 }
 
+// Hide the terminal cursor while the editor redraws its own cursor.
 static void hide_terminal_cursor(void){
   puts("\x1b[?25l");
 }
 
+// Pack an eight-bit color and tile index into one framebuffer cell.
 static short make_tile_entry(unsigned tile_index, unsigned color){
   return (short)(((color & 0xFFu) << 8) | (tile_index & 0xFFu));
 }
 
+// Convert a framebuffer row and column to its linear cell index.
 static unsigned tile_fb_index(unsigned row, unsigned col){
   return row * TILE_ROW_WIDTH + col;
 }
 
+// Draw the editor cursor at the current buffer position.
 static void draw_editor_cursor(void){
   tile_fb[tile_fb_index(cursor_fb_row, cursor_fb_col)] =
     make_tile_entry(SQUARE_TILE, BMACS_CURSOR_COLOR);
 }
 
+// Load the font tiles and map the tile framebuffer used by the editor.
 static bool init_editor_display(void){
   load_text_tiles();
   set_tile_scale(0);
@@ -183,10 +200,12 @@ static bool init_editor_display(void){
   return true;
 }
 
+// Fill render rows.
 static void fill_render_rows(char c){
   memset(render_rows, c, BMACS_TEXT_ROWS * BMACS_TEXT_COLS);
 }
 
+// Advance the display position while accounting for wrapped editor lines.
 static void advance_display_position(unsigned* row, unsigned* col, char c){
   unsigned spaces_remaining;
 
@@ -236,6 +255,7 @@ static void buffer_position_for_index(
   }
 }
 
+// Remember the cursor's visual column for subsequent vertical movement.
 static void update_preferred_col(struct EditorState* editor){
   unsigned row;
   unsigned col;
@@ -249,6 +269,7 @@ static void update_preferred_col(struct EditorState* editor){
   editor->preferred_col = col;
 }
 
+// Ensure text buffer capacity.
 static bool ensure_text_buffer_capacity(
   struct TextBuffer* buffer,
   unsigned required_capacity
@@ -280,6 +301,7 @@ static bool ensure_text_buffer_capacity(
   return true;
 }
 
+// Insert text char.
 static bool insert_text_char(
   struct TextBuffer* buffer,
   unsigned index,
@@ -300,6 +322,7 @@ static bool insert_text_char(
   return true;
 }
 
+// Delete text char before.
 static bool delete_text_char_before(
   struct TextBuffer* buffer,
   unsigned* index
@@ -317,6 +340,7 @@ static bool delete_text_char_before(
   return true;
 }
 
+// Expand tabs to spaces.
 static void expand_tabs_to_spaces(struct TextBuffer* buffer){
   unsigned tab_count = 0;
   char* expanded_bytes;
@@ -357,6 +381,7 @@ static void expand_tabs_to_spaces(struct TextBuffer* buffer){
   buffer->capacity = expanded_length + 1;
 }
 
+// Write a complete buffer in syscall-sized chunks, stopping on any short failure.
 static bool write_all_file_bytes(int fd, char* bytes, unsigned length){
   unsigned written = 0;
 
@@ -379,6 +404,7 @@ static bool write_all_file_bytes(int fd, char* bytes, unsigned length){
   return true;
 }
 
+// Save text buffer to file.
 static bool save_text_buffer_to_file(struct TextBuffer* buffer, char* filename){
   // Saving is an intentional publication point: retain creating open() so a
   // file removed after load can be recreated before its new contents commit.
@@ -495,6 +521,7 @@ static bool find_index_for_display_row_col(
   return true;
 }
 
+// Ensure cursor visible.
 static void ensure_cursor_visible(struct EditorState* editor){
   unsigned cursor_row;
   unsigned cursor_col;
@@ -513,6 +540,7 @@ static void ensure_cursor_visible(struct EditorState* editor){
   }
 }
 
+// Redraw the visible editor buffer, status line, and cursor.
 static void render_editor(struct EditorState* editor){
   unsigned row = 0;
   unsigned col = 0;
@@ -581,6 +609,7 @@ static void render_editor(struct EditorState* editor){
   draw_editor_cursor();
 }
 
+// Translate an unshifted printable key into its US keyboard shifted form.
 static char apply_shift_to_char(char c){
   if (isalpha(c)){
     if (c >= 'a' && c <= 'z'){
@@ -636,6 +665,7 @@ static char apply_shift_to_char(char c){
   return c;
 }
 
+// Move the editor cursor one character toward the start of the buffer.
 static void move_cursor_left(struct EditorState* editor){
   if (editor->cursor_index != 0){
     editor->cursor_index -= 1;
@@ -643,6 +673,7 @@ static void move_cursor_left(struct EditorState* editor){
   update_preferred_col(editor);
 }
 
+// Move the editor cursor one character toward the end of the buffer.
 static void move_cursor_right(struct EditorState* editor){
   if (editor->cursor_index < editor->text.length){
     editor->cursor_index += 1;
@@ -650,6 +681,7 @@ static void move_cursor_right(struct EditorState* editor){
   update_preferred_col(editor);
 }
 
+// Move the editor cursor to the corresponding column on the previous row.
 static void move_cursor_up(struct EditorState* editor){
   unsigned row;
   unsigned col;
@@ -675,6 +707,7 @@ static void move_cursor_up(struct EditorState* editor){
   }
 }
 
+// Move the editor cursor to the corresponding column on the next row.
 static void move_cursor_down(struct EditorState* editor){
   unsigned row;
   unsigned col;
@@ -713,6 +746,7 @@ static bool backspace_at_cursor(struct EditorState* editor){
   return true;
 }
 
+// Insert spaces at cursor.
 static void insert_spaces_at_cursor(struct EditorState* editor, unsigned count){
   while (count != 0){
     insert_text_char(&editor->text, editor->cursor_index, ' ');
@@ -722,6 +756,7 @@ static void insert_spaces_at_cursor(struct EditorState* editor, unsigned count){
   update_preferred_col(editor);
 }
 
+// Load the requested file and run the interactive editor loop.
 int main(int argc, char** argv){
   struct EditorState editor;
   bool running = true;

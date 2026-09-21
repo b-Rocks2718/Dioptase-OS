@@ -27,6 +27,7 @@ char* color_names[22] = {
   "light purple"
 };
 
+// Print every supported terminal foreground/background color pairing.
 int main(void) {
   puts("\n");
   for (int i = 0; i < sizeof(color_names) / sizeof(char*); i++) {

@@ -46,6 +46,7 @@ static void asm_gen_error2_int_str(char* operation, struct Slice* func_name, cha
 
 static struct Operand kStackMem;
 
+// Convert a stack pseudo-memory operand into its finalized frame offset.
 static struct Operand* stack_mem_operand(void) {
   kStackMem.type = OPERAND_MEMORY;
   kStackMem.asm_type = &kWordType;
@@ -55,10 +56,9 @@ static struct Operand* stack_mem_operand(void) {
   return &kStackMem;
 }
 
-// Purpose: Identify aggregate types that require byte-wise copies.
-// Inputs: type is the source/target type.
-// Outputs: Returns true for arrays, structs, and unions.
-// Invariants/Assumptions: type is non-NULL when called.
+// Identify aggregate types that require byte-wise copies.
+// Returns true for arrays, structs, and unions.
+// Type is non-NULL when called.
 static bool is_aggregate_type(struct Type* type) {
   if (type == NULL) {
     return false;
@@ -68,10 +68,9 @@ static bool is_aggregate_type(struct Type* type) {
          type->type == UNION_TYPE;
 }
 
-// Purpose: Determine the base alignment for an operand's backing storage.
-// Inputs: opr is the operand to inspect.
-// Outputs: Returns the alignment in bytes.
-// Invariants/Assumptions: asm_symbol_table is initialized before use.
+// Determine the base alignment for an operand's backing storage.
+// Returns the alignment in bytes.
+// Asm_symbol_table is initialized before use.
 static size_t operand_base_alignment(struct Operand* opr) {
   if (opr == NULL || opr->asm_type == NULL) {
     return 1;
@@ -92,6 +91,7 @@ static size_t operand_base_alignment(struct Operand* opr) {
   return alignment;
 }
 
+// Map a C type to the ASM operand classification used by lowering.
 struct AsmType* type_to_asm_type(struct Type* type){
   switch (type->type){
     case CHAR_TYPE:
@@ -128,10 +128,9 @@ struct AsmType* type_to_asm_type(struct Type* type){
   }
 }
 
-// Purpose: Create a fresh pseudo temp for byte-copy ops and register it in the ASM symbol table.
-// Inputs: func_name identifies the owning function; asm_type selects the temp size.
-// Outputs: Returns an OPERAND_PSEUDO operand with a unique temp name.
-// Invariants/Assumptions: asm_symbol_table is initialized before use.
+// Create a fresh pseudo temp for byte-copy ops and register it in the ASM symbol table.
+// Returns an OPERAND_PSEUDO operand with a unique temp name.
+// Asm_symbol_table is initialized before use.
 static struct Operand* make_asm_temp(struct Slice* func_name, struct AsmType* asm_type) {
   if (asm_symbol_table == NULL) {
     asm_gen_error0("copy-bytes", func_name,
@@ -147,10 +146,7 @@ static struct Operand* make_asm_temp(struct Slice* func_name, struct AsmType* as
   return temp;
 }
 
-// Purpose: Append an ASM instruction node to a list.
-// Inputs: head/tail are the list pointers; node is the instruction to append.
-// Outputs: Updates head/tail to include node at the end.
-// Invariants/Assumptions: node->next is either NULL or a valid list tail.
+// Append an ASM instruction node to a list.
 static void append_asm_instr(struct AsmInstr** head, struct AsmInstr** tail, struct AsmInstr* node) {
   if (head == NULL || tail == NULL || node == NULL) {
     asm_gen_error0("asm-instr", NULL, "append requested with NULL list or node");
@@ -166,10 +162,7 @@ static void append_asm_instr(struct AsmInstr** head, struct AsmInstr** tail, str
   *tail = node;
 }
 
-// Purpose: Append a list of ASM instructions to an existing list.
-// Inputs: head/tail are the destination list; list is the head of the list to append.
-// Outputs: Updates head/tail to include list at the end.
-// Invariants/Assumptions: list is either NULL or a well-formed list.
+// Append a list of ASM instructions to an existing list.
 static void append_asm_instrs(struct AsmInstr** head, struct AsmInstr** tail, struct AsmInstr* list) {
   if (list == NULL) {
     return;
@@ -188,10 +181,9 @@ static void append_asm_instrs(struct AsmInstr** head, struct AsmInstr** tail, st
   *tail = list;
 }
 
-// Purpose: Return the length of an operand list.
-// Inputs: list is the operand list head (may be NULL).
-// Outputs: Returns the number of nodes.
-// Invariants/Assumptions: list is acyclic.
+// Return the length of an operand list.
+// List is the operand list head (may be NULL).
+// Returns the number of nodes.
 static size_t operand_list_length(struct OperandList* list) {
   size_t count = 0;
   for (struct OperandList* cur = list; cur != NULL; cur = cur->next) {
@@ -200,10 +192,8 @@ static size_t operand_list_length(struct OperandList* list) {
   return count;
 }
 
-// Purpose: Fetch an operand from a list by index.
-// Inputs: list is the operand list head; index is zero-based.
-// Outputs: Returns the operand pointer at index or errors if out of range.
-// Invariants/Assumptions: list is acyclic.
+// Fetch an operand from a list by index.
+// Returns the operand pointer at index or errors if out of range.
 static struct Operand* operand_list_get(struct OperandList* list, size_t index) {
   struct OperandList* cur = list;
   for (size_t i = 0; i < index; i++) {
@@ -220,10 +210,9 @@ static struct Operand* operand_list_get(struct OperandList* list, size_t index) 
   return cur->opr;
 }
 
-// Purpose: Build a direct memory operand.
-// Inputs: base is the base register; offset is the byte offset; asm_type selects access size.
-// Outputs: Returns a new OPERAND_MEMORY operand.
-// Invariants/Assumptions: asm_type is non-NULL.
+// Build a direct memory operand.
+// Returns a new OPERAND_MEMORY operand.
+// Asm_type is non-NULL.
 static struct Operand* make_asm_mem(enum Reg base, int offset, struct AsmType* asm_type) {
   if (asm_type == NULL) {
     asm_gen_error0("operand", NULL, "NULL asm type for memory operand");
@@ -237,10 +226,8 @@ static struct Operand* make_asm_mem(enum Reg base, int offset, struct AsmType* a
   return opr;
 }
 
-// Purpose: Create an operand representing base+offset for byte/word accesses.
-// Inputs: base is the base operand; offset is the byte delta; asm_type selects access size.
-// Outputs: Returns a new operand with adjusted offset.
-// Invariants/Assumptions: base is not NULL; data operands do not support non-zero offsets.
+// Create an operand representing base+offset for byte/word accesses.
+// Returns a new operand with adjusted offset.
 static struct Operand* add_offset_typed(struct Operand* base, int offset, struct AsmType* asm_type) {
   if (base == NULL) {
     asm_gen_error0("operand", NULL, "NULL base operand for offset");
@@ -278,14 +265,11 @@ static struct Operand* add_offset_typed(struct Operand* base, int offset, struct
   }
 }
 
-// Purpose: Create a byte-sized operand at base+offset.
-// Inputs: base is the base operand; offset is the byte delta.
-// Outputs: Returns a byte-typed operand.
-// Invariants/Assumptions: base is not NULL.
-// Purpose: Check whether a symbol name refers to a static or constant storage symbol.
-// Inputs: name is the symbol identifier.
-// Outputs: Returns true if the symbol is static/or a function.
-// Invariants/Assumptions: global_symbol_table is initialized before use.
+// Create a byte-sized operand at base+offset.
+// Returns a byte-typed operand.
+// Check whether a symbol name refers to a static or constant storage symbol.
+// Returns true if the symbol is static/or a function.
+// Global_symbol_table is initialized before use.
 static bool is_static_symbol_name(struct Slice* name) {
   if (name == NULL || global_symbol_table == NULL) {
     return false;
@@ -301,11 +285,10 @@ static bool is_static_symbol_name(struct Slice* name) {
          entry->attrs->attr_type == CONST_ATTR;
 }
 
-// Purpose: Forward declaration for aggregate classification helpers.
-// Inputs/Outputs: See definition below.
-// Invariants/Assumptions: Declared early for use in symbol conversion.
+// Forward declaration for aggregate classification helpers.
 static struct VarClassList* classify_struct(struct StructEntry* struct_entry);
 
+// Emit byte-wise copy instructions for an aggregate value.
 struct AsmInstr* copy_bytes(struct Slice* func_name, struct Operand* src, struct Operand* dst, size_t size){
   struct AsmInstr* head = NULL;
   struct AsmInstr* tail = NULL;
@@ -359,6 +342,7 @@ struct AsmInstr* copy_bytes(struct Slice* func_name, struct Operand* src, struct
   return head;
 }
 
+// Emit loads that assemble aggregate bytes into a register value.
 struct AsmInstr* copy_bytes_to_reg(struct Slice* func_name, struct Operand* src, enum Reg dst_reg, size_t size){
   if (size == 0) {
     return NULL;
@@ -510,6 +494,7 @@ struct AsmInstr* copy_bytes_to_reg(struct Slice* func_name, struct Operand* src,
   return mov;
 } 
 
+// Emit stores that split a register value into aggregate bytes.
 struct AsmInstr* copy_bytes_from_reg(struct Slice* func_name, enum Reg src_reg, struct Operand* dst, size_t size){
   if (size == 0) {
     return NULL;
@@ -634,6 +619,7 @@ struct AsmInstr* copy_bytes_from_reg(struct Slice* func_name, enum Reg src_reg, 
   return mov;
 }
 
+// Convert static symbol entries into addressable ASM symbol metadata.
 struct AsmSymbolTable* convert_symbol_table(struct SymbolTable* symbols){
   struct AsmSymbolTable* asm_table = create_asm_symbol_table(symbols->size);
   
@@ -673,10 +659,9 @@ struct AsmSymbolTable* convert_symbol_table(struct SymbolTable* symbols){
   return asm_table;
 }
 
-// Purpose: Check whether a slice contains the compiler temp marker.
-// Inputs: name is a slice of the symbol name.
-// Outputs: Returns true if the marker appears in the slice.
-// Invariants/Assumptions: name->start may not be NUL-terminated.
+// Check whether a slice contains the compiler temp marker.
+// Returns true if the marker appears in the slice.
+// Name->start may not be NUL-terminated.
 static bool slice_contains_temp_marker(struct Slice* name) {
   if (name == NULL || name->start == NULL || name->len < kTempMarkerLen) {
     return false;
@@ -696,10 +681,7 @@ static bool slice_contains_temp_marker(struct Slice* name) {
   return false;
 }
 
-// Purpose: Append a debug local entry into a list sorted by stack offset.
-// Inputs: head is the list head; entry is the node to insert.
-// Outputs: Updates the head pointer to keep ascending offset order.
-// Invariants/Assumptions: entry is not already in the list.
+// Append a debug local entry into a list sorted by stack offset.
 static void insert_debug_local_sorted(struct DebugLocal** head, struct DebugLocal* entry) {
   if (head == NULL || entry == NULL) {
     return;
@@ -717,10 +699,8 @@ static void insert_debug_local_sorted(struct DebugLocal** head, struct DebugLoca
   cur->next = entry;
 }
 
-// Purpose: Collect stack-local debug metadata from a pseudo map.
-// Inputs: map is the pseudo map for a single function.
-// Outputs: Returns a sorted list of locals and sets out_count.
-// Invariants/Assumptions: map entries map pseudos to stack or static storage.
+// Collect stack-local debug metadata from a pseudo map.
+// Returns a sorted list of locals and sets out_count.
 static struct DebugLocal* collect_debug_locals(struct PseudoMap* map, size_t* out_count) {
   if (out_count != NULL) {
     *out_count = 0;
@@ -755,10 +735,9 @@ static struct DebugLocal* collect_debug_locals(struct PseudoMap* map, size_t* ou
   return head;
 }
 
-// Purpose: Detect whether a function body contains debug markers.
-// Inputs: instrs is the function instruction list.
-// Outputs: Returns true if at least one debug boundary is present.
-// Invariants/Assumptions: instrs may be NULL for empty bodies.
+// Detect whether a function body contains debug markers.
+// Returns true if at least one debug boundary is present.
+// Instrs may be NULL for empty bodies.
 static bool asm_has_debug_markers(struct AsmInstr* instrs) {
   for (struct AsmInstr* cur = instrs; cur != NULL; cur = cur->next) {
     if (cur->type == ASM_BOUNDARY) {
@@ -768,10 +747,9 @@ static bool asm_has_debug_markers(struct AsmInstr* instrs) {
   return false;
 }
 
-// Purpose: Print a slice to the selected file descriptor.
-// Inputs: slice may be NULL; otherwise points to a valid slice.
-// Outputs: Writes a best-effort identifier representation to fd.
-// Invariants/Assumptions: slice->start may be non-null-terminated.
+// Print a slice to the selected file descriptor.
+// Slice may be NULL; otherwise points to a valid slice.
+// Slice->start may be non-null-terminated.
 static void asm_gen_fdprint_slice(int fd, struct Slice* slice) {
   int args[2];
 
@@ -784,18 +762,16 @@ static void asm_gen_fdprint_slice(int fd, struct Slice* slice) {
   fdprintf(fd, "%.*s", args);
 }
 
-// Purpose: Print a slice to stderr for error reporting.
-// Inputs: slice may be NULL; otherwise points to a valid slice.
-// Outputs: Writes a best-effort identifier representation to stderr.
-// Invariants/Assumptions: slice->start may be non-null-terminated.
+// Print a slice to stderr for error reporting.
+// Slice may be NULL; otherwise points to a valid slice.
+// Slice->start may be non-null-terminated.
 static void asm_gen_fprint_slice(struct Slice* slice) {
   asm_gen_fdprint_slice(STDERR, slice);
 }
 
-// Purpose: Emit the shared prefix for ASM generation diagnostics.
-// Inputs: operation labels the failing step; func_name may be NULL.
-// Outputs: Writes the shared diagnostic prefix to stderr.
-// Invariants/Assumptions: Callers append the specific message and newline.
+// Emit the shared prefix for ASM generation diagnostics.
+// Operation labels the failing step; func_name may be NULL.
+// Writes the shared diagnostic prefix to stderr.
 static void asm_gen_error_prefix(char* operation, struct Slice* func_name) {
   int args[1];
 
@@ -811,6 +787,7 @@ static void asm_gen_error_prefix(char* operation, struct Slice* func_name) {
   fdputs(STDERR, ": ");
 }
 
+// Format and terminate after an ASM-generation error without arguments.
 static void asm_gen_error0(char* operation, struct Slice* func_name, char* message) {
   asm_gen_error_prefix(operation, func_name);
   fdputs(STDERR, message);
@@ -818,6 +795,7 @@ static void asm_gen_error0(char* operation, struct Slice* func_name, char* messa
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error with one integer.
 static void asm_gen_error1_int(char* operation, struct Slice* func_name, char* fmt, int arg0) {
   int args[1];
 
@@ -828,6 +806,7 @@ static void asm_gen_error1_int(char* operation, struct Slice* func_name, char* f
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error naming one size.
 static void asm_gen_error1_size(char* operation, struct Slice* func_name, char* fmt, size_t arg0) {
   int args[1];
 
@@ -838,6 +817,7 @@ static void asm_gen_error1_size(char* operation, struct Slice* func_name, char* 
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error naming one slice.
 static void asm_gen_error1_slice(char* operation, struct Slice* func_name, char* fmt,
                                  struct Slice* slice) {
   int args[2];
@@ -855,6 +835,7 @@ static void asm_gen_error1_slice(char* operation, struct Slice* func_name, char*
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error with a slice and length.
 static void asm_gen_error1_len_str(char* operation, struct Slice* func_name, char* fmt,
                                    int len, char* str) {
   int args[2];
@@ -867,6 +848,7 @@ static void asm_gen_error1_len_str(char* operation, struct Slice* func_name, cha
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error with two arguments.
 static void asm_gen_error2_size(char* operation, struct Slice* func_name, char* fmt,
                                 size_t arg0, size_t arg1) {
   int args[2];
@@ -879,6 +861,7 @@ static void asm_gen_error2_size(char* operation, struct Slice* func_name, char* 
   exit(1);
 }
 
+// Format and terminate after an ASM-generation error with integer and string.
 static void asm_gen_error2_int_str(char* operation, struct Slice* func_name, char* fmt,
                                    int arg0, char* arg1) {
   int args[2];
@@ -891,10 +874,8 @@ static void asm_gen_error2_int_str(char* operation, struct Slice* func_name, cha
   exit(1);
 }
 
-// Purpose: Name a TAC instruction type for diagnostics.
-// Inputs: type is the TAC instruction enum value.
-// Outputs: Returns a string literal describing the TAC opcode.
-// Invariants/Assumptions: Unknown values map to "TAC<unknown>".
+// Name a TAC instruction type for diagnostics.
+// Returns a string literal describing the TAC opcode.
 static char* tac_instr_name(enum TACInstrType type) {
   switch (type) {
     case TACRETURN:
@@ -930,10 +911,7 @@ static char* tac_instr_name(enum TACInstrType type) {
   }
 }
 
-// Purpose: Append a top-level ASM node to the program list.
-// Inputs: prog is the ASM program; node is the top-level to append.
-// Outputs: Updates prog->head/tail to include node.
-// Invariants/Assumptions: node->next is either NULL or a valid list tail.
+// Append a top-level ASM node to the program list.
 static void append_asm_top_level(struct AsmProg* prog, struct AsmTopLevel* node) {
   if (prog == NULL || node == NULL) {
     asm_gen_error0("top-level", NULL, "append requested with NULL program or node");
@@ -949,11 +927,10 @@ static void append_asm_top_level(struct AsmProg* prog, struct AsmTopLevel* node)
   prog->tail = node;
 }
 
-// Purpose: Lower a TAC program into the ASM IR representation.
-// Inputs: tac_prog is the TAC program to lower (must be non-NULL);
+// Lower a TAC program into the ASM IR representation.
+// Tac_prog is the TAC program to lower (must be non-NULL);
 //         emit_sections controls whether .data/.text directives are emitted.
-// Outputs: Returns a newly allocated ASM program rooted in arena storage.
-// Invariants/Assumptions: TAC top-level lists are well-formed and acyclic.
+// Returns a newly allocated ASM program rooted in arena storage.
 struct AsmProg* prog_to_asm(struct TACProg* tac_prog, bool emit_sections) {
   if (tac_prog == NULL) {
     asm_gen_error0("program", NULL, "input TAC program is NULL");
@@ -1024,6 +1001,7 @@ struct AsmProg* prog_to_asm(struct TACProg* tac_prog, bool emit_sections) {
   return asm_prog;
 }
 
+// Lower one TAC top-level declaration or function into ASM IR.
 struct AsmTopLevel* top_level_to_asm(struct TopLevel* tac_top) {
   if (tac_top == NULL) {
     asm_gen_error0("top-level", NULL, "NULL TAC top-level encountered");
@@ -1145,10 +1123,9 @@ struct AsmTopLevel* top_level_to_asm(struct TopLevel* tac_top) {
   }
 }
 
-// Purpose: Lower a direct TAC call into an ASM instruction list.
-// Inputs: func_name identifies the owning function; call_instr describes the call.
-// Outputs: Returns the full ASM sequence for argument setup, call, and return moves.
-// Invariants/Assumptions: The call has already been typechecked against the ABI classifier.
+// Lower a direct TAC call into an ASM instruction list.
+// Returns the full ASM sequence for argument setup, call, and return moves.
+// The call has already been typechecked against the ABI classifier.
 static struct AsmInstr* direct_call_to_asm(struct Slice* func_name,
                                            struct TACCall* call_instr) {
   struct AsmInstr* head = NULL;
@@ -1324,10 +1301,8 @@ static struct AsmInstr* direct_call_to_asm(struct Slice* func_name,
   return head;
 }
 
-// Purpose: Lower an indirect TAC call into an ASM instruction list.
-// Inputs: func_name identifies the owning function; call_instr describes the call.
-// Outputs: Returns the full ASM sequence for argument setup, call, and return moves.
-// Invariants/Assumptions: The callee operand already holds a callable address.
+// Lower an indirect TAC call into an ASM instruction list.
+// Returns the full ASM sequence for argument setup, call, and return moves.
 static struct AsmInstr* indirect_call_to_asm(struct Slice* func_name,
                                              struct TACCallIndirect* call_instr) {
   struct AsmInstr* head = NULL;
@@ -1502,10 +1477,8 @@ static struct AsmInstr* indirect_call_to_asm(struct Slice* func_name,
   return head;
 }
 
-// Purpose: Lower a static-symbol load through an explicit address calculation.
-// Inputs: func_name identifies the owning function; base/base_type name the static object.
-// Outputs: Returns GET_ADDRESS + ADD + LOAD using a temp pointer.
-// Invariants/Assumptions: offset is non-zero and base_type describes the underlying symbol.
+// Lower a static-symbol load through an explicit address calculation.
+// Returns GET_ADDRESS + ADD + LOAD using a temp pointer.
 static struct AsmInstr* load_from_static_offset_to_asm(struct Slice* func_name,
                                                        struct Slice* base,
                                                        struct AsmType* base_type,
@@ -1547,10 +1520,8 @@ static struct AsmInstr* load_from_static_offset_to_asm(struct Slice* func_name,
   return head;
 }
 
-// Purpose: Lower a static-symbol store through an explicit address calculation.
-// Inputs: func_name identifies the owning function; base/base_type name the static object.
-// Outputs: Returns GET_ADDRESS + ADD + STORE using a temp pointer.
-// Invariants/Assumptions: offset is non-zero and base_type describes the underlying symbol.
+// Lower a static-symbol store through an explicit address calculation.
+// Returns GET_ADDRESS + ADD + STORE using a temp pointer.
 static struct AsmInstr* store_to_static_offset_to_asm(struct Slice* func_name,
                                                       struct Slice* base,
                                                       struct AsmType* base_type,
@@ -1592,6 +1563,7 @@ static struct AsmInstr* store_to_static_offset_to_asm(struct Slice* func_name,
   return head;
 }
 
+// Lower one TAC instruction into an ASM instruction sequence.
 struct AsmInstr* instr_to_asm(struct Slice* func_name, struct TACInstr* tac_instr) {
   if (tac_instr == NULL) {
     asm_gen_error0("instruction", func_name, "NULL TAC instruction encountered");
@@ -2039,6 +2011,7 @@ struct AsmInstr* instr_to_asm(struct Slice* func_name, struct TACInstr* tac_inst
   return asm_instr;
 }
 
+// Collect source, destination, and operation operands from a TAC instruction.
 size_t create_maps(struct AsmInstr* asm_instr, size_t reserved_bytes) {
   if (pseudo_map != NULL) {
     asm_gen_error0("stack-map", NULL, "pseudo map already initialized");
@@ -2102,6 +2075,7 @@ size_t create_maps(struct AsmInstr* asm_instr, size_t reserved_bytes) {
   return stack_bytes;
 }
 
+// Return the destination followed by all source operands of an instruction.
 struct Operand** get_ops(struct AsmInstr* asm_instr, size_t* out_count) {
   size_t src_count = 0;
   struct Operand** srcs = get_srcs(asm_instr, &src_count);
@@ -2122,6 +2096,7 @@ struct Operand** get_ops(struct AsmInstr* asm_instr, size_t* out_count) {
   return ops;
 }
 
+// Return the source operands selected by an instruction's concrete form.
 struct Operand** get_srcs(struct AsmInstr* asm_instr, size_t* out_count) {
   switch (asm_instr->type) {
     case ASM_MOV:
@@ -2189,6 +2164,7 @@ struct Operand** get_srcs(struct AsmInstr* asm_instr, size_t* out_count) {
   }
 }
 
+// Return the destination operand, or NULL for instructions without one.
 struct Operand* get_dst(struct AsmInstr* asm_instr) {
   switch (asm_instr->type) {
     case ASM_MOV:
@@ -2210,6 +2186,7 @@ struct Operand* get_dst(struct AsmInstr* asm_instr) {
   }
 }
 
+// Replace all pseudo-registers in an ASM program with stack locations.
 void replace_pseudo(struct AsmInstr* asm_instr) {
   for (struct AsmInstr* instr = asm_instr; instr != NULL; instr = instr->next) {
     replace_operand_if_pseudo(&instr->dst);
@@ -2218,6 +2195,7 @@ void replace_pseudo(struct AsmInstr* asm_instr) {
   }
 }
 
+// Return whether an operand names static or constant storage.
 bool is_static_symbol_operand(struct Operand* opr) {
   if (opr == NULL || opr->pseudo == NULL || global_symbol_table == NULL) {
     return false;
@@ -2234,6 +2212,7 @@ bool is_static_symbol_operand(struct Operand* opr) {
          entry->attrs->attr_type == CONST_ATTR;
 }
 
+// Reserve the next aligned stack slot for a pseudo value.
 int allocate_stack_slot(struct Operand* opr, size_t* stack_bytes) {
   if (opr == NULL) {
     asm_gen_error0("stack-map", NULL,
@@ -2261,6 +2240,7 @@ int allocate_stack_slot(struct Operand* opr, size_t* stack_bytes) {
   return -((int)next_size);
 }
 
+// Replace one pseudo operand with its allocated stack or symbol location.
 void replace_operand_if_pseudo(struct Operand** field) {
   if (field == NULL || *field == NULL) {
     return;
@@ -2289,6 +2269,7 @@ void replace_operand_if_pseudo(struct Operand** field) {
   }
 }
 
+// Convert a TAC value into an ASM operand, allocating temporaries as needed.
 struct Operand* tac_val_to_asm(struct Val* val) {
   if (val == NULL) {
     asm_gen_error0("operand", NULL, "NULL TAC value encountered");
@@ -2353,6 +2334,7 @@ struct Operand* tac_val_to_asm(struct Val* val) {
   }
 }
 
+// Allocate an ASM pseudo-register operand with a unique name.
 struct Operand* make_pseudo(struct Slice* var_name, struct AsmType* asm_type) {
   if (var_name == NULL) {
     asm_gen_error0("operand", NULL, "NULL slice for pseudo operand");
@@ -2365,6 +2347,7 @@ struct Operand* make_pseudo(struct Slice* var_name, struct AsmType* asm_type) {
   return opr;
 }
 
+// Allocate a pseudo-register memory operand for aggregate lowering.
 struct Operand* make_pseudo_mem(struct Slice* var_name, struct AsmType* asm_type, int offset) {
   if (var_name == NULL) {
     asm_gen_error0("operand", NULL, "NULL slice for pseudo-mem operand");
@@ -2378,6 +2361,7 @@ struct Operand* make_pseudo_mem(struct Slice* var_name, struct AsmType* asm_type
   return opr;
 }
 
+// Return type alignment.
 size_t type_alignment(struct Type* type, struct Slice* symbol_name) {
   // will eventually have different alignments for different types
   // short => 2, char => 1
@@ -2412,10 +2396,8 @@ size_t type_alignment(struct Type* type, struct Slice* symbol_name) {
   }
 }
 
-// Purpose: Resolve the type table entry for a struct or union type.
-// Inputs: type is the aggregate type to resolve.
-// Outputs: Returns the StructEntry for the aggregate.
-// Invariants/Assumptions: type is STRUCT_TYPE or UNION_TYPE.
+// Resolve the type table entry for a struct or union type.
+// Returns the StructEntry for the aggregate.
 static struct StructEntry* get_aggregate_entry(struct Type* type) {
   if (type == NULL) {
     asm_gen_error0("aggregate", NULL, "NULL type for aggregate lookup");
@@ -2435,6 +2417,7 @@ static struct StructEntry* get_aggregate_entry(struct Type* type) {
   return (entry->type == STRUCT_ENTRY) ? entry->data.struct_entry : entry->data.union_entry;
 }
 
+// Classify an aggregate for one-register, two-register, or memory ABI passing.
 struct VarClassList* classify_struct(struct StructEntry* struct_entry) {
   if (struct_entry == NULL) {
     asm_gen_error0("struct-classify", NULL, "NULL struct entry");
@@ -2479,6 +2462,7 @@ struct VarClassList* classify_struct(struct StructEntry* struct_entry) {
   return list;
 }
 
+// Return fourbyte type.
 struct AsmType* get_fourbyte_type(size_t offset, size_t struct_size){
   if (struct_size - offset >= 4){
     struct AsmType* word = arena_alloc(sizeof(struct AsmType));
@@ -2502,6 +2486,7 @@ struct AsmType* get_fourbyte_type(size_t offset, size_t struct_size){
   }
 }
 
+// Partition call arguments into ABI register and stack locations.
 void classify_params(struct Val* params, size_t num_params, bool return_in_memory,
                      struct OperandList** reg_args, struct OperandList** stack_args) {
   *reg_args = NULL;
@@ -2640,6 +2625,7 @@ void classify_params(struct Val* params, size_t num_params, bool return_in_memor
   }
 }
 
+// Classify return val.
 void classify_return_val(struct Val* ret_val, struct OperandList** ret_var_list, bool* return_in_memory) {
   if (ret_val == NULL) {
     asm_gen_error0("return-classify", NULL, "NULL return value");
@@ -2702,10 +2688,8 @@ void classify_return_val(struct Val* ret_val, struct OperandList** ret_var_list,
   }
 }
 
-// Purpose: Lower parameter passing for a function using pre-built Val entries.
-// Inputs: func_name identifies the owning function; params is the parameter Val array.
-// Outputs: Returns the head of the ASM instruction list setting up parameters.
-// Invariants/Assumptions: params entries have valid types and variable names.
+// Lower parameter passing for a function using pre-built Val entries.
+// Returns the head of the ASM instruction list setting up parameters.
 static struct AsmInstr* set_up_params_from_vals(struct Slice* func_name,
                                                 struct Val* params,
                                                 size_t num_params,
@@ -2793,10 +2777,8 @@ static struct AsmInstr* set_up_params_from_vals(struct Slice* func_name,
   return head;
 }
 
-// Purpose: Lower parameter passing for a function definition.
-// Inputs: func_name identifies the owning function; params are parameter names.
-// Outputs: Returns the head of the ASM instruction list setting up parameters.
-// Invariants/Assumptions: params are declared in the global symbol table.
+// Lower parameter passing for a function definition.
+// Returns the head of the ASM instruction list setting up parameters.
 struct AsmInstr* set_up_params(struct Slice* func_name,
                                struct Slice** params,
                                size_t num_params,
@@ -2821,6 +2803,7 @@ struct AsmInstr* set_up_params(struct Slice* func_name,
   return set_up_params_from_vals(func_name, param_vals, num_params, return_in_memory);
 }
 
+// Return asm type alignment.
 size_t asm_type_alignment(struct AsmType* type){
   if (type == NULL) {
     asm_gen_error0("asm-type-alignment", NULL, "NULL asm type");
@@ -2842,6 +2825,7 @@ size_t asm_type_alignment(struct AsmType* type){
   }
 }
 
+// Allocate an empty pseudo-register mapping table.
 struct PseudoMap* create_pseudo_map(size_t num_buckets){
   struct PseudoEntry** arr = malloc(num_buckets * sizeof(struct PseudoEntry*));
   struct PseudoMap* hmap = malloc(sizeof(struct PseudoMap));
@@ -2863,6 +2847,7 @@ struct PseudoMap* create_pseudo_map(size_t num_buckets){
 }
 
 
+// Allocate one pseudo-register mapping entry.
 struct PseudoEntry* create_pseudo_entry(struct Operand* key, struct Operand* value){
   struct PseudoEntry* entry = malloc(sizeof(struct PseudoEntry));
 
@@ -2873,6 +2858,7 @@ struct PseudoEntry* create_pseudo_entry(struct Operand* key, struct Operand* val
   return entry;
 }
 
+// Insert an item into pseudo entry.
 void pseudo_entry_insert(struct PseudoEntry* entry, struct Operand* key, struct Operand* value){
   if (compare_slice_to_slice(entry->pseudo->pseudo, key->pseudo)){
     entry->mapped = value;
@@ -2884,6 +2870,7 @@ void pseudo_entry_insert(struct PseudoEntry* entry, struct Operand* key, struct 
 }
 
 
+// Insert an item into pseudo map.
 void pseudo_map_insert(struct PseudoMap* hmap, struct Operand* key, struct Operand* value){
   if (hmap == NULL || key == NULL || key->pseudo == NULL) {
     asm_gen_error0("stack-map", NULL, "invalid pseudo map insert request");
@@ -2897,6 +2884,7 @@ void pseudo_map_insert(struct PseudoMap* hmap, struct Operand* key, struct Opera
   }
 }
 
+// Return a value from pseudo entry.
 struct Operand* pseudo_entry_get(struct PseudoEntry* entry, struct Operand* key){
   if (compare_slice_to_slice(entry->pseudo->pseudo, key->pseudo)){
     return entry->mapped;
@@ -2907,6 +2895,7 @@ struct Operand* pseudo_entry_get(struct PseudoEntry* entry, struct Operand* key)
   }
 }
 
+// Return a value from pseudo map.
 struct Operand* pseudo_map_get(struct PseudoMap* hmap, struct Operand* key){
   if (hmap == NULL || key == NULL) {
     asm_gen_error0("stack-map", NULL, "invalid pseudo map lookup request");
@@ -2940,6 +2929,7 @@ struct Operand* pseudo_map_get(struct PseudoMap* hmap, struct Operand* key){
 }
 
 
+// Return whether one pseudo-register bucket entry names the requested value.
 bool pseudo_entry_contains(struct PseudoEntry* entry, struct Operand* key){
   if (compare_slice_to_slice(entry->pseudo->pseudo, key->pseudo)){
     return true;
@@ -2950,6 +2940,7 @@ bool pseudo_entry_contains(struct PseudoEntry* entry, struct Operand* key){
   }
 }
 
+// Return whether the pseudo-register map contains a named value.
 bool pseudo_map_contains(struct PseudoMap* hmap, struct Operand* key){
   if (hmap == NULL || key == NULL || key->pseudo == NULL) {
     asm_gen_error0("stack-map", NULL, "invalid pseudo map contains request");
@@ -2963,11 +2954,13 @@ bool pseudo_map_contains(struct PseudoMap* hmap, struct Operand* key){
   }
 }
 
+// Recursively free a pseudo-register entry and its collision chain.
 void destroy_pseudo_entry(struct PseudoEntry* entry){
   if (entry->next != NULL) destroy_pseudo_entry(entry->next);
   free(entry);
 }
 
+// Free all pseudo-register entries and the map's bucket storage.
 void destroy_pseudo_map(struct PseudoMap* hmap){
   for (int i = 0; i < hmap->size; ++i){
     if (hmap->arr[i] != NULL) destroy_pseudo_entry(hmap->arr[i]);
@@ -2976,6 +2969,7 @@ void destroy_pseudo_map(struct PseudoMap* hmap){
   free(hmap);
 }
 
+// Allocate an empty ASM symbol table for static and function symbols.
 struct AsmSymbolTable* create_asm_symbol_table(size_t numBuckets){
   struct AsmSymbolTable* table = arena_alloc(sizeof(struct AsmSymbolTable));
   table->size = numBuckets;
@@ -2986,6 +2980,7 @@ struct AsmSymbolTable* create_asm_symbol_table(size_t numBuckets){
   return table;
 }
 
+// Insert an item into asm symbol table.
 void asm_symbol_table_insert(struct AsmSymbolTable* hmap, struct Slice* key, struct AsmType* type, 
     bool is_static, bool is_defined, bool return_on_stack){
   size_t label = hash_slice(key) % hmap->size;
@@ -3009,6 +3004,7 @@ void asm_symbol_table_insert(struct AsmSymbolTable* hmap, struct Slice* key, str
   }
 }
 
+// Return a value from asm symbol table.
 struct AsmSymbolEntry* asm_symbol_table_get(struct AsmSymbolTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -3022,6 +3018,7 @@ struct AsmSymbolEntry* asm_symbol_table_get(struct AsmSymbolTable* hmap, struct 
   return NULL;
 }
 
+// Return whether the ASM symbol table contains a named symbol.
 bool asm_symbol_table_contains(struct AsmSymbolTable* hmap, struct Slice* key){
   size_t label = hash_slice(key) % hmap->size;
 
@@ -3035,6 +3032,7 @@ bool asm_symbol_table_contains(struct AsmSymbolTable* hmap, struct Slice* key){
   return false;
 }
 
+// Print pseudo map.
 void print_pseudo_map(struct Slice* func, struct PseudoMap* hmap){
   int args[2];
 
@@ -3082,6 +3080,7 @@ void print_pseudo_map(struct Slice* func, struct PseudoMap* hmap){
   }
 }
 
+// Print asm symbol table.
 void print_asm_symbol_table(struct AsmSymbolTable* hmap){
   int args[2];
 
@@ -3134,6 +3133,7 @@ void print_asm_symbol_table(struct AsmSymbolTable* hmap){
   }
 }
 
+// Return the byte size represented by an ASM type descriptor.
 size_t asm_type_size(struct AsmType* type){
   switch (type->type){
     case BYTE:

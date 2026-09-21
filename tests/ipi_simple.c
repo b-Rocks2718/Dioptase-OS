@@ -1,7 +1,7 @@
 #include "../kernel/vmem.h"
 #include "../kernel/print.h"
 
-void kernel_main(void){
+void kernel_main(void){ /* Verify an inter-processor interrupt reaches its handler. */
   say("***Sending test IPI with data 42\n", NULL);
   send_ipi(42);
   say("***Test IPI sent\n", NULL);

@@ -43,7 +43,7 @@ static int destroyer_start = 0;
 static struct TCB* waiter_tcb = NULL;
 static struct TCB* destroyer_tcb = NULL;
 
-static void holder_thread(void* unused) {
+static void holder_thread(void* unused) { /* Run the holder thread. */
   (void)unused;
   while (__atomic_load_n(&holder_start) == 0) {
     yield();
@@ -59,7 +59,7 @@ static void holder_thread(void* unused) {
   clh_lock_release(&target.lock);
 }
 
-static void waiter_thread(void* unused) {
+static void waiter_thread(void* unused) { /* Run the waiter thread. */
   (void)unused;
   __atomic_store_n((int*)&waiter_tcb, (int)get_current_tcb());
   while (__atomic_load_n(&waiter_start) == 0) {
@@ -69,7 +69,7 @@ static void waiter_thread(void* unused) {
   panic("semaphore destroy pre-enqueue test: waiter unexpectedly resumed\n");
 }
 
-static void destroyer_thread(void* unused) {
+static void destroyer_thread(void* unused) { /* Run the destroyer thread. */
   (void)unused;
   __atomic_store_n((int*)&destroyer_tcb, (int)get_current_tcb());
   while (__atomic_load_n(&destroyer_start) == 0) {
@@ -79,7 +79,7 @@ static void destroyer_thread(void* unused) {
   panic("semaphore destroy pre-enqueue test: busy destruction unexpectedly succeeded\n");
 }
 
-static void start_pinned(void (*func)(void*), enum CoreAffinity core) {
+static void start_pinned(void (*func)(void*), enum CoreAffinity core) { /* Start a worker with an explicit core affinity. */
   struct Fun* fun = malloc(sizeof(struct Fun));
   assert(fun != NULL,
     "semaphore destroy pre-enqueue test: Fun allocation failed.\n");
@@ -88,7 +88,7 @@ static void start_pinned(void (*func)(void*), enum CoreAffinity core) {
   thread_(fun, NORMAL_PRIORITY, core);
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify semaphore destruction rejects a pre-enqueue waiter race. */
   say("***semaphore destroy pre-enqueue test start\n", NULL);
   sem_init(&target, 0);
 

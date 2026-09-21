@@ -6,6 +6,7 @@
   .data
   .align 4
   .global DINORUNSHEET_DATA
+# Define the dinosaur run-animation asset data.
 DINORUNSHEET_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
@@ -3079,4 +3080,3 @@ DINORUNSHEET_DATA:
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
   .fill 0x0F3F0F3F
-  

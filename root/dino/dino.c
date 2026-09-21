@@ -47,6 +47,7 @@ unsigned frame;
 unsigned frame2;
 unsigned ground_scroll_screen_px;
 
+// Read a piped input byte when available, otherwise poll the keyboard device.
 static int read_input_event(void){
   int available = fd_bytes_available(STDIN);
 
@@ -65,10 +66,12 @@ static int read_input_event(void){
   return 0;
 }
 
+// Draw one tile from the level map at its world position.
 void draw_tile(unsigned x, unsigned y, short tile){
   TILE_FB[x + TILE_ROW_WIDTH * y] = tile;
 }
 
+// Copy tile from sheet.
 static void copy_tile_from_sheet(unsigned dst_tile, unsigned src_tile){
   for (int i = 0; i < TILE_SIZE; ++i){
     for (int j = 0; j < TILE_SIZE; ++j){
@@ -79,6 +82,7 @@ static void copy_tile_from_sheet(unsigned dst_tile, unsigned src_tile){
   }
 }
 
+// Fill every pixel of one hardware tile with a solid color.
 static void fill_tile(unsigned tile, short color){
   for (int i = 0; i < TILE_SIZE; ++i){
     for (int j = 0; j < TILE_SIZE; ++j){
@@ -87,6 +91,7 @@ static void fill_tile(unsigned tile, short color){
   }
 }
 
+// Wait for next vblank.
 static void wait_for_next_vblank(void){
   unsigned frame_counter = get_vga_frame_counter();
 
@@ -99,6 +104,7 @@ static void wait_for_next_vblank(void){
   }
 }
 
+// Copy the dinosaur sprite from its sheet into hardware sprite slot two.
 void init_dino(void){
   for (int i = 0; i < 32; ++i){
     for (int j = 0; j < 32; ++j){
@@ -110,6 +116,7 @@ void init_dino(void){
 }
 
 
+// Install ground and sky tiles, then populate the scrolling ground rows.
 void init_ground_tiles(void){
   for (int tile = 0; tile < GROUND_TILE_COUNT; ++tile){
     copy_tile_from_sheet(tile, tile);
@@ -127,6 +134,7 @@ void init_ground_tiles(void){
   }
 }
 
+// Copy both obstacle images into hardware sprite slots zero and one.
 void init_obstacles(void){
   for (int i = 0; i < 32; ++i){
     for (int j = 0; j < 32; ++j){
@@ -144,6 +152,7 @@ void init_obstacles(void){
   }
 }
 
+// Copy the sun image into hardware sprite slot three.
 int init_sun(void){
   short* p = SPRITE_DATA_START;
   // p is a short*, so pointer arithmetic is already in 16-bit pixels.
@@ -157,6 +166,7 @@ int init_sun(void){
   }
 }
 
+// Fill the sky rows and install the two cloud sprites.
 void init_sky(void){
   for (int i = 0; i < SKY_ROW_END; ++i){
     for (int j = 0; j < TILE_ROW_WIDTH; ++j){
@@ -187,6 +197,7 @@ void init_sky(void){
   init_sun();
 }
 
+// Advance dinosaur physics, including gravity and ground collision.
 void handle_physics(void){
   // physics
   dino_y -= dino_vy;
@@ -203,6 +214,7 @@ void handle_physics(void){
   }
 }
 
+// Move obstacles toward the player and recycle those leaving the screen.
 void move_obstacles(void){
   // move obstacle
   obstacle_1_x -= GROUND_SPEED;
@@ -237,6 +249,7 @@ void move_obstacles(void){
 
 int score;
 
+// Detect player collisions with active obstacles and update game state.
 int handle_collisions(void){
   // collision
   if (obstacle_1_x <= DINO_X + 1 && obstacle_1_x + 12 >= DINO_X){
@@ -256,6 +269,7 @@ int handle_collisions(void){
   return 0;
 }
 
+// Publish current obstacle, dinosaur, and cloud coordinates to the sprite unit.
 void update_positions(){
   set_sprite_coords(0, obstacle_1_x / 2, obstacle_1_y / 2);
   set_sprite_coords(1, obstacle_2_x / 2, obstacle_2_y / 2);
@@ -266,6 +280,7 @@ void update_positions(){
 
 extern void do_animations(void);
 
+// Initialize display assets and run the dinosaur game's animation loop.
 unsigned main(void){
   // Hide the terminal cursor and clear the terminal before we take over the VGA
   // tile layer directly. Doing this after custom tile writes can race with the

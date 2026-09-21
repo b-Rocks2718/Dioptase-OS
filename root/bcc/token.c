@@ -5,11 +5,13 @@
 #include "slice.h"
 #include "token.h"
 
+// Free a token, including identifier text owned by identifier tokens.
 void free_token(struct Token* token){
   if (token->type == IDENT) free(token->data.ident_name);
   free(token);
 }
 
+// Print one token's kind and payload for lexer diagnostics.
 void print_token(struct Token token){
   switch (token.type){
     case INT_LIT:

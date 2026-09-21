@@ -27,7 +27,7 @@
 #define NUM_THREADS 8
 #define PREEMPT_ROUNDS 10
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies a preemption worker and its iteration budget. */
   int id;
   int rounds;
 };
@@ -104,7 +104,7 @@ static void verify_results(void) {
   }
 }
 
-void kernel_main(void) {
+void kernel_main(void) { /* Verify timer preemption shares execution among workers. */
   say("***threads preempt test start\n", NULL);
 
   spawn_threads();

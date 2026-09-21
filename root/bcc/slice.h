@@ -4,6 +4,7 @@
 #include "../crt/stdbool.h"
 #include "../crt/stddef.h"
 
+// View a non-NUL-terminated character span without owning its storage.
 struct Slice {
   char * start; // where does the string start in memory?
   size_t len;        // How many characters in the string

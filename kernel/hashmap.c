@@ -1,6 +1,7 @@
 #include "hashmap.h"
 #include "heap.h"
 
+// Initialize an empty separate-chaining hash map.
 void hash_map_init(struct HashMap* hmap, unsigned num_buckets){
   struct HashEntry** arr = malloc(num_buckets * sizeof(struct HashEntry*));
 
@@ -41,6 +42,7 @@ static void* hash_entry_insert(struct HashEntry* entry, unsigned key, void* valu
   }
 }
 
+// Insert or replace a value for a key and return the previous value.
 void* hash_map_insert(struct HashMap* hmap, unsigned key, void* value){
   unsigned hash = key % hmap->size;
   
@@ -68,6 +70,7 @@ void* hash_entry_try_insert(struct HashEntry* entry, unsigned key, void* value){
   }
 }
 
+// Insert a key only when absent and return the existing value otherwise.
 void* hash_map_try_insert(struct HashMap* hmap, unsigned key, void* value){
   unsigned hash = key % hmap->size;
   
@@ -79,6 +82,7 @@ void* hash_map_try_insert(struct HashMap* hmap, unsigned key, void* value){
   }
 }
 
+// Search one collision chain for a key.
 static void* hash_entry_get(struct HashEntry* entry, unsigned key){
   while (entry != NULL){
     if (entry->key == key){
@@ -91,6 +95,7 @@ static void* hash_entry_get(struct HashEntry* entry, unsigned key){
   return NULL;
 }
 
+// Look up a key and return its associated value, or NULL when absent.
 void* hash_map_get(struct HashMap* hmap, unsigned key){
   unsigned hash = key % hmap->size;
 
@@ -101,6 +106,7 @@ void* hash_map_get(struct HashMap* hmap, unsigned key){
   }
 }
 
+// Test one collision chain for a key.
 static bool hash_entry_contains(struct HashEntry* entry, unsigned key){
   while (entry != NULL){
     if (entry->key == key){
@@ -113,6 +119,7 @@ static bool hash_entry_contains(struct HashEntry* entry, unsigned key){
   return false;
 }
 
+// Test whether the map contains a key.
 bool hash_map_contains(struct HashMap* hmap, unsigned key){
   unsigned hash = key % hmap->size;
 
@@ -141,6 +148,7 @@ static void* hash_entry_remove(struct HashEntry** head, unsigned key){
   return NULL;
 }
 
+// Remove a key and return its value, or NULL when absent.
 void* hash_map_remove(struct HashMap* hmap, unsigned key){
   unsigned hash = key % hmap->size;
 
@@ -160,6 +168,7 @@ static void hash_entry_free(struct HashEntry* entry){
   }
 }
 
+// Free all bucket entries while retaining the map storage.
 void hash_map_destroy(struct HashMap* hmap){
   for (int i = 0; i < hmap->size; ++i){
     if (hmap->arr[i] != NULL) hash_entry_free(hmap->arr[i]);
@@ -167,6 +176,7 @@ void hash_map_destroy(struct HashMap* hmap){
   free(hmap->arr);
 }
 
+// Destroy and free a heap-allocated hash map.
 void hash_map_free(struct HashMap* hmap){
   hash_map_destroy(hmap);
   free(hmap);

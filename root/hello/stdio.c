@@ -24,6 +24,7 @@ static void write_fd_all(int fd, char* buf, unsigned count){
   }
 }
 
+// Write a null-terminated string to a file descriptor.
 unsigned fdputs(int fd, char* str){
   char* start = str;
   unsigned count = 0;
@@ -35,6 +36,7 @@ unsigned fdputs(int fd, char* str){
   return count;
 }
 
+// Write a null-terminated string to standard output.
 unsigned puts(char* str){
   return fdputs(STDOUT, str);
 }

@@ -40,11 +40,11 @@
 #define MULTIFRAME_ALLOC_EXTRA 128u
 #define CHURN_LARGE_ALLOC_SPAN 384u
 
-struct ThreadArg {
+struct ThreadArg { /* Identifies one concurrent heap churn worker. */
   int id;
 };
 
-struct BlockInfo {
+struct BlockInfo { /* Record an allocated block's address, order, and owner. */
   void* ptr;
   unsigned size;
   unsigned seed;

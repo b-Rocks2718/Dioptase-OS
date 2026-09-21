@@ -4,6 +4,7 @@
 #include "print.h"
 #include "stdlib.h"
 
+// Print a fatal diagnostic and stop the current user program.
 void panic(char* msg) {
   // print panic message
   puts("USER PANIC: ");
@@ -16,6 +17,7 @@ void panic(char* msg) {
   }
 }
 
+// Panic on a failed condition in debug builds; compile to a no-op in releases.
 void assert(bool condition, char* msg) {
 #ifdef OS_RELEASE
   (void)condition;
@@ -27,6 +29,7 @@ void assert(bool condition, char* msg) {
 #endif
 }
 
+// Panic on a failed condition in every build configuration.
 void assert_always(bool condition, char* msg) {
   if (!condition) {
     panic(msg);
