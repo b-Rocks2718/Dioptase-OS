@@ -10,7 +10,7 @@
 // Supports insert/lookup for goto label resolution.
 
 // Node for a single hash bucket chain.
-// Returns Stored inside LabelMap buckets.
+// Stored inside LabelMap buckets.
 // Key/value pointers remain valid for map lifetime.
 struct LabelEntry{
   struct Slice* key;

@@ -100,7 +100,7 @@ static int algn_handler(unsigned pc){ /* Record the address of the misaligned in
   exit(ALGN_EXIT_STATUS);
 }
 
-static int masked_child(void){ /* Run the masked child process. */
+static int masked_child(void){ /* Verify masked duplicate signals coalesce and run once after unmasking. */
   user_test_expect_eq("register masked hello handler",
     register_handler(SIGNAL_HELLO, (void*)masked_hello_handler), 0);
   user_test_expect_eq("mask hello in child", mask_signal(SIGNAL_HELLO), 0);
@@ -128,14 +128,14 @@ static int masked_child(void){ /* Run the masked child process. */
   return CHILD_READY_STATUS;
 }
 
-static int waiting_child(void){ /* Run the waiting child process. */
+static int waiting_child(void){ /* Publish readiness and remain schedulable until an asynchronous signal terminates it. */
   sem_up(child_ready_sem);
   while (1){
     yield();
   }
 }
 
-static int parse_three_digit_decimal(char* text){ /* Parse three digit decimal. */
+static int parse_three_digit_decimal(char* text){ /* Decode the fixed-width semaphore descriptor passed through exec. */
   return (text[0] - '0') * DECIMAL_HUNDREDS +
     (text[1] - '0') * DECIMAL_TENS +
     (text[2] - '0');

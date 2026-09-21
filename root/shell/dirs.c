@@ -43,7 +43,8 @@ struct LinkedDirent* read_directory_no_error(char* path) {
   return entries;
 }
 
-// Returns -1 on error. 0 represents empty.
+// Read all directory entries into owned list nodes.
+// Returns -1 on error and 0 for an empty directory.
 struct LinkedDirent* read_directory(char* path) {
   int fd = open_existing(path);
   if (fd < 0) {
@@ -86,7 +87,8 @@ struct LinkedDirent* read_directory(char* path) {
   return head;
 }
 
-// Returns new index. If keep_together_length > 1, ensures first characters are printed together.
+// Append text to the buffered listing, flushing first when a prefix must stay together.
+// Returns the next unused buffer index.
 unsigned add_to_print_buffer(char* print_buffer, unsigned index, char* to_add, unsigned keep_together_length) {
   // Print earlier if needed.
   if (keep_together_length > 1 && index + keep_together_length >= PRINT_BUFFER_SIZE) {
@@ -101,14 +103,13 @@ unsigned add_to_print_buffer(char* print_buffer, unsigned index, char* to_add, u
       puts(print_buffer);
       index = 0;
     }
-    // Add character.
     print_buffer[index++] = *to_add;
     to_add++;
   }
   return index;
 }
 
-// Print print buffer.
+// NUL-terminate and flush the used portion of the directory-listing buffer.
 void print_print_buffer(char* print_buffer, unsigned index) {
   print_buffer[index] = 0;
   puts(print_buffer);

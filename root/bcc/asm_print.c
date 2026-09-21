@@ -46,7 +46,7 @@ static void print_reg(enum Reg reg) {
   }
 }
 
-// Print asm type.
+// Render an assembly operand type, including byte-array size and alignment.
 static void print_asm_type(struct AsmType* type) {
   switch (type->type) {
     case BYTE:

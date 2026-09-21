@@ -70,7 +70,7 @@ static char shared_worker_byte(int id, int round) { /* Produce the byte each sha
   return 'A' + ((round * WORKER_COUNT + id) % 26);
 }
 
-static void build_shared_expected(char* dest, int round) { /* Build shared expected. */
+static void build_shared_expected(char* dest, int round) { /* Reconstruct the backing bytes expected after all writers complete a round. */
   memcpy(dest, (void*)SHARED_BASE_TEXT, SHARED_FILE_BYTES);
   if (round < 0) {
     return;
@@ -81,7 +81,7 @@ static void build_shared_expected(char* dest, int round) { /* Build shared expec
   }
 }
 
-static void read_file_bytes(char* dest) { /* Read file bytes. */
+static void read_file_bytes(char* dest) { /* Read the complete mapped fixture range directly from its backing node. */
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL,
     "vmem shared file thread: failed to reopen fixture file.\n");
@@ -103,7 +103,7 @@ static void read_file_bytes(char* dest) { /* Read file bytes. */
   node_free(file);
 }
 
-static void expect_bytes(char* got, char* expected, int worker_id, /* Check bytes. */
+static void expect_bytes(char* got, char* expected, int worker_id, /* Compare a worker's mapped view with phase-specific expected bytes. */
   int round, int phase) {
   for (unsigned i = 0; i < SHARED_FILE_BYTES; ++i) {
     if (got[i] != expected[i]) {
@@ -268,7 +268,7 @@ static void check_truncate_cache_serialization(void){
   node_free(file);
 }
 
-static void shared_file_worker(void* arg) { /* Run the shared file worker. */
+static void shared_file_worker(void* arg) { /* Update one byte through a shared mapping and verify cross-worker visibility each round. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   int id = worker->id;
   char expected[SHARED_FILE_BYTES];

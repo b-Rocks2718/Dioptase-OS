@@ -59,7 +59,7 @@ extern int trap_handler(unsigned code,
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7,
     bool* return_to_user);
 
-static void emit_result(char* name, int value){ /* Emit result. */
+static void emit_result(char* name, int value){ /* Print one named syscall result in the fixture's stable output format. */
   void* args[2];
 
   args[0] = name;
@@ -67,7 +67,7 @@ static void emit_result(char* name, int value){ /* Emit result. */
   say("***syscall_display %s = %d\n", args);
 }
 
-static int call_trap(unsigned code, /* Call trap. */
+static int call_trap(unsigned code, /* Invoke trap dispatch directly and require a normal kernel-caller return. */
     int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7){
   bool return_to_user = false;
   int rc = trap_handler(code, arg1, arg2, arg3, arg4, arg5, arg6, arg7,
@@ -107,7 +107,7 @@ static enum CoreAffinity console_stress_affinity(int worker){ /* Assign console-
   return CORE_3;
 }
 
-static int run_console_stress(void){ /* Run console stress. */
+static int run_console_stress(void){ /* Contend four counted writes across cores and validate transaction-level framebuffer output. */
   bool saved_use_vga = CONFIG.use_vga;
   CONFIG.use_vga = true;
   clear_screen();

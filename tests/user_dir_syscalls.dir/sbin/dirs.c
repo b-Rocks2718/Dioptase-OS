@@ -19,7 +19,7 @@ char* combine_path(char* base_path, char* rest, unsigned base_length, unsigned r
     return full_path;
 }
 
-struct LinkedDirent *create_linked_dirent(struct linux_dirent *dirent) { /* Create linked dirent. */
+struct LinkedDirent *create_linked_dirent(struct linux_dirent *dirent) { /* Copy one variable-length getdents record into an owned list node. */
     struct LinkedDirent *entry = (struct LinkedDirent*) malloc(sizeof(struct LinkedDirent) + dirent->d_reclen - sizeof(struct linux_dirent));
     memcpy(&entry->dirent, dirent, dirent->d_reclen);
     entry->d_type = *((char*)dirent + dirent->d_reclen - 1);
@@ -36,7 +36,7 @@ void destroy_linked_dirents(struct LinkedDirent *head) { /* Free every copied en
     }
 }
 
-struct LinkedDirent *read_directory(char* path) { /* Read directory. */
+struct LinkedDirent *read_directory(char* path) { /* Read every getdents batch for a path into an owned linked list. */
     int fd = open(path);
     if (fd < 0) {
         return 0;

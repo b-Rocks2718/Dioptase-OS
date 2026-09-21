@@ -19,7 +19,7 @@
 static struct BlockingLock lock;
 static int owner_ready = 0;
 
-static void owner_thread(void* unused){ /* Run the owner thread. */
+static void owner_thread(void* unused){ /* Acquire the lock on a remote core and retain ownership for the negative release check. */
   (void)unused;
   blocking_lock_acquire(&lock);
   __atomic_store_n(&owner_ready, 1);

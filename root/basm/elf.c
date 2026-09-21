@@ -8,14 +8,14 @@
 #include "../crt/string.h"
 #include "../crt/unistd.h"
 
-// Write u16 little-endian.
+// Append a 16-bit value to a byte buffer in little-endian order.
 static void write_u16_le(uint8_t* buf, size_t* offset, uint16_t value){
   buf[*offset] = (uint8_t)value;
   buf[*offset + 1] = (uint8_t)(value >> 8);
   *offset += 2;
 }
 
-// Write u32 little-endian.
+// Append a 32-bit value to a byte buffer in little-endian order.
 static void write_u32_le(uint8_t* buf, size_t* offset, uint32_t value){
   buf[*offset] = (uint8_t)value;
   buf[*offset + 1] = (uint8_t)(value >> 8);
@@ -34,7 +34,7 @@ static void write_all(int file, uint8_t* bytes, size_t len){
   }
 }
 
-// Print word bytes.
+// Emit aligned little-endian bytes as one eight-digit hexadecimal word per line.
 static void fprint_word_bytes(int file, uint8_t* bytes, size_t len){
   assert(len % 4 == 0, "ELF word dump requires 4-byte alignment");
   for (size_t i = 0; i < len; i += 4){

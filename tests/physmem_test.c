@@ -75,11 +75,11 @@ static int frame_index(void* page) {
   return (addr - FRAMES_ADDR_START) / TEST_FRAME_SIZE;
 }
 
-static unsigned block_page_count(int order) { /* Count block page. */
+static unsigned block_page_count(int order) { /* Convert a buddy order to the number of constituent pages. */
   return 1u << order;
 }
 
-static void check_block_alignment(void* block, int order) { /* Check block alignment. */
+static void check_block_alignment(void* block, int order) { /* Require a higher-order allocation to be size-aligned and remain inside the frame pool. */
   int idx = frame_index(block);
   unsigned page_count = block_page_count(order);
   if ((idx & (page_count - 1)) != 0) {
@@ -133,7 +133,7 @@ static void stamp_block(void* block, int order) { /* Fill an allocated block wit
   }
 }
 
-static void check_block(void* block, int order) { /* Check block. */
+static void check_block(void* block, int order) { /* Verify the first, middle, and last sampled pages retain the block's test pattern. */
   unsigned page_count = block_page_count(order);
   unsigned base_addr = (unsigned)block;
   check_page((void*)base_addr, 0x40 + order, order, 0);

@@ -41,7 +41,7 @@ static int bytes_equal(char* lhs, char* rhs, unsigned count){ /* Compare two byt
   return 1;
 }
 
-static int blocked_writer_child(int read_fd, int write_fd, int ready_sem){ /* Run the blocked writer child process. */
+static int blocked_writer_child(int read_fd, int write_fd, int ready_sem){ /* Fill the pipe, block on a second byte, and verify final-reader closure returns the committed prefix. */
   char suffix[BLOCKED_WRITE_BYTES];
   suffix[0] = 'X';
   suffix[1] = 'Y';

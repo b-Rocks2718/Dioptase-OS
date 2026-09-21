@@ -41,7 +41,7 @@ static int bytes_equal(char* lhs, char* rhs, unsigned count){ /* Compare two byt
   return 1;
 }
 
-static int closed_stdout_child(void){ /* Run the closed stdout child process. */
+static int closed_stdout_child(void){ /* Require every stdout-only printing helper to fail after stdout is closed. */
   if (close(STDOUT) != 0){
     return CLOSED_STDOUT_CLOSE_FAILED;
   }

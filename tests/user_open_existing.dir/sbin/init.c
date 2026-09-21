@@ -32,7 +32,7 @@ static int path_is_missing(char* path){ /* Return whether opening the path faile
   return 1;
 }
 
-static void run_shell_command(char* command){ /* Run shell command. */
+static void run_shell_command(char* command){ /* Feed one command through the bundled shell's normal dispatch buffer. */
   cmd_buf_len = strlen(command);
   memcpy(cmd_buf, command, cmd_buf_len + 1);
   handle_command();

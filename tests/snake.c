@@ -1151,7 +1151,7 @@ static void run_interactive_game(void) {
   }
 }
 
-int kernel_main(void) { /* Run deterministic snake checks and the interactive VGA game. */
+int kernel_main(void) { /* Validate shared game mechanics before starting the interactive kernel-mode game. */
   if (CONFIG.use_vga) {
     run_interactive_game();
   } else {

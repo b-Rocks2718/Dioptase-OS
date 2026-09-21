@@ -595,7 +595,7 @@ static void concurrent_writer_thread(void* arg) {
   __atomic_fetch_add(&concurrent_finished, 1);
 }
 
-static void partial_concurrent_writer_thread(void* arg) { /* Run the partial concurrent writer thread. */
+static void partial_concurrent_writer_thread(void* arg) { /* Repeatedly rewrite one disjoint region while peer writers update the same file. */
   struct ConcurrentWriteArgs* write_args = (struct ConcurrentWriteArgs*)arg;
   struct Node* file = node_find(&fs.root, PARTIAL_CONCURRENT_FILE_NAME);
   assert(file != NULL,

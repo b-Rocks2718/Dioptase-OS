@@ -14,7 +14,7 @@ static unsigned capacity;
 #define K_MAX_UNSIGNED_DECIMAL_DIGITS 10
 #define K_MAX_UNSIGNED_HEX_DIGITS 8
 
-// Print preprocessor memory error.
+// Report failure to grow the assembler preprocessor's expansion buffer.
 static void print_preprocessor_memory_error(void) {
   puts("Preprocessor memory error\n");
 }
@@ -140,14 +140,14 @@ static bool append_control_register_name(int reg) {
   return append_unsigned_decimal((unsigned)reg);
 }
 
-// Print invalid register error.
+// Report an invalid general-purpose register at the current source location.
 static void print_invalid_register_error(void) {
   print_error();
   puts("Invalid register\n");
   puts("Valid registers are r0 - r31\n");
 }
 
-// Print expected immediate error.
+// Report a missing immediate operand at the current source location.
 static void print_expected_immediate_error(void) {
   print_error();
   puts("Expected immediate\n");

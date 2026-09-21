@@ -7,7 +7,7 @@
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/print.h"
 
-void print_dramatically(char* str, unsigned delay){ /* Print dramatically. */
+void print_dramatically(char* str, unsigned delay){ /* Print one character per delay interval, treating '%' as a longer silent pause. */
   for (unsigned i = 0; str[i] != '\0'; i++){
     if (str[i] == '%'){
       sleep(delay * 10);

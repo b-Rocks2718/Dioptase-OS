@@ -2185,7 +2185,7 @@ size_t get_type_size(struct Type* type) {
   }
 }
 
-// Return type alignment.
+// Return the target ABI alignment for a complete object type.
 size_t get_type_alignment(struct Type* type) {
   switch (type->type){
     case ARRAY_TYPE:

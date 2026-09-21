@@ -148,7 +148,7 @@ static void print_tac_un_op(enum UnOp op) {
   }
 }
 
-// Print static init.
+// Render a static initializer list with each value's storage type.
 void print_static_init(struct InitList* init) {
   struct InitList* cur = init;
   bool first = true;

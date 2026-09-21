@@ -7,8 +7,7 @@
 #include "../crt/stdbool.h"
 #include "../crt/stdint.h"
 
-// Define typechecking data structures and APIs.
-// Provides typechecking results and symbol table accessors.
+// Declare typechecking metadata, symbol tables, and pass entry points.
 
 struct IdentAttr;
 struct InitList;
@@ -83,8 +82,7 @@ enum IdentAttrType {
   CONST_ATTR,
 };
 
-// Track initialization state for static storage.
-// Guides tentative definition and redefinition rules.
+// Distinguish declarations, tentative definitions, and explicit static initializers.
 enum IdentInitType {
   NO_INIT = 0,
   TENTATIVE = 1,
@@ -92,7 +90,7 @@ enum IdentInitType {
 };
 
 // Describe the initializer state for a static or global variable.
-// Returns Stored in IdentAttr for later codegen.
+// Stored in IdentAttr for later code generation.
 struct IdentInit {
   enum IdentInitType init_type;
   struct InitList* init_list; // valid if init_type == INITIAL
@@ -129,7 +127,7 @@ struct StaticInit {
 };
 
 // Singly linked list of static initializer values.
-// Returns Stored in IdentInit for static variable initialization.
+// Stored in IdentInit for static variable initialization.
 struct InitList {
   struct StaticInit* value;
   struct InitList* next;

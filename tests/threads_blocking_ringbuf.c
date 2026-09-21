@@ -40,19 +40,19 @@ static void fail_uint(char* msg, unsigned got, unsigned expected){
   panic(msg);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* msg){ /* Check uint. */
+static void expect_uint(unsigned got, unsigned expected, char* msg){ /* Route an unsigned mismatch through the blocking-ring diagnostic. */
   if (got != expected){
     fail_uint(msg, got, expected);
   }
 }
 
-static void expect_byte(char got, unsigned expected, char* msg){ /* Check byte. */
+static void expect_byte(char got, unsigned expected, char* msg){ /* Compare a ring byte without sign-extending values above 0x7f. */
   if ((unsigned char)got != expected){
     fail_uint(msg, (unsigned char)got, expected);
   }
 }
 
-static void reset_workload_state(void){ /* Reset workload state. */
+static void reset_workload_state(void){ /* Clear producer, consumer, completion, and duplicate-detection state between cases. */
   produced = 0;
   consumed = 0;
   consumers_done = 0;

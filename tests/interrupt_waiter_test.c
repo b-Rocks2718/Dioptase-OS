@@ -21,7 +21,7 @@
 
 static struct TCB waiter_thread;
 
-static void expect_thread(char* message, struct TCB* got, /* Check thread. */
+static void expect_thread(char* message, struct TCB* got, /* Require the handoff operation to return the expected waiter. */
     struct TCB* expected){
   if (got != expected){
     int args[2] = { (int)got, (int)expected };
@@ -30,7 +30,7 @@ static void expect_thread(char* message, struct TCB* got, /* Check thread. */
   }
 }
 
-static void test_signal_before_publish(void){ /* Test signal before publish. */
+static void test_signal_before_publish(void){ /* Verify publication consumes a signal that arrived before a waiter was visible. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -44,7 +44,7 @@ static void test_signal_before_publish(void){ /* Test signal before publish. */
     interrupt_waiter_publish(&waiter, &waiter_thread), &waiter_thread);
 }
 
-static void test_publish_before_signal(void){ /* Test publish before signal. */
+static void test_publish_before_signal(void){ /* Verify a later signal detaches an already-published waiter. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -58,7 +58,7 @@ static void test_publish_before_signal(void){ /* Test publish before signal. */
     interrupt_waiter_signal(&waiter), &waiter_thread);
 }
 
-static void test_prepare_clears_stale_signal(void){ /* Test prepare clears stale signal. */
+static void test_prepare_clears_stale_signal(void){ /* Verify preparing a new wait discards signal state from the preceding cycle. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);
@@ -75,7 +75,7 @@ static void test_prepare_clears_stale_signal(void){ /* Test prepare clears stale
     interrupt_waiter_signal(&waiter), &waiter_thread);
 }
 
-static void test_prepublication_signals_coalesce(void){ /* Test prepublication signals coalesce. */
+static void test_prepublication_signals_coalesce(void){ /* Verify repeated early signals produce exactly one wake on publication. */
   struct InterruptWaiter waiter;
 
   interrupt_waiter_init(&waiter);

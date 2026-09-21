@@ -46,7 +46,7 @@ static void fill_basename(char* dest, unsigned size){
   dest[size] = '\0';
 }
 
-static int write_one_byte_file(char* path, char value){ /* Write one byte file. */
+static int write_one_byte_file(char* path, char value){ /* Create or truncate a path and persist exactly one byte. */
   int fd = open(path);
   int rc;
 
@@ -68,7 +68,7 @@ static int write_one_byte_file(char* path, char value){ /* Write one byte file. 
   return 0;
 }
 
-static int read_one_byte_file(char* path, char* out){ /* Read one byte file. */
+static int read_one_byte_file(char* path, char* out){ /* Read exactly one byte from an existing path without creating it. */
   int fd = open(path);
   int rc;
 

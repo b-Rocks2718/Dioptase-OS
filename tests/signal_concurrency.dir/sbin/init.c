@@ -80,7 +80,7 @@ static int counting_handler(int signal){ /* Increment the delivery count for the
   sigreturn(0);
 }
 
-static int pending_order_child(void){ /* Run the pending order child process. */
+static int pending_order_child(void){ /* Unmask two pending signals together and verify numeric-priority delivery. */
   if (register_handler(SIGNAL_HELLO, (void*)recording_handler) != 0 ||
       register_handler(SIGNAL_TERMINATE, (void*)recording_handler) != 0 ||
       mask_signal(SIGNAL_HELLO) != 0 ||
@@ -108,7 +108,7 @@ static int pending_order_child(void){ /* Run the pending order child process. */
   return 0;
 }
 
-static int active_handler_child(void){ /* Run the active handler child process. */
+static int active_handler_child(void){ /* Keep a maskable handler active while rejecting any nested handler entry. */
   if (register_handler(SIGNAL_HELLO, (void*)blocking_handler) != 0 ||
       register_handler(SIGNAL_ILL, (void*)forbidden_nested_handler) != 0){
     return NESTED_HANDLER_STATUS;
@@ -120,7 +120,7 @@ static int active_handler_child(void){ /* Run the active handler child process. 
   }
 }
 
-static int fault_in_handler_child(void){ /* Run the fault in handler child process. */
+static int fault_in_handler_child(void){ /* Fault inside a handler while a sentinel detects forbidden nested delivery. */
   if (register_handler(SIGNAL_HELLO, (void*)faulting_handler) != 0 ||
       register_handler(SIGNAL_ILL, (void*)forbidden_nested_handler) != 0){
     return NESTED_HANDLER_STATUS;
@@ -132,7 +132,7 @@ static int fault_in_handler_child(void){ /* Run the fault in handler child proce
   }
 }
 
-static int mask_send_race_child(void){ /* Run the mask send race child process. */
+static int mask_send_race_child(void){ /* Repeatedly race signal publication against unmasking on another core. */
   if (register_handler(SIGNAL_HELLO, (void*)counting_handler) != 0){
     return MASK_RACE_FAILURE_STATUS;
   }
@@ -167,13 +167,13 @@ static int mask_send_race_child(void){ /* Run the mask send race child process. 
   return 0;
 }
 
-static int exiting_child(void){ /* Run the exiting child process. */
+static int exiting_child(void){ /* Publish readiness, await release, and exit normally for the send/exit race. */
   sem_up(ready_sem);
   sem_down(continue_sem);
   return NORMAL_EXIT_STATUS;
 }
 
-static int test_pending_order(void){ /* Test pending order. */
+static int test_pending_order(void){ /* Queue signals in reverse order and require priority-ordered delivery after unmasking. */
   ready_sem = sem_open(0);
   continue_sem = sem_open(0);
 
@@ -195,7 +195,7 @@ static int test_pending_order(void){ /* Test pending order. */
   return failures;
 }
 
-static int test_nonmaskable_during_handler(void){ /* Test nonmaskable during handler. */
+static int test_nonmaskable_during_handler(void){ /* Send a nonmaskable signal during a handler and require termination without nesting. */
   ready_sem = sem_open(0);
   handler_entered_sem = sem_open(0);
 
@@ -216,7 +216,7 @@ static int test_nonmaskable_during_handler(void){ /* Test nonmaskable during han
   return failures;
 }
 
-static int test_fault_during_handler(void){ /* Test fault during handler. */
+static int test_fault_during_handler(void){ /* Require a synchronous handler fault to terminate rather than enter another handler. */
   ready_sem = sem_open(0);
 
   int child = fork();
@@ -233,7 +233,7 @@ static int test_fault_during_handler(void){ /* Test fault during handler. */
   return failures;
 }
 
-static int test_mask_send_race(void){ /* Test mask send race. */
+static int test_mask_send_race(void){ /* Overlap parent sends with child mask transitions and validate coherent delivery. */
   ready_sem = sem_open(0);
   sends_done_sem = sem_open(0);
 
@@ -256,7 +256,7 @@ static int test_mask_send_race(void){ /* Test mask send race. */
   return failures;
 }
 
-static int test_send_exit_race(void){ /* Test send exit race. */
+static int test_send_exit_race(void){ /* Race SIGNAL_KILL against child exit and accept only lifecycle-consistent results. */
   ready_sem = sem_open(0);
   continue_sem = sem_open(0);
   int failures = 0;

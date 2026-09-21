@@ -88,7 +88,7 @@ static void expect_zeroed(unsigned* base, unsigned pages, int tid, int round, in
   }
 }
 
-static void fill_region(unsigned* base, unsigned pages, int tid, int round, int region) { /* Fill region. */
+static void fill_region(unsigned* base, unsigned pages, int tid, int round, int region) { /* Stamp sampled words with a worker-, round-, and region-specific pattern. */
   unsigned words = words_per_page();
   for (unsigned page = 0; page < pages; page++) {
     unsigned* page_base = base + page * words;

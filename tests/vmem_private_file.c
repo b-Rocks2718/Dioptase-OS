@@ -53,7 +53,7 @@ static char private_worker_byte(int id, int round) { /* Produce the byte each pr
   return 'a' + ((round * WORKER_COUNT + id) % 26);
 }
 
-static void read_file_bytes(char* dest) { /* Read file bytes. */
+static void read_file_bytes(char* dest) { /* Read the complete fixture range directly from its backing node. */
   struct Node* file = node_find(&fs.root, TEST_FILE_NAME);
   assert(file != NULL,
     "vmem private file thread: failed to reopen fixture file.\n");
@@ -75,7 +75,7 @@ static void read_file_bytes(char* dest) { /* Read file bytes. */
   node_free(file);
 }
 
-static void expect_bytes(char* got, char* expected, int worker_id, /* Check bytes. */
+static void expect_bytes(char* got, char* expected, int worker_id, /* Compare one private mapping with its worker-local expected bytes. */
   int round, int phase) {
   for (unsigned i = 0; i < PRIVATE_FILE_BYTES; ++i) {
     if (got[i] != expected[i]) {
@@ -92,12 +92,12 @@ static void expect_bytes(char* got, char* expected, int worker_id, /* Check byte
   }
 }
 
-static void build_private_expected(char* dest, int worker_id, int round) { /* Build private expected. */
+static void build_private_expected(char* dest, int worker_id, int round) { /* Build the worker-local bytes expected after a private mapping write. */
   memcpy(dest, (void*)PRIVATE_BASE_TEXT, PRIVATE_FILE_BYTES);
   dest[worker_id] = private_worker_byte(worker_id, round);
 }
 
-static void private_file_worker(void* arg) { /* Run the private file worker. */
+static void private_file_worker(void* arg) { /* Mutate one private mapping per round and verify neither peers nor the file observe it. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   int id = worker->id;
   char expected[PRIVATE_FILE_BYTES];

@@ -910,7 +910,7 @@ static bool write_machine_instr(FILE* out, struct MachineInstr* instr) {
   }
 }
 
-// Write machine prog to file.
+// Serialize a generated machine program to an assembly-text file.
 bool write_machine_prog_to_file(struct MachineProg* prog, char* path) {
   if (prog == NULL || path == NULL) {
     fputs("Compiler Error: machine_print: invalid write request\n", stderr);

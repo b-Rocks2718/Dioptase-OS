@@ -10,13 +10,10 @@
 #include "../crt/string.h"
 #include "../crt/limits.h"
 
-// TAC interpreter written by Codex
-
 // Provide a small TAC interpreter for validating TAC lowering output.
 // Returns the integer result of main() or exits on interpreter errors.
 
-// Define interpreter memory sizing constants.
-// Controls initial capacities, growth behavior, and scalar slot counts.
+// Centralize interpreter allocation granularity and dynamic-array growth policy.
 static int kTacInterpWordBytes = 4;
 static size_t kTacInterpInitialMemoryCapacity = 8;
 static size_t kTacInterpInitialBindingCapacity = 8;
@@ -25,12 +22,11 @@ static size_t kTacInterpGrowthFactor = 2;
 static size_t kTacInterpSingleSlot = 1;
 static size_t kTacInterpMainNameLen = sizeof("main") - 1;
 static int kTacInterpFunctionAddrBase = 0x10000000;
-// Define supported host builtin names and signatures.
+// Describe host builtins implemented directly by the interpreter.
 static char* kTacBuiltinPutcharName = "putchar";
 static size_t kTacBuiltinPutcharArgCount = 1;
 
-// Track one addressable memory cell in the interpreter.
-// Initialized indicates whether the cell has a defined value.
+// Associate one interpreter byte address with a scalar value and its initialization state.
 struct TacMemoryCell {
   int address;
   uint64_t value;
@@ -62,8 +58,7 @@ struct TacBindings {
   size_t capacity;
 };
 
-// Track required storage for CopyTo/FromOffset base variables.
-// Used to pre-allocate local storage before executing a function.
+// Record the storage span needed by aggregate copy operations on one base variable.
 struct TacCopyOffsetRequirement {
   struct Slice* name;
   size_t bytes;
@@ -85,7 +80,7 @@ struct TacFunctionEntry {
   int address;
 };
 
-// Track function pointer addresses for the interpreter.
+// Assign stable synthetic addresses to functions referenced through pointers.
 struct TacFunctionTable {
   struct TacFunctionEntry* entries;
   size_t count;
@@ -102,8 +97,7 @@ struct TacLabelEntry {
   struct TACInstr* instr;
 };
 
-// Store per-function execution state for the interpreter.
-// Tracks comparison state for TACCOND_JUMP.
+// Hold local bindings, jump targets, and comparison state for one active call.
 struct TacFrame {
   struct TacBindings locals;
   struct TacLabelEntry* labels;
@@ -114,9 +108,7 @@ struct TacFrame {
   uint64_t cmp_right;
 };
 
-// Own global memory, bindings, function metadata, and call-time state.
-// Provides global storage and shared memory space.
-// Globals are initialized before executing main.
+// Own the program-wide memory, global bindings, and function-address table.
 struct TacInterpreter {
   struct TACProg* prog;
   struct TacMemory memory;

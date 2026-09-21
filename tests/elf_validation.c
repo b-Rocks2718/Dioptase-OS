@@ -61,7 +61,7 @@ static void elf_test_require(bool condition, char* message){ /* Abort the test i
   }
 }
 
-static void elf_test_set_load(struct ElfProgramHeader* ph, unsigned offset, /* Set load on ELF test. */
+static void elf_test_set_load(struct ElfProgramHeader* ph, unsigned offset, /* Initialize one PT_LOAD fixture with explicit range and permissions. */
     unsigned vaddr, unsigned filesz, unsigned memsz, unsigned flags){
   ph->p_type = PT_LOAD;
   ph->p_offset = offset;
@@ -110,7 +110,7 @@ static void elf_test_init_valid(struct ElfTestImage* image){ /* Initialize a min
   image->data_word = ELF_TEST_DATA_WORD;
 }
 
-static void elf_test_init_header_limit(struct ElfHeaderLimitImage* image, /* Initialize ELF test header limit. */
+static void elf_test_init_header_limit(struct ElfHeaderLimitImage* image, /* Build an otherwise-valid image with a selected program-header count. */
     unsigned header_count){
   memset(image, 0, sizeof(struct ElfHeaderLimitImage));
 
@@ -145,7 +145,7 @@ static void elf_test_expect_invalid(struct ElfTestImage* image, char* message){ 
     message);
 }
 
-static void elf_test_load_and_verify(struct ElfTestImage* image){ /* Load ELF test and verify. */
+static void elf_test_load_and_verify(struct ElfTestImage* image){ /* Validate and load a fixture, then verify its entry point and segment contents. */
   elf_test_require(elf_validate_image(image, sizeof(struct ElfTestImage)),
     "elf validation test: valid empty-segment fixture was rejected.\n");
 
@@ -276,7 +276,7 @@ static void elf_test_program_header_limit(void){ /* Verify the loader rejects an
   free(image);
 }
 
-static void elf_test_load_range_validation(struct ElfTestImage* image){ /* Load ELF test range validation. */
+static void elf_test_load_range_validation(struct ElfTestImage* image){ /* Exercise rejected PT_LOAD sizes, file ranges, flags, alignment, and address ranges. */
   elf_test_init_valid(image);
   image->ph[0].p_filesz = sizeof(unsigned) + 1;
   image->ph[0].p_memsz = sizeof(unsigned);

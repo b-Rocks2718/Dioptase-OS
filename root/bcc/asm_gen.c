@@ -2361,7 +2361,7 @@ struct Operand* make_pseudo_mem(struct Slice* var_name, struct AsmType* asm_type
   return opr;
 }
 
-// Return type alignment.
+// Return the target ABI alignment for a source-language type.
 size_t type_alignment(struct Type* type, struct Slice* symbol_name) {
   // will eventually have different alignments for different types
   // short => 2, char => 1
@@ -2462,7 +2462,7 @@ struct VarClassList* classify_struct(struct StructEntry* struct_entry) {
   return list;
 }
 
-// Return fourbyte type.
+// Describe the largest naturally sized ASM chunk available at an aggregate offset.
 struct AsmType* get_fourbyte_type(size_t offset, size_t struct_size){
   if (struct_size - offset >= 4){
     struct AsmType* word = arena_alloc(sizeof(struct AsmType));
@@ -3032,7 +3032,7 @@ bool asm_symbol_table_contains(struct AsmSymbolTable* hmap, struct Slice* key){
   return false;
 }
 
-// Print pseudo map.
+// Dump each pseudo-register's stack offset and assigned assembly type.
 void print_pseudo_map(struct Slice* func, struct PseudoMap* hmap){
   int args[2];
 
@@ -3080,7 +3080,7 @@ void print_pseudo_map(struct Slice* func, struct PseudoMap* hmap){
   }
 }
 
-// Print asm symbol table.
+// Dump assembly symbol types, linkage, and definition state.
 void print_asm_symbol_table(struct AsmSymbolTable* hmap){
   int args[2];
 

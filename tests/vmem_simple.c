@@ -7,7 +7,7 @@
 #include "../kernel/physmem.h"
 #include "../kernel/ext.h"
 
-void private_anonymous_test(void){ /* Test private anonymous. */
+void private_anonymous_test(void){ /* Smoke-test reading, writing, and unmapping a private anonymous page. */
   int* p = mmap(FRAME_SIZE, NULL, 0, MMAP_READ | MMAP_WRITE);
   say("***    mmap'd a page at virtual address 0x%X\n", &p);
 
@@ -21,7 +21,7 @@ void private_anonymous_test(void){ /* Test private anonymous. */
   say("***    munmap'd the page\n", NULL);
 }
 
-void private_file_backed_test(void){ /* Test private file backed. */
+void private_file_backed_test(void){ /* Smoke-test a writable private mapping without persisting its modification. */
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 
@@ -39,12 +39,12 @@ void private_file_backed_test(void){ /* Test private file backed. */
   say("***    munmap'd the file-backed page\n", NULL);
 }
 
-void shared_anonymous_test(void){ /* Test shared anonymous. */
+void shared_anonymous_test(void){ /* Report the currently unimplemented shared-anonymous coverage. */
   // might be hard to test without processes
   say("***    TODO: implement shared anonymous mmap test\n", NULL);
 }
 
-void shared_file_backed_test(void){ /* Test shared file backed. */
+void shared_file_backed_test(void){ /* Smoke-test a writable shared mapping of a file-system node. */
   struct Node* file = node_find(&fs.root, "hello.txt");
   assert(file != NULL, "could not find hello.txt in ext2 filesystem\n");
 

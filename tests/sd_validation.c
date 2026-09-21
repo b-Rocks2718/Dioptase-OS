@@ -28,7 +28,7 @@
 #define TEST_CHUNKED_BLOCKS 9
 #define TEST_CHUNKED_BYTES 4608
 
-static void test_generation_arbitration(void){ /* Test generation arbitration. */
+static void test_generation_arbitration(void){ /* Verify one terminal publisher wins per generation and stale generations cannot interfere. */
   struct SdRequestState state;
   sd_request_state_init(&state);
 
@@ -61,7 +61,7 @@ static void test_generation_arbitration(void){ /* Test generation arbitration. *
     "sd validation: successful terminal state is inconsistent.\n");
 }
 
-static void test_terminal_controller_policy(void){ /* Test terminal controller policy. */
+static void test_terminal_controller_policy(void){ /* Verify controller completion retains quarantine only while hardware remains busy. */
   struct SdRequestState state;
   sd_request_state_init(&state);
 
@@ -85,7 +85,7 @@ static void test_terminal_controller_policy(void){ /* Test terminal controller p
     "sd validation: BUSY terminal quarantine could not be acknowledged.\n");
 }
 
-static void test_wrapping_deadline(void){ /* Test wrapping deadline. */
+static void test_wrapping_deadline(void){ /* Verify deadline comparisons remain correct across the runtime counter wrap. */
   unsigned deadline = 2;
   assert(!sd_runtime_deadline_reached(UINT_MAX - 2, deadline),
     "sd validation: pre-wrap time reached a post-wrap deadline early.\n");
@@ -97,11 +97,11 @@ static void test_wrapping_deadline(void){ /* Test wrapping deadline. */
     "sd validation: tick after deadline was not reported reached.\n");
 }
 
-static void expect_invalid(int result, char* message){ /* Check invalid. */
+static void expect_invalid(int result, char* message){ /* Require request validation to reject an input before touching the controller. */
   assert(result == SD_DRIVER_ERR_INVALID_REQUEST, message);
 }
 
-static void test_request_validation(char* buffer){ /* Test request validation. */
+static void test_request_validation(char* buffer){ /* Exercise invalid drive, range, count, and DMA-buffer requests. */
   expect_invalid(sd_read_blocks((enum SdDrive)2, 0, 1, buffer),
     "sd validation: invalid drive reached the controller.\n");
   expect_invalid(sd_read_blocks(SD_DRIVE_0, -1, 1, buffer),

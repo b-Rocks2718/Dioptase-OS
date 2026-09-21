@@ -43,7 +43,7 @@ static int destroyer_start = 0;
 static struct TCB* waiter_tcb = NULL;
 static struct TCB* destroyer_tcb = NULL;
 
-static void holder_thread(void* unused) { /* Run the holder thread. */
+static void holder_thread(void* unused) { /* Hold the semaphore's CLH lock until both competing operations have queued. */
   (void)unused;
   while (__atomic_load_n(&holder_start) == 0) {
     yield();
@@ -59,7 +59,7 @@ static void holder_thread(void* unused) { /* Run the holder thread. */
   clh_lock_release(&target.lock);
 }
 
-static void waiter_thread(void* unused) { /* Run the waiter thread. */
+static void waiter_thread(void* unused) { /* Enter sem_down far enough to publish an active operation and queue for the lock. */
   (void)unused;
   __atomic_store_n((int*)&waiter_tcb, (int)get_current_tcb());
   while (__atomic_load_n(&waiter_start) == 0) {
@@ -69,7 +69,7 @@ static void waiter_thread(void* unused) { /* Run the waiter thread. */
   panic("semaphore destroy pre-enqueue test: waiter unexpectedly resumed\n");
 }
 
-static void destroyer_thread(void* unused) { /* Run the destroyer thread. */
+static void destroyer_thread(void* unused) { /* Attempt destruction while the waiter is active but not yet on the wait queue. */
   (void)unused;
   __atomic_store_n((int*)&destroyer_tcb, (int)get_current_tcb());
   while (__atomic_load_n(&destroyer_start) == 0) {

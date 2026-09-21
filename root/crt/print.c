@@ -92,7 +92,7 @@ static unsigned min_unsigned(unsigned a, unsigned b){
   return b;
 }
 
-// Add emitted count.
+// Accumulate a write count while rejecting I/O failures and signed overflow.
 static bool add_emitted_count(int* total, int emitted){
   if (emitted < 0 || *total > INT_MAX - emitted){
     return false;

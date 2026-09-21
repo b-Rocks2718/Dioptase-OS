@@ -107,7 +107,7 @@ static void free_editor_state(struct EditorState* editor){
   editor->top_display_row = 0;
 }
 
-// Print bmacs file error.
+// Report a failed file operation with the editor and filename context.
 static void print_bmacs_file_error(char* operation, char* filename){
   puts("bmacs: ");
   puts(operation);
@@ -122,7 +122,7 @@ static void clear_status_text(struct EditorState* editor){
   editor->status_text[BMACS_TEXT_COLS] = '\0';
 }
 
-// Append status segment.
+// Append one segment to the fixed-width status line without overrunning it.
 static void append_status_segment(
   struct EditorState* editor,
   unsigned* col,
@@ -135,7 +135,7 @@ static void append_status_segment(
   }
 }
 
-// Set status message.
+// Compose a status message and append the persistent editor key hints.
 static void set_status_message(
   struct EditorState* editor,
   char* prefix,
@@ -154,7 +154,7 @@ static void set_status_message(
   append_status_segment(editor, &col, "Ctrl-S save | Ctrl-C exit");
 }
 
-// Set default status.
+// Restore the normal editor title and key-hint status line.
 static void set_default_status(struct EditorState* editor){
   set_status_message(
     editor,
@@ -200,7 +200,7 @@ static bool init_editor_display(void){
   return true;
 }
 
-// Fill render rows.
+// Clear or initialize the entire off-screen text viewport with one character.
 static void fill_render_rows(char c){
   memset(render_rows, c, BMACS_TEXT_ROWS * BMACS_TEXT_COLS);
 }

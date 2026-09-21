@@ -23,7 +23,7 @@ struct IdentStack {
 };
 
 // Entry in an identifier hash map.
-// Returns Stored in IdentMap buckets for lookups.
+// Stored in IdentMap buckets for lookups.
 struct IdentMapEntry{
   struct Slice* key;
   struct Slice* entry_name;

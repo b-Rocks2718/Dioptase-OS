@@ -76,7 +76,7 @@ static enum CoreAffinity core_affinities[SUPPORTED_AFFINITY_CORES] = {
   CORE_3
 };
 
-static void reset_state(struct FairnessState* state) { /* Reset state. */
+static void reset_state(struct FairnessState* state) { /* Clear synchronization counters, the event log, and published worker TCBs. */
   state->ready = 0;
   state->attempting = 0;
   state->go = 0;
@@ -106,7 +106,7 @@ static struct FairnessState* state_for_kind(int lock_kind) { /* Select the fairn
   return &normal_state;
 }
 
-static void fairness_worker(void* arg) { /* Run the fairness worker. */
+static void fairness_worker(void* arg) { /* Publish readiness, contend once for the selected lock, and record acquisition order. */
   struct WorkerArg* worker = (struct WorkerArg*)arg;
   struct FairnessState* state = state_for_kind(worker->lock_kind);
 
@@ -144,7 +144,7 @@ static enum CoreAffinity worker_affinity(int worker_index) { /* Assign workers t
   return core_affinities[core];
 }
 
-static void spawn_worker(int lock_kind, int id) { /* Spawn worker. */
+static void spawn_worker(int lock_kind, int id) { /* Start one numbered contender on a core distinct from the owner when possible. */
   struct WorkerArg* arg = malloc(sizeof(struct WorkerArg));
   assert(arg != NULL, "clh fairness test: WorkerArg allocation failed.\n");
   arg->id = id;
@@ -158,7 +158,7 @@ static void spawn_worker(int lock_kind, int id) { /* Spawn worker. */
   thread_(fun, HIGH_PRIORITY, worker_affinity(id - 1));
 }
 
-static void wait_for_count(int* value, int expected, int budget, char* panic_msg) { /* Wait for count. */
+static void wait_for_count(int* value, int expected, int budget, char* panic_msg) { /* Yield until a shared counter reaches its expected value or the test budget expires. */
   for (int i = 0; i < budget && __atomic_load_n(value) != expected; i++) {
     yield();
   }
@@ -175,7 +175,7 @@ static void settle_waiters(void) { /* Allow queued lock waiters to reach a stabl
   }
 }
 
-static void wait_for_attempts(struct FairnessState* state, int waiters, char* panic_msg) { /* Wait for attempts. */
+static void wait_for_attempts(struct FairnessState* state, int waiters, char* panic_msg) { /* Wait until every normal-lock worker has begun contending. */
   for (int i = 0; i < QUEUE_WAIT_BUDGET && __atomic_load_n(&state->attempting) != waiters; i++) {
     pause();
   }
@@ -186,7 +186,7 @@ static void wait_for_attempts(struct FairnessState* state, int waiters, char* pa
   }
 }
 
-static int clh_queued_count(int waiters) { /* Count clh queued. */
+static int clh_queued_count(int waiters) { /* Count workers whose TCBs have linked to a CLH predecessor. */
   int queued = 0;
   for (int i = 1; i <= waiters; i++) {
     struct TCB* worker_tcb =
@@ -199,7 +199,7 @@ static int clh_queued_count(int waiters) { /* Count clh queued. */
   return queued;
 }
 
-static void wait_for_clh_queue(int waiters) { /* Wait for clh queue. */
+static void wait_for_clh_queue(int waiters) { /* Wait until every CLH contender is observably queued behind the owner. */
   for (int i = 0; i < QUEUE_WAIT_BUDGET && clh_queued_count(waiters) != waiters; i++) {
     pause();
   }
@@ -212,7 +212,7 @@ static void wait_for_clh_queue(int waiters) { /* Wait for clh queue. */
   }
 }
 
-static void run_normal_phase(int waiters) { /* Run normal phase. */
+static void run_normal_phase(int waiters) { /* Record whether a test-and-set lock owner can barge ahead of active contenders. */
   reset_state(&normal_state);
   spin_lock_init(&normal_lock);
 
@@ -241,7 +241,7 @@ static void run_normal_phase(int waiters) { /* Run normal phase. */
                  "clh fairness test: normal workers did not finish\n");
 }
 
-static void run_clh_phase(int waiters) { /* Run clh phase. */
+static void run_clh_phase(int waiters) { /* Record the order in which already-queued CLH contenders and the owner reacquire. */
   reset_state(&clh_state);
   clh_lock_init(&clh_lock);
 
@@ -305,7 +305,7 @@ static int owner_barges_before_all_waiters(struct FairnessState* state, int wait
   return barges;
 }
 
-static void print_phase(int lock_kind, struct FairnessState* state, int waiters) { /* Print phase. */
+static void print_phase(int lock_kind, struct FairnessState* state, int waiters) { /* Report the acquisition trace and its fairness summary for one lock kind. */
   int args[2];
   args[0] = state->event_count;
   args[1] = waiters;

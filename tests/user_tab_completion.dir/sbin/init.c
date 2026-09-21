@@ -22,7 +22,7 @@
 #define MV_TEST_BUFFER_BYTES 17
 #define MV_TEST_COMMAND "mv inner_file0 ../file_link"
 
-void test_directory(char* path) { /* Test directory. */
+void test_directory(char* path) { /* Print filtered completion candidates for one path prefix. */
   struct LinkedDirent* head = tab_complete_directory(path, false);
   puts("***");
   print_directory(head, true);
@@ -30,7 +30,7 @@ void test_directory(char* path) { /* Test directory. */
   destroy_linked_dirents(head);
 }
 
-struct LinkedDirent* create_linkeddirent(char d_type, char* name, struct LinkedDirent* next) { /* Create linkeddirent. */
+struct LinkedDirent* create_linkeddirent(char d_type, char* name, struct LinkedDirent* next) { /* Prepend an owned synthetic directory entry for print-layout coverage. */
   unsigned name_length = strlen(name);
   struct LinkedDirent* entry = malloc(sizeof(struct LinkedDirent) + name_length + 1);
   entry->d_type = d_type;

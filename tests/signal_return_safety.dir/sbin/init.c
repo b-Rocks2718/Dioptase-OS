@@ -97,7 +97,7 @@ static int child_main(void){ /* Install the page-faulting handler and await the 
   return handler_completed ? 0 : CHILD_HANDLER_FAILED;
 }
 
-static int run_once(int iteration){ /* Run once. */
+static int run_once(int iteration){ /* Signal a child during a slow page fault and verify both nested fault returns complete safely. */
   __atomic_store_n(shared_phase, 0);
 
   int child = fork();

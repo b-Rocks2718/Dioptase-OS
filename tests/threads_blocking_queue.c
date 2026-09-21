@@ -61,19 +61,19 @@ static void fail_ptr(char* msg, void* got, void* expected) {
   panic(msg);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* msg) { /* Check uint. */
+static void expect_uint(unsigned got, unsigned expected, char* msg) { /* Route an unsigned mismatch through the blocking-queue diagnostic. */
   if (got != expected) {
     fail_uint(msg, got, expected);
   }
 }
 
-static void expect_ptr(void* got, void* expected, char* msg) { /* Check ptr. */
+static void expect_ptr(void* got, void* expected, char* msg) { /* Route a pointer mismatch through the blocking-queue diagnostic. */
   if (got != expected) {
     fail_ptr(msg, got, expected);
   }
 }
 
-static void reset_workload_state(void) { /* Reset workload state. */
+static void reset_workload_state(void) { /* Clear producer, consumer, completion, and duplicate-detection state between cases. */
   produced = 0;
   consumed = 0;
   consumers_done = 0;

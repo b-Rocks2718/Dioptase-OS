@@ -24,7 +24,7 @@
 #define CHILD_FAILURE_STATUS 73
 #define CLOSED_GATE_COUNT 0
 
-static int wait_for_parent(int gate){ /* Wait for parent. */
+static int wait_for_parent(int gate){ /* Wait until the parent has installed foreground state, then release the shared gate descriptor. */
   if (sem_down(gate) != 0){
     return CHILD_FAILURE_STATUS;
   }
@@ -34,7 +34,7 @@ static int wait_for_parent(int gate){ /* Wait for parent. */
   return 0;
 }
 
-static void test_non_child_display_use(void){ /* Test non child display use. */
+static void test_non_child_display_use(void){ /* Verify a parent's display trap does not mark its foreground child as a display user. */
   int gate = sem_open(CLOSED_GATE_COUNT);
   int child = fork();
 
@@ -55,7 +55,7 @@ static void test_non_child_display_use(void){ /* Test non child display use. */
   sem_close(gate);
 }
 
-static void test_foreground_child_display_use(void){ /* Test foreground child display use. */
+static void test_foreground_child_display_use(void){ /* Verify a foreground child's display trap is reported when its slot is cleared. */
   int gate = sem_open(CLOSED_GATE_COUNT);
   int child = fork();
 

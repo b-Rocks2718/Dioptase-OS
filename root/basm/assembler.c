@@ -50,7 +50,7 @@ int pass_number = 1;
 
 // Map labels/defines to their addresses or values.
 // local_labels: per-file label table used for local resolution and duplicate checks.
-// local_defines: per-file .define table to resolve  ants without polluting globals.
+// local_defines: per-file .define table to resolve constants without polluting globals.
 // local_globals: per-file set of labels declared with .global (used to validate global duplication).
 // global_labels: shared table of labels exported across files via .global.
 static struct HashMap** local_labels;
@@ -171,7 +171,7 @@ static bool parse_section_load_directive(enum UserSection section,   char* direc
   if (result != FOUND){
     if (result == NOT_FOUND){
       print_error();
-      eprintf1("Invalid %s value; expected integer literal or .define  ant\n", (int)directive);
+      eprintf1("Invalid %s value; expected integer literal or .define constant\n", (int)directive);
     }
     return false;
   }
@@ -371,7 +371,7 @@ static bool apply_cli_defines(void){
     name_view.start = def;
     name_view.len = name_len;
     if (hash_map_contains(local_defines[current_file_index], &name_view)){
-      eputs(" ant has multiple definitions\n");
+      eputs("Constant has multiple definitions\n");
       return false;
     }
 
@@ -823,7 +823,7 @@ int consume_literal(enum ConsumeResult* result) {
 }
 
 // Consume a literal or previously defined constant, rejecting labels.
-// Returns the literal or  ant value when FOUND; returns 0 otherwise.
+// Returns the literal or constant value when FOUND; returns 0 otherwise.
 static int consume_define_or_literal(enum ConsumeResult* result,   char* context) {
   int imm = consume_literal(result);
   if (*result != NOT_FOUND) return imm;
@@ -840,7 +840,7 @@ static int consume_define_or_literal(enum ConsumeResult* result,   char* context
   } else {
     print_error();
     if (context != NULL) {
-      eprintf1("%s  ant \"", (int)context);
+      eprintf1("%s constant \"", (int)context);
     } else {
       eputs("Constant \"");
     }
@@ -854,7 +854,7 @@ static int consume_define_or_literal(enum ConsumeResult* result,   char* context
 }
 
 // Consume a literal, constant, or resolved absolute label address.
-// Returns the literal,  ant, or label address when FOUND; returns 0 otherwise.
+// Returns the literal, constant, or label address when FOUND; returns 0 otherwise.
 static int consume_define_or_literal_or_label_abs(enum ConsumeResult* result,
                                                      char* context) {
   int imm = consume_literal(result);
@@ -893,7 +893,7 @@ static int consume_define_or_literal_or_label_abs(enum ConsumeResult* result,
   } else {
     print_error();
     if (context != NULL) {
-      eprintf1("%s  ant/label \"", (int)context);
+      eprintf1("%s constant/label \"", (int)context);
     } else {
       eputs("Constant/label \"");
     }
@@ -1974,7 +1974,7 @@ void record_define(bool* success){
     // error
     print_error();
     free(label);
-    eputs(" ant has multiple definitions\n");
+    eputs("Constant has multiple definitions\n");
     *success = false;
     return;
   }
@@ -2234,7 +2234,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .origin value; expected integer literal or .define  ant\n");
+            eputs("Invalid .origin value; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2294,7 +2294,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .fill immediate; expected integer literal, label, or .define  ant\n");
+            eputs("Invalid .fill immediate; expected integer literal, label, or .define constant\n");
           }
           return false;
         }
@@ -2314,7 +2314,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .fild immediate; expected integer literal or .define  ant\n");
+            eputs("Invalid .fild immediate; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2334,7 +2334,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .filb immediate; expected integer literal or .define  ant\n");
+            eputs("Invalid .filb immediate; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2354,7 +2354,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .space count; expected integer literal or .define  ant\n");
+            eputs("Invalid .space count; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2375,7 +2375,7 @@ bool process_labels(char  *   prog){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .align value; expected integer literal or .define  ant\n");
+            eputs("Invalid .align value; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2484,7 +2484,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
         if (result != FOUND){
           if (result == NOT_FOUND){
             print_error();
-            eputs("Invalid .origin value; expected integer literal or .define  ant\n");
+            eputs("Invalid .origin value; expected integer literal or .define constant\n");
           }
           return false;
         }
@@ -2549,7 +2549,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
       if (result != FOUND){
         if (result == NOT_FOUND){
           print_error();
-          eputs("Invalid .fill immediate; expected integer literal, label, or .define  ant\n");
+          eputs("Invalid .fill immediate; expected integer literal, label, or .define constant\n");
         }
         return false;
       }
@@ -2575,7 +2575,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
       if (result != FOUND){
         if (result == NOT_FOUND){
           print_error();
-          eputs("Invalid .fild immediate; expected integer literal or .define  ant\n");
+          eputs("Invalid .fild immediate; expected integer literal or .define constant\n");
         }
         return false;
       }
@@ -2605,7 +2605,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
       if (result != FOUND){
         if (result == NOT_FOUND){
           print_error();
-          eputs("Invalid .filb immediate; expected integer literal or .define  ant\n");
+          eputs("Invalid .filb immediate; expected integer literal or .define constant\n");
         }
         return false;
       }
@@ -2633,7 +2633,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
       if (result != FOUND){
         if (result == NOT_FOUND){
           print_error();
-          eputs("Invalid .space count; expected integer literal or .define  ant\n");
+          eputs("Invalid .space count; expected integer literal or .define constant\n");
         }
         return false;
       }
@@ -2710,7 +2710,7 @@ bool to_binary(char  *   prog, struct InstructionArrayList* instructions){
       if (result != FOUND){
         if (result == NOT_FOUND){
           print_error();
-          eputs("Invalid .align value; expected integer literal or .define  ant\n");
+          eputs("Invalid .align value; expected integer literal or .define constant\n");
         }
         return false;
       }

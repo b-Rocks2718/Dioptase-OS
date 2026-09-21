@@ -20,7 +20,7 @@
 char cmd_buf[SHELL_COMMAND_BUFFER_SIZE];
 unsigned cmd_buf_len = 0;
 
-// Print line prefix.
+// Render the colored machine, working-directory, and prompt prefix.
 void print_line_prefix(void){
   // machine name in green
   puts("\x1b[32mdioptase");
@@ -42,7 +42,7 @@ void print_line_prefix(void){
   puts("\x1b[37m$ ");
 }
 
-// Print cmd buf.
+// NUL-terminate and display the current command-line buffer.
 void print_cmd_buf(void){
   cmd_buf[cmd_buf_len] = '\0';
   puts(cmd_buf);
@@ -653,7 +653,6 @@ int main(void){
               cmd_buf[cmd_buf_len++] = add_c;
             }
           } else if (new_characters == 0) { // No new characters.
-            // Print matches.
             puts("\n");
             print_directory(matches, to_tab_complete[last_slash - start] != '.');
 

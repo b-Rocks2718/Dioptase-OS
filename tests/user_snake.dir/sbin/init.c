@@ -875,7 +875,7 @@ static bool poll_input(struct SnakeGame* state, bool* paused,
   return changed;
 }
 
-void load_high_score(void) { /* Load high score. */
+void load_high_score(void) { /* Load the persisted decimal score, defaulting to zero when the file is absent. */
   int fd = open("high_score.txt");
   snake_high_score = 0;
   if (fd >= 0) {
@@ -891,7 +891,7 @@ void load_high_score(void) { /* Load high score. */
   }
 }
 
-void save_high_score(void) { /* Save high score. */
+void save_high_score(void) { /* Persist the score as a fixed-width decimal record. */
   int fd = open("high_score.txt");
   if (fd >= 0) {
     char buf[15];
@@ -911,7 +911,7 @@ void save_high_score(void) { /* Save high score. */
   }
 }
 
-int main(void) { /* Run the userland snake game and deterministic checks. */
+int main(void) { /* Validate shared game mechanics before starting the persistent userland game. */
   unsigned seed = INITIAL_RNG_STATE ^ get_current_jiffies();
   bool keep_running = true;
 

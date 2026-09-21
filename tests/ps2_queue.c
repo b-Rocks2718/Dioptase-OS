@@ -37,17 +37,17 @@ static void fail_uint(char* operation, unsigned got, unsigned expected){ /* Repo
   panic(operation);
 }
 
-static void expect_uint(unsigned got, unsigned expected, char* operation){ /* Check uint. */
+static void expect_uint(unsigned got, unsigned expected, char* operation){ /* Report an unsigned PS/2 queue mismatch with its operation context. */
   if (got != expected){
     fail_uint(operation, got, expected);
   }
 }
 
-static void expect_bool(bool got, bool expected, char* operation){ /* Check bool. */
+static void expect_bool(bool got, bool expected, char* operation){ /* Compare a PS/2 publication result through the shared numeric reporter. */
   expect_uint((unsigned)got, (unsigned)expected, operation);
 }
 
-static void drain_preexisting_events(void){ /* Drain preexisting events. */
+static void drain_preexisting_events(void){ /* Recycle any externally injected key events before deterministic checks begin. */
   while (getkey() != 0){
     // Return any externally injected event element before deterministic checks.
   }

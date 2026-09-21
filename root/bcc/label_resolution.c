@@ -21,7 +21,7 @@ enum LabelType cur_label_type = -1;
 // Used by resolve_gotos to rewrite goto targets.
 struct LabelMap* goto_labels = NULL;
 // Collects case/default labels for the current switch statement.
-// Returns Stored on the switch statement node.
+// Stored on the switch statement node.
 // Reset when entering/leaving a switch statement.
 struct CaseList* current_case_list = NULL;
 

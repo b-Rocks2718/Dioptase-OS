@@ -20,7 +20,7 @@
 #define INCLUDE_LINE_BUFFER_BYTES 23
 #define DEPTH_FILE_COUNT 32
 
-static bool write_fixture(char* path, char* contents) { /* Write fixture. */
+static bool write_fixture(char* path, char* contents) { /* Create one source fixture and write its complete contents. */
   int fd = open(path);
   if (fd < 0) return false;
 
@@ -53,7 +53,7 @@ static void make_depth_path(char* path, unsigned index) {
   path[10] = '\0';
 }
 
-static void make_include_line(char* line, unsigned next_index) { /* Create include line. */
+static void make_include_line(char* line, unsigned next_index) { /* Format the next numbered include in the recursive fixture chain. */
   char path[DEPTH_PATH_BUFFER_BYTES];
   make_depth_path(path, next_index);
   memcpy(line, "#include \"", 10);
@@ -63,7 +63,7 @@ static void make_include_line(char* line, unsigned next_index) { /* Create inclu
   line[22] = '\0';
 }
 
-static bool prepare_depth_chain(void) { /* Prepare depth chain. */
+static bool prepare_depth_chain(void) { /* Create the longest accepted acyclic chain of numbered include files. */
   char path[DEPTH_PATH_BUFFER_BYTES];
   char line[INCLUDE_LINE_BUFFER_BYTES];
 

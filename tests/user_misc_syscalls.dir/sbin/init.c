@@ -60,19 +60,19 @@
 
 extern int raw_trap_preserves_ra(void);
 
-static void write_u16_le(char* bytes, unsigned value){ /* Write u16 le. */
+static void write_u16_le(char* bytes, unsigned value){ /* Encode the low 16 bits in little-endian byte order. */
   bytes[0] = value & 0xFF;
   bytes[1] = (value >> 8) & 0xFF;
 }
 
-static void write_u32_le(char* bytes, unsigned value){ /* Write u32 le. */
+static void write_u32_le(char* bytes, unsigned value){ /* Encode a 32-bit value in little-endian byte order. */
   bytes[0] = value & 0xFF;
   bytes[1] = (value >> 8) & 0xFF;
   bytes[2] = (value >> 16) & 0xFF;
   bytes[3] = (value >> 24) & 0xFF;
 }
 
-static void fill_test_wav(char* wav_bytes){ /* Fill test wav. */
+static void fill_test_wav(char* wav_bytes){ /* Build the minimal valid PCM WAV fixture used by syscall validation cases. */
   wav_bytes[0] = 'R';
   wav_bytes[1] = 'I';
   wav_bytes[2] = 'F';
