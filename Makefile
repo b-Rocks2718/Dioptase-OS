@@ -32,7 +32,7 @@ BLOCK_SIZE := 2048 # 1024, 2048, or 4096
 TEST_RUNS ?= 75
 TIMEOUT_SECONDS ?= 360
 VERSION ?= release
-HEAP_DEBUG ?= no # check for double free, use after free, and other bugs
+HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
 # Soft asserts become no-ops when yes. Independent of VERSION (toolchain flavor).
 # A shipping image typically also sets HEAP_DEBUG=no, e.g.:
 #   make run OS_RELEASE=yes HEAP_DEBUG=no
