@@ -141,11 +141,12 @@ static struct SnakeGame game;
 static unsigned snake_high_score = 0;
 static unsigned snake_saved_high_score = 0;
 static bool snake_high_score_dirty = false;
-static unsigned* vga_frame_counter = (unsigned*)0x7FE5B48;
+static const volatile unsigned * const vga_frame_counter =
+    (const volatile unsigned *)0x7FE5B48;
 // docs/mem_map.md defines VGA status at the single byte address 0x7FE5B46.
 // Use a byte-wide MMIO read here; widening to 16 bits touches 0x7FE5B47,
 // which is not part of the documented register and crashes the emulator.
-static char* vga_status = (char*)0x7FE5B46;
+static const volatile char * const vga_status = (const volatile char *)0x7FE5B46;
 static bool poll_input(struct SnakeGame* state, bool* paused,
                        bool* restart_requested, bool* quit_requested);
 

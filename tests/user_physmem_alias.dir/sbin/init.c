@@ -37,15 +37,15 @@
 #define CHILD_STATUS_GETTER_CHANGED 51
 #define CHILD_STATUS_PARENT_VALUES_MISSING 52
 
-static int mapping_ok(short* mapping){ /* Verify that the aliased mapping contains the expected test values. */
+static int mapping_ok(volatile short* mapping){ /* Verify that the aliased mapping contains the expected test values. */
   return mapping != NULL && (int)mapping != -1;
 }
 
 // Run after fork without console output so the child cannot modify the tile
 // framebuffer as a side effect of reporting its checks. The inherited virtual
 // bases must still be the canonical results of the three getter traps.
-static int child_update_mappings(short* tilemap, short* tile_fb,
-    short* spritemap){
+static int child_update_mappings(volatile short* tilemap, volatile short* tile_fb,
+    volatile short* spritemap){
   if (get_tilemap() != tilemap || get_tile_fb() != tile_fb ||
       get_spritemap() != spritemap){
     return CHILD_STATUS_GETTER_CHANGED;
@@ -64,12 +64,12 @@ static int child_update_mappings(short* tilemap, short* tile_fb,
 }
 
 int main(void){ /* Verify physical-memory aliases are visible with shared updates. */
-  short* tilemap = get_tilemap();
-  short* tile_fb = get_tile_fb();
-  short* spritemap = get_spritemap();
-  short* tilemap_again = get_tilemap();
-  short* tile_fb_again = get_tile_fb();
-  short* spritemap_again = get_spritemap();
+  volatile short* tilemap = get_tilemap();
+  volatile short* tile_fb = get_tile_fb();
+  volatile short* spritemap = get_spritemap();
+  volatile short* tilemap_again = get_tilemap();
+  volatile short* tile_fb_again = get_tile_fb();
+  volatile short* spritemap_again = get_spritemap();
   int ok = 1;
 
   user_test_expect_eq("tilemap mapping succeeds", mapping_ok(tilemap), 1);

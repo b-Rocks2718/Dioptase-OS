@@ -49,7 +49,8 @@ static struct InterruptWaiter ps2_worker_waiter;
 static int ps2_dropped_events;
 
 // PS/2 MMIO address for keyboard input
-static short* ps2_in = (short*)0x7FE5800;
+// docs/mem_map.md: a 16-bit read at 0x7FE5800 returns one key and consumes it.
+static const volatile short * const ps2_in = (const volatile short *)0x7FE5800;
 
 // Block the PS/2 worker until an ISR-published event is available.
 static void ps2_worker_block(void* arg){

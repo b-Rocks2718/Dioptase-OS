@@ -110,8 +110,8 @@ struct SnakeGame { /* Hold the userland snake board, body, score, and HUD state.
   bool won;
 };
 
-short* TILEMAP;
-short* TILE_FB;
+volatile short* TILEMAP;
+volatile short* TILE_FB;
 
 static struct SnakeGame game;
 static unsigned snake_high_score = 0;

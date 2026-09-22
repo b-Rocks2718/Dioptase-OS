@@ -8,7 +8,7 @@
 
 #define COLOR_COUNT 56
 
-short* TILE_FB = NULL;
+volatile short* TILE_FB = NULL;
 
 // Count Mandelbrot iterations for one complex coordinate.
 int mandelbrot_count(struct Complex* c){

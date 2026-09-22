@@ -127,39 +127,41 @@ struct SdDriveContext {
 static struct SdDriveContext sd_contexts[2];
 
 // Return the MMIO memory-address register for one SD controller.
-static unsigned* sd_mem_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_MEM_ADDR;
-  return (unsigned*)SD1_DMA_MEM_ADDR;
+// The cell is volatile so each store reaches the controller.
+static volatile unsigned* sd_mem_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_MEM_ADDR;
+  return (volatile unsigned*)SD1_DMA_MEM_ADDR;
 }
 
 // Return the MMIO block-number register for one SD controller.
-static unsigned* sd_block_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_BLOCK_ADDR;
-  return (unsigned*)SD1_DMA_BLOCK_ADDR;
+static volatile unsigned* sd_block_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_BLOCK_ADDR;
+  return (volatile unsigned*)SD1_DMA_BLOCK_ADDR;
 }
 
 // Return the MMIO transfer-length register for one SD controller.
-static unsigned* sd_len_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_LEN_ADDR;
-  return (unsigned*)SD1_DMA_LEN_ADDR;
+static volatile unsigned* sd_len_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_LEN_ADDR;
+  return (volatile unsigned*)SD1_DMA_LEN_ADDR;
 }
 
 // Return the MMIO command/control register for one SD controller.
-static unsigned* sd_ctrl_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_CTRL_ADDR;
-  return (unsigned*)SD1_DMA_CTRL_ADDR;
+static volatile unsigned* sd_ctrl_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_CTRL_ADDR;
+  return (volatile unsigned*)SD1_DMA_CTRL_ADDR;
 }
 
 // Return the MMIO status register for one SD controller.
-static unsigned* sd_status_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_STATUS_ADDR;
-  return (unsigned*)SD1_DMA_STATUS_ADDR;
+// Software writes this register to clear sticky DONE and ERR bits.
+static volatile unsigned* sd_status_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_STATUS_ADDR;
+  return (volatile unsigned*)SD1_DMA_STATUS_ADDR;
 }
 
-// Return the MMIO error register for one SD controller.
-static unsigned* sd_error_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (unsigned*)SD0_DMA_ERR_ADDR;
-  return (unsigned*)SD1_DMA_ERR_ADDR;
+// Return the read-only MMIO error register for one SD controller.
+static const volatile unsigned* sd_error_reg(enum SdDrive drive){
+  if (drive == SD_DRIVE_0) return (const volatile unsigned*)SD0_DMA_ERR_ADDR;
+  return (const volatile unsigned*)SD1_DMA_ERR_ADDR;
 }
 
 // Return whether drive selects one of the implemented SD controllers.

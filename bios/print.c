@@ -3,14 +3,14 @@
 #include "config.h"
 #include "constants.h"
 
-// Console MMIO addresses from docs/mem_map.md.
-#define UART_TX_PADDR ((char*)0x7FE5802)
-#define TILEMAP_PADDR ((short*)0x7FE8000)
-#define TILE_FB_PADDR ((short*)0x7FBD000)
-#define TILE_VSCROLL_PADDR ((short*)0x7FE5B42)
-#define TILE_SCALE_PADDR ((char*)0x7FE5B44)
-#define PIXEL_SCALE_PADDR ((char*)0x7FE5B54)
-#define PIXEL_FB_PADDR ((short*)0x7FC0000)
+// Console MMIO addresses from docs/mem_map.md. Cells are volatile device state.
+#define UART_TX_PADDR ((volatile char*)0x7FE5802)
+#define TILEMAP_PADDR ((volatile short*)0x7FE8000)
+#define TILE_FB_PADDR ((volatile short*)0x7FBD000)
+#define TILE_VSCROLL_PADDR ((volatile short*)0x7FE5B42)
+#define TILE_SCALE_PADDR ((volatile char*)0x7FE5B44)
+#define PIXEL_SCALE_PADDR ((volatile char*)0x7FE5B54)
+#define PIXEL_FB_PADDR ((volatile short*)0x7FC0000)
 
 #define TILE_HEIGHT_PIXELS 8
 #define TILE_PIXELS_PER_GLYPH 64
@@ -18,16 +18,16 @@
 #define TILE_PIXEL_TRANSPARENT 0xF000
 #define BIOS_DEFAULT_TEXT_COLOR 0xFF
 
-char* UART_PADDR = UART_TX_PADDR;
+volatile char * const UART_PADDR = UART_TX_PADDR;
 
-short* TILEMAP = TILEMAP_PADDR;
-short* TILE_FB = TILE_FB_PADDR;
-short* TILE_VSCROLL = TILE_VSCROLL_PADDR;
-char* TILE_SCALE = TILE_SCALE_PADDR;
-char* PIXEL_SCALE = PIXEL_SCALE_PADDR;
+volatile short * const TILEMAP = TILEMAP_PADDR;
+volatile short * const TILE_FB = TILE_FB_PADDR;
+volatile short * const TILE_VSCROLL = TILE_VSCROLL_PADDR;
+volatile char * const TILE_SCALE = TILE_SCALE_PADDR;
+volatile char * const PIXEL_SCALE = PIXEL_SCALE_PADDR;
 
 // Reserved for future BIOS pixel-mode rendering paths.
-short* PIXEL_FB = PIXEL_FB_PADDR;
+volatile short * const PIXEL_FB = PIXEL_FB_PADDR;
 
 // BIOS console output is single-threaded before kernel handoff, so no lock is
 // needed for this shared state.

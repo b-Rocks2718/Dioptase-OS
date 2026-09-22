@@ -24,21 +24,24 @@
 
 #define TRANSPARENT 255
 
-extern short* TILEMAP;
-extern short* TILE_FB;
-extern short* SPRITEMAP;
-extern short* TILE_HSCROLL;
-extern short* TILE_VSCROLL;
-extern char* VGA_STATUS;
-extern unsigned* VGA_FRAME_COUNTER;
+// Display MMIO from docs/mem_map.md. Each pointer is a fixed device address.
+// The cells are volatile so every access is a real device operation.
+// VGA_STATUS and VGA_FRAME_COUNTER are read-only in hardware.
+extern volatile short * const TILEMAP;
+extern volatile short * const TILE_FB;
+extern volatile short * const SPRITEMAP;
+extern volatile short * const TILE_HSCROLL;
+extern volatile short * const TILE_VSCROLL;
+extern const volatile char * const VGA_STATUS;
+extern const volatile unsigned * const VGA_FRAME_COUNTER;
 
-extern char* TILE_SCALE;
-extern char* PIXEL_SCALE;
+extern volatile char * const TILE_SCALE;
+extern volatile char * const PIXEL_SCALE;
 
-extern short* PIXEL_FB;
+extern volatile short * const PIXEL_FB;
 
-extern char* SPRITE_SCALES;
-extern short* SPRITE_COORDS;
+extern volatile char * const SPRITE_SCALES;
+extern volatile short * const SPRITE_COORDS;
 
 // initialize the VGA hardware and framebuffer
 void vga_init(void);

@@ -10,11 +10,13 @@
 #include "scheduler.h"
 #include "ivt.h"
 
-static unsigned* PIT_ADDR = (unsigned*)0x7FE5804;
-static unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
+// docs/mem_map.md: write-only 32-bit PIT period at 0x7FE5804.
+static volatile unsigned * const PIT_ADDR = (volatile unsigned *)0x7FE5804;
+static const unsigned PIT_CLOCK_FREQ = 100000000; // 100MHz clock
 
-// number of jiffies since boot; incremented by PIT handler on each timer interrupt
-unsigned current_jiffies = 0;
+// Jiffies since boot. Core 0 increments this from the PIT handler, and other
+// cores read it directly, so the object is volatile.
+volatile unsigned current_jiffies = 0;
 
 // Handle PIT interrupts and perform preemptive scheduling
 void pit_handler(void){
@@ -35,13 +37,13 @@ void pit_handler(void){
     // Each core will clear the value itself
     if (current_jiffies % MLFQ_BOOST_INTERVAL == 0){
       for (int core = 0; core < MAX_CORES; core++){
-        __atomic_store_n(&per_core_data[core].mlfq_boost_pending, true);
+        __atomic_store_n((int*)&per_core_data[core].mlfq_boost_pending, true);
       }
     }
 
     if (current_jiffies % REBALANCE_INTERVAL == 0){
       for (int core = 0; core < MAX_CORES; core++){
-        __atomic_store_n(&per_core_data[core].rebalance_pending, true);
+        __atomic_store_n((int*)&per_core_data[core].rebalance_pending, true);
       }
     }
   }

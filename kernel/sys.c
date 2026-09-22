@@ -1487,7 +1487,7 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
   child->next = NULL;
 
-  __atomic_fetch_add(&n_active, 1);
+  __atomic_fetch_add((int*)&n_active, 1);
 
   return child;
 }
