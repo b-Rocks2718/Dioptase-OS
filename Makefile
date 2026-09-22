@@ -38,6 +38,10 @@ HEAP_DEBUG ?= yes # check for double free, use after free, and other bugs
 #   make run OS_RELEASE=yes HEAP_DEBUG=no
 OS_RELEASE ?= no
 
+# Extra bcc options for C compilation. `make BCC_OPT=-opt` enables every
+# optimization pass. Empty leaves the compiler's default, unoptimized pipeline.
+BCC_OPT ?= -opt
+
 # ------------------------------------------------------------------------------------------ #
 
 PYTHON3 ?= python3
@@ -81,8 +85,9 @@ endif
 ifeq ($(OS_RELEASE_STRIPPED),yes)
 KERNEL_TEST_BCC_DEFINES += -DOS_RELEASE=1
 endif
+
 # Passed into root/ and tests/*/sbin submakes so CRT assert policy matches the kernel.
-OS_BCC_DEFINES := $(KERNEL_TEST_BCC_DEFINES)
+OS_BCC_DEFINES := $(KERNEL_TEST_BCC_DEFINES) $(BCC_OPT)
 KERNEL_TEST_CONFIG_STAMP := build/kernel-test-config.stamp
 
 SHELL := /bin/sh
@@ -193,14 +198,15 @@ DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 
 # Generated kernel/test assembly depends on configuration flags passed to bcc.
 # Keep one stamp outside the generated assembly dependency files so switching
-# HEAP_DEBUG or OS_RELEASE cannot silently reuse assembly built with the
-# opposite setting.
+# HEAP_DEBUG, OS_RELEASE, or BCC_OPT cannot silently reuse assembly built with
+# the opposite setting.
 $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	@tmp="$@.tmp"; \
 	{ \
 	  echo "HEAP_DEBUG=$(HEAP_DEBUG_STRIPPED)"; \
 	  echo "OS_RELEASE=$(OS_RELEASE_STRIPPED)"; \
 	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
+	  echo "BCC_OPT=$(BCC_OPT)"; \
 	} > "$$tmp"; \
 	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
 	  mv "$$tmp" "$@"; \
@@ -714,17 +720,17 @@ $(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORD
 # Compile the root test C file to assembly.
 $(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BUILD_DIR)
 	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) $(BCC_OPT) -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.
-$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile | $(BIOS_ASM_DIR)
+$(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BIOS_ASM_DIR)
 	"$(DEPGEN)" -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" -s -kernel -o "$@" "$<" -g
+	"$(BCC)" $(BCC_OPT) -s -kernel -o "$@" "$<" -g
 
 # Compile kernel C sources to assembly.
 $(KERNEL_ASM_DIR)/%.s: kernel/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(KERNEL_ASM_DIR)
 	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -s -kernel -o "$@" "$<" -g
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) $(BCC_OPT) -s -kernel -o "$@" "$<" -g
 
 # Build directories for outputs and temporary files.
 $(BUILD_DIR):

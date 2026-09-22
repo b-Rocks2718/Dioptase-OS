@@ -25,9 +25,9 @@ extern short SPRITEMAP_DATA[42];
 extern short SUNSHEET_DATA[42];
 extern short TILEMAP_DATA[42];
 
-short* SPRITE_DATA_START = NULL; 
-short* TILEMAP = NULL;
-short* TILE_FB = NULL;
+volatile short* SPRITE_DATA_START = NULL;
+volatile short* TILEMAP = NULL;
+volatile short* TILE_FB = NULL;
 
 int dino_y;
 int dino_vy;
@@ -154,8 +154,8 @@ void init_obstacles(void){
 
 // Copy the sun image into hardware sprite slot three.
 int init_sun(void){
-  short* p = SPRITE_DATA_START;
-  // p is a short*, so pointer arithmetic is already in 16-bit pixels.
+  volatile short* p = SPRITE_DATA_START;
+  // Pointer arithmetic is already in 16-bit pixels.
   p += 32 * 32 * 3;
   for (int i = 0; i < 32; ++i){
     for (int j = 0; j < 32; ++j){
@@ -175,8 +175,8 @@ void init_sky(void){
   }
 
   // draw clouds
-  short* p = SPRITE_DATA_START;
-  // p is a short*, so each sprite slot is 32*32 entries, not bytes.
+  volatile short* p = SPRITE_DATA_START;
+  // Each sprite slot is 32*32 entries, not bytes.
   p += 32 * 32 * 4;
   for (int i = 0; i < 32; ++i){
     for (int j = 0; j < 32; ++j){

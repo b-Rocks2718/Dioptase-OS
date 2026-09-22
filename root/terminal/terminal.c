@@ -21,7 +21,7 @@
 #define TERMINAL_SCROLL_ORIGIN 0
 #define TERMINAL_DEFAULT_TEXT_COLOR 0xFF
 
-short* TILE_FB = NULL;
+volatile short* TILE_FB = NULL;
 
 // Cursor movement is relative to visible screen coordinates. Once the terminal
 // starts scrolling, visible row 0 no longer matches physical TILE_FB row 0, so

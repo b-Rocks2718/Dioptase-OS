@@ -47,12 +47,12 @@ struct EditorState {
 // Present one prepared 56x80 character viewport into the mapped tile
 // framebuffer. The implementation lives in local assembly because the C
 // compiler generates very slow code for the nested blit loops.
-void bmacs_present_viewport_asm(short* tile_fb, char* render_rows);
+void bmacs_present_viewport_asm(volatile short* tile_fb, char* render_rows);
 
 bool shift_held = false;
 bool ctrl_held = false;
 bool alt_held = false;
-static short* tile_fb = NULL;
+static volatile short* tile_fb = NULL;
 static char render_rows[BMACS_TEXT_ROWS][BMACS_TEXT_COLS];
 static unsigned cursor_fb_row = BMACS_TEXT_TOP_ROW;
 static unsigned cursor_fb_col = 0;

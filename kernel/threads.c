@@ -35,7 +35,7 @@
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
-int n_active = 0;
+volatile int n_active = 0;
 int n_active_others = 0; // number of running threads not counted in n_active
 /*
  * Work accepted by a normal TCB but completed by a persistent daemon. Unlike
@@ -186,7 +186,7 @@ static void free_tcb(struct TCB* tcb) {
 
   free(tcb);
 
-  __atomic_fetch_add(&n_active, -1);
+  __atomic_fetch_add((int*)&n_active, -1);
 }
 
 // reaper thread that runs forever and frees resources of threads that have been stopped
@@ -277,7 +277,7 @@ void thread(struct Fun* thread_fun){
 void thread_(struct Fun* thread_fun, 
     enum ThreadPriority priority, enum CoreAffinity core_affinity){
   struct TCB* tcb = make_tcb(false);
-  __atomic_fetch_add(&n_active, 1);
+  __atomic_fetch_add((int*)&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
 
   unsigned* the_stack = malloc(TCB_STACK_SIZE);
@@ -332,7 +332,7 @@ void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum Cor
 // Hold the shutdown barrier while a TCB-owned async operation runs elsewhere.
 void kernel_async_work_begin(void){
   struct TCB* current = get_current_tcb();
-  int active_threads = __atomic_load_n(&n_active);
+  int active_threads = __atomic_load_n((int*)&n_active);
 
   if (current == NULL || current->is_daemon || active_threads <= 0){
     int args[3] = {(int)current,
@@ -693,7 +693,7 @@ void kernel_shutdown(void){
 void event_loop(void) {
   /* only the idle thread can enter this function */
   while (__atomic_load_n(&bootstrapping) ||
-      (__atomic_load_n(&n_active) > 0) ||
+      (__atomic_load_n((int*)&n_active) > 0) ||
       (__atomic_load_n(&kernel_async_work_count) > 0)) {
     // on each iteration, try to find a thread to switch to
 

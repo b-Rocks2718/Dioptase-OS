@@ -44,9 +44,11 @@ void load_text_tiles(void);
 
 void clear_screen(void);
 
-short* get_tilemap(void);
+// Map the tilemap MMIO into this process. Each cell is a device register.
+volatile short* get_tilemap(void);
 
-short* get_tile_fb(void);
+// Map the tile framebuffer MMIO into this process.
+volatile short* get_tile_fb(void);
 
 unsigned get_vga_status(void);
 
@@ -84,7 +86,8 @@ int set_sprite_coords(unsigned sprite_num, unsigned x, unsigned y);
 
 int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 
-short* get_spritemap(void);
+// Map the spritemap MMIO into this process. Each cell is a device register.
+volatile short* get_spritemap(void);
 
 int signal_child(int child, int signal);
 

@@ -12,7 +12,9 @@
 extern struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 extern struct SpinQueue reaper_queue;
 
-extern int n_active;
+// Ordinary live-thread count. Other cores update it through the atomic helpers,
+// and stop() also reads it directly, so the object is volatile.
+extern volatile int n_active;
 extern int n_active_others; // number of running threads not counted in n_active
 
 extern unsigned DEFAULT_INTERRUPT_MASK;

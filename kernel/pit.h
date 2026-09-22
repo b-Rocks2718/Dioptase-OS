@@ -3,8 +3,9 @@
 
 #include "TCB.h"
 
-// number of jiffies since boot; incremented by PIT handler on each timer interrupt
-extern unsigned current_jiffies;
+// Jiffies since boot. Core 0 increments this from the PIT handler, and other
+// cores read it directly, so the object is volatile.
+extern volatile unsigned current_jiffies;
 
 // Initialize the PIT to generate interrupts at the specified frequency in hertz
 void pit_init(unsigned hertz);

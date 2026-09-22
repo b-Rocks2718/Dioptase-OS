@@ -35,12 +35,17 @@ static int audio_queued_count;
 static bool audio_daemon_started;
 static struct TCB* audio_daemon_tcb;
 
-static char* AUDIO_RING = (char*)AUDIO_RING_BASE;
-static unsigned* AUDIO_CTRL = (unsigned*)AUDIO_CTRL_ADDR;
-static unsigned* AUDIO_STATUS = (unsigned*)AUDIO_STATUS_ADDR;
-static unsigned* AUDIO_WRITE_IDX = (unsigned*)AUDIO_WRITE_IDX_ADDR;
-static unsigned* AUDIO_READ_IDX = (unsigned*)AUDIO_READ_IDX_ADDR;
-static unsigned* AUDIO_WATERMARK = (unsigned*)AUDIO_WATERMARK_ADDR;
+// Audio MMIO from docs/mem_map.md. STATUS and READ_IDX are hardware read-only.
+static volatile char * const AUDIO_RING = (volatile char *)AUDIO_RING_BASE;
+static volatile unsigned * const AUDIO_CTRL = (volatile unsigned *)AUDIO_CTRL_ADDR;
+static const volatile unsigned * const AUDIO_STATUS =
+    (const volatile unsigned *)AUDIO_STATUS_ADDR;
+static volatile unsigned * const AUDIO_WRITE_IDX =
+    (volatile unsigned *)AUDIO_WRITE_IDX_ADDR;
+static const volatile unsigned * const AUDIO_READ_IDX =
+    (const volatile unsigned *)AUDIO_READ_IDX_ADDR;
+static volatile unsigned * const AUDIO_WATERMARK =
+    (volatile unsigned *)AUDIO_WATERMARK_ADDR;
 
 #define WAV_RIFF_HEADER_BYTES 12
 #define WAV_RIFF_ID_OFFSET 0

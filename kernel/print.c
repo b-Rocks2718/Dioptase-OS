@@ -10,7 +10,7 @@
 #define UART_TX_ADDR 0x7FE5802
 
 static struct PreemptSpinLock print_lock = { 0 };
-static char* UART_PADDR = (char*)UART_TX_ADDR;
+static volatile char * const UART_PADDR = (volatile char *)UART_TX_ADDR;
 
 #define DECIMAL_BASE 10u
 #define HEX_BASE 16u

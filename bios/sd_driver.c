@@ -2,19 +2,21 @@
 #include "sd_driver.h"
 
 // SD card 0/1 DMA MMIO registers
-int* DMA_MEM_REG_0 = (int*)0x7FE5810;
-int* DMA_BLOCK_REG_0 = (int*)0x7FE5814;
-int* DMA_LEN_REG_0 = (int*)0x7FE5818;
-int* DMA_CTRL_REG_0 = (int*)0x7FE581C;
-int* DMA_STATUS_REG_0 = (int*)0x7FE5820;
-int* DMA_ERR_REG_0 = (int*)0x7FE5824;
+// SD DMA MMIO from docs/mem_map.md. ERR is hardware read-only.
+// A write to STATUS clears sticky DONE and ERR; BUSY is unaffected.
+volatile int * const DMA_MEM_REG_0 = (volatile int *)0x7FE5810;
+volatile int * const DMA_BLOCK_REG_0 = (volatile int *)0x7FE5814;
+volatile int * const DMA_LEN_REG_0 = (volatile int *)0x7FE5818;
+volatile int * const DMA_CTRL_REG_0 = (volatile int *)0x7FE581C;
+volatile int * const DMA_STATUS_REG_0 = (volatile int *)0x7FE5820;
+const volatile int * const DMA_ERR_REG_0 = (const volatile int *)0x7FE5824;
 
-int* DMA_MEM_REG_1 = (int*)0x7FE5828;
-int* DMA_BLOCK_REG_1 = (int*)0x7FE582C;
-int* DMA_LEN_REG_1 = (int*)0x7FE5830;
-int* DMA_CTRL_REG_1 = (int*)0x7FE5834;
-int* DMA_STATUS_REG_1 = (int*)0x7FE5838;
-int* DMA_ERR_REG_1 = (int*)0x7FE583C;
+volatile int * const DMA_MEM_REG_1 = (volatile int *)0x7FE5828;
+volatile int * const DMA_BLOCK_REG_1 = (volatile int *)0x7FE582C;
+volatile int * const DMA_LEN_REG_1 = (volatile int *)0x7FE5830;
+volatile int * const DMA_CTRL_REG_1 = (volatile int *)0x7FE5834;
+volatile int * const DMA_STATUS_REG_1 = (volatile int *)0x7FE5838;
+const volatile int * const DMA_ERR_REG_1 = (const volatile int *)0x7FE583C;
 
 // SD DMA register contract from docs/mem_map.md:
 // - DMA_LEN is measured in 512-byte blocks.
@@ -38,7 +40,7 @@ int* DMA_ERR_REG_1 = (int*)0x7FE583C;
 #define SD_DMA_ERR_POLL_TIMEOUT 1000
 
 // Program one SD DMA argument register
-static void sd_write_arg_reg(int* reg, int value){
+static void sd_write_arg_reg(volatile int* reg, int value){
   *reg = value;
 }
 

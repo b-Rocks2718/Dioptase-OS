@@ -509,12 +509,12 @@ struct TCB* schedule_next_thread(void){
 
   if (core->rebalance_pending) {
     rebalance_queues();
-    __atomic_store_n(&core->rebalance_pending, false);
+    __atomic_store_n((int*)&core->rebalance_pending, false);
   }
 
   if (core->mlfq_boost_pending) {
     mlfq_boost();
-    __atomic_store_n(&core->mlfq_boost_pending, false);
+    __atomic_store_n((int*)&core->mlfq_boost_pending, false);
   }
 
   struct TCB* next = local_or_global_queue_remove();

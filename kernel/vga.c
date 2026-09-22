@@ -4,22 +4,23 @@
 #include "print.h"
 #include "ivt.h"
 
-// MMIO addresses for VGA text mode
+// Display MMIO from docs/mem_map.md. Pointers stay fixed; cells stay volatile.
+// Status and the frame counter are hardware read-only.
 
-short* TILEMAP = (short*)0x7FE8000;
-short* TILE_FB = (short*)0x7FBD000;
-short* SPRITEMAP = (short*)0x7FF0000;
-short* TILE_HSCROLL = (short*)0x7FE5B40;
-short* TILE_VSCROLL = (short*)0x7FE5B42;
-char* VGA_STATUS = (char*)0x7FE5B46;
-unsigned* VGA_FRAME_COUNTER = (unsigned*)0x7FE5B48;
-char* TILE_SCALE = (char*)0x7FE5B44;
-char* PIXEL_SCALE = (char*)0x7FE5B54;
+volatile short * const TILEMAP = (volatile short *)0x7FE8000;
+volatile short * const TILE_FB = (volatile short *)0x7FBD000;
+volatile short * const SPRITEMAP = (volatile short *)0x7FF0000;
+volatile short * const TILE_HSCROLL = (volatile short *)0x7FE5B40;
+volatile short * const TILE_VSCROLL = (volatile short *)0x7FE5B42;
+const volatile char * const VGA_STATUS = (const volatile char *)0x7FE5B46;
+const volatile unsigned * const VGA_FRAME_COUNTER = (const volatile unsigned *)0x7FE5B48;
+volatile char * const TILE_SCALE = (volatile char *)0x7FE5B44;
+volatile char * const PIXEL_SCALE = (volatile char *)0x7FE5B54;
 
-short* PIXEL_FB = (short*)0x7FC0000;
+volatile short * const PIXEL_FB = (volatile short *)0x7FC0000;
 
-char* SPRITE_SCALES = (char*)0x7FE5B60;
-short* SPRITE_COORDS = (short*)0x7FE5B00;
+volatile char * const SPRITE_SCALES = (volatile char *)0x7FE5B60;
+volatile short * const SPRITE_COORDS = (volatile short *)0x7FE5B00;
 
 // Initialize VGA registers and the text-mode tile state.
 void vga_init(void){

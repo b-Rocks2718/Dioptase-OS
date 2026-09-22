@@ -18,8 +18,10 @@ struct PerCore {
   struct SpinQueue pinned_queue;
   struct SleepQueue sleep_queue;
   unsigned scheduler_iters;
-  bool mlfq_boost_pending;
-  bool rebalance_pending;
+  // Core 0 publishes these from the PIT handler. The owning core reads them
+  // with ordinary loads, so the cells are volatile.
+  volatile bool mlfq_boost_pending;
+  volatile bool rebalance_pending;
 
   struct CLHNode* idle_clh_node;
   
