@@ -36,7 +36,7 @@ HEAP_DEBUG ?= no # check for double free, use after free, and other bugs
 # Soft asserts become no-ops when yes. Independent of VERSION (toolchain flavor).
 # A shipping image typically also sets HEAP_DEBUG=no, e.g.:
 #   make run OS_RELEASE=yes HEAP_DEBUG=no
-OS_RELEASE ?= yes
+OS_RELEASE ?= no
 
 # Extra bcc options for C compilation. `make BCC_OPT=-opt` enables every
 # optimization pass. Empty leaves the compiler's default, unoptimized pipeline.
