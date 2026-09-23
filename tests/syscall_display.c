@@ -26,10 +26,6 @@
 #include "../kernel/vga.h"
 #include "../kernel/per_core.h"
 
-#define TEST_TILE_SCALE 3
-#define TEST_VSCROLL 17
-#define TEST_HSCROLL -11
-#define TEST_TEXT_COLOR 0x5A
 #define TRANSPARENT_TILE_PIXEL_OFFSET 16320
 #define CONSOLE_STRESS_WORKERS 4
 #define CONSOLE_STRESS_BYTES_PER_WORKER 1536
@@ -310,13 +306,13 @@ int kernel_main(void){ /* Stress concurrent console syscalls and display ownersh
     call_trap(TRAP_REQUEST_PRIORITY, NORMAL_PRIORITY, 0, 0, 0, 0, 0, 0));
   emit_result("priority_normal", get_current_tcb()->priority);
 
-  call_trap(TRAP_SET_TILE_SCALE, TEST_TILE_SCALE, 0, 0, 0, 0, 0, 0);
+  call_trap(TRAP_SET_TILE_SCALE, 3, 0, 0, 0, 0, 0, 0);
   emit_result("tile_scale", *TILE_SCALE);
 
-  call_trap(TRAP_SET_VSCROLL, TEST_VSCROLL, 0, 0, 0, 0, 0, 0);
+  call_trap(TRAP_SET_VSCROLL, 17, 0, 0, 0, 0, 0, 0);
   emit_result("vscroll", *TILE_VSCROLL);
 
-  call_trap(TRAP_SET_HSCROLL, TEST_HSCROLL, 0, 0, 0, 0, 0, 0);
+  call_trap(TRAP_SET_HSCROLL, -11, 0, 0, 0, 0, 0, 0);
   emit_result("hscroll", *TILE_HSCROLL);
 
   call_trap(TRAP_LOAD_TEXT_TILES, 0, 0, 0, 0, 0, 0, 0);
@@ -327,7 +323,7 @@ int kernel_main(void){ /* Stress concurrent console syscalls and display ownersh
   call_trap(TRAP_CLEAR_SCREEN, 0, 0, 0, 0, 0, 0, 0);
   emit_result("clear_screen", TILE_FB[0]);
 
-  call_trap(TRAP_SET_TEXT_COLOR, TEST_TEXT_COLOR, 0, 0, 0, 0, 0, 0);
+  call_trap(TRAP_SET_TEXT_COLOR, 0x5A, 0, 0, 0, 0, 0, 0);
   emit_result("text_color", console_get_text_color());
 
   emit_result("console_preserves_disabled_state",

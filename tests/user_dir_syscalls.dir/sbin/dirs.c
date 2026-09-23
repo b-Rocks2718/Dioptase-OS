@@ -3,9 +3,6 @@
 #include "../../../root/crt/stdlib.h"
 #include "../../../root/crt/sys.h"
 
-#define ENTRIES_PER_LINE 4
-#define SPACES_PER_TAB 8
-
 // Combines with '/'. Adds null terminator.
 char* combine_path(char* base_path, char* rest, unsigned base_length, unsigned rest_length) {
     char has_base = base_length != 0;

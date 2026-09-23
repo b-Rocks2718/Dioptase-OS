@@ -44,7 +44,6 @@
 // File-backed mmap offsets are page-aligned; use the second 4 KiB page so the
 // first-page sentinel catches any offset-handling bug immediately.
 #define TEST_FILE_OFFSET 4096
-#define TEST_FILE_SIZE 4106
 #define SHARED_FILE_BYTES 10
 #define SHARED_BASE_TEXT "SHAREDmap\n"
 
@@ -54,10 +53,7 @@
 
 #define NARROW_EXTENT_BYTES 1
 #define WIDE_EXTENT_BYTES 4
-// The current preprocessor does not recursively expand object-like macros.
-#define WIDE_LAST_BYTE_INDEX 3 // final index of the four-byte extent above
 #define TRUNCATE_INITIAL_BYTES 8
-#define TRUNCATE_INITIAL_LAST_BYTE_INDEX 7 // final index of the eight-byte fixture
 
 static struct Barrier phase_barrier;
 static int finished = 0;
@@ -87,8 +83,8 @@ static void read_file_bytes(char* dest) { /* Read the complete mapped fixture ra
     "vmem shared file thread: failed to reopen fixture file.\n");
 
   unsigned size = node_size_in_bytes(file);
-  if (size != TEST_FILE_SIZE) {
-    int args[2] = {(int)size, TEST_FILE_SIZE};
+  if (size != TEST_FILE_OFFSET + SHARED_FILE_BYTES) {
+    int args[2] = {(int)size, TEST_FILE_OFFSET + SHARED_FILE_BYTES};
     say("***vmem shared file thread FAIL size=%d expected=%d\n", args);
     panic("vmem shared file thread: backing file size changed unexpectedly.\n");
   }
@@ -139,7 +135,7 @@ static void check_writable_extent_merge(void){
     MMAP_READ | MMAP_WRITE | MMAP_SHARED);
   assert(wider != NULL,
     "vmem shared file: failed to map wider writable alias.\n");
-  wider[WIDE_LAST_BYTE_INDEX] = 'W';
+  wider[WIDE_EXTENT_BYTES - 1] = 'W';
 
   munmap(narrow);
   munmap(wider);
@@ -150,7 +146,7 @@ static void check_writable_extent_merge(void){
   unsigned cnt = node_read_all(file, 0, sizeof(persisted), persisted);
   assert(cnt == sizeof(persisted),
     "vmem shared file: writable extent fixture read was short.\n");
-  assert(persisted[0] == 'N' && persisted[WIDE_LAST_BYTE_INDEX] == 'W',
+  assert(persisted[0] == 'N' && persisted[WIDE_EXTENT_BYTES - 1] == 'W',
     "vmem shared file: later writable alias byte was not persisted.\n");
 
   node_free(file);
@@ -175,7 +171,7 @@ static void check_read_only_extent_is_inert(void){
     MMAP_READ | MMAP_SHARED);
   assert(read_only != NULL,
     "vmem shared file: failed to map wider read-only alias.\n");
-  char tail = read_only[WIDE_LAST_BYTE_INDEX];
+  char tail = read_only[WIDE_EXTENT_BYTES - 1];
   assert(tail == 0,
     "vmem shared file: zero-filled read-only cache tail was not zero.\n");
 
@@ -214,7 +210,7 @@ static void check_truncate_cache_serialization(void){
   assert(partial != NULL,
     "vmem shared file: failed to map truncate partial page.\n");
   partial[0] = 'P';
-  partial[TRUNCATE_INITIAL_LAST_BYTE_INDEX] = 'X';
+  partial[TRUNCATE_INITIAL_BYTES - 1] = 'X';
 
   char* beyond = mmap(WIDE_EXTENT_BYTES, file, TEST_FILE_OFFSET,
     MMAP_READ | MMAP_WRITE | MMAP_SHARED);
@@ -250,7 +246,7 @@ static void check_truncate_cache_serialization(void){
     MMAP_READ | MMAP_WRITE | MMAP_SHARED);
   assert(later != NULL,
     "vmem shared file: failed to map post-truncate writable alias.\n");
-  later[WIDE_LAST_BYTE_INDEX] = 'E';
+  later[WIDE_EXTENT_BYTES - 1] = 'E';
   munmap(later);
 
   assert(node_size_in_bytes(file) == NARROW_EXTENT_BYTES,
@@ -262,7 +258,7 @@ static void check_truncate_cache_serialization(void){
   char regrown[WIDE_EXTENT_BYTES];
   cnt = node_read_all(file, 0, sizeof(regrown), regrown);
   assert(cnt == sizeof(regrown) && regrown[0] == 'P' &&
-      regrown[WIDE_LAST_BYTE_INDEX] == 'E',
+      regrown[WIDE_EXTENT_BYTES - 1] == 'E',
     "vmem shared file: post-truncate shared-mmap bytes did not persist.\n");
 
   node_free(file);

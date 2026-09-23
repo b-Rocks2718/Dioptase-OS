@@ -28,14 +28,7 @@
 #define ROUNDS 3
 #define N_BLOCKS 32
 
-#define SMALL_ALLOC_BASE 8u
-#define SMALL_ALLOC_SPAN 128u
-#define MEDIUM_ALLOC_BASE 64u
-#define MEDIUM_ALLOC_SPAN 512u
 #define LARGE_ALLOC_BASE 1280u
-#define LARGE_ALLOC_SPAN 768u
-#define MULTIFRAME_ALLOC_EXTRA 256u
-#define CHURN_LARGE_ALLOC_SPAN 512u
 
 // Generate deterministic pseudo-random values for the stress pattern.
 static unsigned rng_state = 0xC0FFEE01u;
@@ -89,18 +82,18 @@ struct BlockInfo { /* Record an allocated block's address, order, and owner. */
 // physmem orders; the other forced slots stay within one frame.
 static unsigned live_block_size(unsigned slot, unsigned roll) {
   if ((slot % 32u) == 0) {
-    return FRAME_SIZE + MULTIFRAME_ALLOC_EXTRA + (roll % MULTIFRAME_ALLOC_EXTRA);
+    return FRAME_SIZE + 256u + (roll % 256u);
   }
 
   if ((slot % 7u) == 0) {
-    return LARGE_ALLOC_BASE + (roll % LARGE_ALLOC_SPAN);
+    return LARGE_ALLOC_BASE + (roll % 768u);
   }
 
   if ((roll & 3u) == 0) {
-    return MEDIUM_ALLOC_BASE + (roll % MEDIUM_ALLOC_SPAN);
+    return 64u + (roll % 512u);
   }
 
-  return SMALL_ALLOC_BASE + (roll % SMALL_ALLOC_SPAN);
+  return 8u + (roll % 128u);
 }
 
 // Pick a short-lived churn size. Every eighth churn allocation uses the large
@@ -108,7 +101,7 @@ static unsigned live_block_size(unsigned slot, unsigned roll) {
 // normal slab objects are still live.
 static unsigned churn_block_size(unsigned slot, unsigned roll) {
   if ((slot % 8u) == 0) {
-    return LARGE_ALLOC_BASE + (roll % CHURN_LARGE_ALLOC_SPAN);
+    return LARGE_ALLOC_BASE + (roll % 512u);
   }
 
   return 16u + (roll % 256u);

@@ -37,6 +37,8 @@
 #include "../kernel/threads.h"
 #include "../kernel/barrier.h"
 
+// bcc only accepts integer literals as array sizes, so the *_BUFFER_BYTES
+// values cannot be written as the matching length + 1.
 #define FAST_SYMLINK_TARGET_BYTES 60
 #define FAST_SYMLINK_TARGET_BUFFER_BYTES 61
 #define LONG_SYMLINK_TARGET_BYTES 64
@@ -45,16 +47,8 @@
 #define CONCURRENT_CREATE_NAME "concurrent-create.txt"
 #define PUBLICATION_DIR_NAME "publication-dir"
 #define PUBLICATION_SYMLINK_NAME "publication-link"
-#define PUBLICATION_TARGET_BLOCKS 4
-#define PUBLICATION_TARGET_EXTRA_BYTES 17
-#define PUBLICATION_PARTICIPANTS 2
-#define NEW_DIRECTORY_MANDATORY_ENTRIES 2
 #define DIRENT_ALIGNMENT_BYTES 4
-#define DOT_ENTRY_NAME_BYTES 1
-#define DOT_DOT_ENTRY_NAME_BYTES 2
-#define DIRENT_INTERIOR_TEST_OFFSET 1
 #define MAX_NAME_BUFFER_BYTES 256
-#define OVERLONG_NAME_BYTES 256
 #define OVERLONG_NAME_BUFFER_BYTES 257
 
 static struct Barrier concurrent_create_start_barrier;
@@ -112,7 +106,7 @@ static void check_basename_limits(struct Node* root) {
   struct Node* node;
 
   fill_basename(accepted, EXT2_MAX_NAME_BYTES);
-  fill_basename(rejected, OVERLONG_NAME_BYTES);
+  fill_basename(rejected, EXT2_MAX_NAME_BYTES + 1);
 
   node = node_make_file(root, accepted);
   assert(node != NULL,
@@ -198,7 +192,7 @@ static void publication_observer_thread(void* unused) {
     if (dir != NULL){
       assert(node_is_dir(dir),
         "node_make_dir: publication observer found the wrong inode type.\n");
-      assert(node_entry_count(dir) == NEW_DIRECTORY_MANDATORY_ENTRIES,
+      assert(node_entry_count(dir) == 2,
         "node_make_dir: directory became reachable before '.' and '..' were initialized.\n");
       saw_dir = true;
       node_free(dir);
@@ -226,8 +220,7 @@ static void check_concurrent_create_publication(struct Node* root) {
   struct Node* dir;
   struct Node* link;
 
-  publication_target_size = block_size * PUBLICATION_TARGET_BLOCKS +
-    PUBLICATION_TARGET_EXTRA_BYTES;
+  publication_target_size = block_size * 4 + 17;
   publication_target = malloc(publication_target_size + 1);
   assert(publication_target != NULL,
     "ext_new_file: failed to allocate the publication-test symlink target.\n");
@@ -235,7 +228,7 @@ static void check_concurrent_create_publication(struct Node* root) {
 
   publication_creator_done = 0;
   publication_observer_done = 0;
-  barrier_init(&publication_start_barrier, PUBLICATION_PARTICIPANTS);
+  barrier_init(&publication_start_barrier, 2);
 
   struct Fun* fun = malloc(sizeof(struct Fun));
   assert(fun != NULL,
@@ -278,7 +271,7 @@ static void check_concurrent_create_publication(struct Node* root) {
 // A buffer that holds exactly one packed dirent must leave the offset at the
 // second live entry, not advance past it. Invalid non-boundary offsets fail.
 static void check_directory_iteration_offsets(struct Node* dir) {
-  unsigned buffer_size = test_dirent_size(DOT_DOT_ENTRY_NAME_BYTES);
+  unsigned buffer_size = test_dirent_size(2);
   char* buffer = malloc(buffer_size);
   int first_offset = -1;
   int second_offset = -1;
@@ -288,7 +281,7 @@ static void check_directory_iteration_offsets(struct Node* dir) {
     "node_getdents: failed to allocate the one-entry test buffer.\n");
 
   rc = node_getdents(dir, 0, buffer, buffer_size, &first_offset);
-  assert(rc == test_dirent_size(DOT_ENTRY_NAME_BYTES),
+  assert(rc == test_dirent_size(1),
     "node_getdents: one-entry buffer did not emit exactly the '.' entry.\n");
   assert(streq(&((struct linux_dirent*)buffer)->d_name, "."),
     "node_getdents: first new-directory entry is not '.'.\n");
@@ -296,15 +289,14 @@ static void check_directory_iteration_offsets(struct Node* dir) {
     "node_getdents: full buffer skipped the next live directory entry.\n");
 
   rc = node_getdents(dir, first_offset, buffer, buffer_size, &second_offset);
-  assert(rc == test_dirent_size(DOT_DOT_ENTRY_NAME_BYTES),
+  assert(rc == test_dirent_size(2),
     "node_getdents: continuation did not emit exactly the '..' entry.\n");
   assert(streq(&((struct linux_dirent*)buffer)->d_name, ".."),
     "node_getdents: second new-directory entry is not '..'.\n");
   assert((unsigned)second_offset == node_size_in_bytes(dir),
     "node_getdents: consuming '..' did not advance to directory EOF.\n");
 
-  rc = node_getdents(dir, DIRENT_INTERIOR_TEST_OFFSET,
-    buffer, buffer_size, &second_offset);
+  rc = node_getdents(dir, 1, buffer, buffer_size, &second_offset);
   assert(rc == -1,
     "node_getdents: offset inside an ext2 directory record was accepted.\n");
   rc = node_getdents(dir, node_size_in_bytes(dir) + 1,

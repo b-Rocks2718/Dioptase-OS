@@ -31,14 +31,7 @@
 #define ROUNDS 3
 #define N_BLOCKS 32
 
-#define SMALL_ALLOC_BASE 8u
-#define SMALL_ALLOC_SPAN 128u
-#define MEDIUM_ALLOC_BASE 64u
-#define MEDIUM_ALLOC_SPAN 256u
-#define LARGE_ALLOC_BASE 1280u
-#define LARGE_ALLOC_SPAN 512u
-#define MULTIFRAME_ALLOC_EXTRA 128u
-#define CHURN_LARGE_ALLOC_SPAN 384u
+#define LARGE_ALLOC_BASE 1280u // above the largest (1024-byte) slab size class
 
 struct ThreadArg { /* Identifies one concurrent heap churn worker. */
   int id;
@@ -107,18 +100,18 @@ static unsigned worker_live_block_size(int tid, unsigned round, unsigned i,
   unsigned large_slot = ((unsigned)tid + round + 11u) % N_BLOCKS;
 
   if (i == multi_frame_slot) {
-    return FRAME_SIZE + MULTIFRAME_ALLOC_EXTRA + (roll % MULTIFRAME_ALLOC_EXTRA);
+    return FRAME_SIZE + 128u + (roll % 128u);
   }
 
   if (i == large_slot) {
-    return LARGE_ALLOC_BASE + (roll % LARGE_ALLOC_SPAN);
+    return LARGE_ALLOC_BASE + (roll % 512u);
   }
 
   if ((roll & 3u) == 0) {
-    return MEDIUM_ALLOC_BASE + (roll % MEDIUM_ALLOC_SPAN);
+    return 64u + (roll % 256u);
   }
 
-  return SMALL_ALLOC_BASE + (roll % SMALL_ALLOC_SPAN);
+  return 8u + (roll % 128u);
 }
 
 // Pick a short-lived churn size. One churn allocation per worker per round uses
@@ -128,7 +121,7 @@ static unsigned worker_churn_block_size(int tid, unsigned round, unsigned i,
   unsigned large_slot = ((unsigned)tid + round) % (N_BLOCKS / 2);
 
   if (i == large_slot) {
-    return LARGE_ALLOC_BASE + (roll % CHURN_LARGE_ALLOC_SPAN);
+    return LARGE_ALLOC_BASE + (roll % 384u);
   }
 
   return 16u + (roll % 128u);

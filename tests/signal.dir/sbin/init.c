@@ -30,8 +30,6 @@
 #define EXEC_UNEXPECTED_RETURN_STATUS 46
 #define ILL_RETRY_EXIT_STATUS 47
 
-#define DECIMAL_HUNDREDS 100
-#define DECIMAL_TENS 10
 #define HIGHEST_MASKABLE_SIGNAL 15
 #define SEG_FAULT_ADDRESS 0x12345678
 #define EXPECTED_SEG_FAULT_VPN 0x12345
@@ -136,8 +134,8 @@ static int waiting_child(void){ /* Publish readiness and remain schedulable unti
 }
 
 static int parse_three_digit_decimal(char* text){ /* Decode the fixed-width semaphore descriptor passed through exec. */
-  return (text[0] - '0') * DECIMAL_HUNDREDS +
-    (text[1] - '0') * DECIMAL_TENS +
+  return (text[0] - '0') * 100 +
+    (text[1] - '0') * 10 +
     (text[2] - '0');
 }
 
@@ -351,10 +349,9 @@ int main(int argc, char** argv){ /* Exercise basic signal delivery and masking. 
     // three decimal digits. Pass the inherited descriptor to the replacement
     // image without relying on its reset global variables.
     char ready_sem_text[4];
-    ready_sem_text[0] = '0' + child_ready_sem / DECIMAL_HUNDREDS;
-    ready_sem_text[1] =
-      '0' + (child_ready_sem / DECIMAL_TENS) % DECIMAL_TENS;
-    ready_sem_text[2] = '0' + child_ready_sem % DECIMAL_TENS;
+    ready_sem_text[0] = '0' + child_ready_sem / 100;
+    ready_sem_text[1] = '0' + (child_ready_sem / 10) % 10;
+    ready_sem_text[2] = '0' + child_ready_sem % 10;
     ready_sem_text[3] = 0;
 
     char* exec_argv[4] = {

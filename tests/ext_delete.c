@@ -43,7 +43,6 @@
 #define DELETE_TEST_LONG_TARGET_LEN 80
 #define DELETE_TEST_LONG_TARGET_BYTES 81
 #define DELETE_TEST_SINGLE_INDIRECT_DATA_BLOCKS 13
-#define DELETE_TEST_SINGLE_INDIRECT_TOTAL_BLOCKS 14
 #define DELETE_TEST_REUSE_GAP_OFFSET 4
 #define DELETE_TEST_REUSE_PAYLOAD "NEW"
 #define DELETE_TEST_REUSE_WINDOW_BYTES 7
@@ -51,7 +50,6 @@
 #define DELETE_TEST_BUSY_FILE_ROUNDS 4
 #define DELETE_TEST_BUSY_DIR_NAME "busy-dir"
 #define DELETE_TEST_BUSY_DIR_CHILD_NAME "late.txt"
-#define DELETE_TEST_FIXTURE_RECLAIMED_INODES 3
 #define DELETE_TEST_TYPED_FILE_NAME "typed-file"
 #define DELETE_TEST_TYPED_LINK_NAME "typed-link"
 #define DELETE_TEST_TYPED_DIR_NAME "typed-dir"
@@ -279,7 +277,7 @@ static void check_fixture_delete(struct Node* root) {
   deleted_dir = node_find(root, "dir");
   assert(deleted_dir == NULL, "node_find: found the directory that was supposed to be deleted.\n");
   assert(root->filesystem->superblock.free_inodes_count ==
-      initial_free_inodes + DELETE_TEST_FIXTURE_RECLAIMED_INODES,
+      initial_free_inodes + 3, // delete_me.txt, dir, and orphan.txt
     "node_delete: failed delete leaked a Node reference and prevented final inode reclamation.\n");
 }
 
@@ -380,7 +378,7 @@ static void check_dynamic_delete_coverage(struct Node* root) {
   assert(cnt == indirect_bytes, "ext_delete: failed to write the large file payload.\n");
   node_free(indirect);
   free(indirect_payload);
-  expected_blocks -= DELETE_TEST_SINGLE_INDIRECT_TOTAL_BLOCKS;
+  expected_blocks -= DELETE_TEST_SINGLE_INDIRECT_DATA_BLOCKS + 1; // data blocks plus the indirect block
   expected_inodes -= 1;
   assert(root->filesystem->superblock.free_blocks_count == expected_blocks,
     "ext_delete: creating the single-indirect test file should consume its data and metadata blocks.\n");
@@ -388,7 +386,7 @@ static void check_dynamic_delete_coverage(struct Node* root) {
     "ext_delete: creating the single-indirect test file should consume one inode.\n");
 
   node_delete(scratch, "indirect.bin");
-  expected_blocks += DELETE_TEST_SINGLE_INDIRECT_TOTAL_BLOCKS;
+  expected_blocks += DELETE_TEST_SINGLE_INDIRECT_DATA_BLOCKS + 1;
   expected_inodes += 1;
   assert(root->filesystem->superblock.free_blocks_count == expected_blocks,
     "ext_delete: deleting the single-indirect test file should restore every allocated block.\n");
