@@ -167,6 +167,11 @@ endif
 ifeq ($(strip $(NUM_CORES)),1)
 TEST_CHECK_NAMES := $(filter-out $(MULTICORE_ONLY_TEST_NAMES),$(TEST_CHECK_NAMES))
 endif
+# Long-running workloads kept for profiling (emulator --profile). They keep .ok
+# baselines so `make <name>.summary-test` still checks them, but they are too
+# slow for the aggregate suite (user_mandelbrot takes ~10 minutes).
+PROFILING_WORKLOAD_TEST_NAMES := user_mandelbrot
+TEST_CHECK_NAMES := $(filter-out $(PROFILING_WORKLOAD_TEST_NAMES),$(TEST_CHECK_NAMES))
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))

@@ -3,8 +3,14 @@
 ### 0x0000000 - 0x00003FF
 Interrupt Vector Table
 
-### 0x400 - ...
-Where BIOS code is loaded (32KiB reserved). Can overwrite once kernel is entered.
+### 0x400 - 0x8400
+BIOS (32KiB reserved). Can overwrite once kernel is entered.
+- BIOS image (text/data) is loaded at 0x400 (the reset PC)
+- 0x5000 - 0x5200: temporary buffer for SD block 0 (MBR), see `MBR_LOAD_ADDRESS` in `bios/bios_entry.c`
+
+### 0x8400 - 0x10000
+BIOS stack (~31KiB). Grows down from 0x10000 (`BIOS_STACK_TOP` in `bios/init.s`).
+Only the boot core uses it, and only until the BIOS jumps to the kernel. Can overwrite once kernel is entered.
 
 ### 0x10000 - 0xB0000
 Kernel text (640KiB reserved for now)
