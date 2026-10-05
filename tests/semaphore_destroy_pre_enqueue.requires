@@ -1,0 +1,4 @@
+# The pre-enqueue race keeps a controller plus three IRQ-disabled CLH
+# participants simultaneously runnable on distinct cores; with fewer cores the
+# setup assertion fails instead of testing the kernel.
+NUM_CORES=4

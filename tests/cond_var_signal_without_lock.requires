@@ -1,0 +1,2 @@
+# Expects a panic from a soft kernel assert, which OS_RELEASE compiles out.
+OS_RELEASE=no

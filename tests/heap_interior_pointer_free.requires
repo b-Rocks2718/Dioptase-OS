@@ -1,0 +1,2 @@
+# Expects a panic from HEAP_DEBUG-only slab bitmap/poison/pointer checking.
+HEAP_DEBUG=yes
