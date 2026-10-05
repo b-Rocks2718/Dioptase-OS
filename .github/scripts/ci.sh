@@ -9,7 +9,6 @@ readonly COMPILER_DIR="$WORKSPACE_DIR/Dioptase-Languages/Dioptase-C-Compiler"
 readonly EMULATOR_DIR="$WORKSPACE_DIR/Dioptase-Emulators/Dioptase-Emulator-Full"
 readonly OS_TEST_RUNS="${DIOPTASE_OS_TEST_RUNS:-5}"
 readonly OS_PARALLEL_JOBS="${DIOPTASE_OS_PARALLEL_JOBS:-4}"
-readonly EXCLUDED_STRESS_TEST="user_bcc_include_recursion"
 
 for command in cargo cmp du gcc grep make mkfs.ext2 python3 sed tee timeout; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -46,12 +45,6 @@ test_targets=()
 for baseline in "${baselines[@]}"; do
   filename="${baseline##*/}"
   test_name="${filename%.*}"
-
-  # This guest-self-hosting recursion test is intentionally a local stress
-  # test: even one execution is much slower than the rest of the PR smoke suite.
-  if [ "$test_name" = "$EXCLUDED_STRESS_TEST" ]; then
-    continue
-  fi
 
   if [ -z "${seen_tests[$test_name]+present}" ]; then
     seen_tests[$test_name]=1
