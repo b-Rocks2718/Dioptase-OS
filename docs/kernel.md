@@ -122,7 +122,7 @@ Kernel and user CRT share two assertion helpers:
 
 | Form | Use when |
 |---|---|
-| `assert(condition, msg)` | Soft check. Kernel programming or API-contract bug. In the default build it panics when false; when `OS_RELEASE=yes` the function body is a no-op. Skipping in release may crash later or hang, but must not silently leave durable or globally shared state corrupted. |
+| `assert(condition, msg)` | Soft check. Kernel programming or API-contract bug. Without `OS_RELEASE` it panics when false; with `OS_RELEASE=yes` it expands to nothing, so neither the condition nor the message is evaluated. Skipping in release may crash later or hang, but must not silently leave durable or globally shared state corrupted. The condition must never contain a required side effect. |
 | `assert_always(condition, msg)` | Hard check. Always panics on failure, including release builds. Use when continuing would silently corrupt kernel/FS/device/sync state, break a boot-critical dependency, or violate an interrupt/hardware contract with no safe recovery. |
 | Neither (error return) | User- or capacity-triggerable condition. Prefer ordinary failure returns; do not promote these to `assert_always`. |
 
@@ -133,10 +133,11 @@ Soft by default examples: NULL `this`/argument checks on internal helpers, “ca
 Always-on examples: allocator double-free / poison UAF, FS metadata writeback mid-update, detected on-disk directory corruption, boot-critical physmem leak exhaustion, PIT/bootstrap IMR and current-TCB contracts, pipe endpoint table corruption, sync wrong-owner / double-release / acquire-while-holding.
 
 `VERSION` in the Makefile selects the host toolchain flavor (`bcc` / `basm` /
-emulator). OS assert policy is independent and controlled by `OS_RELEASE`
-(default `no`). bcc has no function-like macros, so soft asserts remain real
-calls: release only empties the `assert` body; call-site conditions and message
-strings are still evaluated and may remain in the image.
+emulator). OS assert policy is independent and controlled by `OS_RELEASE`.
+The kernel asserts are function-like macros in `kernel/debug.h`, so a release
+build drops soft-assert conditions and message strings from the image
+entirely. A failing assert prints its source file and line over raw UART,
+then panics with `msg` unchanged so `.panic` baselines keep matching.
 
 Recommended shipping build:
 

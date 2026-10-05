@@ -169,7 +169,7 @@ bool audio_wav_play(struct AudioWav* wav);
  * Clone a live regular-file Node into a heap request for the persistent audio
  * daemon. The returned request owns that clone and two initialized handoff
  * semaphores. Runs in kernel mode and may block while cloning the shared inode
- * wrapper. Returns NULL only if allocation/cloning fails.
+ * wrapper. Never returns NULL (kernel allocation panics on exhaustion).
  */
 struct AudioRequest* audio_request_create(struct Node* node);
 

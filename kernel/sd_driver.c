@@ -14,20 +14,21 @@
 #include "string.h"
 #include "threads.h"
 
-/* SD DMA register addresses from docs/mem_map.md. */
-#define SD0_DMA_MEM_ADDR 0x07FE5810
-#define SD0_DMA_BLOCK_ADDR 0x07FE5814
-#define SD0_DMA_LEN_ADDR 0x07FE5818
-#define SD0_DMA_CTRL_ADDR 0x07FE581C
-#define SD0_DMA_STATUS_ADDR 0x07FE5820
-#define SD0_DMA_ERR_ADDR 0x07FE5824
+/*
+ * SD DMA register blocks from docs/mem_map.md. Each controller exposes six
+ * consecutive 32-bit registers; SD1's block has the same layout as SD0's.
+ *   SD0: 0x07FE5810..0x07FE5827   SD1: 0x07FE5828..0x07FE583F
+ */
+#define SD0_DMA_BASE_ADDR 0x07FE5810
+#define SD1_DMA_BASE_ADDR 0x07FE5828
 
-#define SD1_DMA_MEM_ADDR 0x07FE5828
-#define SD1_DMA_BLOCK_ADDR 0x07FE582C
-#define SD1_DMA_LEN_ADDR 0x07FE5830
-#define SD1_DMA_CTRL_ADDR 0x07FE5834
-#define SD1_DMA_STATUS_ADDR 0x07FE5838
-#define SD1_DMA_ERR_ADDR 0x07FE583C
+// Byte offsets of each register within one controller's block.
+#define SD_DMA_MEM_OFFSET 0x00    // RAM address for the transfer
+#define SD_DMA_BLOCK_OFFSET 0x04  // first SD block number
+#define SD_DMA_LEN_OFFSET 0x08    // transfer length in SD blocks
+#define SD_DMA_CTRL_OFFSET 0x0C   // command/control; writing START begins a command
+#define SD_DMA_STATUS_OFFSET 0x10 // BUSY/DONE/ERR; any write clears DONE, ERR, and SD_DMA_ERR
+#define SD_DMA_ERR_OFFSET 0x14    // read-only controller error code
 
 #define SD_BLOCK_SIZE_BYTES 512
 #define SD_DMA_ALIGNMENT_BYTES 4
@@ -126,42 +127,11 @@ struct SdDriveContext {
 
 static struct SdDriveContext sd_contexts[2];
 
-// Return the MMIO memory-address register for one SD controller.
-// The cell is volatile so each store reaches the controller.
-static volatile unsigned* sd_mem_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_MEM_ADDR;
-  return (volatile unsigned*)SD1_DMA_MEM_ADDR;
-}
-
-// Return the MMIO block-number register for one SD controller.
-static volatile unsigned* sd_block_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_BLOCK_ADDR;
-  return (volatile unsigned*)SD1_DMA_BLOCK_ADDR;
-}
-
-// Return the MMIO transfer-length register for one SD controller.
-static volatile unsigned* sd_len_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_LEN_ADDR;
-  return (volatile unsigned*)SD1_DMA_LEN_ADDR;
-}
-
-// Return the MMIO command/control register for one SD controller.
-static volatile unsigned* sd_ctrl_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_CTRL_ADDR;
-  return (volatile unsigned*)SD1_DMA_CTRL_ADDR;
-}
-
-// Return the MMIO status register for one SD controller.
-// Software writes this register to clear sticky DONE and ERR bits.
-static volatile unsigned* sd_status_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (volatile unsigned*)SD0_DMA_STATUS_ADDR;
-  return (volatile unsigned*)SD1_DMA_STATUS_ADDR;
-}
-
-// Return the read-only MMIO error register for one SD controller.
-static const volatile unsigned* sd_error_reg(enum SdDrive drive){
-  if (drive == SD_DRIVE_0) return (const volatile unsigned*)SD0_DMA_ERR_ADDR;
-  return (const volatile unsigned*)SD1_DMA_ERR_ADDR;
+// Return one MMIO register of an SD controller. The cell is volatile so every
+// load and store reaches the device.
+static volatile unsigned* sd_reg(enum SdDrive drive, unsigned offset){
+  unsigned base = (drive == SD_DRIVE_0) ? SD0_DMA_BASE_ADDR : SD1_DMA_BASE_ADDR;
+  return (volatile unsigned*)(base + offset);
 }
 
 // Return whether drive selects one of the implemented SD controllers.
@@ -279,7 +249,7 @@ static void sd_state_lock_release(struct SdStateLock* lock, unsigned was){
 // Clear the controller's latched status and error registers.
 static void sd_clear_status(enum SdDrive drive){
   // Per docs/mem_map.md, any status write clears DONE, ERR, and DMA_ERR only.
-  *sd_status_reg(drive) = 0;
+  *sd_reg(drive, SD_DMA_STATUS_OFFSET) = 0;
 }
 
 // Return whether status/error indicate a completed SD request.
@@ -416,8 +386,8 @@ static int sd_begin_command_locked(enum SdDrive drive,
     unsigned start_block, unsigned num_blocks, unsigned caller_buffer_addr,
     unsigned dma_buffer_addr,
     unsigned command, bool use_interrupt, unsigned* generation_out){
-  unsigned status = *sd_status_reg(drive);
-  unsigned error = *sd_error_reg(drive);
+  unsigned status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+  unsigned error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
   context->operation = operation;
   context->start_block = start_block;
   context->num_blocks = num_blocks;
@@ -464,11 +434,11 @@ static int sd_begin_command_locked(enum SdDrive drive,
   context->command = command;
 
   if (operation != SD_OPERATION_INIT){
-    *sd_mem_reg(drive) = dma_buffer_addr;
-    *sd_block_reg(drive) = start_block;
-    *sd_len_reg(drive) = num_blocks;
+    *sd_reg(drive, SD_DMA_MEM_OFFSET) = dma_buffer_addr;
+    *sd_reg(drive, SD_DMA_BLOCK_OFFSET) = start_block;
+    *sd_reg(drive, SD_DMA_LEN_OFFSET) = num_blocks;
   }
-  *sd_ctrl_reg(drive) = command;
+  *sd_reg(drive, SD_DMA_CTRL_OFFSET) = command;
 
   *generation_out = generation;
   return 0;
@@ -500,8 +470,8 @@ static int sd_execute_boot_command(enum SdDrive drive,
   unsigned error = 0;
   unsigned polls = 0;
   while (polls < SD_BOOT_POLL_OPERATION_LIMIT){
-    status = *sd_status_reg(drive);
-    error = *sd_error_reg(drive);
+    status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+    error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
     if (sd_status_is_terminal(status, error)){
       break;
     }
@@ -526,42 +496,10 @@ static int sd_execute_boot_command(enum SdDrive drive,
   return result;
 }
 
-// Hold the block range and buffer passed to an SD worker thread.
-struct SdBlockArgs {
-  enum SdDrive drive;
-  struct TCB* thread;
-};
-
-/*
- * Post-context-switch waiter publication callback.
- *
- * Preconditions: the outgoing request TCB has been completely saved and is in
- * no scheduler queue; current-core interrupts are disabled; drive generation
- * remains protected from a later command by command_lock ownership.
- *
- * If ISR/watchdog completion preceded publication, InterruptWaiter returns the
- * just-published TCB to this callback. Otherwise it leaves the TCB for the
- * future terminal publisher. Exactly one path detaches and enqueues it.
- */
-static void sd_block_thread(void* arg){
-  struct SdBlockArgs* args = (struct SdBlockArgs*)arg;
-  struct SdDriveContext* context = &sd_contexts[args->drive];
-  struct TCB* wakeup = interrupt_waiter_publish(&context->waiter,
-    args->thread);
-
-  if (wakeup != NULL){
-    scheduler_wake_thread_from_interrupt(wakeup);
-  }
-}
-
 // Wait for one runtime SD command to complete or time out.
 static int sd_wait_runtime_command(enum SdDrive drive,
     struct SdDriveContext* context, unsigned generation){
-  unsigned was = interrupts_disable();
-  struct SdBlockArgs args;
-  args.drive = drive;
-  args.thread = get_current_tcb();
-  block(was, sd_block_thread, &args, false);
+  interrupt_waiter_wait(&context->waiter);
 
   unsigned state_was = sd_state_lock_acquire(&context->state_lock);
   int result;
@@ -613,8 +551,8 @@ static int sd_prepare_bounce_chunk(enum SdDrive drive,
   unsigned state_was = sd_state_lock_acquire(&context->state_lock);
   bool quarantined = context->request.quarantined;
   bool active = context->request.active;
-  unsigned status = *sd_status_reg(drive);
-  unsigned error = *sd_error_reg(drive);
+  unsigned status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+  unsigned error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
   context->operation = operation;
   context->start_block = start_block;
   context->num_blocks = num_blocks;
@@ -704,8 +642,8 @@ static void sd_watchdog_check(enum SdDrive drive, unsigned now){
   unsigned state_was = sd_state_lock_acquire(&context->state_lock);
   if (context->request.active){
     unsigned generation = context->request.generation;
-    unsigned status = *sd_status_reg(drive);
-    unsigned error = *sd_error_reg(drive);
+    unsigned status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+    unsigned error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
 
     if (sd_status_is_terminal(status, error)){
       context->last_status = status;
@@ -734,10 +672,7 @@ static void sd_watchdog_check(enum SdDrive drive, unsigned now){
   sd_state_lock_release(&context->state_lock, state_was);
 
   if (publish){
-    struct TCB* wakeup = interrupt_waiter_signal(&context->waiter);
-    if (wakeup != NULL){
-      scheduler_wake_thread(wakeup);
-    }
+    interrupt_waiter_notify(&context->waiter);
   }
 }
 
@@ -768,12 +703,11 @@ static void sd_context_init(struct SdDriveContext* context){
   context->last_error = 0;
   context->late_terminal_irq_pending = false;
   context->bounce_buffer = leak(SD_DMA_BOUNCE_BYTES);
-  assert(context->bounce_buffer != NULL &&
-      ((unsigned)context->bounce_buffer & (SD_DMA_ALIGNMENT_BYTES - 1)) == 0 &&
+  assert(((unsigned)context->bounce_buffer & (SD_DMA_ALIGNMENT_BYTES - 1)) == 0 &&
       (unsigned)context->bounce_buffer < SD_DMA_RAM_END_EXCLUSIVE &&
       SD_DMA_BOUNCE_BYTES <= SD_DMA_RAM_END_EXCLUSIVE -
         (unsigned)context->bounce_buffer,
-    "sd driver init: failed to allocate one aligned ordinary-RAM bounce page.\n");
+    "sd driver init: bounce page is not aligned ordinary RAM reachable by SD DMA.\n");
 }
 
 // Initialize both SD controllers, watchdog state, and interrupt handlers.
@@ -905,8 +839,8 @@ void sd_handler(enum SdDrive drive){
   unsigned generation;
 
   unsigned state_was = sd_state_lock_acquire(&context->state_lock);
-  status = *sd_status_reg(drive);
-  error = *sd_error_reg(drive);
+  status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+  error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
   generation = context->request.generation;
   bool expected_late_irq = context->late_terminal_irq_pending;
   context->late_terminal_irq_pending = false;
@@ -964,10 +898,7 @@ void sd_handler(enum SdDrive drive){
   sd_state_lock_release(&context->state_lock, state_was);
 
   if (publish){
-    struct TCB* wakeup = interrupt_waiter_signal(&context->waiter);
-    if (wakeup != NULL){
-      scheduler_wake_thread_from_interrupt(wakeup);
-    }
+    interrupt_waiter_notify_from_interrupt(&context->waiter);
   } else if (unexpected_interrupt){
     void* args[4];
     args[0] = (void*)drive;

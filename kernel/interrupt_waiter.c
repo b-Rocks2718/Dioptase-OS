@@ -1,6 +1,10 @@
 #include "interrupt_waiter.h"
 
 #include "debug.h"
+#include "interrupts.h"
+#include "per_core.h"
+#include "scheduler.h"
+#include "threads.h"
 
 // Initialize a waiter with no published thread or pending interrupt.
 void interrupt_waiter_init(struct InterruptWaiter* waiter){
@@ -52,4 +56,47 @@ struct TCB* interrupt_waiter_signal(struct InterruptWaiter* waiter){
    */
   __atomic_store_n(&waiter->event_pending, true);
   return (struct TCB*)__atomic_exchange_n((int*)&waiter->thread, (int)NULL);
+}
+
+// Arguments carried from interrupt_waiter_wait() into its block() continuation.
+struct InterruptWaiterBlock {
+  struct InterruptWaiter* waiter;
+  struct TCB* thread;
+};
+
+// block() continuation: publish the now fully saved waiter. If a signal won
+// the race, publish detaches the thread here and this callback owns its wake.
+// Runs in the idle context with current-core interrupts disabled, so it uses
+// the interrupt-safe wake path.
+static void interrupt_waiter_block(void* arg){
+  struct InterruptWaiterBlock* args = (struct InterruptWaiterBlock*)arg;
+  struct TCB* wakeup = interrupt_waiter_publish(args->waiter, args->thread);
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
+}
+
+// Block until the next producer signal; see the header for the protocol.
+void interrupt_waiter_wait(struct InterruptWaiter* waiter){
+  unsigned was = interrupts_disable();
+  struct InterruptWaiterBlock args;
+  args.waiter = waiter;
+  args.thread = get_current_tcb();
+  block(was, interrupt_waiter_block, &args, false);
+}
+
+// Signal from thread context and wake any detached waiter.
+void interrupt_waiter_notify(struct InterruptWaiter* waiter){
+  struct TCB* wakeup = interrupt_waiter_signal(waiter);
+  if (wakeup != NULL){
+    scheduler_wake_thread(wakeup);
+  }
+}
+
+// Signal from an ISR and defer any detached waiter's wake.
+void interrupt_waiter_notify_from_interrupt(struct InterruptWaiter* waiter){
+  struct TCB* wakeup = interrupt_waiter_signal(waiter);
+  if (wakeup != NULL){
+    scheduler_wake_thread_from_interrupt(wakeup);
+  }
 }

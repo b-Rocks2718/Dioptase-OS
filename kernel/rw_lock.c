@@ -1,7 +1,5 @@
 #include "rw_lock.h"
 #include "threads.h"
-#include "interrupts.h"
-#include "per_core.h"
 #include "debug.h"
 #include "heap.h"
 #include "scheduler.h"
@@ -10,6 +8,7 @@
 // Reader-writer lock implementation (write-preferring).
 // Waiting readers and writers are queued; writers are granted priority when present.
 
+// Initialize an unlocked reader-writer lock with empty wait queues.
 void rw_lock_init(struct RwLock* rwlock){
   clh_lock_init(&rwlock->lock);
   queue_init(&rwlock->waiting_readers);
@@ -19,22 +18,26 @@ void rw_lock_init(struct RwLock* rwlock){
   __atomic_store_n(&rwlock->active_operations, 0);
 }
 
-// block() callback for readers: either claim a read slot or enqueue
-static void rw_add_reader(void* arg){
-  int** args = (int**)arg;
-  struct RwLock* rwlock = (struct RwLock*)args[0];
-  struct TCB* tcb = (struct TCB*)args[1];
-
-  clh_lock_acquire(&rwlock->lock);
-
+// Claim a read slot unless a writer is active or waiting (write preference).
+// Caller holds rwlock->lock.
+static bool rw_try_read(void* arg){
+  struct RwLock* rwlock = (struct RwLock*)arg;
   if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
     rwlock->readers++;
-    clh_lock_release(&rwlock->lock);
-    scheduler_wake_thread(tcb);
-  } else {
-    queue_add(&rwlock->waiting_readers, tcb);
-    clh_lock_release(&rwlock->lock);
+    return true;
   }
+  return false;
+}
+
+// Claim exclusive ownership if no reader or writer holds the lock.
+// Caller holds rwlock->lock.
+static bool rw_try_write(void* arg){
+  struct RwLock* rwlock = (struct RwLock*)arg;
+  if (!rwlock->writer_active && rwlock->readers == 0){
+    rwlock->writer_active = true;
+    return true;
+  }
+  return false;
 }
 
 // Acquire shared ownership, blocking behind an active or waiting writer.
@@ -48,24 +51,8 @@ void rw_lock_acquire_read(struct RwLock* rwlock){
    * returns and must prevent new calls before destruction.
    */
   __atomic_fetch_add(&rwlock->active_operations, 1);
-  clh_lock_acquire(&rwlock->lock);
-
-  if (!rwlock->writer_active && rwlock->waiting_writers.size == 0){
-    // No active writer and no waiting writers, can acquire read lock
-    rwlock->readers++;
-    clh_lock_release(&rwlock->lock);
-    __atomic_fetch_add(&rwlock->active_operations, -1);
-    return;
-  }
-
-  clh_lock_release(&rwlock->lock);
-
-  int was = interrupts_disable();
-
-  struct TCB* current_tcb = get_current_tcb();
-
-  int* args[2] = { (int*)rwlock, (int*)current_tcb };
-  block(was, (void (*)(void *))rw_add_reader, (void*)(args), true);
+  acquire_or_block(&rwlock->lock, &rwlock->waiting_readers, rw_try_read,
+    rwlock);
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
@@ -95,49 +82,12 @@ void rw_lock_release_read(struct RwLock* rwlock){
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 
-// block() callback for writers: either claim write ownership or enqueue
-static void rw_add_writer(void* arg){
-  int** args = (int**)arg;
-  struct RwLock* rwlock = (struct RwLock*)args[0];
-  struct TCB* tcb = (struct TCB*)args[1];
-
-  clh_lock_acquire(&rwlock->lock);
-
-  // check if nobody else has the lock
-  if (!rwlock->writer_active && rwlock->readers == 0){
-    // take the lock
-    rwlock->writer_active = true;
-    clh_lock_release(&rwlock->lock);
-    scheduler_wake_thread(tcb);
-  } else {
-    // wait in the writers queue
-    queue_add(&rwlock->waiting_writers, tcb);
-    clh_lock_release(&rwlock->lock);
-  }
-}
-
 // Acquire exclusive ownership after all existing readers and writers leave.
 void rw_lock_acquire_write(struct RwLock* rwlock){
   assert(rwlock != NULL, "rw_lock_acquire_write: lock is NULL.\n");
   __atomic_fetch_add(&rwlock->active_operations, 1);
-  clh_lock_acquire(&rwlock->lock);
-
-  if (!rwlock->writer_active && rwlock->readers == 0){
-    // No active writer and no active readers, can acquire write lock
-    rwlock->writer_active = true;
-    clh_lock_release(&rwlock->lock);
-    __atomic_fetch_add(&rwlock->active_operations, -1);
-    return;
-  }
-
-  clh_lock_release(&rwlock->lock);
-
-  int was = interrupts_disable();
-
-  struct TCB* current_tcb = get_current_tcb();
-
-  int* args[2] = { (int*)rwlock, (int*)current_tcb };
-  block(was, (void (*)(void *))rw_add_writer, (void*)(args), true);
+  acquire_or_block(&rwlock->lock, &rwlock->waiting_writers, rw_try_write,
+    rwlock);
   __atomic_fetch_add(&rwlock->active_operations, -1);
 }
 

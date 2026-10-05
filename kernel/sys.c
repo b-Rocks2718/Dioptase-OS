@@ -182,6 +182,63 @@ static int copy_cstr_from_user(char* dest, char* src, unsigned max,
   return -1;
 }
 
+// Return fd's open-file object, or NULL if fd is out of range or unused. The
+// caller's own descriptor-table slot keeps the object alive for the syscall.
+static struct FileDescriptor* lookup_file_descriptor(struct TCB* tcb, int fd){
+  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS){
+    return NULL;
+  }
+  return tcb->file_descriptors[fd];
+}
+
+// Translate a user semaphore handle to its table index, or -1 if the handle is
+// out of range or unused.
+static int sem_descriptor_index(struct TCB* tcb, int sem_d){
+  int index = sem_d - SEM_DESCRIPTORS_START;
+  if (index < 0 || index >= MAX_SEM_DESCRIPTORS ||
+      tcb->sem_descriptors[index] == NULL){
+    return -1;
+  }
+  return index;
+}
+
+// Translate a user child handle to its table index, or -1 if the handle is
+// out of range or unused.
+static int child_descriptor_index(struct TCB* tcb, int child_desc){
+  int index = child_desc - CHILD_DESCRIPTORS_START;
+  if (index < 0 || index >= MAX_CHILD_DESCRIPTORS ||
+      tcb->child_descriptors[index] == NULL){
+    return -1;
+  }
+  return index;
+}
+
+// Copy a NUL-terminated user path into a new SYSCALL_MAX_PATH_BYTES heap
+// buffer owned by the caller. Returns NULL (with nothing allocated) if the
+// path faults or does not fit.
+static char* copy_path_from_user(struct TCB* tcb, char* user_path){
+  char* path = malloc(SYSCALL_MAX_PATH_BYTES);
+  if (copy_cstr_from_user(path, user_path, SYSCALL_MAX_PATH_BYTES, tcb) != 0){
+    free(path);
+    return NULL;
+  }
+  return path;
+}
+
+// Return whether name is exactly one creatable/removable directory-entry
+// component: non-empty, not "." or "..", without '/', and within ext2's limit.
+static bool is_plain_entry_name(char* name){
+  if (name[0] == '\0' || streq(name, ".") || streq(name, "..")){
+    return false;
+  }
+  for (unsigned i = 0; name[i] != '\0'; ++i){
+    if (name[i] == '/' || i >= EXT2_MAX_NAME_BYTES){
+      return false;
+    }
+  }
+  return true;
+}
+
 // Free a kernel snapshot of exec argv strings
 static void free_exec_argv(int argc, char** kargv){
   if (kargv == NULL){
@@ -195,8 +252,8 @@ static void free_exec_argv(int argc, char** kargv){
 }
 
 // Declared early so handle_exec can stage a transactional address-space swap.
-static int construct_user_program_from_image(void* image, unsigned image_size,
-    int argc, char** argv, unsigned* entry_out, unsigned* initial_sp_out,
+static int construct_user_program_from_image(void* image, int argc,
+    char** argv, unsigned* entry_out, unsigned* initial_sp_out,
     unsigned* user_argv_out);
 
 // Compute how much of the initial user stack exec argv will occupy.
@@ -372,9 +429,7 @@ static int build_exec_argv_on_stack(unsigned stack_bottom, unsigned stack_top,
 
 // Create a pipe and return its read and write descriptor numbers to userland.
 int handle_pipe(int* fds){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // pipe() publishes both descriptors as one user-visible result. Reject an
   // incomplete destination before allocating endpoint objects or pipe state;
@@ -404,14 +459,10 @@ int handle_pipe(int* fds){
   blocking_ringbuf_init(&pipe->buf, PIPE_BUFFER_CAPACITY);
 
   tcb->file_descriptors[read_end]->file = (struct Node*)pipe;
-  tcb->file_descriptors[read_end]->offset = 0;
   tcb->file_descriptors[read_end]->type = FILE_DESCRIPTOR_PIPE_READ;
-  tcb->file_descriptors[read_end]->refcount = 1;
 
   tcb->file_descriptors[write_end]->file = (struct Node*)pipe;
-  tcb->file_descriptors[write_end]->offset = 0;
   tcb->file_descriptors[write_end]->type = FILE_DESCRIPTOR_PIPE_WRITE;
-  tcb->file_descriptors[write_end]->refcount = 1;
       
   int fd_arr[PIPE_DESCRIPTOR_COUNT] = {read_end, write_end};
 
@@ -426,17 +477,63 @@ int handle_pipe(int* fds){
   return 0;
 }
 
+// Split `path` in place into NUL-terminated components. Empty and "."
+// components are dropped, and ".." cancels the preceding component. A ".."
+// with nothing to cancel is kept only when keep_unmatched_dot_dot is true
+// (relative paths that climb above their start); otherwise it is dropped.
+//
+// Every component needs at least one byte plus a separator, so a path of
+// length n has at most n / 2 + 1 components; `parts` must hold max_parts
+// entries, and callers size it from that bound. Returns the component count.
+static unsigned split_normalized_path(char* path, char** parts,
+    unsigned max_parts, bool keep_unmatched_dot_dot){
+  unsigned part_count = 0;
+  char* cursor = path;
+
+  while (*cursor != '\0'){
+    while (*cursor == '/'){
+      cursor++;
+    }
+    if (*cursor == '\0'){
+      break;
+    }
+
+    char* component = cursor;
+    while (*cursor != '/' && *cursor != '\0'){
+      cursor++;
+    }
+    if (*cursor == '/'){
+      *cursor = '\0';
+      cursor++;
+    }
+
+    if (streq(component, ".")){
+      continue;
+    }
+    if (streq(component, "..")){
+      if (part_count > 0 && !streq(parts[part_count - 1], "..")){
+        part_count--;
+        continue;
+      }
+      if (!keep_unmatched_dot_dot){
+        continue;
+      }
+    }
+
+    assert_always(part_count < max_parts,
+      "split_normalized_path: component count exceeded the length-derived bound.\n");
+    parts[part_count++] = component;
+  }
+
+  return part_count;
+}
+
 // Resolve a path and open or create its file descriptor according to flags.
 int handle_open(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
@@ -453,52 +550,13 @@ int handle_open(char* path){
     // missing path first, then walk each component from the requested root.
     // Every non-final missing component becomes a directory, while the final
     // missing component becomes the new regular file.
-    unsigned max_parts = SYSCALL_MAX_PATH_BYTES / 2 + 1;
+    unsigned max_parts = strlen(buf) / 2 + 1;
     char** parts = malloc(sizeof(char*) * max_parts);
-    unsigned part_count = 0;
     bool absolute = buf[0] == '/';
-    char* cursor = buf;
 
-    // normalize path and split into components, e.g. "/a/b/../c" -> ["a", "c"]
-    while (*cursor != 0){
-      while (*cursor == '/'){
-        cursor++;
-      }
-      if (*cursor == 0){
-        break;
-      }
-
-      if (part_count >= max_parts){
-        free(parts);
-        free(buf);
-        return -1;
-      }
-
-      char* component = cursor;
-      while (*cursor != '/' && *cursor != 0){
-        cursor++;
-      }
-      char separator = *cursor;
-      *cursor = 0;
-
-      if (component[0] == '.' && component[1] == 0){
-        // Ignore no-op path components.
-      } else if (component[0] == '.' && component[1] == '.' && component[2] == 0){
-        if (part_count > 0 && !streq(parts[part_count - 1], "..")){
-          part_count--;
-        } else if (!absolute){
-          // Relative paths may still need to walk above the starting cwd.
-          parts[part_count++] = component;
-        }
-      } else {
-        parts[part_count++] = component;
-      }
-
-      if (separator == 0){
-        break;
-      }
-      cursor++;
-    }
+    // e.g. "/a/b/../c" -> ["a", "c"]. Relative paths keep unmatched ".."
+    // components because creation may need to walk above the starting cwd.
+    unsigned part_count = split_normalized_path(buf, parts, max_parts, !absolute);
 
     if (part_count == 0){
       free(parts);
@@ -589,7 +647,6 @@ int handle_open(char* path){
   }
 
   tcb->file_descriptors[fd]->file = file_node;
-  tcb->file_descriptors[fd]->offset = 0;
   return fd;
 }
 
@@ -611,14 +668,10 @@ int handle_open(char* path){
 // - `node_find()` supplies all cwd/absolute/symlink traversal semantics; this
 //   function adds no architecture- or host-OS-specific pathname assumptions.
 static int handle_open_existing(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
@@ -640,17 +693,15 @@ static int handle_open_existing(char* path){
   }
 
   tcb->file_descriptors[fd]->file = file_node;
-  tcb->file_descriptors[fd]->offset = 0;
   return fd;
 }
 
 // Read bytes from a descriptor, copying results to the user buffer.
 int handle_read(int fd, char* buf, unsigned count){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
 
@@ -663,7 +714,7 @@ int handle_read(int fd, char* buf, unsigned count){
     return 0;
   }
 
-  enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
+  enum FileDescriptorType type = descriptor->type;
   if (type == FILE_DESCRIPTOR_STDIN){
     if (!user_range_ok(tcb, buf, count, MMAP_WRITE)){
       return -1;
@@ -682,7 +733,7 @@ int handle_read(int fd, char* buf, unsigned count){
             || type == FILE_DESCRIPTOR_PIPE_WRITE){
     return -1;
   } else if (type == FILE_DESCRIPTOR_PIPE_READ){
-    struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+    struct Pipe* pipe = (struct Pipe*)descriptor->file;
 
     /*
      * Establish delivery for the complete clamped request before consuming a
@@ -718,7 +769,7 @@ int handle_read(int fd, char* buf, unsigned count){
     return bytes_read;
   }
 
-  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  struct Node* file_node = descriptor->file;
   if (file_node == NULL){
     return -1;
   }
@@ -727,16 +778,16 @@ int handle_read(int fd, char* buf, unsigned count){
     return -1;
   }
 
-  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
-  int offset = tcb->file_descriptors[fd]->offset;
+  blocking_lock_acquire(&descriptor->offset_lock);
+  int offset = descriptor->offset;
   if (offset < 0){
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
 
   unsigned file_size = node_size_in_bytes(file_node);
   if ((unsigned)offset >= file_size){
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return 0;
   }
 
@@ -754,7 +805,7 @@ int handle_read(int fd, char* buf, unsigned count){
     // Kernel-half VME capacity is finite. A valid read must unwind as a
     // syscall failure if its temporary mapping cannot be reserved.
     free(kbuf);
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
   memcpy(kbuf, mmapped_file + ((unsigned)offset - rounded_offset),
@@ -764,23 +815,22 @@ int handle_read(int fd, char* buf, unsigned count){
   int rc = copy_to_user(buf, kbuf, bytes_to_read, tcb);
   free(kbuf);
   if (rc != 0){
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
 
-  __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, bytes_to_read);
-  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+  __atomic_fetch_add(&descriptor->offset, bytes_to_read);
+  blocking_lock_release(&descriptor->offset_lock);
 
   return bytes_to_read;
 }
 
 // Write bytes from a user buffer to a descriptor.
 int handle_write(int fd, char* buf, unsigned count){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
 
@@ -801,7 +851,7 @@ int handle_write(int fd, char* buf, unsigned count){
     return -1;
   }
 
-  enum FileDescriptorType type = tcb->file_descriptors[fd]->type;
+  enum FileDescriptorType type = descriptor->type;
   if (type == FILE_DESCRIPTOR_STDIN || type == FILE_DESCRIPTOR_PIPE_READ){
     free(kbuf);
     return -1;
@@ -817,7 +867,7 @@ int handle_write(int fd, char* buf, unsigned count){
     free(kbuf);
     return count;
   } else if (type == FILE_DESCRIPTOR_PIPE_WRITE){
-    struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+    struct Pipe* pipe = (struct Pipe*)descriptor->file;
     unsigned bytes_written = 0;
     while (bytes_written < count){
       if (!blocking_ringbuf_add_fallible(&pipe->buf,
@@ -834,7 +884,7 @@ int handle_write(int fd, char* buf, unsigned count){
     return bytes_written == 0 ? -1 : (int)bytes_written;
   }
 
-  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  struct Node* file_node = descriptor->file;
   if (file_node == NULL){
     free(kbuf);
     return -1;
@@ -845,16 +895,16 @@ int handle_write(int fd, char* buf, unsigned count){
     return -1;
   }
 
-  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
-  int offset = tcb->file_descriptors[fd]->offset;
+  blocking_lock_acquire(&descriptor->offset_lock);
+  int offset = descriptor->offset;
   if (offset < 0){
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     free(kbuf);
     return -1;
   }
 
   if ((unsigned)offset > INT_MAX - count){
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     free(kbuf);
     return -1;
   }
@@ -867,7 +917,7 @@ int handle_write(int fd, char* buf, unsigned count){
   if (mmapped_file == NULL){
     // Do not modify the shared descriptor offset or file if the temporary
     // kernel mapping cannot be represented.
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     free(kbuf);
     return -1;
   }
@@ -875,18 +925,16 @@ int handle_write(int fd, char* buf, unsigned count){
   munmap(mmapped_file);
   free(kbuf);
   
-  __atomic_fetch_add(&tcb->file_descriptors[fd]->offset, count);
-  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+  __atomic_fetch_add(&descriptor->offset, count);
+  blocking_lock_release(&descriptor->offset_lock);
   
   return count;
 }
 
 // Drop one descriptor-table reference and close its object at the final owner.
 int handle_close(int fd){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  if (lookup_file_descriptor(tcb, fd) == NULL){
     return -1;
   }
   
@@ -896,9 +944,7 @@ int handle_close(int fd){
 
 // Create a semaphore descriptor initialized with the requested count.
 int handle_sem_open(int sem_count){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   if (sem_count < 0){
     return -1;
@@ -916,48 +962,42 @@ int handle_sem_open(int sem_count){
 
 // Publish a permit to the semaphore named by a process descriptor.
 int handle_sem_up(int sem_d){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  sem_d -= SEM_DESCRIPTORS_START;
-  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+  int index = sem_descriptor_index(tcb, sem_d);
+  if (index < 0){
     return -1;
   }
 
   // INT_MAX is a valid initial count, but incrementing it is not. Preserve
   // the semaphore state and report a public resource/range error instead of
   // routing user input through sem_up()'s kernel-invariant panic wrapper.
-  return sem_try_up(tcb->sem_descriptors[sem_d]->sem) ? 0 : -1;
+  return sem_try_up(tcb->sem_descriptors[index]->sem) ? 0 : -1;
 }
 
 // Consume a semaphore permit, blocking the calling thread when necessary.
 int handle_sem_down(int sem_d){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  sem_d -= SEM_DESCRIPTORS_START;
-  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+  int index = sem_descriptor_index(tcb, sem_d);
+  if (index < 0){
     return -1;
   }
 
-  sem_down(tcb->sem_descriptors[sem_d]->sem);
+  sem_down(tcb->sem_descriptors[index]->sem);
   return 0;
 }
 
 // Close one process-visible semaphore descriptor.
 int handle_sem_close(int sem_d){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  sem_d -= SEM_DESCRIPTORS_START;
-  if (sem_d < 0 || sem_d >= MAX_SEM_DESCRIPTORS || tcb->sem_descriptors[sem_d] == NULL){
+  int index = sem_descriptor_index(tcb, sem_d);
+  if (index < 0){
     return -1;
   }
 
-  deallocate_descriptor(tcb, DESCRIPTOR_SEM, sem_d);
+  deallocate_descriptor(tcb, DESCRIPTOR_SEM, index);
   return 0;
 }
 
@@ -985,16 +1025,12 @@ static bool seek_target_ok(int base, int delta, int* out){
 
 // Adjust a file descriptor's offset relative to its selected origin.
 int handle_seek(int fd, int offset, int whence){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  // validate descriptor
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
-
-  struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
   // Pipe endpoints deliberately store `struct Pipe*` in the same field as a
   // normal descriptor's Node. Reject the kind before any Node operation;
   // seeking a pipe is unsupported for every whence, including SEEK_SET/CUR.
@@ -1050,15 +1086,12 @@ int handle_seek(int fd, int offset, int whence){
 
 // Truncate a regular file and release blocks beyond the requested size.
 int handle_truncate(int fd, unsigned size){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
-
-  struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
   if (descriptor->type != FILE_DESCRIPTOR_NORMAL || descriptor->file == NULL){
     return -1;
   }
@@ -1076,11 +1109,10 @@ int handle_truncate(int fd, unsigned size){
 
 // Duplicate a file descriptor while retaining the underlying open-file object.
 int handle_dup(int fd){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
 
@@ -1089,23 +1121,20 @@ int handle_dup(int fd){
     return -1;
   }
 
-  __atomic_fetch_add(&tcb->file_descriptors[fd]->refcount, 1);
-  tcb->file_descriptors[new_fd] = tcb->file_descriptors[fd];
+  __atomic_fetch_add(&descriptor->refcount, 1);
+  tcb->file_descriptors[new_fd] = descriptor;
   
   return new_fd;
 }
 
 // Submit a WAV file descriptor to the asynchronous audio daemon.
 int handle_play_audio(int fd){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
-
-  struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
   if (descriptor->type != FILE_DESCRIPTOR_NORMAL){
     return -1;
   }
@@ -1121,10 +1150,6 @@ int handle_play_audio(int fd){
    * daemon's admission result. A full request queue is an ordinary -1.
    */
   struct AudioRequest* audio_request = audio_request_create(audio_file);
-  if (audio_request == NULL){
-    return -1;
-  }
-
   if (!audio_request_submit(audio_request)){
     audio_request_destroy_unsubmitted(audio_request);
     return -1;
@@ -1139,83 +1164,20 @@ int handle_play_audio(int fd){
   return audio_request_wait_until_ready(audio_request) ? 0 : -1;
 }
 
-// Hold one normalized path component while cleaning user input.
-struct CleanPathPart {
-  char* start;
-  unsigned length;
-};
-
-// Return one heap-owned absolute lexical normalization of `path`.
-//
-// The previous implementation reserved 16 component pointers even though a
-// 1023-byte input can contain 512 one-byte components. This representation
-// points into the still-live input string and sizes the array from its actual
-// length, so every accepted component has storage without hundreds of small
-// allocations. The result resolves repeated '/', '.', and '..'; it does not
-// perform filesystem or symlink traversal.
+// Return one heap-owned absolute lexical normalization of `path`, resolving
+// repeated '/', '.', and '..' (with ".." at the root staying at the root). It
+// does not perform filesystem or symlink traversal. `path` is split in place
+// and is no longer a single string afterwards.
 static char* clean_path(char* path){
-  if (path == NULL){
-    return NULL;
-  }
-
-  unsigned path_length = strlen(path);
-  unsigned maximum_parts = path_length / 2 + 1;
-  if (maximum_parts > UINT_MAX / sizeof(struct CleanPathPart)){
-    return NULL;
-  }
-  struct CleanPathPart* parts =
-    malloc(sizeof(struct CleanPathPart) * maximum_parts);
-  unsigned part_count = 0;
-  char* current = path;
-
-  while (*current != 0){
-    while (*current == '/'){
-      current++;
-    }
-    if (*current == 0){
-      break;
-    }
-
-    char* start = current;
-    while (*current != '/' && *current != 0){
-      current++;
-    }
-    unsigned length = (unsigned)current - (unsigned)start;
-
-    if (length == 1 && start[0] == '.'){
-      continue;
-    }
-    if (length == 2 && start[0] == '.' && start[1] == '.'){
-      if (part_count != 0){
-        part_count--;
-      }
-      continue;
-    }
-
-    // Every additional component needs at least one input byte and, except
-    // for the first, a separating slash. `path_length / 2 + 1` is therefore
-    // a conservative bound; keep a defensive check in case this parser is
-    // later changed without updating the bound.
-    if (part_count >= maximum_parts){
-      free(parts);
-      return NULL;
-    }
-    parts[part_count].start = start;
-    parts[part_count].length = length;
-    part_count++;
-  }
+  unsigned max_parts = strlen(path) / 2 + 1;
+  char** parts = malloc(sizeof(char*) * max_parts);
+  unsigned part_count = split_normalized_path(path, parts, max_parts, false);
 
   // Root is '/' plus NUL. Each component contributes its bytes, and every
   // component after the first contributes one separator.
   unsigned cleaned_bytes = 2;
   for (unsigned i = 0; i < part_count; i++){
-    unsigned separator_bytes = (i == 0) ? 0 : 1;
-    unsigned added_bytes = parts[i].length + separator_bytes;
-    if (cleaned_bytes > UINT_MAX - added_bytes){
-      free(parts);
-      return NULL;
-    }
-    cleaned_bytes += added_bytes;
+    cleaned_bytes += strlen(parts[i]) + (i == 0 ? 0 : 1);
   }
 
   char* cleaned = malloc(cleaned_bytes);
@@ -1225,8 +1187,9 @@ static char* clean_path(char* path){
     if (i != 0){
       cleaned[cleaned_index++] = '/';
     }
-    memcpy(cleaned + cleaned_index, parts[i].start, parts[i].length);
-    cleaned_index += parts[i].length;
+    unsigned length = strlen(parts[i]);
+    memcpy(cleaned + cleaned_index, parts[i], length);
+    cleaned_index += length;
   }
   cleaned[cleaned_index] = 0;
   free(parts);
@@ -1235,99 +1198,53 @@ static char* clean_path(char* path){
 
 // Resolve a directory path and install it as the current working directory.
 int handle_chdir(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
+    return -1;
+  }
 
-  if (rc != 0){
+  // don't chdir into a missing path or a non-directory
+  struct Node* dir_node = node_find(tcb->cwd, buf);
+  if (dir_node == NULL || !node_is_dir(dir_node) || tcb->cwd_path == NULL){
+    node_free(dir_node);
     free(buf);
     return -1;
   }
 
-  struct Node* file_node = node_find(tcb->cwd, buf);
-  if (file_node == NULL){
-    // could not find file
-    free(buf);
-    return -1;
-  }
-
-  // don't chdir into a non-directory
-  if (!node_is_dir(file_node)){
-    free(buf);
-    node_free(file_node);
-    return -1;
-  }
-  
   // Construct and normalize the textual cwd before publishing either half of
   // the `(cwd, cwd_path)` pair. This syscall executes in kernel mode. The
   // current TCB is not concurrently executing on another core, and pending
   // user handlers run only at the final trap return, so no other context can
-  // observe a half-committed pair from this thread.
-  char *old_path = tcb->cwd_path;
-  if (old_path == NULL){
-    free(buf);
-    node_free(file_node);
-    return -1;
-  }
-  unsigned old_length = strlen(old_path);
-  unsigned new_length = strlen(buf);
-
-  unsigned new_offset = 0;
-  char *final_path;
-
-  if (buf[0] == '/') {
-      // Absolute path.
-      if (new_length == UINT_MAX){
-        free(buf);
-        node_free(file_node);
-        return -1;
-      }
-      final_path = malloc(new_length + 1);
-  } else {
-      // Relative path.
-      if (old_length > UINT_MAX - new_length ||
-          old_length + new_length > UINT_MAX - 2){
-        free(buf);
-        node_free(file_node);
-        return -1;
-      }
-      new_offset = old_length + 1; // Include '/'.
-      final_path = malloc(new_offset + new_length + 1);
-      // Copy old path.
-      memcpy(final_path, old_path, old_length);
-      final_path[old_length] = '/';
-  }
-  // Copy cwd path.
-  memcpy(final_path + new_offset, buf, new_length);
-  final_path[new_offset + new_length] = 0;
-
-  char* cleaned_path = clean_path(final_path);
-  if (cleaned_path == NULL){
-    free(final_path);
-    free(buf);
-    node_free(file_node);
-    return -1;
+  // observe a half-committed pair from this thread. Both lengths measure live
+  // heap strings, so their sum plus two cannot overflow a 32-bit size.
+  char* full_path = buf;
+  if (buf[0] != '/'){
+    unsigned old_length = strlen(tcb->cwd_path);
+    unsigned new_length = strlen(buf);
+    full_path = malloc(old_length + 1 + new_length + 1);
+    memcpy(full_path, tcb->cwd_path, old_length);
+    full_path[old_length] = '/';
+    memcpy(full_path + old_length + 1, buf, new_length + 1);
   }
 
-  struct Node* old_node = tcb->cwd;
-  tcb->cwd = file_node;
-  tcb->cwd_path = cleaned_path;
-
-  free(final_path);
-  node_free(old_node);
-  free(old_path);
+  char* cleaned_path = clean_path(full_path);
+  if (full_path != buf){
+    free(full_path);
+  }
   free(buf);
+
+  node_free(tcb->cwd);
+  free(tcb->cwd_path);
+  tcb->cwd = dir_node;
+  tcb->cwd_path = cleaned_path;
   return 0;
 }
 
 // Map file-backed or anonymous pages into the current address space.
 int handle_mmap(int size, int fd, int offset, int flags){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // Establish every public precondition before calling the lower VM layer,
   // whose assertions describe kernel invariants rather than user errors.
@@ -1354,13 +1271,8 @@ int handle_mmap(int size, int fd, int offset, int flags){
     }
   } else {
     // Every negative value other than the exact sentinel is invalid.
-    if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS ||
-        tcb->file_descriptors[fd] == NULL){
-      return -1;
-    }
-
-    struct FileDescriptor* descriptor = tcb->file_descriptors[fd];
-    if (descriptor->type != FILE_DESCRIPTOR_NORMAL ||
+    struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+    if (descriptor == NULL || descriptor->type != FILE_DESCRIPTOR_NORMAL ||
         descriptor->file == NULL || !node_is_file(descriptor->file)){
       return -1;
     }
@@ -1393,7 +1305,6 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   struct TCB* child = malloc(sizeof(struct TCB));
   memset(child, 0, sizeof(struct TCB));
 
-  child->flags = 0;
   child->psr = 1;
   child->imr = DEFAULT_INTERRUPT_MASK;
 
@@ -1411,18 +1322,15 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
   child->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
 
   // child inherits signal state/handlers from parent
-  child->pending_signals = 0;
   child->signal_mask = parent->signal_mask;
   for (int i = 0; i < MAX_SIGNALS; i++){
     child->signal_handlers[i] = parent->signal_handlers[i];
   }
-  child->in_signal_handler = false;
   child->signal_stack_top = parent->signal_stack_top;
 
   child->my_node = malloc(sizeof(struct CLHNode));
   child->my_node->locked = false;
   child->my_node->interrupt_state = 0;
-  child->my_pred = NULL;
 
   /*
    * Snapshot the descriptor tables as they existed at fork syscall entry.
@@ -1446,21 +1354,7 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
   // set up vme_list and pid
   if (!vmem_fork(parent, child)){
-    for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
-      if (child->file_descriptors[i]){
-        deallocate_descriptor(child, DESCRIPTOR_FILE, i);
-      }
-    }
-    for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
-      if (child->sem_descriptors[i]){
-        deallocate_descriptor(child, DESCRIPTOR_SEM, i);
-      }
-    }
-    for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
-      if (child->child_descriptors[i]){
-        deallocate_descriptor(child, DESCRIPTOR_CHILD, i);
-      }
-    }
+    deallocate_all_descriptors(child);
     node_free(child->cwd);
     free(child->cwd_path);
     free(child->my_node);
@@ -1485,8 +1379,6 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
   __atomic_fetch_add(&parent->child_descriptors[child_desc]->refcount, 1);
 
-  child->next = NULL;
-
   __atomic_fetch_add((int*)&n_active, 1);
 
   return child;
@@ -1494,9 +1386,7 @@ struct TCB* fork_tcb(struct TCB* parent, int child_desc, unsigned pc, unsigned s
 
 // Duplicate the current process and return distinct parent and child results.
 int handle_fork(unsigned pc, unsigned sp){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   int child_desc = allocate_descriptor(tcb, DESCRIPTOR_CHILD, true);
   if (child_desc < 0){
@@ -1521,40 +1411,77 @@ int handle_fork(unsigned pc, unsigned sp){
 
 // Wait for a child descriptor to publish exit and return its status.
 int handle_wait_child(int child_desc){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  child_desc -= CHILD_DESCRIPTORS_START;
-  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+  int index = child_descriptor_index(tcb, child_desc);
+  if (index < 0){
     return -1;
   }
 
-  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
-  if (child == NULL){
-    return -1;
-  }
-
+  struct ChildDescriptor* child = tcb->child_descriptors[index];
   unsigned rc = (unsigned)promise_get(child->child_promise);
 
   // can only wait on a given child descriptor once; after this call the
   // descriptor is consumed and must not be used again
-  deallocate_descriptor(tcb, DESCRIPTOR_CHILD, child_desc);
+  deallocate_descriptor(tcb, DESCRIPTOR_CHILD, index);
   
   return rc;
 }
 
+// Make (pid, vme_list) the TCB's address space and install it in hardware.
+// Caller is the current TCB in kernel mode.
+static void install_address_space(struct TCB* tcb, unsigned pid,
+    struct VME* vme_list){
+  tcb->pid = pid;
+  tcb->vme_list = vme_list;
+  set_pid(pid);
+  tlb_flush();
+}
+
+// Destroy an address space that is not installed in hardware. The TCB only
+// carries (pid, vme_list) into vmem_destroy_address_space(); its active pair
+// is restored before returning.
+static void destroy_inactive_address_space(struct TCB* tcb, unsigned pid,
+    struct VME* vme_list){
+  unsigned active_pid = tcb->pid;
+  struct VME* active_list = tcb->vme_list;
+  tcb->pid = pid;
+  tcb->vme_list = vme_list;
+  vmem_destroy_address_space(tcb);
+  free_vme_list(tcb->vme_list);
+  tcb->pid = active_pid;
+  tcb->vme_list = active_list;
+}
+
+// Map prog, validate it as an ELF image, and copy it into a private heap
+// snapshot so a concurrent writer cannot change the image between validation
+// and load, and so loading does not depend on a second file mapping.
+// Consumes the prog reference. Returns NULL for an empty, non-regular,
+// unmappable, or invalid image.
+static void* snapshot_elf_image(struct Node* prog, unsigned* size_out){
+  unsigned size = node_is_file(prog) ? node_size_in_bytes(prog) : 0;
+  unsigned* prog_bytes = size == 0 ? NULL : mmap(size, prog, 0, MMAP_READ);
+  node_free(prog);
+  if (prog_bytes == NULL){
+    return NULL;
+  }
+
+  void* snapshot = NULL;
+  if (elf_validate_image(prog_bytes, size)){
+    snapshot = malloc(size);
+    memcpy(snapshot, prog_bytes, size);
+    *size_out = size;
+  }
+  munmap(prog_bytes);
+  return snapshot;
+}
+
 // Replace the current user address space with a validated executable image.
 int handle_exec(char* path, int argc, char** argv){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
     
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-    
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
   
@@ -1565,45 +1492,11 @@ int handle_exec(char* path, int argc, char** argv){
     return -1;
   }
 
-  // don't exec non-files
-  if (!node_is_file(prog)){
-    node_free(prog);
+  unsigned prog_size = 0;
+  void* snapshot = snapshot_elf_image(prog, &prog_size);
+  if (snapshot == NULL){
     return -1;
   }
-
-  unsigned prog_size = node_size_in_bytes(prog);
-  void* snapshot = NULL;
-
-  if (prog_size == 0){
-    node_free(prog);
-    return -1;
-  }
-
-  {
-    unsigned* prog_bytes = mmap(prog_size, prog, 0, MMAP_READ);
-    if (prog_bytes == NULL || !elf_validate_image(prog_bytes, prog_size)){
-      if (prog_bytes != NULL){
-        munmap(prog_bytes);
-      }
-      node_free(prog);
-      return -1;
-    }
-
-    // Pin the validated bytes in a private heap snapshot so a concurrent writer
-    // cannot change the image between validation and load, and so loading does
-    // not depend on a second file mapping.
-    snapshot = malloc(prog_size);
-    if (snapshot == NULL){
-      munmap(prog_bytes);
-      node_free(prog);
-      return -1;
-    }
-    memcpy(snapshot, prog_bytes, prog_size);
-    munmap(prog_bytes);
-  }
-
-  node_free(prog);
-  prog = NULL;
 
   char** kargv = NULL;
   if (copy_exec_argv_from_user(&kargv, argc, argv, tcb) != 0){
@@ -1624,22 +1517,16 @@ int handle_exec(char* path, int argc, char** argv){
     free(snapshot);
     return -1;
   }
-  tcb->pid = new_pid;
-  tcb->vme_list = NULL;
-  set_pid(new_pid);
-  tlb_flush();
+  install_address_space(tcb, new_pid, NULL);
 
   unsigned entry = 0;
   unsigned initial_sp = 0;
   unsigned user_argv = 0;
-  if (construct_user_program_from_image(snapshot, prog_size, argc, kargv,
+  if (construct_user_program_from_image(snapshot, argc, kargv,
       &entry, &initial_sp, &user_argv) != 0){
-    vmem_destroy_address_space(tcb);
-    free_vme_list(tcb->vme_list);
-    tcb->pid = old_pid;
-    tcb->vme_list = old_vme_list;
-    set_pid(old_pid);
-    tlb_flush();
+    struct VME* new_vme_list = tcb->vme_list;
+    install_address_space(tcb, old_pid, old_vme_list);
+    destroy_inactive_address_space(tcb, new_pid, new_vme_list);
     return -1;
   }
 
@@ -1656,39 +1543,28 @@ int handle_exec(char* path, int argc, char** argv){
   }
   tcb->in_signal_handler = false;
 
-  {
-    unsigned committed_pid = tcb->pid;
-    struct VME* committed_list = tcb->vme_list;
-    tcb->pid = old_pid;
-    tcb->vme_list = old_vme_list;
-    vmem_destroy_address_space(tcb);
-    free_vme_list(tcb->vme_list);
-    tcb->pid = committed_pid;
-    tcb->vme_list = committed_list;
-  }
+  destroy_inactive_address_space(tcb, old_pid, old_vme_list);
 
   process_pending_signals_before_user_return();
-  rc = jump_to_user(entry, initial_sp, argc, user_argv);
-  stop(rc);
+  stop(jump_to_user(entry, initial_sp, argc, user_argv));
 
   return -1;
 }
 
 // Copy directory entries from an open directory descriptor to userland.
 int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
 
-  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_NORMAL) {
+  if (descriptor->type != FILE_DESCRIPTOR_NORMAL) {
     return -1;
   }
 
-  struct Node* file_node = tcb->file_descriptors[fd]->file;
+  struct Node* file_node = descriptor->file;
   if (file_node == NULL || !node_is_dir(file_node)) {
     return -1;
   }
@@ -1700,10 +1576,10 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
     return -1;
   }
 
-  blocking_lock_acquire(&tcb->file_descriptors[fd]->offset_lock);
-  int offset = tcb->file_descriptors[fd]->offset;
+  blocking_lock_acquire(&descriptor->offset_lock);
+  int offset = descriptor->offset;
   if (offset < 0) {
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
 
@@ -1719,28 +1595,26 @@ int handle_getdents(int fd, char* buffer, unsigned buffer_size) {
     // inode lock. Interior/beyond-EOF offsets are user errors, not VM or ext
     // invariants, and leave the shared descriptor position unchanged.
     free(kbuf);
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
 
   int rc = copy_to_user(buffer, kbuf, (unsigned)bytes_read, tcb);
   free(kbuf);
   if (rc != 0) {
-    blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+    blocking_lock_release(&descriptor->offset_lock);
     return -1;
   }
 
-  __atomic_store_n(&tcb->file_descriptors[fd]->offset, new_offset);
-  blocking_lock_release(&tcb->file_descriptors[fd]->offset_lock);
+  __atomic_store_n(&descriptor->offset, new_offset);
+  blocking_lock_release(&descriptor->offset_lock);
 
   return bytes_read;
 }
 
 // Copy the current working directory path to userland.
 int handle_getcwd(char* buffer, unsigned buffer_size) {
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // guard against invalid cwd_path
   if (tcb->cwd_path == NULL){
@@ -1761,15 +1635,10 @@ int handle_getcwd(char* buffer, unsigned buffer_size) {
 
 // Read a symbolic-link target without following the final link.
 int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-  if (rc != 0) {
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
@@ -1806,7 +1675,7 @@ int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
     read_bytes = total_bytes + 1;
   }
   
-  rc = copy_to_user(buffer, target, read_bytes, tcb);
+  int rc = copy_to_user(buffer, target, read_bytes, tcb);
   node_free(file_node);
   free(target);
 
@@ -1819,164 +1688,89 @@ int handle_readlink(char* path, char* buffer, unsigned buffer_size) {
 
 // Return the number of bytes immediately readable from a descriptor.
 int handle_fd_bytes_available(int fd){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  if (fd < 0 || fd >= MAX_FILE_DESCRIPTORS || tcb->file_descriptors[fd] == NULL){
+  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
+  if (descriptor == NULL){
     return -1;
   }
 
-  if (tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_READ &&
-      tcb->file_descriptors[fd]->type != FILE_DESCRIPTOR_PIPE_WRITE){
+  if (descriptor->type != FILE_DESCRIPTOR_PIPE_READ &&
+      descriptor->type != FILE_DESCRIPTOR_PIPE_WRITE){
     return -1;
   }
 
-  struct Pipe* pipe = (struct Pipe*)tcb->file_descriptors[fd]->file;
+  struct Pipe* pipe = (struct Pipe*)descriptor->file;
 
   return blocking_ringbuf_size(&pipe->buf);
 }
 
 // Create a directory at the supplied path.
 int handle_mkdir(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
-  if (buf[0] == '\0'){
-    // empty name
+  // Only single components relative to the cwd can be created.
+  if (!is_plain_entry_name(buf)){
     free(buf);
     return -1;
-  }
-
-  if (strlen(buf) > EXT2_MAX_NAME_BYTES){
-    free(buf);
-    return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '\0'){
-    // can't create directory with name "."
-    free(buf);
-    return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
-    // can't create directory with name ".."
-    free(buf);
-    return -1;
-  }
-
-  for (unsigned i = 0; buf[i] != '\0'; ++i){
-    // can't create directory with '/' in the name
-    if (buf[i] == '/'){
-      free(buf);
-      return -1;
-    }
   }
 
   struct Node* new_node = node_make_dir(tcb->cwd, buf);
-  rc = (new_node == NULL) ? -1 : 0;
   free(buf);
+  if (new_node == NULL){
+    return -1;
+  }
   node_free(new_node);
-  return rc;
+  return 0;
 }
 
 // Remove an empty directory at the supplied path.
 int handle_rmdir(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
-  if (buf[0] == '\0'){
-    // empty name
+  // Only single components relative to the cwd can be removed.
+  if (!is_plain_entry_name(buf)){
     free(buf);
     return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '\0'){
-    // can't remove "."
-    free(buf);
-    return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
-    // can't remove ".."
-    free(buf);
-    return -1;
-  }
-
-  for (unsigned i = 0; buf[i] != '\0'; ++i){
-    // can only remove stuff in current dir
-    if (buf[i] == '/'){
-      free(buf);
-      return -1;
-    }
   }
 
   // Lookup, directory-kind validation, emptiness validation, and removal are
   // one parent-lock transaction. A competing unlink/create cannot replace the
   // checked directory with a file before the final namespace mutation.
-  rc = node_delete_typed(tcb->cwd, buf, NODE_DELETE_EMPTY_DIRECTORY);
+  int rc = node_delete_typed(tcb->cwd, buf, NODE_DELETE_EMPTY_DIRECTORY);
   free(buf);
   return rc;
 }
 
 // Remove a non-directory path and update its inode link lifetime.
 int handle_unlink(char* path){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  char* buf = malloc(SYSCALL_MAX_PATH_BYTES);
-  int rc = copy_cstr_from_user(buf, path, SYSCALL_MAX_PATH_BYTES, tcb);
-
-  if (rc != 0){
-    free(buf);
+  char* buf = copy_path_from_user(tcb, path);
+  if (buf == NULL){
     return -1;
   }
 
-  if (buf[0] == '\0'){
+  // Only single components relative to the cwd can be removed.
+  if (!is_plain_entry_name(buf)){
     free(buf);
     return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '\0'){
-    free(buf);
-    return -1;
-  }
-
-  if (buf[0] == '.' && buf[1] == '.' && buf[2] == '\0'){
-    free(buf);
-    return -1;
-  }
-
-  for (unsigned i = 0; buf[i] != '\0'; ++i){
-    if (buf[i] == '/'){
-      free(buf);
-      return -1;
-    }
   }
 
   // Keep exact-name lookup, regular-file/symlink validation, and removal under
   // one parent lock. This closes the replacement window between the old
   // syscall-side type check and node_delete()'s second lookup.
-  rc = node_delete_typed(tcb->cwd, buf, NODE_DELETE_FILE_OR_SYMLINK);
+  int rc = node_delete_typed(tcb->cwd, buf, NODE_DELETE_FILE_OR_SYMLINK);
   free(buf);
   return rc;
 }
@@ -2046,9 +1840,7 @@ static int send_signal_to_child(struct ChildDescriptor* descriptor, int signal){
 //   the current foreground descriptor. Calls made by the terminal, shell, or a
 //   background child do not claim foreground display recovery.
 static void claim_foreground_display(void){
-  int was = interrupts_disable();
   struct TCB* current = get_current_tcb();
-  interrupts_restore(was);
 
   blocking_lock_acquire(&foreground_child_lock);
   struct ChildDescriptor* descriptor = foreground_child;
@@ -2062,23 +1854,30 @@ static void claim_foreground_display(void){
   blocking_lock_release(&foreground_child_lock);
 }
 
+// Map one display MMIO window (tilemap, tile framebuffer, or spritemap) into
+// the caller and record a foreground display claim. Returns the user address,
+// or -1 if the caller's virtual address space has no room.
+static int map_display_window(unsigned size, unsigned paddr){
+  void* mapping = mmap_physmem(size, paddr, MMAP_READ | MMAP_WRITE | MMAP_USER);
+  if (mapping == NULL){
+    return -1;
+  }
+  claim_foreground_display();
+  return (int)mapping;
+}
+
 // Install or clear the single interactive foreground child.
 int handle_set_foreground_child(int child_desc){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   struct ChildDescriptor* new_child = NULL;
   if (child_desc != -1){
-    child_desc -= CHILD_DESCRIPTORS_START;
-    if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+    int index = child_descriptor_index(tcb, child_desc);
+    if (index < 0){
       return -1;
     }
 
-    new_child = tcb->child_descriptors[child_desc];
-    if (new_child == NULL){
-      return -1;
-    }
+    new_child = tcb->child_descriptors[index];
 
     __atomic_fetch_add(&new_child->refcount, 1);
   }
@@ -2116,17 +1915,13 @@ int handle_set_foreground_child(int child_desc){
 
 // Queue a signal for a specific child after validating the descriptor.
 int handle_signal_child(int child_desc, int signal){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
-  child_desc -= CHILD_DESCRIPTORS_START;
-  if (child_desc < 0 || child_desc >= MAX_CHILD_DESCRIPTORS){
+  int index = child_descriptor_index(tcb, child_desc);
+  if (index < 0){
     return -1;
   }
-
-  struct ChildDescriptor* child = tcb->child_descriptors[child_desc];
-  return send_signal_to_child(child, signal);
+  return send_signal_to_child(tcb->child_descriptors[index], signal);
 }
 
 // Queue a signal for the process currently owning the foreground display.
@@ -2267,18 +2062,10 @@ int trap_handler(unsigned code,
       return 0;
     }
     case TRAP_GET_TILEMAP: {
-      void* mapping = mmap_physmem(TILEMAP_SIZE, (unsigned)TILEMAP,
-        MMAP_READ | MMAP_WRITE | MMAP_USER);
-      if (mapping == NULL) return -1;
-      claim_foreground_display();
-      return (int)mapping;
+      return map_display_window(TILEMAP_SIZE, (unsigned)TILEMAP);
     }
     case TRAP_GET_TILE_FB: {
-      void* mapping = mmap_physmem(TILE_FB_SIZE, (unsigned)TILE_FB,
-        MMAP_READ | MMAP_WRITE | MMAP_USER);
-      if (mapping == NULL) return -1;
-      claim_foreground_display();
-      return (int)mapping;
+      return map_display_window(TILE_FB_SIZE, (unsigned)TILE_FB);
     }
     case TRAP_GET_VGA_STATUS: {
       return (unsigned char)(*VGA_STATUS);
@@ -2413,11 +2200,7 @@ int trap_handler(unsigned code,
       return 0;
     }
     case TRAP_GET_SPRITEMAP: {
-      void* mapping = mmap_physmem(SPRITEMAP_SIZE, (unsigned)SPRITEMAP,
-        MMAP_READ | MMAP_WRITE | MMAP_USER);
-      if (mapping == NULL) return -1;
-      claim_foreground_display();
-      return (int)mapping;
+      return map_display_window(SPRITEMAP_SIZE, (unsigned)SPRITEMAP);
     }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);
@@ -2492,11 +2275,9 @@ void trap_destroy(void) {
  * On failure: returns -1 after freeing image/argv. Any partial VME list remains
  * for the caller to destroy with the in-construction address space.
  */
-static int construct_user_program_from_image(void* image, unsigned image_size,
-    int argc, char** argv, unsigned* entry_out, unsigned* initial_sp_out,
+static int construct_user_program_from_image(void* image, int argc,
+    char** argv, unsigned* entry_out, unsigned* initial_sp_out,
     unsigned* user_argv_out){
-  (void)image_size;
-
   if (argc < 0 || image == NULL || entry_out == NULL ||
       initial_sp_out == NULL || user_argv_out == NULL){
     free(image);
@@ -2551,45 +2332,18 @@ static int construct_user_program_from_image(void* image, unsigned image_size,
 // Used for initial /sbin/init entry where there is no prior user image to
 // restore: construction failure simply returns -1.
 int run_user_program(struct Node* prog_node, int argc, char** argv){
-  if (argc < 0){
-    node_free(prog_node);
+  unsigned size = 0;
+  void* snapshot = snapshot_elf_image(prog_node, &size);
+  if (argc < 0 || snapshot == NULL){
+    free(snapshot);
     free_exec_argv(argc, argv);
     return -1;
   }
-
-  unsigned size = node_size_in_bytes(prog_node);
-  if (size == 0){
-    node_free(prog_node);
-    free_exec_argv(argc, argv);
-    return -1;
-  }
-
-  unsigned* prog = mmap(size, prog_node, 0, MMAP_READ);
-  node_free(prog_node);
-  if (prog == NULL){
-    free_exec_argv(argc, argv);
-    return -1;
-  }
-
-  if (!elf_validate_image(prog, size)){
-    munmap(prog);
-    free_exec_argv(argc, argv);
-    return -1;
-  }
-
-  void* snapshot = malloc(size);
-  if (snapshot == NULL){
-    munmap(prog);
-    free_exec_argv(argc, argv);
-    return -1;
-  }
-  memcpy(snapshot, prog, size);
-  munmap(prog);
 
   unsigned entry = 0;
   unsigned initial_sp = 0;
   unsigned user_argv = 0;
-  if (construct_user_program_from_image(snapshot, size, argc, argv,
+  if (construct_user_program_from_image(snapshot, argc, argv,
       &entry, &initial_sp, &user_argv) != 0){
     return -1;
   }
@@ -2601,37 +2355,21 @@ int run_user_program(struct Node* prog_node, int argc, char** argv){
   return jump_to_user(entry, initial_sp, argc, user_argv);
 }
 
+// Allocate one open-file object of the given kind with refcount 1, offset 0,
+// and no backing Node/Pipe yet.
+static struct FileDescriptor* file_descriptor_create(enum FileDescriptorType type){
+  struct FileDescriptor* descriptor = malloc(sizeof(struct FileDescriptor));
+  descriptor->file = NULL;
+  descriptor->offset = 0;
+  blocking_lock_init(&descriptor->offset_lock);
+  descriptor->type = type;
+  descriptor->refcount = 1;
+  return descriptor;
+}
+
 // Initialize a TCB's descriptor tables, optionally installing stdio entries.
 void init_descriptors(struct TCB* tcb, bool init_stdio){
-  if (init_stdio){
-    // User-entering threads need the conventional stdio descriptors from boot.
-    tcb->file_descriptors[0] = malloc(sizeof(struct FileDescriptor));
-    tcb->file_descriptors[0]->refcount = 1;
-    tcb->file_descriptors[0]->offset = 0;
-    blocking_lock_init(&tcb->file_descriptors[0]->offset_lock);
-    tcb->file_descriptors[0]->type = FILE_DESCRIPTOR_STDIN;
-    tcb->file_descriptors[0]->file = NULL;
-    
-    tcb->file_descriptors[1] = malloc(sizeof(struct FileDescriptor));
-    tcb->file_descriptors[1]->refcount = 1;
-    tcb->file_descriptors[1]->offset = 0;
-    blocking_lock_init(&tcb->file_descriptors[1]->offset_lock);
-    tcb->file_descriptors[1]->type = FILE_DESCRIPTOR_STDOUT;
-    tcb->file_descriptors[1]->file = NULL;
-
-    tcb->file_descriptors[2] = malloc(sizeof(struct FileDescriptor));
-    tcb->file_descriptors[2]->refcount = 1;
-    tcb->file_descriptors[2]->offset = 0;
-    blocking_lock_init(&tcb->file_descriptors[2]->offset_lock);
-    tcb->file_descriptors[2]->type = FILE_DESCRIPTOR_STDERR;
-    tcb->file_descriptors[2]->file = NULL;
-  } else {
-    tcb->file_descriptors[0] = NULL;
-    tcb->file_descriptors[1] = NULL;
-    tcb->file_descriptors[2] = NULL;
-  }
-
-  for (int i = 3; i < MAX_FILE_DESCRIPTORS; i++){
+  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
     tcb->file_descriptors[i] = NULL;
   }
   for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
@@ -2639,6 +2377,13 @@ void init_descriptors(struct TCB* tcb, bool init_stdio){
   }
   for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
     tcb->child_descriptors[i] = NULL;
+  }
+
+  if (init_stdio){
+    // User-entering threads need the conventional stdio descriptors from boot.
+    tcb->file_descriptors[0] = file_descriptor_create(FILE_DESCRIPTOR_STDIN);
+    tcb->file_descriptors[1] = file_descriptor_create(FILE_DESCRIPTOR_STDOUT);
+    tcb->file_descriptors[2] = file_descriptor_create(FILE_DESCRIPTOR_STDERR);
   }
 }
 
@@ -2649,12 +2394,7 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
       for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
         if (tcb->file_descriptors[i] == NULL){
           if (fill){
-            tcb->file_descriptors[i] = malloc(sizeof(struct FileDescriptor));
-            tcb->file_descriptors[i]->refcount = 1;
-            tcb->file_descriptors[i]->offset = 0;
-            blocking_lock_init(&tcb->file_descriptors[i]->offset_lock);
-            tcb->file_descriptors[i]->type = FILE_DESCRIPTOR_NORMAL;
-            tcb->file_descriptors[i]->file = NULL;
+            tcb->file_descriptors[i] = file_descriptor_create(FILE_DESCRIPTOR_NORMAL);
           }
           return i;
         }
@@ -2678,13 +2418,14 @@ int allocate_descriptor(struct TCB* tcb, enum DescriptorType type, bool fill){
       for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
         if (tcb->child_descriptors[i] == NULL){
           if (fill){
-            tcb->child_descriptors[i] = malloc(sizeof(struct ChildDescriptor));
-            tcb->child_descriptors[i]->refcount = 1;
-            tcb->child_descriptors[i]->child_tcb = NULL;
-            tcb->child_descriptors[i]->child_promise = malloc(sizeof(struct Promise));
-            tcb->child_descriptors[i]->display_claimed = false;
-            clh_lock_init(&tcb->child_descriptors[i]->state_lock);
-            promise_init(tcb->child_descriptors[i]->child_promise);
+            struct ChildDescriptor* child = malloc(sizeof(struct ChildDescriptor));
+            child->refcount = 1;
+            child->child_tcb = NULL;
+            child->child_promise = malloc(sizeof(struct Promise));
+            child->display_claimed = false;
+            clh_lock_init(&child->state_lock);
+            promise_init(child->child_promise);
+            tcb->child_descriptors[i] = child;
           }
           return i;
         }
@@ -2847,6 +2588,25 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
 
       child_descriptor_release(descriptor);
       break;
+    }
+  }
+}
+
+// Release every descriptor-table entry the TCB still owns.
+void deallocate_all_descriptors(struct TCB* tcb){
+  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
+    if (tcb->file_descriptors[i] != NULL){
+      deallocate_descriptor(tcb, DESCRIPTOR_FILE, i);
+    }
+  }
+  for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
+    if (tcb->sem_descriptors[i] != NULL){
+      deallocate_descriptor(tcb, DESCRIPTOR_SEM, i);
+    }
+  }
+  for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
+    if (tcb->child_descriptors[i] != NULL){
+      deallocate_descriptor(tcb, DESCRIPTOR_CHILD, i);
     }
   }
 }

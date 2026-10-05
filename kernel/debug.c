@@ -19,21 +19,13 @@ void panic(char* msg) {
   }
 }
 
-// Report a failed condition and halt the kernel.
-void assert(bool condition, char* msg) {
-#ifdef OS_RELEASE
-  (void)condition;
-  (void)msg;
-#else
-  if (!condition) {
-    panic(msg);
-  }
-#endif
-}
-
-// Halt unconditionally with the supplied diagnostic message.
-void assert_always(bool condition, char* msg) {
-  if (!condition) {
-    panic(msg);
-  }
+// Print the failing assertion's location over raw UART, then panic. Raw UART
+// output bypasses console serialization in case this core owns the console.
+void assert_failed(char* file, int line, char* msg) {
+  puts_uart("| assertion failed at ");
+  puts_uart(file);
+  putchar_uart(':');
+  print_signed_uart(line);
+  putchar_uart('\n');
+  panic(msg);
 }

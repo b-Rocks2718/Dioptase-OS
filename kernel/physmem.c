@@ -199,13 +199,24 @@ void physmem_destroy_locks(void){
   }
 }
 
+// Acquire a physmem lock once physmem_sync_init() has run. Earlier boot code
+// is single-threaded on core 0, before the locks exist.
+static void physmem_lock_acquire(struct BlockingLock* lock){
+  if (physmem_sync_initialized) blocking_lock_acquire(lock);
+}
+
+// Release a lock taken by physmem_lock_acquire().
+static void physmem_lock_release(struct BlockingLock* lock){
+  if (physmem_sync_initialized) blocking_lock_release(lock);
+}
+
 // allocate a physical page of given order
 // Returns NULL if no free frames remain; callers at public boundaries must
 // translate that into a normal failure rather than treating it as corruption.
 void* physmem_alloc_order(int order){
   assert(order >= 0 && order <= PHYS_FRAME_MAX_ORDER, "physmem alloc: invalid order.\n");
 
-  if (physmem_sync_initialized) blocking_lock_acquire(&physmem_lock);
+  physmem_lock_acquire(&physmem_lock);
 
   __atomic_fetch_add(&order_allocs[order], 1);
 
@@ -213,7 +224,7 @@ void* physmem_alloc_order(int order){
   int current_order = order;
   while (free_page_list[current_order] == NULL) {
     if (current_order >= PHYS_FRAME_MAX_ORDER) {
-      if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
+      physmem_lock_release(&physmem_lock);
       int args[1] = {order};
       say("| physmem: alloc_order failed order=%d reason=out_of_physical_pages\n",
         args);
@@ -234,7 +245,7 @@ void* physmem_alloc_order(int order){
     free_list_push(buddy, current_order);
   }
 
-  if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
+  physmem_lock_release(&physmem_lock);
 
   assert_always(
     physmem_is_frame_address((unsigned)node),
@@ -266,7 +277,7 @@ void physmem_free_order(void* page, int order){
   assert((frame_index_from_address(phys_addr) & ((1u << order) - 1)) == 0, 
     "physmem free: page address is not aligned to its size.\n");
 
-  if (physmem_sync_initialized) blocking_lock_acquire(&physmem_lock);
+  physmem_lock_acquire(&physmem_lock);
 
   __atomic_fetch_add(&order_frees[order], 1);
 
@@ -304,7 +315,7 @@ void physmem_free_order(void* page, int order){
   unsigned block_addr = address_from_frame_index(block_index);
   free_list_push((struct FreePageNode*)block_addr, order);
 
-  if (physmem_sync_initialized) blocking_lock_release(&physmem_lock);
+  physmem_lock_release(&physmem_lock);
 }
 
 // allocate a physical page from core-local cache
@@ -313,7 +324,7 @@ void* physmem_alloc(void){
   struct PerCore* per_core = get_per_core();
 
   // protect against re-entrance, needed because physmem_alloc_order can block
-  if (physmem_sync_initialized) blocking_lock_acquire(&per_core->physmem_cache.lock);
+  physmem_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_alloced, 1);
 
@@ -332,7 +343,7 @@ void* physmem_alloc(void){
     }
     per_core->physmem_cache.count = (unsigned)filled;
     if (filled == 0){
-      if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+      physmem_lock_release(&per_core->physmem_cache.lock);
       core_unpin(prev);
       return NULL;
     }
@@ -342,7 +353,7 @@ void* physmem_alloc(void){
   per_core->physmem_cache.count--;
   void* page = per_core->physmem_cache.pages[per_core->physmem_cache.count];
 
-  if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+  physmem_lock_release(&per_core->physmem_cache.lock);
 
   core_unpin(prev);
 
@@ -371,7 +382,7 @@ void physmem_free(void* page){
   struct PerCore* per_core = get_per_core();
 
   // protect against re-entrance
-  if (physmem_sync_initialized) blocking_lock_acquire(&per_core->physmem_cache.lock);
+  physmem_lock_acquire(&per_core->physmem_cache.lock);
 
   __atomic_fetch_add(&frames_freed, 1);
 
@@ -386,7 +397,7 @@ void physmem_free(void* page){
   per_core->physmem_cache.pages[per_core->physmem_cache.count] = page;
   per_core->physmem_cache.count++;
 
-  if (physmem_sync_initialized) blocking_lock_release(&per_core->physmem_cache.lock);
+  physmem_lock_release(&per_core->physmem_cache.lock);
   core_unpin(prev);
 }
 

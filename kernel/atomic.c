@@ -21,9 +21,7 @@ void spin_lock_init(struct SpinLock* lock){
 // when it returns, interrupts are disabled
 void spin_lock_acquire(struct SpinLock* lock){
   assert(lock != NULL, "spin_lock_acquire: lock is NULL.\n");
-  int was = interrupts_disable();
   struct TCB* me = get_current_tcb();
-  interrupts_restore(was);
   
   assert_always(!me->my_node->locked,
     "spin_lock_acquire: thread attempted to acquire a spinlock while already holding one.\n");
@@ -229,9 +227,7 @@ void clh_lock_free(struct CLHLock* lock){
 // threads spin until all threads have reached the barrier
 void spin_barrier_sync(int* barrier){
   // ensure we are not holding a spinlock
-  int was = interrupts_disable();
   struct TCB* me = get_current_tcb();
-  interrupts_restore(was);
   assert(!me->my_node->locked,
     "spin_barrier_sync: thread attempted to synchronize while holding a spinlock.\n");
 

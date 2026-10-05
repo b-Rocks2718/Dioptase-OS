@@ -15,7 +15,6 @@ extern struct SpinQueue reaper_queue;
 // Ordinary live-thread count. Other cores update it through the atomic helpers,
 // and stop() also reads it directly, so the object is volatile.
 extern volatile int n_active;
-extern int n_active_others; // number of running threads not counted in n_active
 
 extern unsigned DEFAULT_INTERRUPT_MASK;
 
@@ -41,6 +40,21 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
 // Assumes callback doesn't modify the 'next' TCB 
 extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, 
   struct TCB** cur_thread, int was, bool run_with_interrupts);
+
+// Claim a resource guarded by `lock`, blocking FIFO on `waiters` until granted.
+//
+// try_acquire(obj) runs with `lock` held and must claim the resource and
+// return true if it is available. It is tried once immediately, and once more
+// from the block() continuation after this TCB is fully switched out, so a
+// release that raced with the first attempt cannot be missed.
+//
+// Hand-off contract: a releaser that finds `waiters` nonempty must, under
+// `lock`, remove a waiter, claim the resource on its behalf, and then wake it.
+// The woken thread returns without retrying.
+//
+// Preconditions: kernel mode, non-idle TCB, no spinlock held.
+void acquire_or_block(struct CLHLock* lock, struct Queue* waiters,
+  bool (*try_acquire)(void*), void* obj);
 
 // called when a new thread first runs
 // calls the thread's main function and calls stop() when it returns

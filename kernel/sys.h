@@ -216,6 +216,9 @@ void copy_descriptors(struct TCB* src, struct TCB* dst,
 // deallocate descriptor and free its resources
 void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index);
 
+// Release every descriptor the TCB still owns (thread teardown and failed fork).
+void deallocate_all_descriptors(struct TCB* tcb);
+
 extern void trap_handler_(void);
 
 // copy n bytes from either user -> kernel or kernel -> user

@@ -41,8 +41,9 @@ extern struct PerCore per_core_data[MAX_CORES];
 // Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
 struct PerCore* get_per_core(void);
 
-// return a pointer to the TCB for the currently running thread on this core
-// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
-struct TCB* get_current_tcb();
+// Return the TCB currently running on this core. Callable from any kernel
+// context: it masks interrupts internally so the result cannot belong to a
+// different core after a migration between the core-ID read and the load.
+struct TCB* get_current_tcb(void);
 
 #endif // PER_CORE_H

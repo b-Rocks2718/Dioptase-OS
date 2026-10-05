@@ -18,6 +18,7 @@
 #include "audio.h"
 #include "physmem.h"
 #include "sd_driver.h"
+#include "string.h"
 
 // jump_to_user executes one rfe, so this is the only PSR depth from which a
 // final kernel-return path can enter a user signal handler in user mode.
@@ -36,11 +37,10 @@ struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
 volatile int n_active = 0;
-int n_active_others = 0; // number of running threads not counted in n_active
 /*
- * Work accepted by a normal TCB but completed by a persistent daemon. Unlike
- * n_active_others, this counts finite resource-owning operations rather than
- * the boot-lifetime daemon TCBs themselves.
+ * Work accepted by a normal TCB but completed by a persistent daemon. This
+ * counts finite resource-owning operations, not the boot-lifetime daemon TCBs
+ * themselves (which are never counted in n_active).
  */
 static int kernel_async_work_count = 0;
 bool bootstrapping = true;
@@ -163,21 +163,7 @@ static void free_tcb(struct TCB* tcb) {
   vmem_destroy_address_space(tcb);
   free_vme_list(tcb->vme_list);
 
-  for (int i = 0; i < MAX_FILE_DESCRIPTORS; i++){
-    if (tcb->file_descriptors[i]){
-      deallocate_descriptor(tcb, DESCRIPTOR_FILE, i);
-    }
-  }
-  for (int i = 0; i < MAX_SEM_DESCRIPTORS; i++){
-    if (tcb->sem_descriptors[i]){
-      deallocate_descriptor(tcb, DESCRIPTOR_SEM, i);
-    }
-  }
-  for (int i = 0; i < MAX_CHILD_DESCRIPTORS; i++){
-    if (tcb->child_descriptors[i]){
-      deallocate_descriptor(tcb, DESCRIPTOR_CHILD, i);
-    }
-  }
+  deallocate_all_descriptors(tcb);
 
   node_free(tcb->cwd);
   free(tcb->cwd_path);
@@ -203,66 +189,48 @@ static void reaper(void){
   panic("reaper thread tried to exit\n");
 }
 
-// return a TCB struct
-// defaults to: preemption enabled, not pinned, normal priority
-// If init_stdio is false, leave the descriptor tables empty so kernel-only
-// daemon threads do not allocate stdio descriptors they can never consume.
-static struct TCB* make_tcb(bool is_daemon){
-  struct TCB* tcb = is_daemon ? leak(sizeof(struct TCB)) : malloc(sizeof(struct TCB));
+// Allocate a kernel-mode TCB whose first context switch enters thread_entry()
+// on a fresh stack and runs thread_fun. Every field not set here is zero.
+//
+// Daemon TCBs (setup_thread) live until shutdown and never enter user mode, so
+// their storage comes from leak() and they get no stdio descriptors. Ordinary
+// TCBs use reclaimable malloc() storage that free_tcb() later releases.
+static struct TCB* make_tcb(struct Fun* thread_fun, enum ThreadPriority priority,
+    enum CoreAffinity core_affinity, bool is_daemon){
+  void* (*alloc)(unsigned) = is_daemon ? leak : malloc;
 
-  tcb->flags = 0;
+  struct TCB* tcb = alloc(sizeof(struct TCB));
+  memset(tcb, 0, sizeof(struct TCB));
 
-  tcb->r20 = 0;
-  tcb->r21 = 0;
-  tcb->r22 = 0;
-  tcb->r23 = 0;
-  tcb->r24 = 0;
-  tcb->r25 = 0;
-  tcb->r26 = 0;
-  tcb->r27 = 0;
-  tcb->r28 = 0;
-
+  unsigned* stack = alloc(TCB_STACK_SIZE);
+  assert(((unsigned)stack & 3) == 0, "make_tcb: kernel stack is not 4-byte aligned.\n");
+  unsigned stack_top = (unsigned)&stack[TCB_STACK_SIZE / sizeof(unsigned) - 1];
+  tcb->stack = stack;
+  tcb->ksp = stack_top;
+  tcb->bp = stack_top;
+  tcb->ra = (unsigned)thread_entry;
+  tcb->thread_fun = thread_fun;
+  tcb->psr = 1; // kernel mode
   tcb->imr = DEFAULT_INTERRUPT_MASK;
-  tcb->pid = 0;
-  tcb->fault_addr = 0;
-  tcb->fault_flags = 0;
-  tcb->uaccess_active = 0;
-  tcb->uaccess_err_addr = 0;
 
   tcb->can_preempt = true;
-  tcb->core_affinity = ANY_CORE;
-  tcb->priority = NORMAL_PRIORITY;
-  tcb->vme_list = NULL;
+  tcb->core_affinity = core_affinity;
+  tcb->priority = priority;
+  tcb->mlfq_level = LEVEL_ZERO;
+  tcb->remaining_quantum = TIME_QUANTUM[LEVEL_ZERO];
 
   tcb->cwd = &fs.root;
-  tcb->cwd_path = is_daemon ? leak(2) : malloc(2);
+  tcb->cwd_path = alloc(2);
   tcb->cwd_path[0] = '/';
   tcb->cwd_path[1] = 0;
 
   init_descriptors(tcb, !is_daemon);
 
-  tcb->parent_promise = NULL;
-
-  // Daemon threads never enter user mode.  ChildDescriptor.state_lock, rather
-  // than a TCB-local lock, protects the signal state of user threads.
-  if (!is_daemon) {
-    tcb->pending_signals = 0;
-    tcb->signal_mask = 0;
-    for (int i = 0; i < MAX_SIGNALS; i++){
-      tcb->signal_handlers[i] = NULL;
-    }
-    tcb->in_signal_handler = false;
-  }
-  tcb->signal_stack_top = 0;
-
-  tcb->my_node = is_daemon ? leak(sizeof(struct CLHNode)) : malloc(sizeof(struct CLHNode));
+  tcb->my_node = alloc(sizeof(struct CLHNode));
   tcb->my_node->locked = false;
   tcb->my_node->interrupt_state = 0;
-  tcb->my_pred = NULL;
 
   tcb->is_daemon = is_daemon;
-  tcb->next = NULL;
-
   return tcb;
 }
 
@@ -271,32 +239,16 @@ void thread(struct Fun* thread_fun){
   thread_(thread_fun, NORMAL_PRIORITY, ANY_CORE);
 }
 
-
 // create a thread to run the given function, and add it to the global ready queue
 // allows specifying the thread's priority and the core affinity
 void thread_(struct Fun* thread_fun, 
     enum ThreadPriority priority, enum CoreAffinity core_affinity){
-  struct TCB* tcb = make_tcb(false);
+  struct TCB* tcb = make_tcb(thread_fun, priority, core_affinity, false);
   __atomic_fetch_add((int*)&n_active, 1);
   __atomic_store_n(&bootstrapping, false);
 
-  unsigned* the_stack = malloc(TCB_STACK_SIZE);
-  assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
-  assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ra = (unsigned)thread_entry;
-  tcb->thread_fun = thread_fun;
-  tcb->stack = the_stack;
-  tcb->psr = 1; // kernel mode
-
-  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  
-  tcb->priority = priority;
-  tcb->core_affinity = core_affinity;
-  tcb->mlfq_level = LEVEL_ZERO;
-  tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
   tcb->pid = create_page_directory();
-  assert(tcb->pid != 0,
+  assert_always(tcb->pid != 0,
     "thread: failed to allocate a page directory for a new kernel thread.\n");
 
   scheduler_wake_thread(tcb);
@@ -307,26 +259,7 @@ void thread_(struct Fun* thread_fun,
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
 void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity){
-  struct TCB* tcb = make_tcb(true);
-
-  __atomic_fetch_add(&n_active_others, 1);
-
-  unsigned* the_stack = leak(TCB_STACK_SIZE);
-  assert(((unsigned)the_stack & 3) == 0, "stack not 4 byte aligned");
-  assert(((unsigned)(&the_stack[1023]) & 3) == 0, "stack top not 4 byte aligned");
-  tcb->ra = (unsigned)thread_entry;
-  tcb->thread_fun = thread_fun;
-  tcb->stack = the_stack;
-  tcb->psr = 1; // kernel mode
-
-  tcb->ksp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->bp = (unsigned)(&the_stack[TCB_STACK_SIZE / sizeof (unsigned) - 1]);
-  tcb->priority = priority;
-  tcb->core_affinity = core_affinity;
-  tcb->mlfq_level = LEVEL_ZERO;
-  tcb->remaining_quantum = TIME_QUANTUM[tcb->mlfq_level];
-
-  scheduler_wake_thread(tcb);
+  scheduler_wake_thread(make_tcb(thread_fun, priority, core_affinity, true));
 }
 
 // Hold the shutdown barrier while a TCB-owned async operation runs elsewhere.
@@ -400,12 +333,54 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
   context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
 }
 
+// Arguments carried from acquire_or_block() into its block() continuation.
+struct AcquireOrBlock {
+  struct CLHLock* lock;
+  struct Queue* waiters;
+  bool (*try_acquire)(void*);
+  void* obj;
+  struct TCB* tcb;
+};
+
+// block() continuation: runs on the idle thread after the waiter is saved.
+// Either the resource became available (wake the waiter immediately) or the
+// waiter is published on the queue for a later hand-off.
+static void acquire_or_block_enqueue(void* arg){
+  struct AcquireOrBlock* args = (struct AcquireOrBlock*)arg;
+
+  clh_lock_acquire(args->lock);
+  if (args->try_acquire(args->obj)){
+    clh_lock_release(args->lock);
+    scheduler_wake_thread(args->tcb);
+  } else {
+    queue_add(args->waiters, args->tcb);
+    clh_lock_release(args->lock);
+  }
+}
+
+void acquire_or_block(struct CLHLock* lock, struct Queue* waiters,
+    bool (*try_acquire)(void*), void* obj){
+  clh_lock_acquire(lock);
+  bool acquired = try_acquire(obj);
+  clh_lock_release(lock);
+  if (acquired){
+    return;
+  }
+
+  unsigned was = interrupts_disable();
+  struct AcquireOrBlock args;
+  args.lock = lock;
+  args.waiters = waiters;
+  args.try_acquire = try_acquire;
+  args.obj = obj;
+  args.tcb = get_current_tcb();
+  block(was, acquire_or_block_enqueue, &args, true);
+}
+
 // called when a new thread first runs
 // calls the thread's main function and calls stop() when it returns
 void thread_entry(void) {
-  int was = interrupts_disable();
   struct TCB* current_tcb = get_current_tcb();
-  interrupts_restore(was);
   struct Fun* thread_fun = current_tcb->thread_fun;
   unsigned rc = 0;
   if (thread_fun != NULL) {
@@ -733,49 +708,23 @@ void bootstrap(void){
     "interrupts should be disabled when bootstrapping thread context.\n");
 
   int me = get_core_id();
+  assert_always(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
   struct PerCore* core = get_per_core();
   struct TCB* tcb = &core->idle_thread;
 
-  tcb->flags = 0;
-
-  tcb->r20 = 0;
-  tcb->r21 = 0;
-  tcb->r22 = 0;
-  tcb->r23 = 0;
-  tcb->r24 = 0;
-  tcb->r25 = 0;
-  tcb->r26 = 0;
-  tcb->r27 = 0;
-  tcb->r28 = 0;
-  
-  tcb->next = NULL;
+  // Every field not set below is zero. The idle thread never enters user mode,
+  // never runs thread_entry(), and is never reaped, so it needs no thread_fun,
+  // descriptors, address space, or signal state.
+  memset(tcb, 0, sizeof(struct TCB));
   tcb->is_daemon = true;
   tcb->can_preempt = false;
   tcb->core_affinity = me;
   tcb->priority = NORMAL_PRIORITY;
-  // these values should never be used
-  tcb->thread_fun = NULL;
-  tcb->bp = 0;
-  tcb->sp = 0;
-  tcb->ra = 0;
   tcb->psr = 1;
-  tcb->imr = 0;
-  tcb->fault_addr = 0;
-  tcb->fault_flags = 0;
-  tcb->uaccess_active = 0;
-  tcb->uaccess_err_addr = 0;
-
   tcb->stack = (unsigned*)(IDLE_STACKS_TOP - (me * IDLE_STACK_SIZE));
 
-  assert_always(me >= 0 && me < MAX_CORES, "bootstrap: core id is outside idle CLH node table.\n");
   assert_always(per_core_data[me].idle_clh_node != NULL, "bootstrap: idle CLH node table was not initialized.\n");
   tcb->my_node = per_core_data[me].idle_clh_node;
-  tcb->my_pred = NULL;
-
-  // idle threads should never enter user mode
-  // so skip setting up signal handling 
-  // (avoids a call to malloc() to create the CLH lock)
-  tcb->signal_stack_top = 0;
 
   core->current_thread = tcb;
 }
@@ -846,23 +795,15 @@ void stop(unsigned rc) {
   // state becomes externally visible, this TCB may never be scheduled again.
   preemption_disable();
 
-  unsigned was = interrupts_disable();
-  struct PerCore* core = get_per_core();
-  struct TCB* current = core->current_thread;
-  interrupts_restore(was);
-  bool is_idle = (current == &core->idle_thread);
+  struct TCB* current = get_current_tcb();
+  assert_always(current != &get_per_core()->idle_thread,
+    "idle thread cannot call stop().\n");
+  assert(n_active > 0, "no active threads to stop.\n");
 
   publish_exit(current, rc);
 
-  was = interrupts_disable();
-
-  if (is_idle) {
-    panic("idle thread cannot call stop().\n");
-  } else {
-    // free current thread resources and block forever
-    assert(n_active > 0, "no active threads to stop.\n");
-    block(was, reap_tcb, (struct TCB*)current, true);
-  }
+  unsigned was = interrupts_disable();
+  block(was, reap_tcb, current, true);
 
   panic("unreachable code reached in stop().\n");
 }
@@ -919,7 +860,6 @@ enum CoreAffinity core_pin(void){
 // allow a thread to be scheduled on any core
 void core_unpin(enum CoreAffinity prev){
   int was = interrupts_disable();
-  unsigned me = get_core_id();
   struct TCB* tcb = get_current_tcb();
 
   // no-op if threading not initialized yet
