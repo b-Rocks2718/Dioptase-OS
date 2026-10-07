@@ -108,14 +108,16 @@ return_to_kernel:
 
   ret
 
-  # for now, always ipi all cores
+  # Send an IPI to every core, including the caller. IPIs carry no payload;
+  # callers publish any request data in shared memory before calling this.
+  # An IPI to a core that already has one pending merges into it, so the
+  # receiving handler must eoi before reading the request (docs/ISA.md).
+  # Inputs: none
+  # Outputs: none
+  # Kernel mode only (ipi is privileged).
   .global send_ipi
 send_ipi:
-  # r1 = data
-  mov mbo, r1
-
-  # return success code
-  ipi r1, all
+  ipi all
   ret
 
   .global ipi_handler_
@@ -151,7 +153,6 @@ ipi_handler_:
   push bp
   push ra
 
-  mov r1, mbi
   call ipi_handler
 
   pop  ra

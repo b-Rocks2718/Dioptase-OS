@@ -101,16 +101,23 @@ EMULATOR := ../Dioptase-Emulators/Dioptase-Emulator-Full/target/$(VERSION)/Diopt
 EMULATOR_DIR := ../Dioptase-Emulators/Dioptase-Emulator-Full
 EMULATOR_SRCS := $(shell find "$(EMULATOR_DIR)/src" -type f -name '*.rs' 2>/dev/null)
 EXT2_DIR_EXTRACTOR := ./scripts/extract_ext2_dir.py
+# Runs a test image TEST_RUNS times and classifies each run against its
+# tests/<name>.ok or .panic baseline (see the script header for the rules).
+TEST_RUNNER := ./scripts/run_test.sh
 
 # Build output locations.
 BUILD_DIR := build
 BIOS_ASM_DIR := $(BUILD_DIR)/bios
 KERNEL_ASM_DIR := $(BUILD_DIR)/kernel
 
+# Assembly routines linked into both the BIOS and the kernel image (software
+# arithmetic helpers and the text-mode tile set).
+COMMON_ASM_SRCS := $(wildcard common/*.s)
+
 # BIOS sources to link into the BIOS image.
 BIOS_C_SRCS := $(wildcard bios/*.c)
 BIOS_C_ASMS := $(patsubst bios/%.c,$(BIOS_ASM_DIR)/%.s,$(BIOS_C_SRCS))
-BIOS_ASM_SRCS := $(wildcard bios/*.s)
+BIOS_ASM_SRCS := $(wildcard bios/*.s) $(COMMON_ASM_SRCS)
 BIOS_ASM_INIT := $(wildcard bios/init.s)
 BIOS_ASM_SRCS_ORDERED := $(BIOS_ASM_INIT) $(filter-out $(BIOS_ASM_INIT),$(BIOS_ASM_SRCS))
 
@@ -120,7 +127,7 @@ KERNEL_C_ASMS := $(patsubst kernel/%.c,$(KERNEL_ASM_DIR)/%.s,$(KERNEL_C_SRCS))
 KERNEL_MAIN_C := kernel/kernel_main.c
 KERNEL_MAIN_ASM := $(KERNEL_ASM_DIR)/kernel_main.s
 KERNEL_C_ASMS_NO_MAIN := $(filter-out $(KERNEL_MAIN_ASM),$(KERNEL_C_ASMS))
-KERNEL_ASM_SRCS := $(wildcard kernel/*.s)
+KERNEL_ASM_SRCS := $(wildcard kernel/*.s) $(COMMON_ASM_SRCS)
 KERNEL_ASM_MBR := $(wildcard kernel/mbr.s)
 KERNEL_ASM_INIT := $(wildcard kernel/init.s)
 KERNEL_ASM_SRCS_ORDERED := $(KERNEL_ASM_MBR) $(KERNEL_ASM_INIT) \
@@ -148,25 +155,17 @@ TEST_OK_FILES := $(wildcard tests/*.ok)
 TEST_OK_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_OK_FILES))))
 TEST_PANIC_FILES := $(wildcard tests/*.panic)
 TEST_PANIC_NAMES := $(filter $(TEST_NAMES),$(basename $(notdir $(TEST_PANIC_FILES))))
-HEAP_PANIC_NAMES := $(filter heap_%,$(TEST_PANIC_NAMES))
 ALL_TEST_CHECK_NAMES := $(sort $(TEST_OK_NAMES) $(TEST_PANIC_NAMES))
-FOUR_CORE_ONLY_TEST_NAMES := semaphore_destroy_pre_enqueue
-MULTICORE_ONLY_TEST_NAMES := blocking_lock_release_nonowner
-ifeq ($(HEAP_DEBUG_STRIPPED),yes)
-TEST_CHECK_NAMES := $(ALL_TEST_CHECK_NAMES)
-else
-TEST_CHECK_NAMES := $(filter-out $(HEAP_PANIC_NAMES),$(ALL_TEST_CHECK_NAMES))
-endif
-# The pre-enqueue race keeps a controller plus three IRQ-disabled CLH
-# participants simultaneously runnable on distinct cores. Preserve it as an
-# explicit target for any configuration, but do not make aggregate suites with
-# fewer than four cores fail its setup assertion instead of testing the kernel.
-ifneq ($(strip $(NUM_CORES)),4)
-TEST_CHECK_NAMES := $(filter-out $(FOUR_CORE_ONLY_TEST_NAMES),$(TEST_CHECK_NAMES))
-endif
-ifeq ($(strip $(NUM_CORES)),1)
-TEST_CHECK_NAMES := $(filter-out $(MULTICORE_ONLY_TEST_NAMES),$(TEST_CHECK_NAMES))
-endif
+# Every test must reach the same verdict in every configuration unless
+# tests/<name>.requires declares the configuration it needs (see
+# scripts/test_requirements.sh). Aggregate targets leave out tests whose
+# requirements the current configuration does not meet; running one explicitly
+# reports it as skipped.
+TEST_REQUIREMENTS := ./scripts/test_requirements.sh
+TEST_CONFIG_ENV := OS_RELEASE=$(OS_RELEASE_STRIPPED) HEAP_DEBUG=$(HEAP_DEBUG_STRIPPED) \
+  OPT=$(if $(strip $(BCC_OPT)),yes,no) NUM_CORES=$(strip $(NUM_CORES))
+UNSUPPORTED_TEST_NAMES := $(shell $(TEST_CONFIG_ENV) $(SHELL) $(TEST_REQUIREMENTS) unsupported)
+TEST_CHECK_NAMES := $(filter-out $(UNSUPPORTED_TEST_NAMES),$(ALL_TEST_CHECK_NAMES))
 # Long-running workloads kept for profiling (emulator --profile). They keep .ok
 # baselines so `make <name>.summary-test` still checks them, but they are too
 # slow for the aggregate suite (user_mandelbrot takes ~10 minutes).
@@ -179,11 +178,13 @@ ROOTFS_DIR := root
 ROOT_PROGRAM_MAKEFILES := $(sort $(wildcard $(ROOTFS_DIR)/*/Makefile))
 ROOT_PROGRAM_DIRS := $(patsubst %/Makefile,%,$(ROOT_PROGRAM_MAKEFILES))
 
-EXT_TEST_NAMES := $(filter ext_%,$(TEST_OK_NAMES))
+# Category aggregates draw from the configuration-supported baseline tests.
+SUPPORTED_TEST_OK_NAMES := $(filter-out $(UNSUPPORTED_TEST_NAMES),$(TEST_OK_NAMES))
+EXT_TEST_NAMES := $(filter ext_%,$(SUPPORTED_TEST_OK_NAMES))
 EXT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(EXT_TEST_NAMES))
-THREAD_TEST_NAMES := $(filter threads_%,$(TEST_OK_NAMES))
+THREAD_TEST_NAMES := $(filter threads_%,$(SUPPORTED_TEST_OK_NAMES))
 THREAD_SUMMARY_TARGETS := $(addsuffix .summary-test,$(THREAD_TEST_NAMES))
-DATASTRUCT_TEST_NAMES := $(filter hashmap_test queue_test string,$(TEST_OK_NAMES))
+DATASTRUCT_TEST_NAMES := $(filter hashmap_test queue_test string,$(SUPPORTED_TEST_OK_NAMES))
 DATASTRUCT_SUMMARY_TARGETS := $(addsuffix .summary-test,$(DATASTRUCT_TEST_NAMES))
 HEAP_TEST_NAMES := $(filter heap_%,$(TEST_CHECK_NAMES))
 HEAP_SUMMARY_TARGETS := $(addsuffix .summary-test,$(HEAP_TEST_NAMES))
@@ -316,7 +317,8 @@ datastructs: $(if $(DATASTRUCT_SUMMARY_TARGETS),$(DATASTRUCT_SUMMARY_TARGETS),da
 datastructs-no-ok:
 	@echo "No data-structure tests with .ok baselines were found under tests/."
 
-# Aggregate heap allocator tests. Heap panic-mode checks require HEAP_DEBUG=yes.
+# Aggregate heap allocator tests. Panic tests for HEAP_DEBUG-only checks declare
+# HEAP_DEBUG=yes in their .requires files and are left out otherwise.
 heap: $(if $(HEAP_SUMMARY_TARGETS),$(HEAP_SUMMARY_TARGETS),heap-no-ok)
 
 heap-no-ok:
@@ -409,55 +411,8 @@ $(TEST_NAMES): %: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 # Keep per-run logging here for interactive debugging of a single test.
 %.test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_test_emulator_cmd) \
-	runs=$(TEST_RUNS); \
-	success=0; \
-	test_name="$*"; \
-	i=1; \
-	while [ $$i -le $$runs ]; do \
-	  raw="tests/$*.raw"; \
-	  out="tests/$*.out"; \
-	  ok="tests/$*.ok"; \
-	  panic_ok="tests/$*.panic"; \
-	  rm -f "$$raw" "$$out"; \
-	  status=0; \
-	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
-	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
-	  if [ $$status -eq 124 ]; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
-	  elif [ -f "$$panic_ok" ]; then \
-	    grep 'PANIC' "$$raw" > "$$out" || true; \
-	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
-	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-	    elif ! grep -q "PANIC" "$$raw"; then \
-	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
-	    else \
-	      missing=0; \
-	      while IFS= read -r expected || [ -n "$$expected" ]; do \
-	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
-	          missing=1; \
-	        fi; \
-	      done < "$$panic_ok"; \
-	      if [ $$missing -eq 0 ]; then \
-	        success=$$((success + 1)); \
-	        echo "[$$test_name] run $$i/$$runs: pass"; \
-	      else \
-	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
-	      fi; \
-	    fi; \
-	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-	  elif [ $$status -ne 0 ]; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (exit $$status)"; \
-	  elif [ -f "$$ok" ] && cmp -s "$$out" "$$ok"; then \
-	    success=$$((success + 1)); \
-	    echo "[$$test_name] run $$i/$$runs: pass"; \
-	  else \
-	    echo "[$$test_name] run $$i/$$runs: fail"; \
-	  fi; \
-	  i=$$((i + 1)); \
-	done; \
-	$(extract_sd1_output_dir) \
-	echo "[$$test_name] summary: $$success/$$runs"
+	$(TEST_CONFIG_ENV) $(SHELL) "$(TEST_RUNNER)" verbose "$*" $(TEST_RUNS) $(TIMEOUT_SECONDS) -- "$$@"; \
+	$(extract_sd1_output_dir)
 
 # Quiet aggregate target used by `make test`; prints once after all runs complete.
 # physmem_test still does threaded churn, higher-order validation, and a large
@@ -476,127 +431,14 @@ signal_return_safety.test signal_return_safety.fail signal_return_safety.summary
 
 %.summary-test: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_test_emulator_cmd) \
-	runs=$(TEST_RUNS); \
-	success=0; \
-	timeout_failures=0; \
-	warning_failures=0; \
-	exit_failures=0; \
-	mismatch_failures=0; \
-	test_name="$*"; \
-	i=1; \
-	while [ $$i -le $$runs ]; do \
-	  raw="tests/$*.raw"; \
-	  out="tests/$*.out"; \
-	  ok="tests/$*.ok"; \
-	  panic_ok="tests/$*.panic"; \
-	  rm -f "$$raw" "$$out"; \
-	  status=0; \
-	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
-	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
-	  if [ $$status -eq 124 ]; then \
-	    timeout_failures=$$((timeout_failures + 1)); \
-	  elif [ -f "$$panic_ok" ]; then \
-	    grep 'PANIC' "$$raw" > "$$out" || true; \
-	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
-	      warning_failures=$$((warning_failures + 1)); \
-	    elif ! grep -q "PANIC" "$$raw"; then \
-	      mismatch_failures=$$((mismatch_failures + 1)); \
-	    else \
-	      missing=0; \
-	      while IFS= read -r expected || [ -n "$$expected" ]; do \
-	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
-	          missing=1; \
-	        fi; \
-	      done < "$$panic_ok"; \
-	      if [ $$missing -eq 0 ]; then \
-	        success=$$((success + 1)); \
-	      else \
-	        mismatch_failures=$$((mismatch_failures + 1)); \
-	      fi; \
-	    fi; \
-	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
-	    warning_failures=$$((warning_failures + 1)); \
-	  elif [ $$status -ne 0 ]; then \
-	    exit_failures=$$((exit_failures + 1)); \
-	  elif [ -f "$$ok" ] && cmp -s "$$out" "$$ok"; then \
-	    success=$$((success + 1)); \
-	  else \
-	    mismatch_failures=$$((mismatch_failures + 1)); \
-	  fi; \
-	  i=$$((i + 1)); \
-	done; \
-	if [ $$success -eq $$runs ]; then \
-	  echo "[$$test_name] pass: $$success/$$runs"; \
-	else \
-	  reason_summary=""; \
-	  if [ $$timeout_failures -gt 0 ]; then reason_summary="$$reason_summary $$timeout_failures timeout"; fi; \
-	  if [ $$warning_failures -gt 0 ]; then reason_summary="$$reason_summary $$warning_failures warning"; fi; \
-	  if [ $$exit_failures -gt 0 ]; then reason_summary="$$reason_summary $$exit_failures exit"; fi; \
-	  if [ $$mismatch_failures -gt 0 ]; then reason_summary="$$reason_summary $$mismatch_failures mismatch"; fi; \
-	  reason_summary=$${reason_summary# }; \
-	  echo "[$$test_name] fail: $$success/$$runs ($$reason_summary)"; \
-	fi; \
+	$(TEST_CONFIG_ENV) $(SHELL) "$(TEST_RUNNER)" summary "$*" $(TEST_RUNS) $(TIMEOUT_SECONDS) -- "$$@"; \
 	$(extract_sd1_output_dir)
 
 # Test alias so `make testname.fail` stops on the first failure.
 %.fail: test-sbin-% $(BIOS_HEX) $(BUILD_DIR)/%.bin $(EMULATOR)
 	@$(prepare_test_emulator_cmd) \
-	runs=$(TEST_RUNS); \
-	success=0; \
-	test_name="$*"; \
-	i=1; \
-	while [ $$i -le $$runs ]; do \
-	  raw="tests/$*.raw"; \
-	  out="tests/$*.out"; \
-	  ok="tests/$*.ok"; \
-	  panic_ok="tests/$*.panic"; \
-	  rm -f "$$raw" "$$out"; \
-	  status=0; \
-	  timeout "$(TIMEOUT_SECONDS)" "$$@" > "$$raw" || status=$$?; \
-	  grep '^\*\*\*' "$$raw" > "$$out" || true; \
-	  if [ $$status -eq 124 ]; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (timeout)"; \
-				break; \
-	  elif [ -f "$$panic_ok" ]; then \
-	    grep 'PANIC' "$$raw" > "$$out" || true; \
-	    if grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw"; then \
-	      echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-				break; \
-	    elif ! grep -q "PANIC" "$$raw"; then \
-	      echo "[$$test_name] run $$i/$$runs: fail (missing panic)"; \
-				break; \
-	    else \
-	      missing=0; \
-	      while IFS= read -r expected || [ -n "$$expected" ]; do \
-	        if [ -n "$$expected" ] && ! grep -F -- "$$expected" "$$raw" > /dev/null; then \
-	          missing=1; \
-	        fi; \
-	      done < "$$panic_ok"; \
-	      if [ $$missing -eq 0 ]; then \
-	        success=$$((success + 1)); \
-	        echo "[$$test_name] run $$i/$$runs: pass"; \
-	      else \
-	        echo "[$$test_name] run $$i/$$runs: fail (panic mismatch)"; \
-				break; \
-	      fi; \
-	    fi; \
-	  elif grep -q "Warning" "$$raw" || grep -q "Spurious" "$$raw" || grep -q "PANIC" "$$raw"; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (warning)"; \
-				break; \
-	  elif [ $$status -ne 0 ]; then \
-	    echo "[$$test_name] run $$i/$$runs: fail (exit $$status)"; \
-			break; \
-	  elif [ -f "$$ok" ] && cmp -s "$$out" "$$ok"; then \
-	    success=$$((success + 1)); \
-	    echo "[$$test_name] run $$i/$$runs: pass"; \
-	  else \
-	    echo "[$$test_name] run $$i/$$runs: fail"; \
-			break; \
-	  fi; \
-	  i=$$((i + 1)); \
-	done; \
-	$(extract_sd1_output_dir) \
-	echo "[$$test_name] summary: $$success/$$runs"
+	$(TEST_CONFIG_ENV) $(SHELL) "$(TEST_RUNNER)" failfast "$*" $(TEST_RUNS) $(TIMEOUT_SECONDS) -- "$$@"; \
+	$(extract_sd1_output_dir)
 
 # Assemble a BIOS image from BIOS C asm and BIOS asm.
 # init.s must be first so its .origin establishes the bios entry point.
@@ -723,9 +565,10 @@ $(KERNEL_BIN): $(KERNEL_MAIN_ASM) $(KERNEL_C_ASMS_NO_MAIN) $(KERNEL_ASM_SRCS_ORD
 	$(call assemble_kernel_image,$(KERNEL_MAIN_ASM))
 
 # Compile the root test C file to assembly.
+# OS_TEST keeps soft asserts in test code active regardless of OS_RELEASE.
 $(BUILD_DIR)/%.s: tests/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BUILD_DIR)
-	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -MM -MP -MT "$@" -MF "$@.d" "$<"
-	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) $(BCC_OPT) -s -kernel -o "$@" "$<" -g
+	"$(DEPGEN)" $(KERNEL_TEST_BCC_DEFINES) -DOS_TEST -MM -MP -MT "$@" -MF "$@.d" "$<"
+	"$(BCC)" $(KERNEL_TEST_BCC_DEFINES) -DOS_TEST $(BCC_OPT) -s -kernel -o "$@" "$<" -g
 
 # Compile bios C sources to assembly.
 $(BIOS_ASM_DIR)/%.s: bios/%.c $(BCC) Makefile $(KERNEL_TEST_CONFIG_STAMP) | $(BIOS_ASM_DIR)

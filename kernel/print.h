@@ -131,6 +131,5 @@ void load_text_tiles(void);
 // then clear the screen
 void load_text_tiles_colored(short text_color, short bg_color);
 
-bool isnum(char c);
 
 #endif // PRINT_H

@@ -19,29 +19,41 @@
  * Before fork, the parent prefaults a shared file-backed phase word. The child
  * stores to that already-resident word immediately before touching an uncached
  * file mapping. The parent observes the store without relying on a syscall
- * wakeup, waits one jiffy for the child to enter the fault, and makes
+ * wakeup, yields until one jiffy passes for the child to enter the fault, and makes
  * SIGNAL_HELLO pending while deliberately slowed SD DMA is still blocked. The
  * handler faults a distinct uncached mapping. It can complete only if delivery
  * waited until the first page-cache acquisition fully unwound.
+ *
+ * The parent's wakeup latency is scheduler-dependent, so the signal sometimes
+ * lands after the primary fault has finished. That delivery is still correct,
+ * so the child waits for its handler without a bound (a lost signal shows up as
+ * a test timeout) and reports whether delivery hit the fault window. The
+ * parent prints how many iterations exercised the window as an informational
+ * "|" line, which is not part of the .ok comparison.
  */
 
+#include "../../../root/crt/stdbool.h"
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/atomic.h"
 #include "../../user_test.h"
 
 #define STRESS_ITERATIONS 4
-#define HANDLER_WAIT_YIELDS 32
 #define PRIMARY_FAULT_SETTLE_JIFFIES 1
 #define SHARED_PHASE_MAPPING_BYTES 4
 #define PRIMARY_FAULT_PHASE 1
 
+// Child exit statuses. Both "delivered" statuses are passes.
+#define CHILD_DELIVERED_DURING_FAULT 0
+#define CHILD_DELIVERED_AFTER_FAULT 1
 #define CHILD_SETUP_FAILED 11
 #define CHILD_HANDLER_FAILED 12
 
 static char* handler_mapping = NULL;
 static int* shared_phase = NULL;
 static int primary_fault_started = 0;
+static int primary_fault_finished = 0;
 static int handler_completed = 0;
+static int delivered_during_fault = 0;
 
 static int page_faulting_handler(int signal){ /* Trigger and record a page fault while returning from a handler. */
   // primary_fault_started is written immediately before the shared phase
@@ -52,6 +64,11 @@ static int page_faulting_handler(int signal){ /* Trigger and record a page fault
     exit(CHILD_HANDLER_FAILED);
   }
 
+  // If the signal arrived during the fault, the handler runs at the TLB
+  // exception's final return, before the faulting load re-executes. (An
+  // interrupt return between the load and the flag store is counted the same
+  // way, so the coverage count is approximate; it is informational only.)
+  delivered_during_fault = !primary_fault_finished;
   handler_completed = 1;
   sigreturn(0);
 }
@@ -89,13 +106,19 @@ static int child_main(void){ /* Install the page-faulting handler and await the 
   if (primary_mapping[0] != 'A'){
     return CHILD_SETUP_FAILED;
   }
+  primary_fault_finished = 1;
 
-  for (int i = 0; i < HANDLER_WAIT_YIELDS && !handler_completed; ++i){
+  // The parent always sends the signal; each yield's final user return
+  // delivers it if it arrived after the fault.
+  while (!handler_completed){
     yield();
   }
 
-  return handler_completed ? 0 : CHILD_HANDLER_FAILED;
+  return delivered_during_fault ? CHILD_DELIVERED_DURING_FAULT
+                                : CHILD_DELIVERED_AFTER_FAULT;
 }
+
+static int window_hits = 0;
 
 static int run_once(int iteration){ /* Signal a child during a slow page fault and verify both nested fault returns complete safely. */
   __atomic_store_n(shared_phase, 0);
@@ -112,14 +135,25 @@ static int run_once(int iteration){ /* Signal a child during a slow page fault a
 
   /*
    * The target-specific SD timing makes one ext2-block read span about two PIT
-   * periods. A one-jiffy settling delay after observing the resident phase
-   * store gives the child time to acquire the page-cache lock and block in SD,
-   * while the longer transfer supplies margin before DMA completion.
+   * periods. Waiting for the jiffy counter to advance after observing the
+   * resident phase store gives the child time to acquire the page-cache lock
+   * and block in SD, while the longer transfer supplies margin before DMA
+   * completion. Yield rather than sleep(): a sleeping parent is woken only when
+   * its core's idle thread next runs the scheduler, which can add several
+   * jiffies and let the child's fault finish before the signal is sent.
    */
-  sleep(PRIMARY_FAULT_SETTLE_JIFFIES);
+  unsigned settle_start = get_current_jiffies();
+  while (get_current_jiffies() - settle_start < PRIMARY_FAULT_SETTLE_JIFFIES){
+    yield();
+  }
   int signal_result = signal_child(child, SIGNAL_HELLO);
   int child_result = wait_child(child);
-  int failures = (signal_result != 0) + (child_result != 0);
+  if (child_result == CHILD_DELIVERED_DURING_FAULT){
+    window_hits++;
+  }
+  bool child_ok = child_result == CHILD_DELIVERED_DURING_FAULT ||
+    child_result == CHILD_DELIVERED_AFTER_FAULT;
+  int failures = (signal_result != 0) + !child_ok;
   if (failures != 0){
     int args[3] = {iteration, signal_result, child_result};
     printf("| signal return safety: iteration=%d signal_result=%d child_result=%d\n",
@@ -153,6 +187,9 @@ int main(void){ /* Verify safe return from signal handlers after faults and nest
     failures += run_once(i);
   }
 
+  int args[2] = {window_hits, STRESS_ITERATIONS};
+  printf("| signal return safety: delivered during the fault in %d/%d iterations\n",
+    args);
   user_test_expect_eq("signals wait for the final kernel-to-user return",
     failures, 0);
   return 0;

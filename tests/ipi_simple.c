@@ -1,8 +1,13 @@
 #include "../kernel/vmem.h"
 #include "../kernel/print.h"
 
-void kernel_main(void){ /* Verify an inter-processor interrupt reaches its handler. */
-  say("***Sending test IPI with data 42\n", NULL);
-  send_ipi(42);
+/*
+ * Smoke test: broadcast an IPI and check that each core's ipi_handler logs it.
+ * IPIs carry no payload; any data would be passed through shared memory.
+ * There is no .ok baseline because handler output interleaves across cores.
+ */
+void kernel_main(void){
+  say("***Sending test IPI\n", NULL);
+  send_ipi();
   say("***Test IPI sent\n", NULL);
 }

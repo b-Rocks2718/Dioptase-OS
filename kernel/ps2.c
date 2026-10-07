@@ -52,16 +52,6 @@ static int ps2_dropped_events;
 // docs/mem_map.md: a 16-bit read at 0x7FE5800 returns one key and consumes it.
 static const volatile short * const ps2_in = (const volatile short *)0x7FE5800;
 
-// Block the PS/2 worker until an ISR-published event is available.
-static void ps2_worker_block(void* arg){
-  struct TCB* tcb = (struct TCB*)arg;
-  struct TCB* wakeup = interrupt_waiter_publish(&ps2_worker_waiter, tcb);
-
-  if (wakeup != NULL){
-    scheduler_wake_thread_from_interrupt(wakeup);
-  }
-}
-
 // Record one nonzero event dropped at either bounded PS/2 queue boundary.
 // Atomic fetch-add is a single bounded ISR-safe operation. The public 32-bit
 // diagnostic count consequently wraps modulo 2^32 after UINT_MAX drops.
@@ -115,9 +105,7 @@ static void ps2_worker(void){
       }
     }
 
-    int was = interrupts_disable();
-    struct TCB* me = get_current_tcb();
-    block(was, ps2_worker_block, me, false);
+    interrupt_waiter_wait(&ps2_worker_waiter);
   }
   panic("PS/2 worker thread exited unexpectedly");
 }
@@ -307,8 +295,5 @@ void ps2_handler(void){
     ps2_record_dropped_event();
   }
 
-  struct TCB* worker = interrupt_waiter_signal(&ps2_worker_waiter);
-  if (worker != NULL){
-    scheduler_wake_thread_from_interrupt(worker);
-  }
+  interrupt_waiter_notify_from_interrupt(&ps2_worker_waiter);
 }

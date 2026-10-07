@@ -1,0 +1,2 @@
+# A non-owner release needs the owner and the offender running on different cores.
+NUM_CORES!=1

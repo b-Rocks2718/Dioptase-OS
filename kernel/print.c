@@ -15,7 +15,6 @@ static volatile char * const UART_PADDR = (volatile char *)UART_TX_ADDR;
 #define DECIMAL_BASE 10u
 #define HEX_BASE 16u
 #define MAX_INT_DEC_DIGITS 10      // ABI: int is 4 bytes, so the largest decimal magnitude has 10 digits.
-#define MAX_UNSIGNED_HEX_DIGITS 8  // ABI: unsigned is 4 bytes, so hexadecimal output needs at most 8 digits.
 #define DEFAULT_TEXT_COLOR 0xFF    // RGB332 white.
 #define TILE_COLOR_SHIFT 8         // The framebuffer entry's high byte is RGB332 color.
 #define TILE_ENTRY_BYTE_MASK 0xFFu // Both tile-index and tile-color fields are one byte.
@@ -78,12 +77,6 @@ static bool pending_row_entry = false;
 static int console_owner_core = CONSOLE_NO_OWNER;
 static int console_lock_depth = 0;
 
-static unsigned puts_unlocked(char* str);
-static unsigned printf_unlocked(char* fmt, void* arr);
-static unsigned printf_uart_unlocked(char* fmt, void* arr);
-static unsigned print_signed_unlocked(int n);
-static unsigned print_unsigned_unlocked(unsigned n);
-static unsigned print_hex_unlocked(unsigned n, bool uppercase);
 static void clear_screen_unlocked(void);
 static void make_tiles_transparent_unlocked(void);
 static void load_text_tiles_unlocked(void);
@@ -327,18 +320,94 @@ int console_get_text_color(void){
   return color;
 }
 
-// Return whether c is an ASCII decimal digit.
-bool isnum(char c){
-  return ('0' <= c && c <= '9');
+/*
+ * Formatting core. Every printer below writes through an `emit` byte sink:
+ * putchar_unlocked (console; caller holds print_lock) or putchar_uart (raw,
+ * lock-free UART used by panic paths). Each returns the number of characters
+ * emitted.
+ */
+
+// Emit a NUL-terminated string.
+static unsigned emit_string(void (*emit)(char), char* str){
+  unsigned count = 0;
+  while (str[count] != '\0'){
+    emit(str[count]);
+    count++;
+  }
+  return count;
 }
 
-/* Caller must hold print_lock. */
-static unsigned puts_unlocked(char* str){
+// Emit n in the given base (10 or 16), most significant digit first.
+static unsigned emit_unsigned(void (*emit)(char), unsigned n, unsigned base,
+    bool uppercase){
+  // A 32-bit value needs at most MAX_INT_DEC_DIGITS decimal digits, more than
+  // the 8 hexadecimal digits base 16 can need.
+  char digits[MAX_INT_DEC_DIGITS];
+  unsigned len = 0;
+
+  do {
+    unsigned digit = n % base;
+    if (digit < DECIMAL_BASE){
+      digits[len++] = (char)('0' + digit);
+    } else {
+      digits[len++] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
+    }
+    n /= base;
+  } while (n != 0);
+
+  unsigned count = len;
+  while (len != 0){
+    emit(digits[--len]);
+  }
+  return count;
+}
+
+// Emit n as signed decimal. The magnitude is computed in unsigned arithmetic
+// so INT_MIN prints correctly.
+static unsigned emit_signed(void (*emit)(char), int n){
+  if (n < 0){
+    emit('-');
+    return 1 + emit_unsigned(emit, 0u - (unsigned)n, DECIMAL_BASE, false);
+  }
+  return emit_unsigned(emit, (unsigned)n, DECIMAL_BASE, false);
+}
+
+// Minimal printf supporting %d, %u, %x, %X, %s, %c, and %%. bcc has no
+// variadic functions, so `arr` is an array of word-sized arguments (integers
+// or string pointers) consumed in order. Unsupported specifiers print as-is.
+static unsigned emit_format(void (*emit)(char), char* fmt, void* arr){
   unsigned count = 0;
-  while (*str != '\0'){
-    putchar_unlocked(*str);
-    ++str;
-    ++count;
+  unsigned arg = 0;
+  for (; *fmt != '\0'; ++fmt){
+    if (*fmt != '%'){
+      emit(*fmt);
+      ++count;
+      continue;
+    }
+
+    char spec = fmt[1];
+    if (spec == 'd'){
+      count += emit_signed(emit, ((int*)arr)[arg++]);
+    } else if (spec == 'u'){
+      count += emit_unsigned(emit, ((unsigned*)arr)[arg++], DECIMAL_BASE, false);
+    } else if (spec == 'x' || spec == 'X'){
+      count += emit_unsigned(emit, ((unsigned*)arr)[arg++], HEX_BASE, spec == 'X');
+    } else if (spec == 's'){
+      count += emit_string(emit, (char*)((void**)arr)[arg++]);
+    } else if (spec == 'c'){
+      emit((char)((unsigned*)arr)[arg++]);
+      ++count;
+    } else if (spec == '%'){
+      emit('%');
+      ++count;
+    } else {
+      // unsupported format specifier: print the '%' and let the loop print
+      // the following character normally
+      emit('%');
+      ++count;
+      continue;
+    }
+    ++fmt; // consume the specifier character
   }
   return count;
 }
@@ -346,375 +415,91 @@ static unsigned puts_unlocked(char* str){
 // Write a null-terminated string while holding the console lock.
 unsigned puts(char* str){
   unsigned interrupt_state = console_lock_acquire();
-  unsigned count = puts_unlocked(str);
+  unsigned count = emit_string(putchar_unlocked, str);
   console_lock_release(interrupt_state);
   return count;
 }
 
 // Direct, panic-safe UART output; intentionally bypasses print_lock.
 unsigned puts_uart(char* str){
-  unsigned count = 0;
-  while (*str != '\0'){
-    putchar_uart(*str);
-    ++str;
-    ++count;
-  }
+  return emit_string(putchar_uart, str);
+}
+
+// Format and write text to the active console as one transaction.
+unsigned printf(char* fmt, void* arr){
+  unsigned interrupt_state = console_lock_acquire();
+  unsigned count = emit_format(putchar_unlocked, fmt, arr);
+  console_lock_release(interrupt_state);
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
-// accepts an array because the compiler does not yet support variadic functions
-// array can contain integers and string pointers
-// acquires print_lock for serialized output
+// Format text directly to UART as one console transaction.
+unsigned printf_uart(char* fmt, void* arr){
+  unsigned interrupt_state = console_lock_acquire();
+  unsigned count = emit_format(putchar_uart, fmt, arr);
+  console_lock_release(interrupt_state);
+  return count;
+}
+
+// Kernel diagnostic printf; see printf().
 unsigned say(char* fmt, void* arr){
   return printf(fmt, arr);
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
-// accepts an array because the compiler does not yet support variadic functions
-// array can contain integers and string pointers
-// acquires print_lock for serialized output
-// ignores CONFIG.use_vga
+// Kernel diagnostic printf that always targets UART; see printf_uart().
 unsigned say_uart(char* fmt, void* arr){
   return printf_uart(fmt, arr);
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
-// accepts an array because the compiler does not yet support variadic functions
-// array can contain integers and string pointers
-// acquires print_lock for serialized output and allows specifying text color
+// Kernel diagnostic printf in a specific RGB332 color, restoring the previous
+// color within the same console transaction.
 unsigned say_color(char* fmt, void* arr, int color){
   unsigned interrupt_state = console_lock_acquire();
   int old_color = current_text_color;
   current_text_color = color;
-  unsigned count = printf_unlocked(fmt, arr);
+  unsigned count = emit_format(putchar_unlocked, fmt, arr);
   current_text_color = old_color;
   console_lock_release(interrupt_state);
   return count;
 }
 
-// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
-// accepts an array because the compiler does not yet support variadic functions
-// array can contain integers and string pointers
-// caller must hold print_lock
-static unsigned printf_unlocked(char* fmt, void* arr){
-  unsigned count = 0;
-  unsigned i = 0;
-  while (*fmt != '\0'){
-    if (*fmt == '%') {
-      if (*(fmt + 1) == 'd') {
-        ++fmt;
-        count += print_signed_unlocked(((int*)arr)[i++]);
-      } else if (*(fmt + 1) == 'u') {
-        ++fmt;
-        count += print_unsigned_unlocked(((unsigned*)arr)[i++]);
-      } else if (*(fmt + 1) == 'x') {
-        ++fmt;
-        count += print_hex_unlocked(((unsigned*)arr)[i++], false);
-      } else if (*(fmt + 1) == 'X') {
-        ++fmt;
-        count += print_hex_unlocked(((unsigned*)arr)[i++], true);
-      } else if (*(fmt + 1) == 's') {
-        ++fmt;
-        count += puts_unlocked((char*)((void**)arr)[i++]);
-      } else if (*(fmt + 1) == 'c') {
-        ++fmt;
-        putchar_unlocked(((unsigned*)arr)[i++]);
-        ++count;
-      } else if (*(fmt + 1) == '%') {
-        ++fmt;
-        putchar_unlocked('%');
-        ++count;
-      } else {
-        // unsupported format specifier, print as is
-        putchar_unlocked(*fmt);
-        ++count;
-      }
-    } else {
-      putchar_unlocked(*fmt);
-      ++count;
-    }
-    ++fmt;
-  }
-  return count;
-}
-
-// Format and write text to the active console.
-unsigned printf(char* fmt, void* arr){
-  unsigned interrupt_state = console_lock_acquire();
-  unsigned count = printf_unlocked(fmt, arr);
-  console_lock_release(interrupt_state);
-  return count;
-}
-
-// simple printf implementation supporting %d, %u, %x, %X, %s, %c, %%
-// accepts an array because the compiler does not yet support variadic functions
-// array can contain integers and string pointers
-// caller must hold print_lock; ignores CONFIG.use_vga
-static unsigned printf_uart_unlocked(char* fmt, void* arr){
-  unsigned count = 0;
-  unsigned i = 0;
-  while (*fmt != '\0'){
-    if (*fmt == '%') {
-      if (*(fmt + 1) == 'd') {
-        ++fmt;
-        count += print_signed_uart(((int*)arr)[i++]);
-      } else if (*(fmt + 1) == 'u') {
-        ++fmt;
-        count += print_unsigned_uart(((unsigned*)arr)[i++]);
-      } else if (*(fmt + 1) == 'x') {
-        ++fmt;
-        count += print_hex_uart(((unsigned*)arr)[i++], false);
-      } else if (*(fmt + 1) == 'X') {
-        ++fmt;
-        count += print_hex_uart(((unsigned*)arr)[i++], true);
-      } else if (*(fmt + 1) == 's') {
-        ++fmt;
-        count += puts_uart((char*)((void**)arr)[i++]);
-      } else if (*(fmt + 1) == 'c') {
-        ++fmt;
-        putchar_uart(((unsigned*)arr)[i++]);
-        ++count;
-      } else if (*(fmt + 1) == '%') {
-        ++fmt;
-        putchar_uart('%');
-        ++count;
-      } else {
-        // unsupported format specifier, print as is
-        putchar_uart(*fmt);
-        ++count;
-      }
-    } else {
-      putchar_uart(*fmt);
-      ++count;
-    }
-    ++fmt;
-  }
-  return count;
-}
-
-// Format text directly to UART without consulting VGA state.
-unsigned printf_uart(char* fmt, void* arr){
-  unsigned interrupt_state = console_lock_acquire();
-  unsigned count = printf_uart_unlocked(fmt, arr);
-  console_lock_release(interrupt_state);
-  return count;
-}
-
-// print the number n to the console as a signed decimal
-// returns the number of characters printed
-// caller must hold print_lock
-static unsigned print_signed_unlocked(int n){
-  char digits[MAX_INT_DEC_DIGITS];
-  unsigned magnitude;
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_unlocked('0');
-    return 1;
-  }
-
-  if(n < 0){
-    putchar_unlocked('-');
-    magnitude = 0u - (unsigned)n;
-  } else {
-    magnitude = (unsigned)n;
-  }
-
-  while (magnitude != 0){
-    digits[len++] = (char)('0' + (magnitude % DECIMAL_BASE));
-    magnitude /= DECIMAL_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_unlocked(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return (n < 0) ? (count + 1) : count;
-}
-
 // Format one signed integer to the active console.
 unsigned print_signed(int n){
   unsigned interrupt_state = console_lock_acquire();
-  unsigned count = print_signed_unlocked(n);
+  unsigned count = emit_signed(putchar_unlocked, n);
   console_lock_release(interrupt_state);
   return count;
 }
 
-// print the number n to the console as a signed decimal
-// returns the number of characters printed
-// ignores CONFIG.use_vga
+// Panic-safe signed decimal output directly to UART.
 unsigned print_signed_uart(int n){
-  char digits[MAX_INT_DEC_DIGITS];
-  unsigned magnitude;
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_uart('0');
-    return 1;
-  }
-
-  if(n < 0){
-    putchar_uart('-');
-    magnitude = 0u - (unsigned)n;
-  } else {
-    magnitude = (unsigned)n;
-  }
-
-  while (magnitude != 0){
-    digits[len++] = (char)('0' + (magnitude % DECIMAL_BASE));
-    magnitude /= DECIMAL_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_uart(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return (n < 0) ? (count + 1) : count;
-}
-
-// print the number n to the console as an unsigned decimal
-// returns the number of characters printed
-// caller must hold print_lock
-static unsigned print_unsigned_unlocked(unsigned n){
-  char digits[MAX_INT_DEC_DIGITS];
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_unlocked('0');
-    return 1;
-  }
-
-  while (n != 0){
-    digits[len++] = (char)('0' + (n % DECIMAL_BASE));
-    n /= DECIMAL_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_unlocked(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return count;
+  return emit_signed(putchar_uart, n);
 }
 
 // Format one unsigned integer to the active console.
 unsigned print_unsigned(unsigned n){
   unsigned interrupt_state = console_lock_acquire();
-  unsigned count = print_unsigned_unlocked(n);
+  unsigned count = emit_unsigned(putchar_unlocked, n, DECIMAL_BASE, false);
   console_lock_release(interrupt_state);
   return count;
 }
 
-// print the number n to the console as an unsigned decimal
-// returns the number of characters printed
-// ignores CONFIG.use_vga
+// Panic-safe unsigned decimal output directly to UART.
 unsigned print_unsigned_uart(unsigned n){
-  char digits[MAX_INT_DEC_DIGITS];
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_uart('0');
-    return 1;
-  }
-
-  while (n != 0){
-    digits[len++] = (char)('0' + (n % DECIMAL_BASE));
-    n /= DECIMAL_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_uart(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return count;
-}
-
-// print the number n to the console as a hexadecimal
-// returns the number of characters printed
-// caller must hold print_lock
-static unsigned print_hex_unlocked(unsigned n, bool uppercase){
-  char digits[MAX_UNSIGNED_HEX_DIGITS];
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_unlocked('0');
-    return 1;
-  }
-
-  while (n != 0){
-    unsigned digit = n % HEX_BASE;
-
-    if (digit < DECIMAL_BASE){
-      digits[len++] = (char)('0' + digit);
-    } else {
-      digits[len++] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
-    }
-
-    n /= HEX_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_unlocked(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return count;
+  return emit_unsigned(putchar_uart, n, DECIMAL_BASE, false);
 }
 
 // Format one unsigned integer in hexadecimal on the active console.
 unsigned print_hex(unsigned n, bool uppercase){
   unsigned interrupt_state = console_lock_acquire();
-  unsigned count = print_hex_unlocked(n, uppercase);
+  unsigned count = emit_unsigned(putchar_unlocked, n, HEX_BASE, uppercase);
   console_lock_release(interrupt_state);
   return count;
 }
 
-// print the number n to the console as a hexadecimal
-// returns the number of characters printed
-// ignores CONFIG.use_vga
+// Panic-safe hexadecimal output directly to UART.
 unsigned print_hex_uart(unsigned n, bool uppercase){
-  char digits[MAX_UNSIGNED_HEX_DIGITS];
-  unsigned len = 0;
-  unsigned count;
-
-  if(n == 0){
-    putchar_uart('0');
-    return 1;
-  }
-
-  while (n != 0){
-    unsigned digit = n % HEX_BASE;
-
-    if (digit < DECIMAL_BASE){
-      digits[len++] = (char)('0' + digit);
-    } else {
-      digits[len++] = (char)((uppercase ? 'A' : 'a') + (digit - DECIMAL_BASE));
-    }
-
-    n /= HEX_BASE;
-  }
-
-  count = len;
-  while (len != 0){
-    putchar_uart(digits[--len]);
-  }
-  
-  // return number of characters printed
-  return count;
+  return emit_unsigned(putchar_uart, n, HEX_BASE, uppercase);
 }
 
 // load text mode tiles and initialize VGA text mode

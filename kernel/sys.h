@@ -216,7 +216,19 @@ void copy_descriptors(struct TCB* src, struct TCB* dst,
 // deallocate descriptor and free its resources
 void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index);
 
+// Release every descriptor the TCB still owns (thread teardown and failed fork).
+void deallocate_all_descriptors(struct TCB* tcb);
+
 extern void trap_handler_(void);
+
+// Record the current syscall's failure cause (a syscall_errors.h code). The
+// trap return path delivers it to user mode in r2. Call only on a path that
+// makes the syscall fail.
+void set_syscall_error(int error);
+
+// Read and clear the current syscall's failure cause. Called by trap_handler_
+// between trap_handler() and signal processing; see kernel/sys.c.
+int take_syscall_error(void);
 
 // copy n bytes from either user -> kernel or kernel -> user
 extern int copy_user(void* dest, void* src, unsigned n, struct TCB* cur_tcb);

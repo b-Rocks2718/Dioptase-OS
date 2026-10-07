@@ -39,13 +39,24 @@ These tools are expected to be built already (default `VERSION=release`):
 - `make <test>.fail` is the same as `.test` but stops on the first failure.
 - `make test` runs every test that has a checked-in `tests/<test>.ok` or
   `tests/<test>.panic` baseline through the quiet `.summary-test` path.
+- Every test must pass in every configuration (`OS_RELEASE`, `HEAP_DEBUG`,
+  `BCC_OPT`, `NUM_CORES`) unless it declares otherwise in `tests/<test>.requires`,
+  one `KEY=VALUE` or `KEY!=VALUE` per line (keys `OS_RELEASE`, `HEAP_DEBUG`,
+  `OPT`, `NUM_CORES`; `OPT` is `yes` when `BCC_OPT` is non-empty). Use this
+  only when the expected result inherently depends on the configuration, for
+  example a `.panic` test of a `HEAP_DEBUG`-only check or of a soft assert that
+  `OS_RELEASE` compiles out. Aggregate targets leave out unsupported tests, and
+  running one directly prints `[<test>] skip: requires ...`.
+  `scripts/test_requirements.sh` implements the rules.
+- Test sources are compiled with `-DOS_TEST`, which keeps their own soft
+  `assert` checks active even when `OS_RELEASE=yes`.
 - `make ext` runs the ext2-related baseline-checked subset:
   `ext_read`, `ext_new_file`, `ext_write`, `ext_rename`, and `ext_delete`.
 - `make threads` runs every baseline-checked `threads_*` test.
 - `make datastructs` runs the baseline-checked utility tests:
   `hashmap_test`, `queue_test`, and `string`.
-- `make heap` runs the baseline-checked `heap_*` allocator tests. Heap
-  panic-mode negative checks run only when `HEAP_DEBUG=yes`.
+- `make heap` runs the baseline-checked `heap_*` allocator tests. Panic tests of
+  `HEAP_DEBUG`-only checks require `HEAP_DEBUG=yes` via their `.requires` files.
 - `make clean` removes build outputs and temporary assembly outputs.
 
 ### Configuration
@@ -56,8 +67,10 @@ These tools are expected to be built already (default `VERSION=release`):
 - `SCHEDULER` controls the emulators scheduling for multicore runs. Options are `free`, `random`, and `rr` (round robin)
 - `TIMEOUT_SECONDS` controls the per-run timeout for `.test`/`.fail`.
 - `HEAP_DEBUG=yes` passes `-DHEAP_DEBUG=1` to kernel/test C builds and enables
-  heap bitmap/poison diagnostics. `make test` and `make heap` skip the
-  `heap_*.panic` negative tests when this is not `yes`.
+  heap bitmap/poison diagnostics.
+- `OS_RELEASE=yes` (the default) compiles soft kernel `assert` checks out.
+- `BCC_OPT` (default `-opt`) passes optimization flags to bcc; set it empty for
+  an unoptimized build.
 - `BLOCK_SIZE` controls the ext2 block size used for tests with `tests/<test>.dir`.
 - The aggregate targets `make test`, `make ext`, `make threads`, `make datastructs`,
   and `make heap` all honor `TEST_RUNS`, `TIMEOUT_SECONDS`, `BLOCK_SIZE`,

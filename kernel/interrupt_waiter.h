@@ -69,4 +69,24 @@ struct TCB* interrupt_waiter_publish(struct InterruptWaiter* waiter,
  */
 struct TCB* interrupt_waiter_signal(struct InterruptWaiter* waiter);
 
+/*
+ * Consumer side: block the calling thread until a producer signals. Call
+ * prepare, drain/check the backing state, and call this only when nothing was
+ * found. A signal that raced with that check makes this return after a single
+ * reschedule rather than being lost.
+ *
+ * Preconditions: kernel mode, the sole consumer thread for this waiter, a
+ * non-idle TCB, and no spinlock held. Postcondition: the thread was woken by
+ * exactly one detach (publish-time or signal-time).
+ */
+void interrupt_waiter_wait(struct InterruptWaiter* waiter);
+
+// Thread-context producer: signal, then wake any detached waiter through the
+// ordinary scheduler path.
+void interrupt_waiter_notify(struct InterruptWaiter* waiter);
+
+// ISR producer (interrupts disabled by hardware): signal, then defer any
+// detached waiter's wake through the bounded-time interrupt wake path.
+void interrupt_waiter_notify_from_interrupt(struct InterruptWaiter* waiter);
+
 #endif // INTERRUPT_WAITER_H

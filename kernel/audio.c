@@ -797,16 +797,8 @@ struct AudioRequest* audio_request_create(struct Node* node){
     "audio request create: source Node must be a regular file.\n");
 
   struct AudioRequest* request = malloc(sizeof(struct AudioRequest));
-  if (request == NULL){
-    return NULL;
-  }
-
   request->link.next = NULL;
   request->node = node_clone(node);
-  if (request->node == NULL){
-    free(request);
-    return NULL;
-  }
 
   sem_init(&request->ready, 0);
   sem_init(&request->caller_acknowledged, 0);
@@ -846,10 +838,7 @@ bool audio_request_submit(struct AudioRequest* request){
   kernel_async_work_begin();
   generic_spin_queue_add(&audio_request_queue, &request->link);
 
-  struct TCB* daemon = interrupt_waiter_signal(&audio_request_waiter);
-  if (daemon != NULL){
-    scheduler_wake_thread(daemon);
-  }
+  interrupt_waiter_notify(&audio_request_waiter);
   return true;
 }
 
@@ -962,22 +951,6 @@ static void audio_process_request(struct AudioRequest* request){
   free(request);
 }
 
-/*
- * Post-context-switch publication for an idle audio daemon.
- *
- * Preconditions: the daemon TCB is fully saved, is in no scheduler queue, and
- * current-core interrupts are disabled. If a submitter signalled before this
- * callback published the TCB, the callback consumes that notification and
- * defers exactly one wake without modifying the saved TCB.
- */
-static void audio_daemon_block(void* arg){
-  struct TCB* daemon = (struct TCB*)arg;
-  struct TCB* wakeup = interrupt_waiter_publish(&audio_request_waiter, daemon);
-  if (wakeup != NULL){
-    scheduler_wake_thread_from_interrupt(wakeup);
-  }
-}
-
 // Release one daemon-owned request reference and wake its final waiter.
 static void audio_request_finish_lifetime(void){
   int previous = __atomic_fetch_add(&audio_queued_count, -1);
@@ -1049,9 +1022,7 @@ static void audio_daemon(void* unused){
     struct GenericQueueElement* element =
       generic_spin_queue_remove(&audio_request_queue);
     if (element == NULL){
-      int was = interrupts_disable();
-      struct TCB* me = get_current_tcb();
-      block(was, audio_daemon_block, me, false);
+      interrupt_waiter_wait(&audio_request_waiter);
       continue;
     }
 

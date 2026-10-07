@@ -10,10 +10,6 @@
 #include "interrupts.h"
 #include "config.h"
 
-/*
-  Once I get user mode working, I'll spend some time tuning these parameters
-*/
-
 #define GLOBAL_CHECK_INTERVAL 2 // check shared runnable work on every other scheduling pass so one hot local queue cannot hide runnable peers on other cores
 #define MIN_LOCAL_RUNNABLE_THREADS 1 // a core only needs one admitted peer before it can keep filling opportunistically from the shared bucketed queues
 #define MAX_GLOBAL_ADMISSIONS_PER_PASS 1 // one admission per pass avoids one core vacuuming a whole weighted batch before other cores can participate
@@ -35,23 +31,37 @@ unsigned REBALANCE_INTERVAL = 512; // rebalance often enough that per-core prior
 
 static int global_admission_iters;
 
-// Map one scheduler slot into the preferred priority order for that slot
-static void scheduler_priority_order(unsigned slot,
-                                     enum ThreadPriority* first,
-                                     enum ThreadPriority* second,
-                                     enum ThreadPriority* third) {
-  if (slot < HIGH_PRIORITY_WEIGHT) {
-    *first = HIGH_PRIORITY;
-    *second = NORMAL_PRIORITY;
-    *third = LOW_PRIORITY;
-  } else if (slot < HIGH_PRIORITY_WEIGHT + MID_PRIORITY_WEIGHT) {
-    *first = NORMAL_PRIORITY;
-    *second = HIGH_PRIORITY;
-    *third = LOW_PRIORITY;
-  } else {
-    *first = LOW_PRIORITY;
-    *second = NORMAL_PRIORITY;
-    *third = HIGH_PRIORITY;
+#define PRIORITY_SLOTS (HIGH_PRIORITY_WEIGHT + MID_PRIORITY_WEIGHT + LOW_PRIORITY_WEIGHT)
+
+// Order in which priorities are tried for one scheduling slot, indexed by the
+// slot's class: HIGH slots prefer high priority, MID slots normal, LOW slots
+// low. Each order still falls back to every other priority so no slot idles
+// while any work is runnable.
+static enum ThreadPriority PRIORITY_ORDER[PRIORITY_LEVELS][PRIORITY_LEVELS] = {
+  {HIGH_PRIORITY, NORMAL_PRIORITY, LOW_PRIORITY},
+  {NORMAL_PRIORITY, HIGH_PRIORITY, LOW_PRIORITY},
+  {LOW_PRIORITY, NORMAL_PRIORITY, HIGH_PRIORITY},
+};
+
+// Return the priority try-order for scheduling slot `slot` (any value; it is
+// reduced modulo PRIORITY_SLOTS). The weights set how many of every
+// PRIORITY_SLOTS consecutive slots prefer each priority.
+static enum ThreadPriority* scheduler_priority_order(unsigned slot) {
+  slot = slot % PRIORITY_SLOTS;
+  if (slot < HIGH_PRIORITY_WEIGHT) return PRIORITY_ORDER[0];
+  if (slot < HIGH_PRIORITY_WEIGHT + MID_PRIORITY_WEIGHT) return PRIORITY_ORDER[1];
+  return PRIORITY_ORDER[2];
+}
+
+// Hand every TCB on a detached `next`-linked list to fn, clearing each link
+// first so fn may enqueue the TCB elsewhere. fn takes void* (a TCB pointer)
+// to match the kernel's other TCB callbacks such as block() continuations.
+static void for_each_detached(struct TCB* list, void (*fn)(void*)) {
+  while (list != NULL) {
+    struct TCB* next = list->next;
+    list->next = NULL;
+    fn(list);
+    list = next;
   }
 }
 
@@ -85,23 +95,19 @@ void scheduler_init(void){
   global_admission_iters = 0;
 }
 
-// Detach a queue-owned list during globally quiescent shutdown.
+// Validate one TCB detached from a scheduler queue during globally quiescent
+// shutdown.
 //
 // Normal TCBs keep n_active nonzero until the reaper has freed them, so every
 // residual scheduler entry after all idle cores reach the shutdown barrier
-// must be a setup_thread() daemon. Validate this, and discard pointers
-// to TCBs that will not be freed.
-static void scheduler_detach_daemon_list(struct TCB* list){
-  while (list != NULL){
-    struct TCB* next = list->next;
-    list->next = NULL;
-    if (!list->is_daemon){
-      int args[2] = {(int)list, (int)list->pid};
-      say("| scheduler shutdown rejected queued non-daemon tcb=0x%X pid=%d\n",
-        args);
-      panic("scheduler_destroy: normal TCB remained runnable after n_active reached zero.\n");
-    }
-    list = next;
+// must be a setup_thread() daemon, whose storage is intentionally never freed.
+static void scheduler_check_detached_daemon(void* arg){
+  struct TCB* tcb = (struct TCB*)arg;
+  if (!tcb->is_daemon){
+    int args[2] = {(int)tcb, (int)tcb->pid};
+    say("| scheduler shutdown rejected queued non-daemon tcb=0x%X pid=%d\n",
+      args);
+    panic("scheduler_destroy: normal TCB remained runnable after n_active reached zero.\n");
   }
 }
 
@@ -117,8 +123,9 @@ void scheduler_destroy(void){
 
   for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
     for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-      scheduler_detach_daemon_list(
-        spin_queue_remove_all(&global_ready_queue[priority][level]));
+      for_each_detached(
+        spin_queue_remove_all(&global_ready_queue[priority][level]),
+        scheduler_check_detached_daemon);
       spin_queue_destroy(&global_ready_queue[priority][level]);
     }
   }
@@ -126,17 +133,21 @@ void scheduler_destroy(void){
   for (int i = 0; i < MAX_CORES; i++) {
     for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
       for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-        scheduler_detach_daemon_list(
-          queue_remove_all(&per_core_data[i].ready_queue[priority][level]));
+        for_each_detached(
+          queue_remove_all(&per_core_data[i].ready_queue[priority][level]),
+          scheduler_check_detached_daemon);
       }
     }
 
-    scheduler_detach_daemon_list(
-      queue_remove_all(&per_core_data[i].deferred_interrupt_wake_queue));
-    scheduler_detach_daemon_list(
-      sleep_queue_remove_all(&per_core_data[i].sleep_queue));
-    scheduler_detach_daemon_list(
-      spin_queue_remove_all(&per_core_data[i].pinned_queue));
+    for_each_detached(
+      queue_remove_all(&per_core_data[i].deferred_interrupt_wake_queue),
+      scheduler_check_detached_daemon);
+    for_each_detached(
+      sleep_queue_remove_all(&per_core_data[i].sleep_queue),
+      scheduler_check_detached_daemon);
+    for_each_detached(
+      spin_queue_remove_all(&per_core_data[i].pinned_queue),
+      scheduler_check_detached_daemon);
     spin_queue_destroy(&per_core_data[i].pinned_queue);
   }
 }
@@ -173,34 +184,16 @@ void global_queue_add(void* tcb){
 
 // Remove a thread from the global ready queues according to the admission policy
 struct TCB* global_queue_remove(void){
-  int old_slot = __atomic_fetch_add(&global_admission_iters, 1);
-  unsigned slot = old_slot %
-    (HIGH_PRIORITY_WEIGHT + MID_PRIORITY_WEIGHT + LOW_PRIORITY_WEIGHT);
-  enum ThreadPriority first;
-  enum ThreadPriority second;
-  enum ThreadPriority third;
-  scheduler_priority_order(slot, &first, &second, &third);
+  // Try priorities in this admission slot's preferred order. Within each
+  // priority, check MLFQ levels from LEVEL_ZERO to LEVEL_TWO.
+  enum ThreadPriority* order =
+    scheduler_priority_order(__atomic_fetch_add(&global_admission_iters, 1));
 
-  // the order we check priorities within this admission slot is determined
-  // by scheduler_priority_order(). We try the highest-weighted priority first,
-  // then the second, then the third.
-
-  // Within each priority, we check MLFQ levels from LEVEL_ZERO to LEVEL_TWO,
-  // returning the first thread we find.
-  struct TCB* tcb = NULL;
-  for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-    tcb = global_bucket_remove(first, level);
-    if (tcb != NULL) return tcb;
-  }
-
-  for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-    tcb = global_bucket_remove(second, level);
-    if (tcb != NULL) return tcb;
-  }
-
-  for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-    tcb = global_bucket_remove(third, level);
-    if (tcb != NULL) return tcb;
+  for (int i = 0; i < PRIORITY_LEVELS; i++) {
+    for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
+      struct TCB* tcb = global_bucket_remove(order[i], level);
+      if (tcb != NULL) return tcb;
+    }
   }
 
   return NULL;
@@ -317,11 +310,14 @@ void scheduler_wake_thread(struct TCB* tcb) {
   global_queue_add(tcb);
 }
 
-// Interrupt-safe wakeup path for device ISRs
-// - ANY_CORE and same-core pinned threads are admitted directly to this core's
-//   local ready queues in bounded time without taking a spin lock
-// - remote pinned threads are appended to a current-core deferred queue and
-//   will be handed to scheduler_wake_thread() by schedule_next_thread()
+// void* adapter so scheduler_wake_thread() can be used as a list callback.
+static void scheduler_wake_thread_any(void* tcb) {
+  scheduler_wake_thread((struct TCB*)tcb);
+}
+
+// Interrupt-safe wakeup path for device ISRs: append the TCB in O(1), without a
+// spin lock, to this core's deferred queue. schedule_next_thread() later hands
+// it to scheduler_wake_thread() from the idle thread, outside interrupt context.
 void scheduler_wake_thread_from_interrupt(struct TCB* tcb) {
   assert(tcb != NULL, "scheduler_wake_thread_from_interrupt: tcb is NULL.\n");
 
@@ -329,7 +325,7 @@ void scheduler_wake_thread_from_interrupt(struct TCB* tcb) {
 }
 
 // MLFQ removes from the highest non-empty level first
-struct TCB* mlfq_remove(struct Queue* mlfq) {
+static struct TCB* mlfq_remove(struct Queue* mlfq) {
   for (int i = 0; i < MLFQ_LEVELS; i++) {
     struct TCB* tcb = queue_remove(&mlfq[i]);
     if (tcb != NULL) return tcb;
@@ -337,33 +333,18 @@ struct TCB* mlfq_remove(struct Queue* mlfq) {
   return NULL;
 }
 
-// Remove from the first non-empty queue in the given priority order.
-// local_queue_remove() uses this to prefer one priority for the current slot
-// while still falling back to lower- or higher-priority work if the preferred
-// queue is empty. Must be called with interrupts disabled to avoid re-entrancy issues
-struct TCB* local_remove_in_priority_order(struct PerCore* per_core,
-  enum ThreadPriority first, enum ThreadPriority second, enum ThreadPriority third) {
-  struct TCB* tcb = mlfq_remove(per_core->ready_queue[first]);
-  if (tcb != NULL) return tcb;
-
-  tcb = mlfq_remove(per_core->ready_queue[second]);
-  if (tcb != NULL) return tcb;
-
-  return mlfq_remove(per_core->ready_queue[third]);
-}
-
-// remove a thread from the core-local ready queue
+// Remove a thread from the core-local ready queues, preferring the priority
+// selected by this core's current scheduling slot and falling back to the
+// others so local work is never skipped.
 struct TCB* local_queue_remove(void){
   int was = interrupts_disable();
   struct PerCore* per_core = get_per_core();
-  unsigned slot = per_core->scheduler_iters % 
-    (HIGH_PRIORITY_WEIGHT + MID_PRIORITY_WEIGHT + LOW_PRIORITY_WEIGHT);
-  enum ThreadPriority first;
-  enum ThreadPriority second;
-  enum ThreadPriority third;
-  scheduler_priority_order(slot, &first, &second, &third);
+  enum ThreadPriority* order = scheduler_priority_order(per_core->scheduler_iters);
+
   struct TCB* tcb = NULL;
-  tcb = local_remove_in_priority_order(per_core, first, second, third);
+  for (int i = 0; i < PRIORITY_LEVELS && tcb == NULL; i++) {
+    tcb = mlfq_remove(per_core->ready_queue[order[i]]);
+  }
 
   interrupts_restore(was);
   return tcb;
@@ -371,7 +352,7 @@ struct TCB* local_queue_remove(void){
 
 // Remove a thread from the current core's local ready queues after first admitting
 // any needed global work into those local queues. Caller must be the current core's idle thread
-struct TCB* local_or_global_queue_remove(void){
+static struct TCB* local_or_global_queue_remove(void){
   struct PerCore* core = get_per_core();
   admit_global_work(core);
   return local_queue_remove();
@@ -379,7 +360,7 @@ struct TCB* local_or_global_queue_remove(void){
 
 // Boost all threads to the highest MLFQ level
 // Only to be called by schedule_next_thread()
-void mlfq_boost(void){
+static void mlfq_boost(void){
   struct PerCore* core = get_per_core();
   for (int i = LOW_PRIORITY; i <= HIGH_PRIORITY; i++) {
     for (int k = LEVEL_ONE; k <= LEVEL_TWO; k++) {
@@ -455,7 +436,7 @@ static void move_global_bucket_to_local(struct PerCore* core,
 // Attempt to rebalance the number of threads between the local and global queues
 // bucket-by-bucket, preserving both priority class and MLFQ level
 // Only to be called by schedule_next_thread()
-void rebalance_queues(void){
+static void rebalance_queues(void){
   struct PerCore* core = get_per_core();
 
   for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
@@ -484,12 +465,7 @@ struct TCB* schedule_next_thread(void){
   struct TCB* deferred = queue_remove_all(&core->deferred_interrupt_wake_queue);
   interrupts_restore(was);
 
-  while (deferred != NULL) {
-    struct TCB* next_deferred = deferred->next;
-    deferred->next = NULL;
-    scheduler_wake_thread(deferred);
-    deferred = next_deferred;
-  }
+  for_each_detached(deferred, scheduler_wake_thread_any);
 
   // check sleep queue for threads that need to be woken up
   struct TCB* wakeup = sleep_queue_remove(&core->sleep_queue);
@@ -499,13 +475,8 @@ struct TCB* schedule_next_thread(void){
   }
 
   // empty pinned queue into local ready queue
-  struct TCB* pinned = spin_queue_remove_all(&core->pinned_queue);
-  while (pinned != NULL) {
-    struct TCB* next = pinned->next;
-    pinned->next = NULL;
-    local_queue_add(pinned);
-    pinned = next;
-  }
+  for_each_detached(spin_queue_remove_all(&core->pinned_queue),
+    local_queue_add);
 
   if (core->rebalance_pending) {
     rebalance_queues();
@@ -524,7 +495,8 @@ struct TCB* schedule_next_thread(void){
   return next;
 }
 
-// Update a TCB's priority and move it to the matching ready queue.
+// Set the current thread's static priority. The running thread is in no
+// ready queue, so the new priority takes effect when it is next enqueued.
 void set_priority(enum ThreadPriority priority){
   int was = interrupts_disable();
   struct TCB* current = get_current_tcb();

@@ -24,8 +24,6 @@ void blocking_ringbuf_init(struct BlockingRingBuf* b, unsigned capacity){
   b->buf = NULL;
   if (capacity > 0){
     b->buf = malloc(capacity);
-    assert(b->buf != NULL,
-      "blocking_ringbuf_init: failed to allocate ring storage.\n");
   }
 
   blocking_lock_init(&b->lock);
@@ -117,14 +115,16 @@ bool blocking_ringbuf_remove_fallible(struct BlockingRingBuf* b, char* byte){
 
 // Enqueue one byte, blocking until capacity or closure is observed.
 void blocking_ringbuf_add(struct BlockingRingBuf* b, char byte){
-  assert(blocking_ringbuf_add_fallible(b, byte),
+  bool added = blocking_ringbuf_add_fallible(b, byte);
+  assert(added,
     "blocking_ringbuf_add: a generic producer or consumer was closed during an invariant-enforcing add.\n");
 }
 
 // Dequeue one byte, blocking until data or closure is observed.
 char blocking_ringbuf_remove(struct BlockingRingBuf* b){
   char byte = 0;
-  assert(blocking_ringbuf_remove_fallible(b, &byte),
+  bool removed = blocking_ringbuf_remove_fallible(b, &byte);
+  assert(removed,
     "blocking_ringbuf_remove: a generic producer or consumer was closed during an invariant-enforcing remove.\n");
   return byte;
 }

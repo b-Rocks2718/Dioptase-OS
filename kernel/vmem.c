@@ -63,6 +63,53 @@ static bool vmem_round_mapping_size(unsigned size, unsigned* rounded_size){
   return *rounded_size != 0;
 }
 
+/*
+ * Two-level page-table geometry (docs/ISA.md): a 32-bit VA splits into a
+ * 10-bit page-directory index, a 10-bit page-table index, and a 12-bit page
+ * offset. Directories and tables are each one frame of 1024 word entries, and
+ * an entry keeps its frame address in the high bits and flags in the low 12.
+ */
+#define PAGE_TABLE_ENTRIES (FRAME_SIZE / sizeof(unsigned))
+#define PAGE_DIR_SHIFT 22
+#define PAGE_TABLE_SHIFT 12
+#define PAGE_INDEX_MASK 0x3FF
+#define PAGE_ENTRY_FLAGS_MASK (FRAME_SIZE - 1)
+
+// Return va's index into its page directory.
+static unsigned page_dir_index_of(unsigned va){
+  return (va >> PAGE_DIR_SHIFT) & PAGE_INDEX_MASK;
+}
+
+// Return va's index into its page table.
+static unsigned page_table_index_of(unsigned va){
+  return (va >> PAGE_TABLE_SHIFT) & PAGE_INDEX_MASK;
+}
+
+// Return the frame a page-directory or page-table entry points to.
+static unsigned* page_entry_frame(unsigned entry){
+  return (unsigned*)(entry & ~PAGE_ENTRY_FLAGS_MASK);
+}
+
+// Return whether no entry in a page table is valid.
+static bool page_table_is_empty(unsigned* pt){
+  for (unsigned i = 0; i < PAGE_TABLE_ENTRIES; i++){
+    if (pt[i] & VMEM_VALID){
+      return false;
+    }
+  }
+  return true;
+}
+
+// Translate VME MMAP_* permission flags into PTE permission bits.
+static unsigned vmem_pte_permissions(unsigned mmap_flags){
+  unsigned bits = 0;
+  if (mmap_flags & MMAP_READ) bits |= VMEM_READ;
+  if (mmap_flags & MMAP_WRITE) bits |= VMEM_WRITE;
+  if (mmap_flags & MMAP_EXEC) bits |= VMEM_EXEC;
+  if (mmap_flags & MMAP_USER) bits |= VMEM_USER;
+  return bits;
+}
+
 // Initialize global VM synchronization and the shared zero page.
 void vmem_global_init(void){
   register_handler(tlb_miss_handler_, (void*)TLB_MISS_IVT_ENTRY);
@@ -97,40 +144,25 @@ void tlb_invalidate_range(unsigned start, unsigned end){
   }
 }
 
-// allocate a new page directory for a thread
-unsigned create_page_directory(void){
-  unsigned* pd = (unsigned*)physmem_alloc();
-  if (pd == NULL){
-    return 0;
-  }
-  for (int i = 0; i < 1024; i++){
-    pd[i] = 0; // mark all entries invalid
-  }
-  return (unsigned)pd;
-}
-
-// Allocate and clear one page table for a new address space.
-unsigned create_page_table(void){
-  unsigned* pt = (unsigned*)physmem_alloc();
-  if (pt == NULL){
-    return 0;
-  }
-  for (int i = 0; i < 1024; i++){
-    pt[i] = 0; // mark all entries invalid
-  }
-  return (unsigned)pt;
-}
-
-// Allocate a physical page and clear it before user mapping.
+// Allocate one zero-filled physical frame, or return 0 if physmem is
+// exhausted. A zeroed directory or table has every entry invalid.
 unsigned create_zeroed_page(void){
-  unsigned* page = (unsigned*)physmem_alloc();
+  void* page = physmem_alloc();
   if (page == NULL){
     return 0;
   }
-  for (int i = 0; i < FRAME_SIZE / sizeof(unsigned); i++){
-    page[i] = 0;
-  }
+  memset(page, 0, FRAME_SIZE);
   return (unsigned)page;
+}
+
+// Allocate an empty page directory for a new address space (0 on exhaustion).
+unsigned create_page_directory(void){
+  return create_zeroed_page();
+}
+
+// Allocate an empty page table (0 on exhaustion).
+unsigned create_page_table(void){
+  return create_zeroed_page();
 }
 
 // Allocate a virtual-memory-entry descriptor for a mapping.
@@ -196,13 +228,13 @@ void unmap_vme(unsigned* pd, struct VME* vme){
   unsigned prev_page_dir_index = UINT_MAX;
   unsigned* prev_pt = NULL;
   for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE) {
-    unsigned page_dir_index = (va >> 22) & 0x3FF;
-    unsigned page_table_index = (va >> 12) & 0x3FF;
+    unsigned page_dir_index = page_dir_index_of(va);
+    unsigned page_table_index = page_table_index_of(va);
 
     unsigned pde = pd[page_dir_index];
     if (!(pde & VMEM_VALID)) continue;
 
-    unsigned* pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+    unsigned* pt = page_entry_frame(pde);
     unsigned pte = pt[page_table_index];
     if (!(pte & VMEM_VALID)) continue;
     
@@ -216,7 +248,7 @@ void unmap_vme(unsigned* pd, struct VME* vme){
       page_cache_release(&page_cache, vme->file, (vme->file_offset + (va - vme->start)));
     } else {
       // private mapping, just free the physical page
-      physmem_free((void*)(pte & ~(FRAME_SIZE - 1)));
+      physmem_free(page_entry_frame(pte));
     }
     
     pt[page_table_index] = 0;
@@ -224,14 +256,7 @@ void unmap_vme(unsigned* pd, struct VME* vme){
     // only check if the page table is empty when we move to a new page directory entry
     if (page_dir_index != prev_page_dir_index && prev_pt != NULL){
       // if page table is now empty, free it and invalidate the PDE
-      bool empty = true;
-      for (int i = 0; i < 1024; i++){
-        if (prev_pt[i] & VMEM_VALID){
-          empty = false;
-          break;
-        }
-      }
-      if (empty){
+      if (page_table_is_empty(prev_pt)){
         physmem_free(prev_pt);
         pd[prev_page_dir_index] = 0;
       }
@@ -242,18 +267,9 @@ void unmap_vme(unsigned* pd, struct VME* vme){
   }
 
   // if page table is now empty, free it and invalidate the PDE
-  if (prev_pt != NULL){
-    bool empty = true;
-    for (int i = 0; i < 1024; i++){
-      if (prev_pt[i] & VMEM_VALID){
-        empty = false;
-        break;
-      }
-    }
-    if (empty){
-      physmem_free(prev_pt);
-      pd[prev_page_dir_index] = 0;
-    }
+  if (prev_pt != NULL && page_table_is_empty(prev_pt)){
+    physmem_free(prev_pt);
+    pd[prev_page_dir_index] = 0;
   }
 
   // invalidate any TLB entries mapping this VME
@@ -282,7 +298,13 @@ static unsigned shared_vme_page_bytes(struct VME* vme, unsigned va){
   return FRAME_SIZE;
 }
 
-static void vmem_destroy_address_space_impl(struct TCB* tcb);
+// Undo a partially built fork: free dst's page tables, frames, and VMEs.
+static void vmem_fork_abort(struct TCB* dst){
+  vmem_destroy_address_space(dst);
+  free_vme_list(dst->vme_list);
+  dst->vme_list = NULL;
+  dst->pid = 0;
+}
 
 // copy a thread's page dir/page tables and vme_list from src to dst
 bool vmem_fork(struct TCB* src, struct TCB* dst){
@@ -318,32 +340,29 @@ bool vmem_fork(struct TCB* src, struct TCB* dst){
     if (!(vme->flags & MMAP_USER) && !vme->maps_physmem) continue;
 
     for (unsigned va = vme->start; va < vme->end; va += FRAME_SIZE){
-      unsigned page_dir_index = (va >> 22) & 0x3FF;
-      unsigned page_table_index = (va >> 12) & 0x3FF;
+      unsigned page_dir_index = page_dir_index_of(va);
+      unsigned page_table_index = page_table_index_of(va);
 
       unsigned pde = src_pd[page_dir_index];
       if (!(pde & VMEM_VALID)) continue;
 
-      unsigned* src_pt = (unsigned*)(pde & ~(FRAME_SIZE - 1));
+      unsigned* src_pt = page_entry_frame(pde);
       unsigned pte = src_pt[page_table_index];
       if (!(pte & VMEM_VALID)) continue;
 
       unsigned* dst_pt;
       if (dst_pd[page_dir_index] & VMEM_VALID){
-        dst_pt = (unsigned*)(dst_pd[page_dir_index] & ~(FRAME_SIZE - 1));
+        dst_pt = page_entry_frame(dst_pd[page_dir_index]);
       } else {
         dst_pt = (unsigned*)create_page_table();
         if (dst_pt == NULL){
-          vmem_destroy_address_space_impl(dst);
-          free_vme_list(dst->vme_list);
-          dst->vme_list = NULL;
-          dst->pid = 0;
+          vmem_fork_abort(dst);
           return false;
         }
-        dst_pd[page_dir_index] = (unsigned)dst_pt | (pde & 0xFFF);
+        dst_pd[page_dir_index] = (unsigned)dst_pt | (pde & PAGE_ENTRY_FLAGS_MASK);
       }
 
-      unsigned paddr = pte & ~(FRAME_SIZE - 1);
+      unsigned paddr = (unsigned)page_entry_frame(pte);
       if (vme->maps_physmem){
         // A direct VME is a borrowed live device/physical alias, not a private
         // RAM snapshot. Copy the valid source translation verbatim. Nonresident
@@ -361,10 +380,7 @@ bool vmem_fork(struct TCB* src, struct TCB* dst){
         struct PageCacheEntry* page = page_cache_acquire(&page_cache,
           vme->file, vme->file_offset + (va - vme->start));
         if (page == NULL){
-          vmem_destroy_address_space_impl(dst);
-          free_vme_list(dst->vme_list);
-          dst->vme_list = NULL;
-          dst->pid = 0;
+          vmem_fork_abort(dst);
           return false;
         }
         assert((unsigned)page->page_data == paddr,
@@ -373,14 +389,11 @@ bool vmem_fork(struct TCB* src, struct TCB* dst){
       } else {
         unsigned* dst_page = physmem_alloc();
         if (dst_page == NULL){
-          vmem_destroy_address_space_impl(dst);
-          free_vme_list(dst->vme_list);
-          dst->vme_list = NULL;
-          dst->pid = 0;
+          vmem_fork_abort(dst);
           return false;
         }
         memcpy(dst_page, (void*)paddr, FRAME_SIZE);
-        dst_pt[page_table_index] = (unsigned)dst_page | (pte & 0xFFF);
+        dst_pt[page_table_index] = (unsigned)dst_page | (pte & PAGE_ENTRY_FLAGS_MASK);
       }
     }
   }
@@ -390,7 +403,7 @@ bool vmem_fork(struct TCB* src, struct TCB* dst){
 
 // free all physical pages mapped by the given address space, 
 // and free the page directory and page tables
-static void vmem_destroy_address_space_impl(struct TCB* tcb) {
+void vmem_destroy_address_space(struct TCB* tcb) {
   unsigned* pd = (unsigned*)tcb->pid;
 
   for (struct VME* vme = tcb->vme_list; vme != NULL; vme = vme->next) {
@@ -398,9 +411,9 @@ static void vmem_destroy_address_space_impl(struct TCB* tcb) {
   }
 
   // free any page tables and invalidate PDE entries
-  for (unsigned page_dir_index = 0; page_dir_index < 1024; page_dir_index++) {
+  for (unsigned page_dir_index = 0; page_dir_index < PAGE_TABLE_ENTRIES; page_dir_index++) {
     if (pd[page_dir_index] & VMEM_VALID) {
-      physmem_free((void*)(pd[page_dir_index] & ~(FRAME_SIZE - 1)));
+      physmem_free(page_entry_frame(pd[page_dir_index]));
       pd[page_dir_index] = 0;
     }
   }
@@ -409,26 +422,17 @@ static void vmem_destroy_address_space_impl(struct TCB* tcb) {
   physmem_free(pd);
 }
 
-// Unmap and free all page tables and VMEs owned by a TCB.
-void vmem_destroy_address_space(struct TCB* tcb) {
-  vmem_destroy_address_space_impl(tcb);
-}
-
-// Make a VME with the given parameters and add it to the current thread's list of VMEs
-void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags){
-  unsigned rounded_size = 0;
-  if (!vmem_round_mapping_size(size, &rounded_size)){
-    return NULL;
-  }
+// First-fit search of tcb's sorted, non-overlapping VME list for a free gap
+// of rounded_size bytes inside the address-space half selected by flags.
+// On success, sets *start_out to the gap start and *prev_out to the VME the new
+// mapping must follow (NULL for the list head). Running out of virtual range
+// is normal resource exhaustion and returns false.
+static bool vmem_find_gap(struct TCB* tcb, unsigned rounded_size,
+    unsigned flags, unsigned* start_out, struct VME** prev_out){
   unsigned range_start = vmem_range_start(flags);
   unsigned range_end = vmem_range_end(flags);
 
-  int was = interrupts_disable();
-  struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
-
-  // Skip any mappings that end before the selected kernel/user half, 
-  // then do first-fit within that half
+  // Skip any mappings that end before the selected kernel/user half.
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
   while (curr && curr->end <= range_start){
@@ -439,13 +443,9 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   unsigned last_end = range_start;
   while (curr){
     assert(curr->start >= last_end,
-      "mmap: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
+      "vmem_find_gap: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
 
-    if (curr->start > range_end){
-      break;
-    }
-
-    if (curr->start - last_end >= rounded_size){
+    if (curr->start > range_end || curr->start - last_end >= rounded_size){
       break;
     }
 
@@ -455,20 +455,33 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
   }
 
   if (!vmem_range_can_hold(last_end, rounded_size, range_start, range_end)){
-    // A sorted list with no sufficiently large gap is normal finite-resource
-    // exhaustion. The syscall layer translates NULL to -1; kernel callers
-    // must likewise unwind their operation rather than dereference address 0.
+    return false;
+  }
+
+  *start_out = last_end;
+  *prev_out = prev;
+  return true;
+}
+
+// Make a VME with the given parameters and add it to the current thread's list
+// of VMEs. Returns NULL when the request cannot be represented or no virtual
+// gap exists; syscall callers translate that to -1 and kernel callers must
+// unwind rather than dereference address 0.
+void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flags){
+  unsigned rounded_size = 0;
+  if (!vmem_round_mapping_size(size, &rounded_size)){
     return NULL;
   }
 
-  unsigned start = last_end;
-  unsigned end = start + rounded_size;
+  struct TCB* tcb = get_current_tcb();
+  unsigned start = 0;
+  struct VME* prev = NULL;
+  if (!vmem_find_gap(tcb, rounded_size, flags, &start, &prev)){
+    return NULL;
+  }
 
-  struct VME* vme = vme_create(start, end, size, file, file_offset, flags,
-    false, 0);
-
-  vme_insert(tcb, prev, vme);
-
+  vme_insert(tcb, prev, vme_create(start, start + rounded_size, size, file,
+    file_offset, flags, false, 0));
   return (void*)start;
 }
 
@@ -476,7 +489,10 @@ void* mmap(unsigned size, struct Node* file, unsigned file_offset, unsigned flag
 // user half. The returned pointer is the stack base; callers still compute the
 // initial SP from the top word in the reserved range.
 void* mmap_stack(unsigned size, unsigned flags){
-  if (size == 0) return NULL;
+  unsigned rounded_size = 0;
+  if (!vmem_round_mapping_size(size, &rounded_size)){
+    return NULL;
+  }
 
   if (!(flags & MMAP_USER)){
     panic("mmap_stack: user stacks must be allocated in the user virtual memory range!\n");
@@ -488,14 +504,11 @@ void* mmap_stack(unsigned size, unsigned flags){
     return NULL;
   }
 
-  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
   unsigned range_start = vmem_range_start(flags);
   unsigned range_end = vmem_range_end(flags);
   unsigned range_limit = vmem_range_topdown_limit(flags);
 
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // Walk the ascending VME list once and remember the highest gap that can fit
   // the stack. The list stays globally sorted; we only consider the user half.
@@ -557,10 +570,10 @@ void* mmap_stack(unsigned size, unsigned flags){
 
 // Make a VME with the given parameters and add it to the current thread's list of VMEs
 struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsigned flags, unsigned vaddr){
-  if (size == 0) return NULL;
-
-  // round up size to the nearest page boundary
-  unsigned rounded_size = (size + FRAME_SIZE - 1) & ~(FRAME_SIZE - 1);
+  unsigned rounded_size = 0;
+  if (!vmem_round_mapping_size(size, &rounded_size)){
+    return NULL;
+  }
   unsigned range_start = vmem_range_start(flags);
   unsigned range_end = vmem_range_end(flags);
 
@@ -570,9 +583,7 @@ struct VME* mmap_at(unsigned size, struct Node* file, unsigned file_offset, unsi
     return NULL;
   }
 
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   unsigned start = vaddr;
   unsigned end = start + rounded_size;
@@ -638,12 +649,7 @@ void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags){
     return NULL;
   }
 
-  unsigned range_start = vmem_range_start(flags);
-  unsigned range_end = vmem_range_end(flags);
-
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // Exact direct-map requests are idempotent per TCB. This is required for
   // getter-style APIs with no user-visible munmap operation: repeated calls
@@ -657,54 +663,20 @@ void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags){
     }
   }
 
-  // Skip any mappings that end before the selected kernel/user half, 
-  // then do first-fit within that half
+  unsigned start = 0;
   struct VME* prev = NULL;
-  struct VME* curr = tcb->vme_list;
-  while (curr && curr->end <= range_start){
-    prev = curr;
-    curr = curr->next;
-  }
-
-  unsigned last_end = range_start;
-  while (curr){
-    assert(curr->start >= last_end,
-      "mmap_physmem: VME list must stay sorted, non-overlapping, and stay within one address-space half.\n");
-
-    if (curr->start > range_end){
-      break;
-    }
-
-    if (curr->start - last_end >= rounded_size){
-      break;
-    }
-
-    last_end = curr->end;
-    prev = curr;
-    curr = curr->next;
-  }
-
-  if (!vmem_range_can_hold(last_end, rounded_size, range_start, range_end)){
-    // Running out of virtual range is a normal resource failure. Trap callers
-    // translate NULL to -1; kernel callers must unwind without dereferencing 0.
+  if (!vmem_find_gap(tcb, rounded_size, flags, &start, &prev)){
     return NULL;
   }
 
-  unsigned start = last_end;
-  unsigned end = start + rounded_size;
-
-  struct VME* vme = vme_create(start, end, size, NULL, 0, flags, true, paddr);
-
-  vme_insert(tcb, prev, vme);
-
+  vme_insert(tcb, prev, vme_create(start, start + rounded_size, size, NULL, 0,
+    flags, true, paddr));
   return (void*)start;
 }
 
 // Remove the mapping containing p and release its backing references.
 void munmap(void* p){
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
@@ -743,23 +715,19 @@ void vme_change_perms(struct VME* vme, unsigned new_flags){
 
   // traverse the page tables corresponding to this VME and update the permissions
   for (unsigned addr = vme->start; addr < vme->end; addr += FRAME_SIZE){
-    unsigned page_dir_index = (addr >> 22) & 0x3FF;
-    unsigned page_table_index = (addr >> 12) & 0x3FF;
+    unsigned page_dir_index = page_dir_index_of(addr);
+    unsigned page_table_index = page_table_index_of(addr);
 
     unsigned* pd = get_pid();
     unsigned pde = pd[page_dir_index];
     if (!(pde & VMEM_VALID)) continue;
 
-    unsigned* pt = (unsigned*)(pde & ~0xFFF);
+    unsigned* pt = page_entry_frame(pde);
     unsigned pte = pt[page_table_index];
     if (!(pte & VMEM_VALID)) continue;
 
     pte &= ~(VMEM_READ | VMEM_WRITE | VMEM_EXEC);
-    if (vme->flags & MMAP_READ) pte |= VMEM_READ;
-    if (vme->flags & MMAP_WRITE) pte |= VMEM_WRITE;
-    if (vme->flags & MMAP_EXEC) pte |= VMEM_EXEC;
-    if (vme->flags & MMAP_USER) pte |= VMEM_USER;
-    pt[page_table_index] = pte;
+    pt[page_table_index] = pte | vmem_pte_permissions(vme->flags);
   }
 
   tlb_invalidate_range(vme->start, vme->end);
@@ -768,9 +736,7 @@ void vme_change_perms(struct VME* vme, unsigned new_flags){
 // Resolve a user page fault by materializing the mapped page or report failure.
 int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_to_user){
   // look up the VME corresponding to this faulting address
-  int was = interrupts_disable();
   struct TCB* tcb = get_current_tcb();
-  interrupts_restore(was);
 
   // ISA `cr0` is the trap/exception nesting depth after entry. A value of 1
   // means this miss interrupted user mode; values above 1 mean the core was
@@ -848,7 +814,7 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
     return -1;
   }
 
-  unsigned page_dir_index = ((unsigned)vpn >> 10) & 0x3FF;
+  unsigned page_dir_index = page_dir_index_of(fault_addr);
   
   unsigned* pd = get_pid();
   unsigned pde = pd[page_dir_index];
@@ -864,8 +830,8 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
     pde = entry;
   }
 
-  unsigned* pt = (unsigned*)(pde & ~0xFFF);
-  unsigned page_table_index = (unsigned)vpn & 0x3FF;
+  unsigned* pt = page_entry_frame(pde);
+  unsigned page_table_index = page_table_index_of(fault_addr);
   unsigned pte = pt[page_table_index];
 
   if (!(pte & VMEM_VALID)) {
@@ -921,12 +887,7 @@ int tlb_miss_handler(void* vpn, unsigned flags, unsigned* epc_ptr, bool* return_
       }
     }
     
-    unsigned entry = phys_page | VMEM_VALID;
-
-    if (curr->flags & MMAP_READ) entry |= VMEM_READ;
-    if (curr->flags & MMAP_WRITE) entry |= VMEM_WRITE;
-    if (curr->flags & MMAP_EXEC) entry |= VMEM_EXEC;
-    if (curr->flags & MMAP_USER) entry |= VMEM_USER;
+    unsigned entry = phys_page | VMEM_VALID | vmem_pte_permissions(curr->flags);
     pt[page_table_index] = entry;
     pte = entry;
   }
@@ -956,11 +917,15 @@ physmem_exhausted:
   return -1;
 }
 
-// Service a TLB-shootdown or other inter-core notification.
-void ipi_handler(unsigned data){
+// Acknowledge an inter-processor interrupt and log which core received it.
+// Nothing sends IPIs after boot yet (only tests/ipi_simple.c), so there is no
+// shared-memory request to service. Runs in kernel mode with interrupts
+// disabled, entered from ipi_handler_.
+void ipi_handler(void){
+  // IPIs merge while the ISR bit is set, so acknowledge before reading any
+  // request data: an IPI sent after this point raises a fresh interrupt.
   mark_ipi_handled();
 
   int cid = get_core_id();
-  int args[2] = {cid, data};
-  say("| Received IPI on core %d with data %d\n", args);
+  say("| Received IPI on core %d\n", &cid);
 }

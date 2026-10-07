@@ -8,6 +8,12 @@ The current kernel heap is built on top of `physmem`. Small allocations are
 served from slab caches backed by 4 KiB physical frames. Larger allocations are
 served by whole order-based `physmem` blocks.
 
+Kernel allocations do not fail. If neither the slab caches nor `physmem` can
+satisfy a `malloc()` or `leak()` request, the kernel panics with the requested
+size, so callers never check for `NULL`. Code that must survive memory
+exhaustion (for example, page-fault handling) allocates frames directly with
+`physmem_alloc()`, which still returns `NULL`. As in C, `free(NULL)` is a no-op.
+
 ### Arena / Geometry
 
 The current heap does not allocate from a separate fixed heap arena. Heap-owned

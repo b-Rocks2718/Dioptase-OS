@@ -37,9 +37,9 @@ trap_handler_:
 
   # get return_to_user boolean from the stack
   add  sp, sp, 12 # remove the arguments pushed for trap_handler
-  pop  r2 # load return_to_user boolean into r2
+  pop  r9 # load return_to_user boolean (r9 is caller-saved scratch)
 
-  cmp  r2, r0
+  cmp  r9, r0
   bz   return_to_kernel
 
   # The syscall C continuation has fully returned, so it no longer owns a
@@ -47,7 +47,21 @@ trap_handler_:
   # result in r1 while the final user-return hook processes at most one pending
   # asynchronous signal against the still-saved user frame.
   push r1
+
+  # Take the syscall's failure cause (0 if none) and keep it on this kernel
+  # stack before signal processing. A signal handler runs nested on this stack
+  # and its own traps reuse tcb->syscall_error, so it must be captured first.
+  # take_syscall_error() follows the C ABI and clobbers caller-saved registers,
+  # which is safe because r1 is already saved and r9-r19 are trap-caller-saved.
+  call take_syscall_error
+  push r1
+
   call process_pending_signals_before_user_return
+
+  # Trap return ABI: r1 = syscall result, r2 = failure cause (see
+  # docs/syscalls.md, "Error Reporting"). Every other caller-saved register is
+  # unspecified on return.
+  pop  r2
   pop  r1
 
   # Disable the global interrupts again before restoring EPC/EFG and

@@ -1,8 +1,6 @@
 #include "semaphore.h"
 #include "heap.h"
-#include "per_core.h"
 #include "threads.h"
-#include "interrupts.h"
 #include "scheduler.h"
 #include "print.h"
 #include "debug.h"
@@ -21,24 +19,14 @@ void sem_init(struct Semaphore* sem, int initial_count){
   __atomic_store_n(&sem->active_operations, 0);
 }
 
-// callback for when sem_down blocks
-// adds the current thread to the semaphore wait queue,
-// or if the count is > 0, just decrements the count and adds the thread to the ready queue
-static void sem_add(void* arg){
-  int** args = (int**)arg;
-  struct Semaphore* sem = (struct Semaphore*)args[0];
-  struct TCB* tcb = (struct TCB*)args[1];
-
-  clh_lock_acquire(&sem->lock);
-
+// Consume one permit if available. Caller holds sem->lock.
+static bool sem_try_take(void* arg){
+  struct Semaphore* sem = (struct Semaphore*)arg;
   if (sem->count > 0){
     sem->count--;
-    clh_lock_release(&sem->lock);
-    scheduler_wake_thread(tcb);
-  } else {
-    queue_add(&sem->wait_queue, tcb);
-    clh_lock_release(&sem->lock);
+    return true;
   }
+  return false;
 }
 
 // Decrement the semaphore or block until a permit exists.
@@ -49,7 +37,7 @@ void sem_down(struct Semaphore* sem){
    * This reference begins before the first CLH exchange and remains live
    * across block(). Consequently sem_destroy() can diagnose both a contender
    * already linked into the CLH tail and the otherwise invisible interval
-   * before sem_add() publishes the TCB in wait_queue.
+   * before acquire_or_block()'s continuation publishes the TCB in wait_queue.
    *
    * Preconditions: the owner has not begun destruction and guarantees the
    * Semaphore storage remains allocated until this operation returns.
@@ -58,25 +46,8 @@ void sem_down(struct Semaphore* sem){
    */
   __atomic_fetch_add(&sem->active_operations, 1);
 
-  // if the count is > 0, decrement it and return, 
-  // otherwise block until another thread calls sem_up
-  clh_lock_acquire(&sem->lock);
-
-  if (sem->count > 0){
-    sem->count--;
-    clh_lock_release(&sem->lock);
-    __atomic_fetch_add(&sem->active_operations, -1);
-    return;
-  }
-  
-  clh_lock_release(&sem->lock);
-
-  int was = interrupts_disable();
-
-  struct TCB* current_tcb = get_current_tcb();
-  
-  int* args[2] = { (int*)sem, (int*)current_tcb };
-  block(was, (void (*)(void *))sem_add, (void*)(args), true);
+  // Take a permit now, or block until sem_try_up() hands one to this TCB.
+  acquire_or_block(&sem->lock, &sem->wait_queue, sem_try_take, sem);
 
   // sem_up() transferred one permit before waking this TCB. The operation is
   // no longer live only after the suspended sem_down() continuation resumes.
@@ -88,17 +59,10 @@ bool sem_try_down(struct Semaphore* sem){
   assert(sem != NULL, "sem_try_down: semaphore is NULL.\n");
   __atomic_fetch_add(&sem->active_operations, 1);
   clh_lock_acquire(&sem->lock);
-
-  if (sem->count > 0){
-    sem->count--;
-    clh_lock_release(&sem->lock);
-    __atomic_fetch_add(&sem->active_operations, -1);
-    return true;
-  }
-
+  bool taken = sem_try_take(sem);
   clh_lock_release(&sem->lock);
   __atomic_fetch_add(&sem->active_operations, -1);
-  return false;
+  return taken;
 }
 
 // Attempt to publish one permit without blocking.

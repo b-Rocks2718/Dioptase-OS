@@ -31,15 +31,16 @@ void scheduler_charge_yield(struct TCB* tcb);
 // Make a blocked thread runnable again
 void scheduler_wake_thread(struct TCB* tcb);
 
-// Interrupt-safe wakeup path for ISRs that must remain bounded-time
-// - same-core and ANY_CORE work is admitted in O(1) to this core's local ready queue
-// - remote pinned work is deferred to a current-core queue and routed by the
-//   normal scheduler path outside interrupt context
+// Interrupt-safe wakeup path for ISRs that must remain bounded-time. The TCB is
+// appended in O(1), without taking a spin lock, to this core's deferred
+// interrupt-wake queue; the idle thread later routes it through
+// scheduler_wake_thread() from schedule_next_thread(), outside interrupt context.
 void scheduler_wake_thread_from_interrupt(struct TCB* tcb);
 
 // choose the next thread to run on this core, or return NULL to stay idle
 struct TCB* schedule_next_thread(void);
 
+// Set the current thread's static priority for its next ready-queue entry.
 void set_priority(enum ThreadPriority priority);
 
 #endif // SCHEDULER_H

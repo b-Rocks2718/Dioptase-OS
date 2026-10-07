@@ -47,45 +47,26 @@ void bounded_buffer_free(struct BoundedBuffer* b) {
   free(b);
 }
 
-// block for space, then enqueue one element
+// Block for a free slot, then enqueue one element.
+//
+// add_sem counts free slots and remove_sem counts published elements. Every
+// element is queued before its remove permit is published and dequeued before
+// its slot permit is returned, so queue size + add permits <= capacity and
+// queue size >= remove permits at all times. Holding a permit therefore
+// guarantees the matching queue operation succeeds.
 void bounded_buffer_add(struct BoundedBuffer* b, struct GenericQueueElement* element) {
-  assert(element != NULL, "Cannot add NULL element to blocking queue.\n");
-  bool added = false;
-  while (!added){
-    sem_down(&b->add_sem);
-
-    clh_lock_acquire(&b->queue.spinlock);
-    if (b->queue.size < b->capacity) {
-      // add to queue
-
-      // not using generic_spin_queue_add to avoid double locking
-      if (b->queue.tail == NULL) {
-        b->queue.head = element;
-        b->queue.tail = element;
-      } else {
-        b->queue.tail->next = element;
-        b->queue.tail = element;
-      }
-      element->next = NULL;
-      __atomic_fetch_add(&b->queue.size, 1);
-
-      added = true;
-    }
-    clh_lock_release(&b->queue.spinlock);
-  }
-
+  assert(element != NULL, "bounded_buffer_add: cannot add a NULL element.\n");
+  sem_down(&b->add_sem);
+  generic_spin_queue_add(&b->queue, element);
   sem_up(&b->remove_sem);
 }
 
-// block for an available item, then dequeue one element
+// Block for a published element, then dequeue it and return its slot.
 struct GenericQueueElement* bounded_buffer_remove(struct BoundedBuffer* b) {
-  struct GenericQueueElement* element = NULL;
-  while (element == NULL) {
-    // Block until an element is available
-    sem_down(&b->remove_sem);
-    // Try to remove an element from the queue
-    element = generic_spin_queue_remove(&b->queue);
-  }
+  sem_down(&b->remove_sem);
+  struct GenericQueueElement* element = generic_spin_queue_remove(&b->queue);
+  assert_always(element != NULL,
+    "bounded_buffer_remove: semaphore permit had no matching queued element.\n");
   sem_up(&b->add_sem);
   return element;
 }
