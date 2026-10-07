@@ -1,0 +1,33 @@
+***PASS chdir to test root: got 0 expected 0
+***PASS insert after Home+Right: line 'hello' cursor 2
+***PASS backspace mid-line: line 'helo' cursor 2
+***PASS Delete removes the character at the cursor: line 'heo' cursor 2
+***PASS Delete at end of line is a no-op: line 'heo' cursor 3
+***PASS Ctrl+D deletes at cursor: line 'elo' cursor 0
+***PASS Left at start of line is a no-op: line 'elo' cursor 0
+***PASS Right at end of line is a no-op: line 'elo' cursor 3
+***PASS Ctrl+U deletes to start: line 'bar' cursor 0
+***PASS Ctrl+K deletes to end: line 'foo' cursor 3
+***PASS Ctrl+W deletes word and trailing spaces: line 'ls ' cursor 3
+***PASS overlong input stops at buffer capacity: got 2047 expected 2047
+***PASS Enter mid-line submits: got 1 expected 1
+***PASS Enter keeps the whole line: line 'echo hi' cursor 0
+***PASS Ctrl+C cancels: got 2 expected 2
+***PASS Ctrl+C clears the line: line '' cursor 0
+***PASS Up recalls newest entry: line 'second' cursor 6
+***PASS Up again recalls older entry: line 'echo hi' cursor 7
+***PASS Up past oldest entry stays put: line 'echo hi' cursor 7
+***PASS recalled entry can be edited: line 'secon' cursor 5
+***PASS Down past newest restores draft: line 'draft' cursor 5
+***PASS Down on the draft stays put: line 'draft' cursor 5
+***PASS editing a recalled line leaves history unchanged: line 'second' cursor 6
+***PASS single directory match appends '/': line 'cat docs/beta/' cursor 14
+***PASS '.' and '..' are not offered: line 'cat docs/beta/keep ' cursor 19
+***PASS ambiguous matches insert shared prefix: line 'cat docs/alpha' cursor 14
+***PASS listing candidates leaves line unchanged: line 'cat docs/alpha' cursor 14
+***PASS first word completes built-in commands: line 'mkdir ' cursor 6
+***PASS later words do not complete commands: line 'ls mkd' cursor 6
+***PASS mid-line completion inserts at cursor: line 'cat docs/beta/ x' cursor 14
+***PASS mid-line completion steps over existing space: line 'cat docs/alpha.txt x' cursor 19
+***PASS wrapped-line edits keep the expected length: got 74 expected 74
+***Done.

@@ -190,7 +190,7 @@ static void handle_keyboard_event(short key){
       key == 0x1B || key == KEY_LEFT || key == KEY_RIGHT ||
       key == KEY_UP || key == KEY_DOWN || key == KEY_HOME ||
       key == KEY_END || key == KEY_PAGE_UP || key == KEY_PAGE_DOWN ||
-      key == 127 || key == 8){
+      key == KEY_DELETE || key == KEY_BACKSPACE){
     write_terminal_input_char((char)key);
   }
 }

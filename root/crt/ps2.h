@@ -10,6 +10,12 @@
 #define KEY_LEFT_CTRL  224
 #define KEY_RIGHT_CTRL 228
 
+// Backspace and Delete keep their ASCII control values (docs/mem_map.md, PS/2
+// keyboard input stream). Unlike many Unix terminals, Backspace is not sent as
+// DEL, so 0x7F always means the Delete key.
+#define KEY_BACKSPACE  0x08
+#define KEY_DELETE     0x7F
+
 #define KEY_INSERT     128
 #define KEY_HOME       129
 #define KEY_PAGE_UP    130
