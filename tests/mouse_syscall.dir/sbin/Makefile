@@ -3,16 +3,12 @@
 VERSION ?= release
 # Optional -D flags from the top-level OS Makefile (e.g. -DOS_RELEASE=1).
 OS_BCC_DEFINES ?=
-TOOLCHAIN_ROOT ?= ../../../
+TOOLCHAIN_ROOT ?= ../../../../
 CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM = $(TOOLCHAIN_ROOT)Dioptase-Assembler/build/$(VERSION)/basm
 BUILD_DIR = build
-PROGRAM ?= $(notdir $(CURDIR))
-SBIN_DIR := ../sbin
-PROGRAM_OUTPUT := $(SBIN_DIR)/$(PROGRAM)
 
-# root/<program> is one level shallower than tests/<name>.dir/sbin.
-CRT_DIR = ../crt
+CRT_DIR = ../../../root/crt
 CRT_STARTUP_SRC := $(CRT_DIR)/crt0.s
 CRT_ASM_SRCS := $(wildcard $(CRT_DIR)/*.s)
 CRT_C_SRCS := $(wildcard $(CRT_DIR)/*.c)
@@ -28,27 +24,17 @@ C_ASMS := $(patsubst %.c,$(BUILD_DIR)/%.s,$(C_SRCS))
 LOCAL_ASM_SRCS := $(filter-out $(LEGACY_C_ASMS) $(LEGACY_CRT_C_ASMS),$(wildcard *.s))
 LINK_ASM_SRCS := $(CRT_ASM_SRCS_ORDERED) $(CRT_C_ASMS) $(LOCAL_ASM_SRCS) $(C_ASMS)
 
-.PHONY: all clean $(PROGRAM)
+.PHONY: all clean
 
-all: $(PROGRAM)
+all: init
 
-$(PROGRAM): $(PROGRAM_OUTPUT)
-	@:
-
-# Compile each C source to assembly under build/ and place the final binary in
-# ../sbin/ so the root filesystem keeps executables separate from sources.
-$(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
+# Compile each C source to assembly under build/ so the sbin root only keeps
+# source files plus the final /sbin/init program needed by the guest image.
+init: $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR)
 	$(BASM) -bin -o $@ $(LINK_ASM_SRCS)
 
 $(BUILD_DIR)/%.s: %.c Makefile | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
-
-# These generated objects consume the shared shell interfaces directly. Keep
-# their header dependencies explicit so a command-buffer contract change cannot
-# leave a stale production binary in root/sbin.
-$(BUILD_DIR)/shell.s: shell.h dirs.h line_editor.h
-$(BUILD_DIR)/line_editor.s: line_editor.h shell.h dirs.h
-$(BUILD_DIR)/dirs.s: dirs.h
 
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
@@ -56,10 +42,7 @@ $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(SBIN_DIR):
-	mkdir -p $@
-
 clean:
-	rm -f $(PROGRAM) $(PROGRAM_OUTPUT)
+	rm -f init
 	rm -f $(LEGACY_C_ASMS) $(LEGACY_CRT_C_ASMS)
 	rm -rf $(BUILD_DIR)

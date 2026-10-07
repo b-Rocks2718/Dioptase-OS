@@ -60,7 +60,7 @@ void kernel_main(void){ /* Exercise PS/2 event ordering, drops, and bounded capa
 
   unsigned capacity = ps2_event_pool_capacity();
   unsigned expected_capacity =
-    (unsigned)(MAX_CORES * (KEYBUF_CAPACITY - 1));
+    (unsigned)(MAX_CORES * (EVENTBUF_CAPACITY - 1));
   unsigned drops_before = ps2_dropped_event_count();
 
   expect_uint(capacity, expected_capacity,

@@ -53,8 +53,9 @@ Core 0 initializes subsystems in this order:
 - `bootstrap()` creates core 0's idle-thread TCB context.
 - `threads_init()` initializes scheduler queues and creates the reaper thread
   with `setup_thread()`.
-- `uart_init()`, `audio_init()`, `exc_init()`, `sd_init()`, and `ps2_init()`
-  register device and exception handlers and initialize device-side state.
+- `uart_init()`, `audio_init()`, `exc_init()`, `sd_init()`, `ps2_init()`, and
+  `mouse_init()` register device and exception handlers and initialize
+  device-side state.
 - `ext2_init(&fs)` reads the ext2 filesystem metadata from SD drive 1 and opens
   the root inode.
 - `trap_init()` installs the shared syscall/trap handler.
@@ -113,7 +114,8 @@ the same final setup:
 
 - `vmem_core_init()` flushes the local TLB and sets the active PID to `0`.
 - `interrupts_restore(DEFAULT_INTERRUPT_MASK)` enables global interrupts plus
-  the configured PIT, PS/2, SD, IPI, and audio interrupt bits.
+  the configured PIT, PS/2 keyboard, PS/2 mouse, SD, IPI, and audio interrupt
+  bits.
 - `spin_barrier_sync(&start_barrier)` waits until all cores reach the same
   point.
 - `event_loop()` starts the idle-thread scheduler loop.

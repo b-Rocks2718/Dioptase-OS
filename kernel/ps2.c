@@ -20,13 +20,13 @@ struct KeyElement {
 
 /*
  * The bootstrap compiler requires a literal global-array bound. Keep this
- * named value synchronized with MAX_CORES * (KEYBUF_CAPACITY - 1); ps2_init()
+ * named value synchronized with MAX_CORES * (EVENTBUF_CAPACITY - 1); ps2_init()
  * checks that relationship before the driver publishes any queue state.
  */
 #define PS2_EVENT_POOL_CAPACITY 252
 
 /*
- * The ISR rings can hold KEYBUF_CAPACITY - 1 events per core because they
+ * The ISR rings can hold EVENTBUF_CAPACITY - 1 events per core because they
  * reserve one slot to distinguish full from empty. Give the worker-to-reader
  * handoff enough static elements to drain every ISR ring once without an
  * allocation. This is a capacity bound, not a promise that an indefinitely
@@ -47,6 +47,12 @@ static struct InterruptWaiter ps2_worker_waiter;
 // Atomic builtins operate on the architecture's 32-bit int storage. The public
 // accessor interprets this counter's bits as unsigned modulo-2^32 state.
 static int ps2_dropped_events;
+// Global ISR ticket counter. Consecutive interrupts land on different cores'
+// rings; the worker merges rings by ticket to restore device order (see
+// debugging/input_event_cross_core_reordering.md).
+static int ps2_event_seq;
+// Every core's key_events ring, for eventbuf_remove_oldest(). Set by ps2_init().
+static struct EventBuf* ps2_rings[MAX_CORES];
 
 // PS/2 MMIO address for keyboard input
 // docs/mem_map.md: a 16-bit read at 0x7FE5800 returns one key and consumes it.
@@ -98,11 +104,12 @@ static void ps2_worker(void){
      */
     interrupt_waiter_prepare(&ps2_worker_waiter);
 
-    for (int i = 0; i < MAX_CORES; ++i){
-      short key = 0;
-      while ((key = keybuf_remove(&per_core_data[i].keybuf)) != 0){
-        ps2_publish_event(key);
-      }
+    // Drain all rings oldest-ticket first so keys keep device order even
+    // when consecutive interrupts were handled on different cores.
+    int key = 0;
+    while ((key = eventbuf_remove_oldest(ps2_rings, MAX_CORES)) != 0){
+      // The ISR stored a 16-bit MMIO key word, so the narrowing is exact.
+      ps2_publish_event((short)key);
     }
 
     interrupt_waiter_wait(&ps2_worker_waiter);
@@ -112,11 +119,11 @@ static void ps2_worker(void){
 
 // Initialize the PS/2 driver
 void ps2_init(void){
-  int required_capacity = MAX_CORES * (KEYBUF_CAPACITY - 1);
+  int required_capacity = MAX_CORES * (EVENTBUF_CAPACITY - 1);
   if (PS2_EVENT_POOL_CAPACITY != required_capacity){
     int args[4] = {PS2_EVENT_POOL_CAPACITY, required_capacity,
-      MAX_CORES, KEYBUF_CAPACITY};
-    say("| PS/2 init rejected pool=%d required=%d max_cores=%d keybuf_slots=%d\n",
+      MAX_CORES, EVENTBUF_CAPACITY};
+    say("| PS/2 init rejected pool=%d required=%d max_cores=%d ring_slots=%d\n",
       args);
     panic("PS/2 init: static event-pool capacity does not match all usable ISR ring slots.\n");
   }
@@ -136,11 +143,13 @@ void ps2_init(void){
   }
 
   for (int i = 0; i < MAX_CORES; ++i){
-    keybuf_init(&per_core_data[i].keybuf);
+    eventbuf_init(&per_core_data[i].key_events);
+    ps2_rings[i] = &per_core_data[i].key_events;
   }
 
   interrupt_waiter_init(&ps2_worker_waiter);
   __atomic_store_n(&ps2_dropped_events, 0);
+  __atomic_store_n(&ps2_event_seq, 0);
 
   // init ps2 worker thread
   struct Fun* ps2_worker_fun = leak(sizeof(struct Fun));
@@ -271,11 +280,11 @@ short waitkey_raw(void){
 // Drain per-core PS/2 ISR buffers and publish their key events.
 void ps2_handler(void){
   struct PerCore* pc = get_per_core();
-  struct KeyBuf* kb = &pc->keybuf;
+  struct EventBuf* kb = &pc->key_events;
   short key = *ps2_in;
 
   // Zero is the device's "no key" sentinel, not an event. Publishing it into
-  // KeyBuf would be ambiguous with keybuf_remove()'s empty result: a later real
+  // EventBuf would be ambiguous with eventbuf_remove()'s empty result: a later real
   // event could remain behind that sentinel after the worker consumed the one
   // wake notification. Acknowledge a spurious/empty interrupt without
   // mutating either bounded queue.
@@ -288,7 +297,11 @@ void ps2_handler(void){
    * Capture the single hardware event before acknowledging the interrupt. The
    * fixed-size per-core SPSC buffer keeps this path allocation- and lock-free.
    */
-  bool queued = keybuf_add(kb, key);
+  // Take the ticket before eoi: the device does not route the next keyboard
+  // interrupt (possibly to another core) until this core's eoi, so ticket
+  // order matches MMIO order.
+  unsigned seq = (unsigned)__atomic_fetch_add(&ps2_event_seq, 1);
+  bool queued = eventbuf_add(kb, key, seq);
   mark_ps2_handled();
 
   if (!queued){

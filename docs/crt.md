@@ -44,3 +44,11 @@ return zero without dereferencing the buffer or performing descriptor I/O when
 `size` or `count` is zero, or when `size * count` is not representable by the
 CRT's 32-bit `size_t`; a rejected request therefore does not change the stream
 position or underlying file contents.
+
+## Mouse input
+
+`getmouse()` (declared in `sys.h`) returns one raw PS/2 mouse event word, or `0`
+if none is pending. `mouse.h` provides decoders: `MOUSE_BUTTONS()` and the
+`MOUSE_BUTTON_*` bits, plus the sign-extending `MOUSE_DX()`, `MOUSE_DY()`, and
+`MOUSE_WHEEL()`. Motion is relative with +DY pointing down. Button bits are
+state, so detect a press by comparing with the previous event's buttons.

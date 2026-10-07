@@ -10,4 +10,7 @@ extern unsigned cmd_buf_len;
 
 void handle_command(void);
 
+// Print the colored "dioptase:<cwd>$ " prompt and return its width in columns.
+unsigned print_line_prefix(void);
+
 #endif // SHELL_H

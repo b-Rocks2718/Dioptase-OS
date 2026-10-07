@@ -67,6 +67,7 @@ enum TrapCode {
   // retired ABI slot; new public traps extend the documented tail instead of
   // making an old code name a different operation.
   TRAP_OPEN_EXISTING = 56,
+  TRAP_GET_MOUSE = 57,
 };
 
 #define SEEK_SET 0

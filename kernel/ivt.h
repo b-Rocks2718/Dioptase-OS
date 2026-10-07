@@ -16,6 +16,7 @@
 #define IPI_IVT_ENTRY  0x3D4
 #define SD_1_IVT_ENTRY 0x3D8
 #define AUDIO_IVT_ENTRY 0x3DC
+#define MOUSE_IVT_ENTRY 0x3E0
 
 // register the given handler function for the given IVT entry
 void register_handler(void* func, void* ivt_entry);

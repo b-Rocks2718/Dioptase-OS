@@ -9,6 +9,7 @@
 #include "pit.h"
 #include "vga.h"
 #include "ps2.h"
+#include "mouse.h"
 #include "threads.h"
 #include "per_core.h"
 #include "promise.h"
@@ -2086,6 +2087,9 @@ int trap_handler(unsigned code,
     }
     case TRAP_GET_KEY: {
       return getkey();
+    }
+    case TRAP_GET_MOUSE: {
+      return getmouse();
     }
     case TRAP_SET_TILE_SCALE: {
       claim_foreground_display();

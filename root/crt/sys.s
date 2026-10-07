@@ -155,6 +155,43 @@ getkey.errno_done:
 
   ret
 
+  .global getmouse
+# Issue the getmouse system-call wrapper (Dioptase-OS trap code 57).
+# Inputs: none. Outputs: r1 = oldest mouse event word, or 0 if none pending.
+# `trap` enters kernel mode; its ordinary return restores user mode.
+getmouse:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 57
+  trap
+  cmp  r2, r0
+  bz   getmouse.errno_done
+  sw   r2, [errno]
+getmouse.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
   .global set_tile_scale
 # Marshal arguments and issue the set tile scale system-call wrapper.
 set_tile_scale:

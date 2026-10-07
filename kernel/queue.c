@@ -573,51 +573,76 @@ void ringbuf_free(struct RingBuf* rb){
 }
 
 
-// initialize keybuf
-void keybuf_init(struct KeyBuf* kb){
-  for (int i = 0; i < KEYBUF_CAPACITY; i++){
-    kb->buf[i] = 0;
+// initialize an empty event buffer
+void eventbuf_init(struct EventBuf* eb){
+  for (int i = 0; i < EVENTBUF_CAPACITY; i++){
+    eb->buf[i] = 0;
+    eb->seq[i] = 0;
   }
-  kb->head = 0;
-  kb->tail = 0;
+  eb->head = 0;
+  eb->tail = 0;
 }
 
-// push an element at the front; returns false if the buffer is full
-bool keybuf_add(struct KeyBuf* kb, short p){
-  if ((kb->head + 1) % KEYBUF_CAPACITY == kb->tail){
+// Producer side: append one event with its ticket; false if the buffer is full
+bool eventbuf_add(struct EventBuf* eb, int event, unsigned seq){
+  if ((eb->head + 1) % EVENTBUF_CAPACITY == eb->tail){
     // full
     return false;
   }
-  if (p == 0) {
-    // Don't add 0 keys.
+  if (event == 0) {
+    // Zero is the empty sentinel; never store it.
     return true;
   }
 
-  kb->buf[kb->head] = p;
-  kb->head = (kb->head + 1) % KEYBUF_CAPACITY;
+  // Fill the slot before advancing head, which publishes it to the consumer.
+  eb->buf[eb->head] = event;
+  eb->seq[eb->head] = seq;
+  eb->head = (eb->head + 1) % EVENTBUF_CAPACITY;
   return true;
 }
 
-// pop and return the back element, or 0 if empty
-short keybuf_remove(struct KeyBuf* kb){
-  if (kb->head == kb->tail){
+// Consumer side: pop and return the oldest event, or 0 if empty
+int eventbuf_remove(struct EventBuf* eb){
+  if (eb->head == eb->tail){
     // empty
     return 0;
   }
 
   // Consume the current tail slot before advancing it. This matches the
-  // one-empty-slot FIFO invariant used by keybuf_add() and preserves the
-  // oldest queued key for the single consumer.
-  short key = kb->buf[kb->tail];
-  kb->tail = (kb->tail + 1) % KEYBUF_CAPACITY;
-  return key;
+  // one-empty-slot FIFO invariant used by eventbuf_add() and preserves the
+  // oldest queued event for the single consumer.
+  int event = eb->buf[eb->tail];
+  eb->tail = (eb->tail + 1) % EVENTBUF_CAPACITY;
+  return event;
 }
 
-// return the current number of stored elements
-unsigned keybuf_size(struct KeyBuf* kb){
-  if (kb->head >= kb->tail){
-    return kb->head - kb->tail;
+// Pop the event with the oldest sequence ticket across several rings
+int eventbuf_remove_oldest(struct EventBuf** rings, int count){
+  int oldest = -1;
+  unsigned oldest_seq = 0;
+  for (int i = 0; i < count; ++i){
+    struct EventBuf* eb = rings[i];
+    if (eb->head == eb->tail){
+      continue;
+    }
+    unsigned seq = eb->seq[eb->tail];
+    // Wrap-safe "seq is older than oldest_seq".
+    if (oldest < 0 || (int)(seq - oldest_seq) < 0){
+      oldest = i;
+      oldest_seq = seq;
+    }
+  }
+  if (oldest < 0){
+    return 0;
+  }
+  return eventbuf_remove(rings[oldest]);
+}
+
+// return the current number of stored events
+unsigned eventbuf_size(struct EventBuf* eb){
+  if (eb->head >= eb->tail){
+    return eb->head - eb->tail;
   } else {
-    return KEYBUF_CAPACITY - (kb->tail - kb->head);
+    return EVENTBUF_CAPACITY - (eb->tail - eb->head);
   }
 }

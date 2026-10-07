@@ -10,6 +10,7 @@
 
 #include "dirs.h"
 #include "shell.h"
+#include "line_editor.h"
 
 #define MAX_ARGV 16
 #define FOREGROUND_START_GATE_CLOSED 0
@@ -20,32 +21,36 @@
 char cmd_buf[SHELL_COMMAND_BUFFER_SIZE];
 unsigned cmd_buf_len = 0;
 
-// Render the colored machine, working-directory, and prompt prefix.
-void print_line_prefix(void){
+// Render the colored machine, working-directory, and prompt prefix, and return
+// how many columns it occupies (escape sequences take no space on screen).
+unsigned print_line_prefix(void){
+  unsigned width = 0;
+
   // machine name in green
   puts("\x1b[32mdioptase");
+  width += strlen("dioptase");
 
   // colon in white
   puts("\x1b[37m:");
+  width += 1;
 
   // current directory in blue
   char cwd_buf[MAX_PATH];
   if (getcwd(cwd_buf, MAX_PATH) != (char*)-1){
     puts("\x1b[34m");
     puts(cwd_buf);
+    width += strlen(cwd_buf);
   } else {
     puts("\x1b[31m");
     puts("unknown");
+    width += strlen("unknown");
   }
 
   // dollar sign prompt in white
   puts("\x1b[37m$ ");
-}
+  width += 2;
 
-// NUL-terminate and display the current command-line buffer.
-void print_cmd_buf(void){
-  cmd_buf[cmd_buf_len] = '\0';
-  puts(cmd_buf);
+  return width;
 }
 
 // Split the current command buffer on spaces into newly allocated arguments.
@@ -454,7 +459,12 @@ void handle_command(void){
     puts("  clear - clear the terminal screen\n");
     puts("  exit - exit the shell\n");
     puts("  help - print this help message\n");
-    puts("  ^C - cancel current command\n");
+    puts("line editing:\n");
+    puts("  Left/Right, ^B/^F - move cursor    Home/End, ^A/^E - start/end of line\n");
+    puts("  Up/Down, ^P/^N - command history   Tab - complete command or path\n");
+    puts("  Backspace - delete before cursor   Delete, ^D - delete at cursor\n");
+    puts("  ^U/^K - delete to start/end of line   ^W - delete previous word\n");
+    puts("  ^L - clear screen   ^C - cancel current command\n");
   } else {
     // Keep the child from entering a program that can touch VGA until the
     // parent has installed the corresponding foreground descriptor. Without
@@ -527,161 +537,24 @@ void handle_command(void){
 // Focused shell tests compile the command handlers into a guest test program;
 // production builds leave SHELL_LIBRARY_ONLY undefined and use this entrypoint.
 #ifndef SHELL_LIBRARY_ONLY
-// Read and dispatch commands from the interactive shell prompt.
+// Read and dispatch commands from the interactive shell prompt. Line editing,
+// history, and completion live in line_editor.c.
 int main(void){
-  while (true) { 
-    print_line_prefix();
+  while (true) {
+    line_editor_begin(print_line_prefix());
 
-    while (true){
-      char key;
+    enum LineEditorStatus status = LINE_EDITOR_CONTINUE;
+    while (status == LINE_EDITOR_CONTINUE){
+      unsigned char key;
       if (read(STDIN, &key, 1) != 1){
         sleep(1);
         continue;
       }
+      status = line_editor_handle_key(key);
+    }
 
-      if (key == '\n' || key == '\r'){
-        putchar('\n');
-        handle_command();
-        cmd_buf_len = 0;
-        break;
-      } else if (key == '\t') {
-        // TODO: if allowing cursor to move, either tab-complete or ignore if in middle.
-
-        // Tab-completion.
-        int start = 0;
-        for (int i = cmd_buf_len - 1; i >= 0; i--) {
-          if (cmd_buf[i] == ' ') {
-            start = i + 1;
-            break;
-          }
-        }
-
-        char* to_tab_complete = malloc(cmd_buf_len - start + 1);
-        memcpy(to_tab_complete, &cmd_buf[start], cmd_buf_len - start);
-        to_tab_complete[cmd_buf_len - start] = 0;
-
-        int last_slash = start;
-        for (int i = cmd_buf_len - 1; i >= start; i--) {
-          if (cmd_buf[i] == '/') {
-            last_slash = i + 1;
-            break;
-          }
-        }
-
-        // Completion with paths.
-        struct LinkedDirent* matches = tab_complete_directory(to_tab_complete, last_slash == 0);
-        int num_matches = 0;
-        for (struct LinkedDirent* current = matches; current != 0; current = current->next) {
-          num_matches++;
-        }
-
-        // Exclude ".", "..", and "lost+found" if matches <= 3, and first character is not '.'.
-        if (num_matches <= 3 && to_tab_complete[last_slash - start] != '.') {
-          num_matches = 0;
-          struct LinkedDirent* filtered_matches = 0;
-          struct LinkedDirent* filtered_tail = 0;
-          for (struct LinkedDirent* current = matches; current != 0; current = current->next) {
-            char* name = &current->dirent.d_name;
-            if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
-              // Skip.
-              continue;
-            }
-            num_matches++;
-            struct LinkedDirent* new_entry = create_linked_dirent(&current->dirent);
-            if (filtered_matches == 0) {
-              filtered_matches = new_entry;
-              filtered_tail = new_entry;
-            } else {
-              filtered_tail->next = new_entry;
-              filtered_tail = new_entry;
-            }
-          }
-          destroy_linked_dirents(matches);
-          matches = filtered_matches;
-        }
-
-        if (num_matches != 0) { // Only do something if match.
-          // Find longest common prefix.
-          int prefix_length = cmd_buf_len - last_slash;
-          while (1) {
-            char c = 0;
-            struct LinkedDirent* current = matches;
-            while (current != 0) {
-              char* name = &current->dirent.d_name;
-              if (name[prefix_length] == 0) {
-                // End of this name.
-                c = 0;
-                break;
-              }
-              if (c == 0) {
-                c = name[prefix_length];
-              } else if (name[prefix_length] != c) {
-                // Mismatch.
-                c = 0;
-                break;
-              }
-              current = current->next;
-            }
-            if (c == 0) {
-              // Mismatch found (or end).
-              break;
-            } else {
-              // All shared this character.
-              prefix_length++;
-            }
-          }
-
-          int new_characters = prefix_length - (cmd_buf_len - last_slash);
-          for (int i = 0; i < new_characters &&
-                          cmd_buf_len < SHELL_COMMAND_BUFFER_SIZE - 1; i++) {
-            char add_c = (&matches->dirent.d_name)[cmd_buf_len - last_slash];
-            char str[2] = {add_c, '\0'};
-            puts(str);
-            cmd_buf[cmd_buf_len++] = add_c;
-          }
-          // If at end of only one match, add space or '/'.
-          if (num_matches == 1) {
-            if (cmd_buf_len < SHELL_COMMAND_BUFFER_SIZE - 1) {
-              char add_c;
-              if (matches->d_type == DT_DIR) {
-                add_c = '/';
-              } else {
-                add_c = ' ';
-              }
-              char str[2] = {add_c, '\0'};
-              puts(str);
-              cmd_buf[cmd_buf_len++] = add_c;
-            }
-          } else if (new_characters == 0) { // No new characters.
-            puts("\n");
-            print_directory(matches, to_tab_complete[last_slash - start] != '.');
-
-            // Reprint prompt and command.
-            print_line_prefix();
-            print_cmd_buf();
-          }
-        }
-        free(to_tab_complete);
-        destroy_linked_dirents(matches);
-      } else if (key == 127 || key == 8){
-        // backspace
-        if (cmd_buf_len > 0){
-          cmd_buf_len--;
-          puts("\b \b");
-        }
-      } else if (key == 0x03) {
-        // Cancel current command.
-        puts("^C\n");
-        cmd_buf_len = 0;
-        break;
-      } else if (key >= 32 && key < 127){
-        // printable character
-        if (cmd_buf_len < SHELL_COMMAND_BUFFER_SIZE - 1){
-          cmd_buf[cmd_buf_len++] = key;
-          char str[2] = {key, '\0'};
-          puts(str);
-        }
-      }
+    if (status == LINE_EDITOR_SUBMIT){
+      handle_command();
     }
   }
 

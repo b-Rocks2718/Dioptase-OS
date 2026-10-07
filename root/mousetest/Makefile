@@ -43,13 +43,6 @@ $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 $(BUILD_DIR)/%.s: %.c Makefile | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
 
-# These generated objects consume the shared shell interfaces directly. Keep
-# their header dependencies explicit so a command-buffer contract change cannot
-# leave a stale production binary in root/sbin.
-$(BUILD_DIR)/shell.s: shell.h dirs.h line_editor.h
-$(BUILD_DIR)/line_editor.s: line_editor.h shell.h dirs.h
-$(BUILD_DIR)/dirs.s: dirs.h
-
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
 

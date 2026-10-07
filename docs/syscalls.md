@@ -340,6 +340,7 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | Code | Wrapper | Arguments | Result |
 | --- | --- | --- | --- |
 | `3` | `getkey()` | none | Returns the next queued keyboard event, or `0` if no key is pending. Unlike `read(STDIN, ...)`, this trap does not block. |
+| `57` | `getmouse()` | none | Returns the oldest queued PS/2 mouse event word (layout in `../../docs/mem_map.md`; decode with `root/crt/mouse.h`), or `0` if none is pending. Does not block. Events are shared system-wide: whichever process calls it first consumes the event. |
 | `4` | `set_tile_scale(scale)` | `scale` | Writes the tile-scale register and returns `0`. |
 | `5` | `set_vscroll(value)` | `value` | Writes the tile vertical-scroll register and returns `0`. |
 | `6` | `set_hscroll(value)` | `value` | Writes the tile horizontal-scroll register and returns `0`. |

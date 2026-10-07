@@ -56,7 +56,16 @@ source remains masked unless a future refresh consumer enables it.
 
 The raw PS/2 device publishes one 16-bit word at a time from MMIO: `0` means no key is pending, bit 8 marks release events, and the low byte is the guest keycode described in `docs/mem_map.md`. Printable keys use their unshifted base-key ASCII identity, left/right modifiers remain distinct, and common navigation/function keys live in a reserved non-ASCII range. The kernel keeps that raw contract for `getkey_raw()` and `waitkey_raw()`, which are the polling helpers used during boot or shutdown before the threading stack is available.
 
-After `ps2_init()`, the normal path is interrupt-driven. Each core's PS/2 interrupt handler copies the MMIO word into a fixed per-core key buffer and signals one dedicated high-priority PS/2 worker thread through an atomic waiter handoff. The ISR records the event before detaching the waiter; the worker's post-switch callback publishes itself and consumes any event that raced with publication. This closes the sleep/wakeup race without a PIT backup or a lock in interrupt context.
+After `ps2_init()`, the normal path is interrupt-driven. Each core's PS/2 interrupt handler copies the MMIO word into a fixed per-core event buffer (`EventBuf`) and signals one dedicated high-priority PS/2 worker thread through an atomic waiter handoff. The ISR records the event before detaching the waiter; the worker's post-switch callback publishes itself and consumes any event that raced with publication. This closes the sleep/wakeup race without a PIT backup or a lock in interrupt context.
+
+Consecutive keyboard interrupts are routed to different cores, so consecutive
+events land in different per-core buffers. Before its `eoi`, the ISR stamps each
+event with a ticket from a global counter. The worker always publishes the
+buffered event with the oldest ticket (`eventbuf_remove_oldest()`), so readers
+see events in device order. The ticket order matches device order because the
+device does not route the next interrupt until the current core's `eoi`; see
+`debugging/input_event_cross_core_reordering.md`. Before this, the worker
+drained buffers by core index and could deliver a key release before its press.
 
 The worker drains all per-core buffers into a fixed static event pool and a
 shared `BlockingQueue`, so `getkey()` is non-blocking and `waitkey()` blocks
@@ -76,8 +85,39 @@ queues, requires all 252 static elements to be accounted for, and destroys only
 the synchronization state; it never passes an event element to `free()`.
 
 The bounded worker handoff is tested deterministically by `ps2_queue.c`, and
-the SPSC ring helpers are tested by `queue_test.c`. The MMIO interrupt path is
-exercised interactively by `collatz.c`.
+the SPSC ring helpers and ticket ordering are tested by `queue_test.c`. The
+MMIO interrupt path is exercised interactively by `collatz.c`.
+
+### PS/2 Mouse
+
+The raw device publishes one 32-bit event word at a time from MMIO
+(`docs/mem_map.md` "PS/2 mouse input stream"). `0` means no event is pending.
+Otherwise, bits [2:0] hold the left/right/middle buttons, bit 3 is always set,
+and bytes 1..3 are signed DX, DY (+down), and WHEEL (+toward the user). Motion
+is relative and measured in 640x480 screen pixels. Button bits report state, not
+edges. The mouse uses ISR bit 8 / IVT `0x3E0`, and `MOUSE_INT_ENABLE` is part of
+`DEFAULT_INTERRUPT_MASK`.
+
+`kernel/mouse.c` is structured like the keyboard driver. Each core's ISR reads
+one word with a single 32-bit load, stamps it with a ticket, stores it in that
+core's `mouse_events` `EventBuf`, issues `eoi 8`, and notifies a dedicated
+high-priority worker. The worker merges the per-core rings oldest-ticket first
+into a static 252-element pool and `BlockingQueue`. `getmouse()` returns the
+oldest event word or `0`; there is no blocking variant. User programs reach it
+through trap `57`.
+
+The kernel does not track an absolute pointer position. Readers add up DX/DY
+themselves (see `root/mousetest`). If no program reads the mouse, the pool
+fills and new events are dropped and counted by `mouse_dropped_event_count()`.
+Because each event carries full button state, the first event read after a drop
+resynchronizes buttons, but dropped motion is lost. Programs should drain stale
+events when they start.
+
+`mouse_destroy()` follows the same quiescent-shutdown accounting as
+`ps2_destroy()`. The pool handoff is tested by `mouse_queue.c`. The user trap
+and the `root/crt/mouse.h` field decoders are tested by `mouse_syscall.c`. The
+interactive interrupt path is exercised by the `mousetest` program
+(`make run EMU_VGA=yes`, then run `mousetest` from the shell).
 
 ### SD Card
 

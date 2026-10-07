@@ -12,6 +12,7 @@
 #define IPI_INT_ENABLE 0x20
 #define SD_1_INT_ENABLE 0x40
 #define AUDIO_INT_ENABLE 0x80
+#define MOUSE_INT_ENABLE 0x100
 
 // disables interrupts and returns previous imr value
 extern unsigned interrupts_disable(void);

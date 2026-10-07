@@ -1,0 +1,3 @@
+***Running /sbin/init
+***test_syscall arg = 0
+***/sbin/init returned 42
