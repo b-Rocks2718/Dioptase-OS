@@ -11,6 +11,7 @@
 #include "interrupts.h"
 #include "config.h"
 #include "ps2.h"
+#include "mouse.h"
 #include "scheduler.h"
 #include "vmem.h"
 #include "sys.h"
@@ -52,6 +53,7 @@ unsigned DEFAULT_INTERRUPT_MASK =
   SD_0_INT_ENABLE | SD_1_INT_ENABLE | 
   PIT_INT_ENABLE |
   PS2_INT_ENABLE |
+  MOUSE_INT_ENABLE |
   IPI_INT_ENABLE |
   AUDIO_INT_ENABLE;
 
@@ -620,6 +622,7 @@ void kernel_shutdown(void){
   if (get_core_id() == 0) {
     ext2_destroy(&fs);
     ps2_destroy();
+    mouse_destroy();
     audio_destroy();
     trap_destroy();
     sd_destroy();

@@ -25,8 +25,9 @@ struct PerCore {
 
   struct CLHNode* idle_clh_node;
   
-  // I/O
-  struct KeyBuf keybuf;
+  // I/O: per-core SPSC rings filled by this core's device ISRs
+  struct EventBuf key_events;
+  struct EventBuf mouse_events;
 
   // allocator
   struct PhysmemLocalCache physmem_cache;

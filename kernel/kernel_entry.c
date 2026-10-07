@@ -10,6 +10,7 @@
 #include "per_core.h"
 #include "sd_driver.h"
 #include "ps2.h"
+#include "mouse.h"
 #include "physmem.h"
 #include "vmem.h"
 #include "ext.h"
@@ -81,6 +82,7 @@ void kernel_entry(void){
     exc_init();
     sd_init();
     ps2_init();
+    mouse_init();
 
     say("| Initializing ext2 filesystem...\n", NULL);
     ext2_init(&fs);

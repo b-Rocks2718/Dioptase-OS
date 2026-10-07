@@ -489,32 +489,77 @@ static void test_ringbuf(void) {
   ringbuf_free(heap_ringbuf);
 }
 
-// Check the SPSC key buffer FIFO order, wrap-around, and full detection.
-static void test_keybuf(void) {
-  struct KeyBuf keybuf;
-  short a = 'a';
-  short b = 'b';
-  short c = 'c';
+// Check the SPSC device-event buffer FIFO order, wrap-around, and that full
+// 32-bit events survive. Mouse words use every byte and are negative as an
+// int when the wheel byte is negative, so a 16-bit ring would corrupt them.
+static void test_eventbuf(void) {
+  struct EventBuf eventbuf;
+  int a = 'a';
+  int b = (int)0xFE05FD09;
+  int c = 0x0100 | 'c';
 
-  keybuf_init(&keybuf);
-  expect_uint(keybuf_size(&keybuf), 0, "queue test: keybuf_init size mismatch\n");
-  expect_uint((unsigned)keybuf_remove(&keybuf), 0,
-              "queue test: empty keybuf remove mismatch\n");
+  eventbuf_init(&eventbuf);
+  expect_uint(eventbuf_size(&eventbuf), 0, "queue test: eventbuf_init size mismatch\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), 0,
+              "queue test: empty eventbuf remove mismatch\n");
 
-  expect_bool(keybuf_add(&keybuf, a), true, "queue test: keybuf add a failed\n");
-  expect_bool(keybuf_add(&keybuf, b), true, "queue test: keybuf add b failed\n");
-  expect_uint(keybuf_size(&keybuf), 2, "queue test: keybuf size after add mismatch\n");
-  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)a,
-              "queue test: keybuf first FIFO remove mismatch\n");
-  expect_bool(keybuf_add(&keybuf, c), true,
-              "queue test: keybuf add after wrap-around failed\n");
-  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)b,
-              "queue test: keybuf second FIFO remove mismatch\n");
-  expect_uint((unsigned)keybuf_remove(&keybuf), (unsigned)c,
-              "queue test: keybuf wrapped FIFO remove mismatch\n");
-  expect_uint((unsigned)keybuf_remove(&keybuf), 0,
-              "queue test: keybuf should be empty after drain\n");
-  expect_uint(keybuf_size(&keybuf), 0, "queue test: keybuf size after drain mismatch\n");
+  expect_bool(eventbuf_add(&eventbuf, a, 0), true, "queue test: eventbuf add a failed\n");
+  expect_bool(eventbuf_add(&eventbuf, b, 1), true, "queue test: eventbuf add b failed\n");
+  expect_uint(eventbuf_size(&eventbuf), 2, "queue test: eventbuf size after add mismatch\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), (unsigned)a,
+              "queue test: eventbuf first FIFO remove mismatch\n");
+  expect_bool(eventbuf_add(&eventbuf, c, 2), true,
+              "queue test: eventbuf add after wrap-around failed\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), (unsigned)b,
+              "queue test: eventbuf lost bits of a full 32-bit event\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), (unsigned)c,
+              "queue test: eventbuf wrapped FIFO remove mismatch\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), 0,
+              "queue test: eventbuf should be empty after drain\n");
+  expect_uint(eventbuf_size(&eventbuf), 0, "queue test: eventbuf size after drain mismatch\n");
+
+  // One slot stays empty, so exactly EVENTBUF_CAPACITY - 1 events fit.
+  for (int i = 1; i < EVENTBUF_CAPACITY; ++i) {
+    expect_bool(eventbuf_add(&eventbuf, i, (unsigned)i), true,
+                "queue test: eventbuf rejected an event below capacity\n");
+  }
+  expect_bool(eventbuf_add(&eventbuf, EVENTBUF_CAPACITY, EVENTBUF_CAPACITY), false,
+              "queue test: eventbuf accepted an event past capacity\n");
+  expect_uint((unsigned)eventbuf_remove(&eventbuf), 1,
+              "queue test: full eventbuf lost its oldest event\n");
+}
+
+// Check that merging per-core rings follows sequence tickets, not ring index.
+// Device interrupts rotate across cores, so consecutive events sit in
+// different rings; draining ring 0 first would reorder them. Tickets also
+// wrap modulo 2^32, so the comparison must stay correct across the wrap.
+static void test_eventbuf_remove_oldest(void) {
+  struct EventBuf ring0;
+  struct EventBuf ring1;
+  struct EventBuf* rings[2] = {&ring0, &ring1};
+
+  eventbuf_init(&ring0);
+  eventbuf_init(&ring1);
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 0,
+              "queue test: remove_oldest on empty rings must return 0\n");
+
+  // Device order a(0xFFFFFFFE) b(0xFFFFFFFF) c(0) d(1), alternating rings,
+  // with ring 1 holding the oldest event and the tickets wrapping past 2^32.
+  eventbuf_add(&ring1, 'a', 0xFFFFFFFEu);
+  eventbuf_add(&ring0, 'b', 0xFFFFFFFFu);
+  eventbuf_add(&ring1, 'c', 0);
+  eventbuf_add(&ring0, 'd', 1);
+
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 'a',
+              "queue test: remove_oldest did not return the oldest ticket\n");
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 'b',
+              "queue test: remove_oldest reordered across rings\n");
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 'c',
+              "queue test: remove_oldest mis-ordered a wrapped ticket\n");
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 'd',
+              "queue test: remove_oldest lost the final event\n");
+  expect_uint((unsigned)eventbuf_remove_oldest(rings, 2), 0,
+              "queue test: remove_oldest rings should be empty after drain\n");
 }
 
 // Run the full queue helper suite variant by variant.
@@ -539,8 +584,9 @@ void kernel_main(void) {
   test_ringbuf();
   say("***ringbuf ok\n", NULL);
 
-  test_keybuf();
-  say("***keybuf ok\n", NULL);
+  test_eventbuf();
+  test_eventbuf_remove_oldest();
+  say("***eventbuf ok\n", NULL);
 
   say("***queue test complete\n", NULL);
 }

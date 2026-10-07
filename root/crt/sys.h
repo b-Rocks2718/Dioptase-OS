@@ -34,6 +34,10 @@ unsigned get_current_jiffies(void);
 
 unsigned getkey(void);
 
+// Return the oldest queued PS/2 mouse event word, or 0 if none is pending.
+// Non-blocking. Decode the word with the macros in mouse.h.
+int getmouse(void);
+
 void set_tile_scale(unsigned scale);
 
 void set_vscroll(unsigned value);

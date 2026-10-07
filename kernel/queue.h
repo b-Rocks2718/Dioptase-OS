@@ -65,12 +65,26 @@ struct RingBuf {
   unsigned tail;
 };
 
-#define KEYBUF_CAPACITY 64
+#define EVENTBUF_CAPACITY 64
 
-// Circular buffer that leaves one slot empty to distinguish full from empty
-// SPSC queue
-struct KeyBuf {
-  short buf[KEYBUF_CAPACITY];
+/*
+ * Fixed-size SPSC ring of nonzero 32-bit device input events (PS/2 key
+ * words, PS/2 mouse words). Zero is reserved as the empty result, which both
+ * devices also use as their MMIO "nothing pending" sentinel. One slot stays
+ * empty to distinguish full from empty, so EVENTBUF_CAPACITY - 1 events fit.
+ *
+ * Each event carries a sequence ticket from a per-device global counter so a
+ * consumer of several per-core rings can restore device order with
+ * eventbuf_remove_oldest() (see debugging/input_event_cross_core_reordering.md).
+ *
+ * Concurrency: exactly one producer (a core's device ISR) and one consumer
+ * (that device's worker thread). The producer writes only head and the
+ * consumer writes only tail; sequentially consistent memory ordering makes a
+ * slot's contents visible before the index that publishes it.
+ */
+struct EventBuf {
+  int buf[EVENTBUF_CAPACITY];
+  unsigned seq[EVENTBUF_CAPACITY];
   unsigned head;
   unsigned tail;
 };
@@ -216,16 +230,27 @@ void ringbuf_destroy(struct RingBuf* rb);
 void ringbuf_free(struct RingBuf* rb);
 
 
-// initialize keybuf
-void keybuf_init(struct KeyBuf* kb);
+// initialize an empty event buffer
+void eventbuf_init(struct EventBuf* eb);
 
-// push an element at the front; returns false if the buffer is full
-bool keybuf_add(struct KeyBuf* kb, short p);
+// Producer side: append one event with its sequence ticket; returns false if
+// the buffer is full. A zero event is ignored (and reported as accepted)
+// because zero means empty.
+bool eventbuf_add(struct EventBuf* eb, int event, unsigned seq);
 
-// pop and return the back element, or 0 if empty
-short keybuf_remove(struct KeyBuf* kb);
+// Consumer side: pop and return the oldest event, or 0 if empty
+int eventbuf_remove(struct EventBuf* eb);
 
-// return the current number of stored elements
-unsigned keybuf_size(struct KeyBuf* kb);
+/*
+ * Consumer side for a device spread over several rings: pop and return the
+ * event with the oldest sequence ticket among the heads of rings[0..count),
+ * or 0 if all are empty. The caller must be the sole consumer of every ring.
+ * Tickets compare modulo 2^32, so ordering is correct while fewer than 2^31
+ * events are buffered at once.
+ */
+int eventbuf_remove_oldest(struct EventBuf** rings, int count);
+
+// return the current number of stored events
+unsigned eventbuf_size(struct EventBuf* eb);
 
 #endif // QUEUE_H
