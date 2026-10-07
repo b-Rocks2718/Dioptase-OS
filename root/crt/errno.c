@@ -1,7 +1,6 @@
 /*
- * Bootstrap userland currently does not thread errno through every syscall
- * wrapper yet. Keep a process-global storage cell so code that references the
- * standard symbol still links while the richer error plumbing is added later.
+ * Process-global errno storage. The syscall wrappers in sys.s store the
+ * kernel's nonzero r2 failure cause here after each trap; see errno.h.
  */
 
 int errno = 0;

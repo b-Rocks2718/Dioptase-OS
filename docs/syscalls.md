@@ -7,6 +7,8 @@ User programs enter the kernel with `trap` using the trap ABI documented in
 - `r1`: trap code
 - `r2-r8`: trap-specific arguments
 - return value: `r1` unless otherwise documented
+- failure cause: `r2` on every trap that returns to user mode (see
+  [Error Reporting](#error-reporting))
 - IVT entry `0x004`: shared trap vector
 
 The current Dioptase-OS trap code assignments are defined in
@@ -53,6 +55,52 @@ Current implementation-defined bounds:
 - each `execv()` argument string: at most 256 bytes including the terminating
   NUL
 - rebuilt `execv()` argv block must fit in the initial 16 KiB user stack
+
+### Error Reporting
+
+Every trap that returns to the user trap site sets `r2` in addition to the
+`r1` result:
+
+- `r2 == 0`: no failure cause is reported. This is always the case on
+  success, and also on a failure whose path does not classify its cause yet.
+- `r2 != 0`: the syscall failed (its `r1` value is the failure value
+  documented in its table row) and `r2` is one of the codes below.
+
+The `r1` result is unchanged from the original ABI, so callers that only test
+`r1` keep working. Every other caller-saved register (`r3-r19`, flags) is
+unspecified on trap return. Traps that do not return to their call site
+(`exit`, successful `execv`, successful `sigreturn`) do not use `r2` this way;
+a forked child returns with `r1 = 0` and `r2 = 0`.
+
+The kernel records the cause per thread while the syscall runs and moves it
+into `r2` before any pending signal is delivered, so syscalls made inside a
+signal handler cannot overwrite the interrupted syscall's cause.
+
+The CRT wrappers in `root/crt/sys.s` store a nonzero `r2` into `errno`
+(`root/crt/errno.h`) and leave `errno` unchanged otherwise.
+
+Codes (shared by `kernel/syscall_errors.h` and `root/crt/errno.h`):
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| `2` | `ENOENT` | The path did not resolve to an existing inode. |
+| `14` | `EFAULT` | A user pointer argument is not accessible. |
+| `20` | `ENOTDIR` | A non-final path component exists but is not a directory. |
+| `24` | `EMFILE` | The caller's file-descriptor table is full. |
+| `36` | `ENAMETOOLONG` | A path exceeds the path-argument bound, or a component exceeds 255 bytes. |
+
+Syscalls that currently report causes:
+
+- every syscall taking a path argument: `EFAULT` or `ENAMETOOLONG` when the
+  path cannot be copied (unreadable memory, or no NUL within the bound)
+- `open()`: additionally `ENAMETOOLONG` (component), `ENOTDIR`, `EMFILE`; a
+  failure to create a missing directory or file reports no cause
+- `open_existing()`: additionally `ENAMETOOLONG` (component), `ENOENT`,
+  `EMFILE`. `ENOENT` covers every lookup failure, including a missing or
+  non-directory intermediate component and a dangling symlink, because
+  pathname lookup does not distinguish them.
+
+All other failures report `0` until their handlers are converted.
 
 ### Process, Time, and Scheduling
 

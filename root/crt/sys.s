@@ -1,3 +1,14 @@
+# Dioptase-OS syscall wrappers (user mode).
+#
+# Each wrapper moves its C arguments into the trap ABI (r1 = trap code,
+# r2-r8 = arguments), issues `trap`, and returns the kernel result in r1.
+# The kernel also returns the syscall's failure cause in r2 (0 on success or
+# when no cause is reported; see docs/syscalls.md, "Error Reporting"). Right
+# after `trap`, each wrapper stores a nonzero r2 to the C `errno` global
+# (root/crt/errno.c) and leaves errno untouched otherwise, so, as in standard
+# C, errno is never cleared by a syscall and is meaningful only after the
+# result signals failure. The check clobbers flags, which are caller-saved.
+
   .text
   .align 4
 
@@ -19,7 +30,10 @@ exit:
   mov  r2, r1
   movi r1, 0
   trap
-
+  cmp  r2, r0
+  bz   exit.errno_done
+  sw   r2, [errno]
+exit.errno_done:
   pop ra
   pop bp
   pop r28
@@ -53,7 +67,10 @@ test_syscall:
   mov  r2, r1
   movi r1, 1
   trap
-
+  cmp  r2, r0
+  bz   test_syscall.errno_done
+  sw   r2, [errno]
+test_syscall.errno_done:
   pop ra
   pop bp
   pop r28
@@ -85,7 +102,10 @@ get_current_jiffies:
 
   movi r1, 2
   trap
-
+  cmp  r2, r0
+  bz   get_current_jiffies.errno_done
+  sw   r2, [errno]
+get_current_jiffies.errno_done:
   pop ra
   pop bp
   pop r28
@@ -117,7 +137,10 @@ getkey:
 
   movi r1, 3
   trap
-
+  cmp  r2, r0
+  bz   getkey.errno_done
+  sw   r2, [errno]
+getkey.errno_done:
   pop ra
   pop bp
   pop r28
@@ -151,7 +174,10 @@ set_tile_scale:
   mov  r2, r1
   movi r1, 4
   trap
-
+  cmp  r2, r0
+  bz   set_tile_scale.errno_done
+  sw   r2, [errno]
+set_tile_scale.errno_done:
   pop ra
   pop bp
   pop r28
@@ -185,7 +211,10 @@ set_vscroll:
   mov  r2, r1
   movi r1, 5
   trap
-
+  cmp  r2, r0
+  bz   set_vscroll.errno_done
+  sw   r2, [errno]
+set_vscroll.errno_done:
   pop ra
   pop bp
   pop r28
@@ -219,7 +248,10 @@ set_hscroll:
   mov  r2, r1
   movi r1, 6
   trap
-
+  cmp  r2, r0
+  bz   set_hscroll.errno_done
+  sw   r2, [errno]
+set_hscroll.errno_done:
   pop ra
   pop bp
   pop r28
@@ -251,7 +283,10 @@ load_text_tiles:
 
   movi r1, 7
   trap
-
+  cmp  r2, r0
+  bz   load_text_tiles.errno_done
+  sw   r2, [errno]
+load_text_tiles.errno_done:
   pop ra
   pop bp
   pop r28
@@ -283,7 +318,10 @@ clear_screen:
 
   movi r1, 8
   trap
-
+  cmp  r2, r0
+  bz   clear_screen.errno_done
+  sw   r2, [errno]
+clear_screen.errno_done:
   pop ra
   pop bp
   pop r28
@@ -315,7 +353,10 @@ get_tilemap:
 
   movi r1, 9
   trap
-
+  cmp  r2, r0
+  bz   get_tilemap.errno_done
+  sw   r2, [errno]
+get_tilemap.errno_done:
   pop ra
   pop bp
   pop r28
@@ -347,7 +388,10 @@ get_tile_fb:
 
   movi r1, 10
   trap
-
+  cmp  r2, r0
+  bz   get_tile_fb.errno_done
+  sw   r2, [errno]
+get_tile_fb.errno_done:
   pop ra
   pop bp
   pop r28
@@ -379,7 +423,10 @@ get_vga_status:
 
   movi r1, 11
   trap
-
+  cmp  r2, r0
+  bz   get_vga_status.errno_done
+  sw   r2, [errno]
+get_vga_status.errno_done:
   pop ra
   pop bp
   pop r28
@@ -411,7 +458,10 @@ get_vga_frame_counter:
 
   movi r1, 12
   trap
-
+  cmp  r2, r0
+  bz   get_vga_frame_counter.errno_done
+  sw   r2, [errno]
+get_vga_frame_counter.errno_done:
   pop ra
   pop bp
   pop r28
@@ -444,7 +494,10 @@ sleep:
   mov  r2, r1
   movi r1, 13
   trap
-
+  cmp  r2, r0
+  bz   sleep.errno_done
+  sw   r2, [errno]
+sleep.errno_done:
   pop ra
   pop bp
   pop r28
@@ -477,7 +530,10 @@ open:
   mov  r2, r1
   movi r1, 14
   trap
-
+  cmp  r2, r0
+  bz   open.errno_done
+  sw   r2, [errno]
+open.errno_done:
   pop ra
   pop bp
   pop r28
@@ -514,7 +570,10 @@ open_existing:
   mov  r2, r1
   movi r1, 56
   trap
-
+  cmp  r2, r0
+  bz   open_existing.errno_done
+  sw   r2, [errno]
+open_existing.errno_done:
   pop ra
   pop bp
   pop r28
@@ -549,7 +608,10 @@ read:
   mov  r2, r1
   movi r1, 15
   trap
-
+  cmp  r2, r0
+  bz   read.errno_done
+  sw   r2, [errno]
+read.errno_done:
   pop ra
   pop bp
   pop r28
@@ -584,7 +646,10 @@ write:
   mov  r2, r1
   movi r1, 16
   trap
-
+  cmp  r2, r0
+  bz   write.errno_done
+  sw   r2, [errno]
+write.errno_done:
   pop ra
   pop bp
   pop r28
@@ -617,7 +682,10 @@ close:
   mov  r2, r1
   movi r1, 17
   trap
-  
+  cmp  r2, r0
+  bz   close.errno_done
+  sw   r2, [errno]
+close.errno_done:
   pop ra
   pop bp
   pop r28
@@ -650,7 +718,10 @@ sem_open:
   mov  r2, r1
   movi r1, 18
   trap
-
+  cmp  r2, r0
+  bz   sem_open.errno_done
+  sw   r2, [errno]
+sem_open.errno_done:
   pop ra
   pop bp
   pop r28
@@ -683,7 +754,10 @@ sem_up:
   mov  r2, r1
   movi r1, 19
   trap
-
+  cmp  r2, r0
+  bz   sem_up.errno_done
+  sw   r2, [errno]
+sem_up.errno_done:
   pop ra
   pop bp
   pop r28
@@ -716,7 +790,10 @@ sem_down:
   mov  r2, r1
   movi r1, 20
   trap
-  
+  cmp  r2, r0
+  bz   sem_down.errno_done
+  sw   r2, [errno]
+sem_down.errno_done:
   pop ra
   pop bp
   pop r28
@@ -749,7 +826,10 @@ sem_close:
   mov  r2, r1
   movi r1, 21
   trap
-
+  cmp  r2, r0
+  bz   sem_close.errno_done
+  sw   r2, [errno]
+sem_close.errno_done:
   pop ra
   pop bp
   pop r28
@@ -785,7 +865,10 @@ mmap:
   mov  r2, r1
   movi r1, 22
   trap
-
+  cmp  r2, r0
+  bz   mmap.errno_done
+  sw   r2, [errno]
+mmap.errno_done:
   pop ra
   pop bp
   pop r28
@@ -817,7 +900,10 @@ fork:
 
   movi r1, 23
   trap
-
+  cmp  r2, r0
+  bz   fork.errno_done
+  sw   r2, [errno]
+fork.errno_done:
   pop ra
   pop bp
   pop r28
@@ -852,7 +938,10 @@ execv:
   mov  r2, r1
   movi r1, 24
   trap
-
+  cmp  r2, r0
+  bz   execv.errno_done
+  sw   r2, [errno]
+execv.errno_done:
   pop ra
   pop bp
   pop r28
@@ -885,7 +974,10 @@ play_audio_file:
   mov  r2, r1
   movi r1, 25
   trap
-
+  cmp  r2, r0
+  bz   play_audio_file.errno_done
+  sw   r2, [errno]
+play_audio_file.errno_done:
   pop ra
   pop bp
   pop r28
@@ -918,7 +1010,10 @@ set_text_color:
   mov  r2, r1
   movi r1, 26
   trap
-  
+  cmp  r2, r0
+  bz   set_text_color.errno_done
+  sw   r2, [errno]
+set_text_color.errno_done:
   pop ra
   pop bp
   pop r28
@@ -951,7 +1046,10 @@ wait_child:
   mov  r2, r1
   movi r1, 27
   trap
-
+  cmp  r2, r0
+  bz   wait_child.errno_done
+  sw   r2, [errno]
+wait_child.errno_done:
   pop ra
   pop bp
   pop r28
@@ -983,7 +1081,10 @@ chdir:
   mov  r2, r1
   movi r1, 28
   trap
-
+  cmp  r2, r0
+  bz   chdir.errno_done
+  sw   r2, [errno]
+chdir.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1016,7 +1117,10 @@ pipe:
   mov  r2, r1
   movi r1, 29
   trap
-
+  cmp  r2, r0
+  bz   pipe.errno_done
+  sw   r2, [errno]
+pipe.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1049,7 +1153,10 @@ dup:
   mov  r2, r1
   movi r1, 30
   trap
-
+  cmp  r2, r0
+  bz   dup.errno_done
+  sw   r2, [errno]
+dup.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1084,7 +1191,10 @@ seek:
   mov  r2, r1
   movi r1, 31
   trap
-
+  cmp  r2, r0
+  bz   seek.errno_done
+  sw   r2, [errno]
+seek.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1116,7 +1226,10 @@ yield:
 
   movi r1, 32
   trap
-  
+  cmp  r2, r0
+  bz   yield.errno_done
+  sw   r2, [errno]
+yield.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1151,7 +1264,10 @@ getdents:
   mov  r2, r1
   movi r1, 33
   trap
-
+  cmp  r2, r0
+  bz   getdents.errno_done
+  sw   r2, [errno]
+getdents.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1185,7 +1301,10 @@ getcwd:
   mov  r2, r1
   movi r1, 34
   trap
-
+  cmp  r2, r0
+  bz   getcwd.errno_done
+  sw   r2, [errno]
+getcwd.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1220,7 +1339,10 @@ readlink:
   mov  r2, r1
   movi r1, 35
   trap
-
+  cmp  r2, r0
+  bz   readlink.errno_done
+  sw   r2, [errno]
+readlink.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1253,7 +1375,10 @@ move_vscroll:
   mov  r2, r1
   movi r1, 36
   trap
-
+  cmp  r2, r0
+  bz   move_vscroll.errno_done
+  sw   r2, [errno]
+move_vscroll.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1286,7 +1411,10 @@ move_hscroll:
   mov  r2, r1
   movi r1, 37
   trap
-
+  cmp  r2, r0
+  bz   move_hscroll.errno_done
+  sw   r2, [errno]
+move_hscroll.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1319,7 +1447,10 @@ fd_bytes_available:
   mov  r2, r1
   movi r1, 38
   trap
-
+  cmp  r2, r0
+  bz   fd_bytes_available.errno_done
+  sw   r2, [errno]
+fd_bytes_available.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1353,7 +1484,10 @@ truncate:
   mov  r2, r1
   movi r1, 39
   trap
-
+  cmp  r2, r0
+  bz   truncate.errno_done
+  sw   r2, [errno]
+truncate.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1386,7 +1520,10 @@ mkdir:
   mov  r2, r1
   movi r1, 40
   trap
-
+  cmp  r2, r0
+  bz   mkdir.errno_done
+  sw   r2, [errno]
+mkdir.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1419,7 +1556,10 @@ rmdir:
   mov  r2, r1
   movi r1, 41
   trap
-
+  cmp  r2, r0
+  bz   rmdir.errno_done
+  sw   r2, [errno]
+rmdir.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1452,7 +1592,10 @@ unlink:
   mov  r2, r1
   movi r1, 42
   trap
-
+  cmp  r2, r0
+  bz   unlink.errno_done
+  sw   r2, [errno]
+unlink.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1486,7 +1629,10 @@ set_sprite_scale:
   mov  r2, r1
   movi r1, 43
   trap
-
+  cmp  r2, r0
+  bz   set_sprite_scale.errno_done
+  sw   r2, [errno]
+set_sprite_scale.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1521,7 +1667,10 @@ set_sprite_coords:
   mov  r2, r1
   movi r1, 44
   trap
-
+  cmp  r2, r0
+  bz   set_sprite_coords.errno_done
+  sw   r2, [errno]
+set_sprite_coords.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1555,7 +1704,10 @@ load_text_tiles_colored:
   mov  r2, r1
   movi r1, 45
   trap
-
+  cmp  r2, r0
+  bz   load_text_tiles_colored.errno_done
+  sw   r2, [errno]
+load_text_tiles_colored.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1587,7 +1739,10 @@ get_spritemap:
 
   movi r1, 46
   trap
-
+  cmp  r2, r0
+  bz   get_spritemap.errno_done
+  sw   r2, [errno]
+get_spritemap.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1621,7 +1776,10 @@ signal_child:
   mov  r2, r1
   movi r1, 47
   trap
-
+  cmp  r2, r0
+  bz   signal_child.errno_done
+  sw   r2, [errno]
+signal_child.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1654,7 +1812,10 @@ request_priority:
   mov  r2, r1
   movi r1, 49
   trap
-
+  cmp  r2, r0
+  bz   request_priority.errno_done
+  sw   r2, [errno]
+request_priority.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1687,7 +1848,10 @@ set_foreground_child:
   mov  r2, r1
   movi r1, 50
   trap
-
+  cmp  r2, r0
+  bz   set_foreground_child.errno_done
+  sw   r2, [errno]
+set_foreground_child.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1720,7 +1884,10 @@ signal_foreground:
   mov  r2, r1
   movi r1, 51
   trap
-
+  cmp  r2, r0
+  bz   signal_foreground.errno_done
+  sw   r2, [errno]
+signal_foreground.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1754,7 +1921,10 @@ register_handler:
   mov  r2, r1
   movi r1, 52
   trap
-
+  cmp  r2, r0
+  bz   register_handler.errno_done
+  sw   r2, [errno]
+register_handler.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1782,7 +1952,10 @@ sigreturn:
   mov  r2, r1
   movi r1, 53
   trap
-
+  cmp  r2, r0
+  bz   sigreturn.errno_done
+  sw   r2, [errno]
+sigreturn.errno_done:
   mov ra, r20
   pop r20
 
@@ -1806,7 +1979,10 @@ mask_signal:
   mov  r2, r1
   movi r1, 54
   trap
-
+  cmp  r2, r0
+  bz   mask_signal.errno_done
+  sw   r2, [errno]
+mask_signal.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1839,7 +2015,10 @@ unmask_signal:
   mov  r2, r1
   movi r1, 55
   trap
-
+  cmp  r2, r0
+  bz   unmask_signal.errno_done
+  sw   r2, [errno]
+unmask_signal.errno_done:
   pop ra
   pop bp
   pop r28

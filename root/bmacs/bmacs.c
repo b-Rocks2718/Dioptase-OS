@@ -6,6 +6,7 @@
 #include "../crt/stdlib.h"
 #include "../crt/string.h"
 #include "../crt/fcntl.h"
+#include "../crt/errno.h"
 #include "../crt/unistd.h"
 #include "../crt/vga.h"
 #include "../crt/ps2.h"
@@ -772,23 +773,29 @@ int main(int argc, char** argv){
 
   char* filename = argv[1];
   // Loading must not create an empty entry merely because the requested
-  // document is missing. The current ABI has no errno/stat distinction, so
-  // every lookup failure remains an explicit editor error below.
+  // document is missing, so ENOENT starts an empty buffer instead. The file
+  // (and any missing parent directories) is only created when the user saves,
+  // via the creating open() in save_text_buffer_to_file(). Any other lookup
+  // failure, or one with no reported cause, is a real error.
+  errno = 0;
   int fd = open_existing(filename);
   if (fd < 0){
-    print_bmacs_file_error("failed to open file", filename);
-    return 1;
-  }
+    if (errno != ENOENT){
+      print_bmacs_file_error("failed to open file", filename);
+      return 1;
+    }
+    set_status_message(&editor, "New file ", filename);
+  } else {
+    if (!load_text_buffer_from_file(&editor.text, fd, filename)){
+      close(fd);
+      return 1;
+    }
 
-  if (!load_text_buffer_from_file(&editor.text, fd, filename)){
-    close(fd);
-    return 1;
-  }
-
-  if (close(fd) < 0){
-    print_bmacs_file_error("failed to close file", filename);
-    free_editor_state(&editor);
-    return 1;
+    if (close(fd) < 0){
+      print_bmacs_file_error("failed to close file", filename);
+      free_editor_state(&editor);
+      return 1;
+    }
   }
 
   hide_terminal_cursor();

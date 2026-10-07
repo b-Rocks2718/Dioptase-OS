@@ -17,6 +17,7 @@
 #include "ext.h"
 #include "string.h"
 #include "scheduler.h"
+#include "syscall_errors.h"
 
 #define SYSCALL_MAX_PATH_BYTES 1024
 #define SYSCALL_MAX_IO_BYTES 1024
@@ -153,23 +154,48 @@ static int copy_to_user(void* dest, void* src, unsigned n, struct TCB* tcb){
   return copy_user(dest, src, n, tcb);
 }
 
+// Record why the current syscall is failing; trap return delivers it in r2.
+// Call this only on a path that makes the syscall return failure: a nonzero
+// error alongside a successful result would violate the documented contract.
+void set_syscall_error(int error){
+  get_current_tcb()->syscall_error = error;
+}
+
+// Consume the current syscall's failure cause for the trap return path.
+//
+// Called from trap_handler_ (kernel/sys.s) after trap_handler() returns and
+// before process_pending_signals_before_user_return(). That ordering matters:
+// a delivered signal handler runs nested on this kernel stack and its own
+// traps reuse tcb->syscall_error, so the outer value must already be saved in
+// the outer trap frame. Runs in kernel mode with interrupts enabled; only the
+// owning thread touches the field, so no locking is required.
+int take_syscall_error(void){
+  struct TCB* tcb = get_current_tcb();
+  int error = tcb->syscall_error;
+  tcb->syscall_error = SYSCALL_ERROR_NONE;
+  return error;
+}
+
 // Copy a NUL-terminated user string, rejecting faults and overlong input.
+// Returns 0 on success, EFAULT if the string runs off readable user memory, or
+// ENAMETOOLONG if no NUL appears within `max` bytes. The caller decides
+// whether to publish that cause as the syscall error.
 static int copy_cstr_from_user(char* dest, char* src, unsigned max,
     struct TCB* tcb){
   if (max == 0){
-    return -1;
+    return ENAMETOOLONG;
   }
 
   for (unsigned i = 0; i < max; i++){
     char c;
     if ((unsigned)src > UINT_MAX - i){
       dest[0] = '\0';
-      return -1;
+      return EFAULT;
     }
 
     if (copy_from_user(&c, (void*)((unsigned)src + i), 1, tcb) != 0){
       dest[0] = '\0';
-      return -1;
+      return EFAULT;
     }
 
     dest[i] = c;
@@ -179,7 +205,7 @@ static int copy_cstr_from_user(char* dest, char* src, unsigned max,
   }
 
   dest[max - 1] = '\0';
-  return -1;
+  return ENAMETOOLONG;
 }
 
 // Return fd's open-file object, or NULL if fd is out of range or unused. The
@@ -215,11 +241,15 @@ static int child_descriptor_index(struct TCB* tcb, int child_desc){
 
 // Copy a NUL-terminated user path into a new SYSCALL_MAX_PATH_BYTES heap
 // buffer owned by the caller. Returns NULL (with nothing allocated) if the
-// path faults or does not fit.
+// path faults or does not fit, and records EFAULT or ENAMETOOLONG as the
+// syscall error. Every caller fails its syscall on NULL, so recording the
+// cause here cannot leave a stale error on a successful syscall.
 static char* copy_path_from_user(struct TCB* tcb, char* user_path){
   char* path = malloc(SYSCALL_MAX_PATH_BYTES);
-  if (copy_cstr_from_user(path, user_path, SYSCALL_MAX_PATH_BYTES, tcb) != 0){
+  int copy_error = copy_cstr_from_user(path, user_path, SYSCALL_MAX_PATH_BYTES, tcb);
+  if (copy_error != 0){
     free(path);
+    set_syscall_error(copy_error);
     return NULL;
   }
   return path;
@@ -528,7 +558,11 @@ static unsigned split_normalized_path(char* path, char** parts,
   return part_count;
 }
 
-// Resolve a path and open or create its file descriptor according to flags.
+// Resolve a path and open a descriptor for it, creating any missing parent
+// directories and the final regular file. Failures return -1 and record
+// EFAULT/ENAMETOOLONG (path copy or component length), ENOTDIR (an existing
+// non-final component is not a directory), or EMFILE (descriptor table full);
+// a failed node creation is not yet classified and reports no cause.
 int handle_open(char* path){
   struct TCB* tcb = get_current_tcb();
 
@@ -539,6 +573,7 @@ int handle_open(char* path){
 
   if (!ext2_path_component_lengths_valid(buf)){
     free(buf);
+    set_syscall_error(ENAMETOOLONG);
     return -1;
   }
 
@@ -612,6 +647,7 @@ int handle_open(char* path){
 
       if (!is_final && !node_is_dir(next)){
         // expected a directory but found a non-directory component, so fail
+        set_syscall_error(ENOTDIR);
         node_free(next);
         node_free(current);
         current = NULL;
@@ -643,6 +679,7 @@ int handle_open(char* path){
   if (fd < 0){
     // could not allocate file descriptor
     node_free(file_node);
+    set_syscall_error(EMFILE);
     return -1;
   }
 
@@ -663,8 +700,11 @@ int handle_open(char* path){
 // Postconditions:
 // - Success installs one normal descriptor owned by the current TCB at offset
 //   zero and transfers the lookup's Node reference to that descriptor.
-// - Every failure returns -1. In particular, a missing path never enters any
-//   node_make_* path, and a descriptor-allocation failure releases the Node.
+// - Every failure returns -1 and records its cause for user r2: EFAULT or
+//   ENAMETOOLONG for the path copy, ENAMETOOLONG for an overlong component,
+//   ENOENT for any lookup failure, and EMFILE for a full descriptor table. A
+//   missing path never enters any node_make_* path, and a
+//   descriptor-allocation failure releases the Node.
 // - `node_find()` supplies all cwd/absolute/symlink traversal semantics; this
 //   function adds no architecture- or host-OS-specific pathname assumptions.
 static int handle_open_existing(char* path){
@@ -677,18 +717,24 @@ static int handle_open_existing(char* path){
 
   if (!ext2_path_component_lengths_valid(buf)){
     free(buf);
+    set_syscall_error(ENAMETOOLONG);
     return -1;
   }
 
+  // node_find() does not distinguish a missing final entry from a missing or
+  // non-directory intermediate component or a dangling symlink, so every
+  // lookup failure is reported as ENOENT ("did not resolve to an inode").
   struct Node* file_node = node_find(tcb->cwd, buf);
   free(buf);
   if (file_node == NULL){
+    set_syscall_error(ENOENT);
     return -1;
   }
 
   int fd = allocate_descriptor(tcb, DESCRIPTOR_FILE, true);
   if (fd < 0){
     node_free(file_node);
+    set_syscall_error(EMFILE);
     return -1;
   }
 
@@ -2020,6 +2066,11 @@ int trap_handler(unsigned code,
 
   // most sycalls return to the user program
   *return_to_user = true;
+
+  // Start every trap with no recorded failure cause. Handlers that fail call
+  // set_syscall_error(); trap_handler_ moves the value into user r2 through
+  // take_syscall_error() on the way out.
+  get_current_tcb()->syscall_error = SYSCALL_ERROR_NONE;
 
   switch (code){
     case TRAP_EXIT: {

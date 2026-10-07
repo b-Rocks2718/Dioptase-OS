@@ -123,6 +123,14 @@ struct TCB {
   // queues. This field is after all assembly-addressed context members.
   bool is_daemon;
 
+  // Failure cause for the syscall this thread is currently executing (one of
+  // the syscall_errors.h codes). trap_handler() clears it on every trap entry
+  // and the trap return path consumes it through take_syscall_error() before
+  // any signal handler can issue a nested trap, so its value is meaningful
+  // only inside one syscall continuation and needs no initialization at TCB
+  // creation. Only the owning thread reads or writes it, so no lock is needed.
+  int syscall_error;
+
   struct TCB* next;
 };
 

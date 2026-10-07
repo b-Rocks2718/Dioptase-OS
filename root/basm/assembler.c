@@ -674,7 +674,9 @@ int consume_control_register(void) {
       i += 1;
     }
 
-    if (v > 12 || is_identifier_char(current[i])) return -1;
+    // cr10 and cr11 are reserved (formerly the IPI mailboxes; see
+    // docs/ISA.md "Control Registers"), so only cr0 - cr9 and cr12 exist.
+    if (v > 12 || v == 10 || v == 11 || is_identifier_char(current[i])) return -1;
     current += i;
     return v;
   } else {
@@ -688,8 +690,6 @@ int consume_control_register(void) {
     else if (consume_named_register("tlba")) return 7;
     else if (consume_named_register("ksp")) return 8;
     else if (consume_named_register("cid")) return 9;
-    else if (consume_named_register("mbi")) return 10;
-    else if (consume_named_register("mbo")) return 11;
     else if (consume_named_register("tlbf")) return 12;
     else return -1;
   }
@@ -1812,19 +1812,15 @@ int consume_ipi(bool* success){
   int instruction = 31 << 27; // opcode
   instruction |= 4 << 12; // ID
 
-  int ra = consume_register();
-  if (ra == -1){
+  // ipi always succeeds and writes no register, so the rA field stays zero.
+  skip();
+  if (consume_register() != -1){
     print_error();
-    eputs("Invalid register\n");
-    eputs("Valid registers are r0 - r31\n");
+    eputs("ipi takes no result register; expected 'ipi n' or 'ipi all', found 'ipi rA, ...'\n");
     *success = false;
     return 0;
   }
 
-  skip();
-
-  instruction |= ra << 22;
-  
   if (consume_keyword("all")) {
     // ipi to all cores
     instruction |= 1 << 11;

@@ -144,6 +144,8 @@ extern void ipi_handler_(void);
 
 extern void mark_ipi_handled(void);
 
-extern unsigned send_ipi(unsigned data);
+// Interrupt every core, including the caller. IPIs carry no payload, so
+// request data must be published in shared memory before the call.
+extern void send_ipi(void);
 
 #endif // VMEM_H

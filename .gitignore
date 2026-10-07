@@ -12,3 +12,8 @@ a.s
 *.out.dir
 root/sbin/*
 debugging/*
+# Guest binaries rebuilt from source by `make test-sbin-<name>` / `make root-sbin`
+tests/*.dir/sbin/init
+tests/*.dir/test/init
+root/hello/bmake
+root/snake/init

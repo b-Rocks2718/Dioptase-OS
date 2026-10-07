@@ -26,4 +26,15 @@
 ***PASS shell cp did not create destination after source failure: got 1 expected 1
 ***PASS shell mv did not create missing source: got 1 expected 1
 ***PASS shell mv did not create destination after source failure: got 1 expected 1
+***PASS open_existing bad pointer reports EFAULT: got 14 expected 14
+***PASS open_existing 256-byte component reports ENAMETOOLONG: got 36 expected 36
+***PASS open_existing unterminated path reports ENAMETOOLONG: got 36 expected 36
+***PASS open_existing missing file reports ENOENT: got 2 expected 2
+***PASS open_existing missing parent reports ENOENT: got 2 expected 2
+***PASS successful open_existing leaves errno unchanged: got 2 expected 2
+***PASS open through regular file fails: got -1 expected -1
+***PASS open through regular file reports ENOTDIR: got 20 expected 20
+***PASS open_existing full table reports EMFILE: got 24 expected 24
+***PASS open full table fails: got -1 expected -1
+***PASS open full table reports EMFILE: got 24 expected 24
 ***Done.

@@ -125,8 +125,12 @@ tlb_flush:
 
   .global wakeup_core
 wakeup_core:
-  # wake up other cores based on number in r1 by sending an IPI
-  # puts success in r1
+  # Wake up the core numbered r1 (0 - 3) by sending it an IPI.
+  # Inputs: r1 = core number
+  # Outputs: none (ipi always succeeds); halts with r1 = 0xEEEE if r1 >= 4
+  # Kernel mode only (ipi is privileged).
+  # cmp with an immediate sets flags for 4 - r1 (immediate sub is reversed,
+  # see Dioptase-Assembler/docs/syntax.md), so this branches when 4 <= r1.
   cmp r1, 4
   bbe wakeup_core_error
   cmp r1, 3
@@ -139,16 +143,16 @@ wakeup_core:
   bz  wakeup_core_0
   jmp wakeup_core_error
 wakeup_core_0:
-  ipi r1, 0
+  ipi 0
   ret
 wakeup_core_1:
-  ipi r1, 1
+  ipi 1
   ret
 wakeup_core_2:
-  ipi r1, 2
+  ipi 2
   ret
 wakeup_core_3:
-  ipi r1, 3
+  ipi 3
   ret
 wakeup_core_error:
   movi r1, 0xEEEE

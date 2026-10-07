@@ -917,11 +917,15 @@ physmem_exhausted:
   return -1;
 }
 
-// Service a TLB-shootdown or other inter-core notification.
-void ipi_handler(unsigned data){
+// Acknowledge an inter-processor interrupt and log which core received it.
+// Nothing sends IPIs after boot yet (only tests/ipi_simple.c), so there is no
+// shared-memory request to service. Runs in kernel mode with interrupts
+// disabled, entered from ipi_handler_.
+void ipi_handler(void){
+  // IPIs merge while the ISR bit is set, so acknowledge before reading any
+  // request data: an IPI sent after this point raises a fresh interrupt.
   mark_ipi_handled();
 
   int cid = get_core_id();
-  int args[2] = {cid, data};
-  say("| Received IPI on core %d with data %d\n", args);
+  say("| Received IPI on core %d\n", &cid);
 }
