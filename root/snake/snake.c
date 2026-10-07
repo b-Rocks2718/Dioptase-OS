@@ -23,7 +23,16 @@
 #define HELP_ROW 4
 #define STATUS_ROW 6
 
-#define LOOP_SLEEP_JIFFIES 20
+// Game steps are paced by the 60 Hz VGA frame counter rather than PIT jiffies:
+// jiffies count emulated cycles, so jiffy-based pacing speeds up and slows down
+// with emulator performance, while VGA frames track wall-clock time on both the
+// emulator and hardware. 2 frames is 30 moves per second.
+#define STEP_FRAMES 2
+
+// Turns pressed between steps are buffered and applied one per step, so quick
+// sequences such as "up, left" both register instead of the latest key
+// overwriting (or being rejected against) the earlier one.
+#define TURN_QUEUE_CAPACITY 3
 
 #define RNG_MULTIPLIER 1664525u
 #define RNG_INCREMENT 1013904223u
@@ -126,7 +135,9 @@ struct SnakeGame {
   int head_slot;
   int length;
   int direction;
-  int queued_direction;
+  // Pending turns, oldest first; turn_queue[0] is applied on the next step.
+  int turn_queue[TURN_QUEUE_CAPACITY];
+  int turn_count;
   int food_x;
   int food_y;
   unsigned rng_state;
@@ -426,11 +437,21 @@ static int direction_from_key(int key) {
   return -1;
 }
 
-// Queue the next turn, rejecting only immediate reversals of the current heading.
+// Append a turn to the pending queue. Each turn is checked against the heading
+// the snake will have when it is applied (the last queued turn, or the current
+// heading), so repeats and reversals are dropped. Turns past capacity are dropped.
 static void queue_direction(struct SnakeGame* state, int direction) {
+  int heading;
+
   if (direction < 0) return;
-  if (directions_are_opposites(state->direction, direction)) return;
-  state->queued_direction = direction;
+  if (state->turn_count >= TURN_QUEUE_CAPACITY) return;
+
+  heading = state->direction;
+  if (state->turn_count > 0) heading = state->turn_queue[state->turn_count - 1];
+  if (direction == heading || directions_are_opposites(heading, direction)) return;
+
+  state->turn_queue[state->turn_count] = direction;
+  state->turn_count++;
 }
 
 // Advance the deterministic food-placement PRNG.
@@ -470,7 +491,7 @@ static void reset_game(struct SnakeGame* state, unsigned seed) {
   state->head_slot = INITIAL_LENGTH - 1;
   state->length = INITIAL_LENGTH;
   state->direction = DIR_RIGHT;
-  state->queued_direction = DIR_RIGHT;
+  state->turn_count = 0;
   state->food_x = -1;
   state->food_y = -1;
   state->rng_state = seed;
@@ -496,7 +517,7 @@ static void load_self_collision_shape(struct SnakeGame* state) {
   state->head_slot = 4;
   state->length = 5;
   state->direction = DIR_UP;
-  state->queued_direction = DIR_UP;
+  state->turn_count = 0;
   state->food_x = 0;
   state->food_y = 0;
   state->rng_state = INITIAL_RNG_STATE;
@@ -532,7 +553,13 @@ static void advance_game(struct SnakeGame* state) {
 
   if (!state->alive || state->won) return;
 
-  state->direction = state->queued_direction;
+  if (state->turn_count > 0) {
+    state->direction = state->turn_queue[0];
+    for (int i = 1; i < state->turn_count; i++) {
+      state->turn_queue[i - 1] = state->turn_queue[i];
+    }
+    state->turn_count--;
+  }
 
   head_x = state->snake_x[state->head_slot];
   head_y = state->snake_y[state->head_slot];
@@ -823,10 +850,17 @@ static bool play_round(unsigned seed, unsigned* next_seed) {
     if (restart_requested) return true;
 
     if (paused || !game.alive || game.won) {
+      // Restart the step interval so unpausing does not move immediately.
+      last_frame = get_vga_frame_counter();
       continue;
     }
 
-    sleep(LOOP_SLEEP_JIFFIES);
+    // Unsigned subtraction keeps the comparison correct across counter wrap.
+    // sleep(1) yields the CPU between frame-counter checks.
+    while (get_vga_frame_counter() - last_frame < STEP_FRAMES) {
+      sleep(1);
+    }
+    last_frame = get_vga_frame_counter();
 
     if (poll_input(&game, &paused, &restart_requested, &quit_requested)) {
       dirty = true;

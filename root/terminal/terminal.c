@@ -7,8 +7,14 @@
 #include "../crt/ps2.h"
 #include "../crt/terminal.h"
 
-#define CURSOR_BLINK_INTERVAL 100
-#define MAIN_LOOP_DELAY_INTERVAL 10
+// Cursor blink half-period in 60 Hz VGA frames (0.25 s). Measured in frames
+// rather than PIT jiffies because jiffies count emulated cycles, so their
+// wall-clock length depends on emulator speed.
+#define CURSOR_BLINK_FRAMES 15
+// Jiffies to sleep between polls of the keyboard and stdin. Keys reach the
+// foreground program only when this loop forwards them, so this delay adds
+// directly to input latency in games like snake. Keep it at one tick.
+#define MAIN_LOOP_DELAY_INTERVAL 1
 
 #define TAB_WIDTH 8
 
@@ -236,20 +242,20 @@ static void show_cursor_now(void){
   }
 
   cursor_blink_on = true;
-  last_cursor_blink = get_current_jiffies();
+  last_cursor_blink = get_vga_frame_counter();
   draw_cursor();
 }
 
 // Toggle the software cursor after its configured blink interval elapses.
 static void blink_cursor(void){
-  unsigned now = get_current_jiffies();
+  unsigned now = get_vga_frame_counter();
 
   if (!cursor_visible){
     erase_cursor();
     return;
   }
 
-  if (now - last_cursor_blink < CURSOR_BLINK_INTERVAL){
+  if (now - last_cursor_blink < CURSOR_BLINK_FRAMES){
     return;
   }
 
@@ -357,7 +363,7 @@ static void reset_display_state(void){
   cursor_visible = true;
   cursor_drawn = false;
   cursor_blink_on = true;
-  last_cursor_blink = get_current_jiffies();
+  last_cursor_blink = get_vga_frame_counter();
   under_cursor = 0;
 }
 
@@ -896,7 +902,7 @@ int main(void){
   cursor_home();
   wrap_pending = false;
   cursor_blink_on = true;
-  last_cursor_blink = get_current_jiffies();
+  last_cursor_blink = get_vga_frame_counter();
   draw_cursor();
 
   while (true){

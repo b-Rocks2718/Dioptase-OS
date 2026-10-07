@@ -8,6 +8,10 @@
 #define JUMP_VELOCITY 0x16
 #define GROUND_Y 357
 #define DINO_X 80
+// A space press is remembered for this many game steps (one step per 60 Hz
+// frame, so 8 is about 133 ms). Pressing jump slightly before landing then
+// still jumps on touchdown instead of being discarded mid-air.
+#define JUMP_BUFFER_STEPS 8
 
 #define GROUND_SPEED 12
 #define TILE_LAYER_SCALE 1
@@ -32,6 +36,8 @@ volatile short* TILE_FB = NULL;
 int dino_y;
 int dino_vy;
 int is_jumping;
+// Steps remaining in which a buffered space press will trigger a jump.
+int jump_buffer;
 
 int obstacle_1_x;
 int obstacle_1_y;
@@ -297,6 +303,7 @@ unsigned main(void){
   init_ground_tiles();
 
   start: dino_y = 300;
+  jump_buffer = 0;
   dino_vy = 0;
   is_jumping = 1;
   score = 0;
@@ -332,12 +339,23 @@ unsigned main(void){
     wait_for_next_vblank();
     update_positions();
 
-    // input
-    unsigned key = read_input_event();
-    if (key == 0x71) {
-      return 0;
+    // Drain every pending input byte so a backlog (other keys, key repeat)
+    // cannot delay a space press by one step per queued byte.
+    if (jump_buffer > 0){
+      jump_buffer--;
     }
-    if (key == 0x20 && !is_jumping){ // spacebar
+    unsigned key;
+    while ((key = read_input_event()) != 0){
+      if (key == 0x71) { // 'q'
+        return 0;
+      }
+      if (key == 0x20){ // spacebar
+        jump_buffer = JUMP_BUFFER_STEPS;
+      }
+    }
+
+    if (jump_buffer > 0 && !is_jumping){
+      jump_buffer = 0;
       dino_vy = JUMP_VELOCITY;
       dino_y -= 3;
       is_jumping = 1;
