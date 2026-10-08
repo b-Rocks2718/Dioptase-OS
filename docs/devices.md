@@ -155,34 +155,39 @@ address. If non-atomic DMA remains BUSY after a software timeout, it can touch
 only the quarantined drive's bounce page, so returning cannot create a
 use-after-free or post-return overwrite of caller memory.
 
-One persistent watchdog supplies an independent PIT-driven completion path for
-both controllers without allocating per request. It polls every 30 jiffies and
-gives each runtime request an implementation-defined 30,000-jiffy deadline
-(nominally about ten seconds with the kernel's 3,000-Hz PIT configuration). The
-SD hardware does not specify a software deadline, so these numbers are kernel
-policy rather than device timing guarantees. The deadline is below the
-`INT_MAX` modular-time horizon. If status becomes terminal but the SD interrupt
-is missing, the watchdog publishes the controller result. If neither status nor
-interrupt progresses by the deadline, it returns `SD_DRIVER_ERR_TIMEOUT` while
-retaining the bounce page under quarantine.
+Runtime requests complete only through the SD interrupt. Every IRQ_EN command
+raises exactly one completion interrupt, including completion with ERR (see
+`docs/mem_map.md`), and the interrupt stays pending in `ISR` until the handler
+acknowledges it (`docs/ISA.md`, `eoi`). So the ISR always finishes the request,
+even when the routed core is slow to take the interrupt.
+
+The shared kernel watchdog daemon (`kernel/watchdog.c`) enforces a software
+deadline for both controllers without allocating per request. It exists only for hardware that breaks that
+contract, such as a wedged controller or a lost interrupt line. It polls every
+30 jiffies and gives each runtime request an implementation-defined
+30,000-jiffy deadline (nominally about ten seconds with the kernel's 3,000-Hz
+PIT configuration). The SD hardware does not specify a software deadline, so
+these numbers are kernel policy rather than device timing guarantees. The
+deadline is below the `INT_MAX` modular-time horizon. Before the deadline the
+watchdog never touches a request. At the deadline it returns
+`SD_DRIVER_ERR_TIMEOUT` and quarantines the drive, even if the controller
+already shows DONE or ERR.
 
 The watchdog and ISR arbitrate under the per-drive state lock, and only the
 first terminal transition for the active generation may wake its caller. A
-watchdog-observed terminal result quarantines the drive only if BUSY remains
+terminal result observed by the ISR quarantines the drive only if BUSY remains
 set; clean DONE or terminal controller error with BUSY clear has released DMA
-ownership and may admit the next request immediately. The driver records the
-outstanding interrupt provenance, so its delayed handler either clears the old
-sticky terminal state or, if a newer command has already completed, safely
-handles that active generation. A delayed old edge observed while the newer
-command is nonterminal is acknowledged without waking it or clearing its
-status.
+ownership and may admit the next request immediately.
 
-A nonterminal software deadline always quarantines the drive until terminal
-hardware state with BUSY clear and the late interrupt are acknowledged. Later
-requests fail promptly with `SD_DRIVER_ERR_QUARANTINED`; if the device never
-completes, quarantine remains permanent. Consequently unresolved DMA cannot
-access newly staged bytes, and a late IRQ cannot be mistaken for completion of
-a newer generation. The other drive remains independent.
+A timed-out command is the only one whose interrupt can arrive after its
+request has been finished. Quarantine keeps any new request from starting until
+the ISR consumes that interrupt with BUSY clear, so the late interrupt cannot
+be mistaken for completion of a newer generation, and unresolved DMA cannot
+access newly staged bytes. Requests made meanwhile fail promptly with
+`SD_DRIVER_ERR_QUARANTINED`. If the interrupt never arrives, quarantine is
+permanent. An interrupt that arrives with no active or quarantined request is
+stray, and the ISR acknowledges it and prints a diagnostic. The other drive
+remains independent.
 
 Early boot cannot use scheduler or PIT wakeups, so it polls without IRQ_EN for
 at most 16,777,216 status reads. This implementation-defined operation budget
@@ -197,7 +202,7 @@ warning when code accesses block 0 on drive 1, because that drive currently
 backs the filesystem image.
 
 Tested in `sd_drives.c` and `sd_validation.c`. The latter exercises generation,
-single-terminal-publication, watchdog terminal-release, quarantine,
+single-terminal-publication, controller terminal-release, quarantine,
 stale-generation, and request-admission rules without requiring a deliberately
 hung device. The ext2 tests `ext_read.c`,
 `ext_write.c`, `ext_new_file.c`, `ext_delete.c`, and `ext_rename.c` also
@@ -232,13 +237,22 @@ queue is destroyed, the daemon's boot-lifetime TCB is detached from its waiter,
 and its private address space, if it was ever created, is explicitly reclaimed
 before VM/physmem teardown.
 
-This path owns the `AUDIO_*` control block. The bounded audio ISR acknowledges
-each enabled low-water edge, but playback progress does not depend on an
-interrupt wake: the daemon polls LOW_WATER and the ring indices once per jiffy
-with an implementation-defined 30,000-jiffy elapsed deadline (same modular
-half-range ordering as sleep/SD). If the device never reaches LOW_WATER or
-never drains within that budget, the daemon disables the device, releases the
-audio lock, cleans the retained mapping, and accepts the next queued request.
+This path owns the `AUDIO_*` control block. Playback progress is
+interrupt-driven. After each refill the daemon blocks on an `InterruptWaiter`
+that the audio ISR signals on every LOW_WATER edge. Because the device
+interrupts only on LOW_WATER's 0->1 transition, and not when IRQ_EN is enabled
+while LOW_WATER already holds, the daemon checks the status directly after
+preparing the waiter and before blocking. For the final drain it lowers
+`AUDIO_WATERMARK` to 0, so LOW_WATER means "empty" and the last sample also
+ends with an edge.
+
+Each wait has an implementation-defined 30,000-jiffy progress deadline (same
+modular half-range ordering as sleep/SD), enforced by the shared kernel
+watchdog daemon (`kernel/watchdog.c`), which also enforces SD deadlines. If the
+device never reaches LOW_WATER or never drains within that budget, the
+watchdog marks the wait timed out and wakes the daemon, which disables the
+device, releases the audio lock, cleans the retained mapping, and accepts the
+next queued request.
 Every refill of a validated source must also consume at least one complete
 sample; a zero-byte refill is treated as the same asynchronous failure class.
 

@@ -30,7 +30,7 @@ releases the child's internal descriptor reference. The callback asserts that
 places blocked threads on the reaper queue; owners must wake and join waiters
 before quiescent destruction.
 
-`setup_thread()` creates persistent kernel daemons which deliberately do not
+`daemon()` creates persistent kernel daemons which deliberately do not
 contribute to the normal-thread shutdown count. Each such TCB carries an
 explicit daemon marker. After every core has disabled interrupts and crossed
 the shutdown barrier, core 0 detaches only marked daemons from residual global,

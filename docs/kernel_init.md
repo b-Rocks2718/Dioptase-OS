@@ -52,7 +52,7 @@ Core 0 initializes subsystems in this order:
   Interrupts are still globally disabled at this point.
 - `bootstrap()` creates core 0's idle-thread TCB context.
 - `threads_init()` initializes scheduler queues and creates the reaper thread
-  with `setup_thread()`.
+  with `daemon()`.
 - `uart_init()`, `audio_init()`, `exc_init()`, `sd_init()`, `ps2_init()`, and
   `mouse_init()` register device and exception handlers and initialize
   device-side state.
@@ -61,7 +61,7 @@ Core 0 initializes subsystems in this order:
 - `trap_init()` installs the shared syscall/trap handler.
 
 During this phase, `bootstrapping` is still true. Kernel daemon threads created
-with `setup_thread()` do not end bootstrapping and do not count as active user
+with `daemon()` do not end bootstrapping and do not count as active user
 work. SD waits poll during this phase because normal thread blocking and
 interrupt-driven wakeups are not fully live yet. The poll is bounded by the
 implementation-defined operation budget documented in `devices.md`; it cannot
@@ -75,7 +75,7 @@ After the global subsystems are ready, core 0 creates the `kernel_main` thread:
 - points it at `kernel_main`
 - calls `thread()`
 
-Unlike `setup_thread()`, `thread()` creates normal active work. It sets
+Unlike `daemon()`, `thread()` creates normal active work. It sets
 `bootstrapping` to false, increments `n_active`, allocates a normal thread
 stack, creates a fresh page directory, initializes stdio descriptors, and wakes
 the thread through the scheduler.

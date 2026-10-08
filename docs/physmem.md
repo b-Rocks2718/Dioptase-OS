@@ -105,7 +105,9 @@ or differently sized buddy.
 
 Each core has a local cache of `LOCAL_CACHE_SIZE = 64` order-0 pages. Empty
 caches refill from the global buddy allocator in `LOCAL_CACHE_REFILL = 32` page
-batches.
+batches. Each refill, and each spill of a full cache back to the buddy
+allocator, holds the global buddy lock once for the whole batch rather than
+once per page.
 
 `physmem_alloc()`:
 

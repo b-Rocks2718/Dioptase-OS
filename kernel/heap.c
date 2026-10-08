@@ -301,13 +301,11 @@ static void bitmap_update(struct Slab* slab, void* obj, bool allocate) {
 }
 #endif
 
-// Allocate one object of size class class_index from its shared slab cache,
+// Take one object of size class class_index from its shared slab cache,
 // preferring partial slabs, then a cached empty slab, then a new slab.
-// Returns NULL only when a new slab is needed and physmem is exhausted.
-static void* slab_alloc(int class_index){
-  struct SlabCache* cache = &slab_caches[class_index];
-  heap_lock(&cache->lock);
-
+// Caller holds cache->lock. Returns NULL only when a new slab is needed and
+// physmem is exhausted.
+static void* slab_alloc_locked(struct SlabCache* cache, int class_index){
   struct Slab* slab = cache->partial_slabs;
   if (slab == NULL) {
     slab = cache->empty_slabs;
@@ -317,7 +315,6 @@ static void* slab_alloc(int class_index){
     } else {
       slab = slab_create(class_index);
       if (slab == NULL) {
-        heap_unlock(&cache->lock);
         return NULL;
       }
     }
@@ -333,16 +330,50 @@ static void* slab_alloc(int class_index){
     slab_list_push(&cache->full_slabs, slab);
   }
 
-  heap_unlock(&cache->lock);
   return obj;
 }
 
-// Return one object to its slab, moving the slab between the full, partial,
-// and empty lists as its free count changes.
-static void slab_free(void* obj) {
-  struct Slab* slab = slab_of(obj);
-  struct SlabCache* cache = &slab_caches[size_class_of_slab(slab, obj)];
+// Take up to `want` objects of size class class_index from the shared cache
+// under a single cache-lock hold, returned as a FreeObject chain whose last
+// node is stored in *tail. Fewer than `want` (possibly zero) are returned only
+// when physmem is exhausted.
+//
+// Refilling a per-core free list one locked object at a time made a cold
+// refill (e.g. the first allocation after a thread migrates to another core)
+// cost tens of thousands of cycles per size class. One lock hold amortizes the
+// lock and preemption overhead across the whole batch.
+static unsigned slab_alloc_batch(int class_index, unsigned want,
+    struct FreeObject** head, struct FreeObject** tail){
+  struct SlabCache* cache = &slab_caches[class_index];
+  struct FreeObject* chain = NULL;
+  struct FreeObject* last = NULL;
+  unsigned got = 0;
+
   heap_lock(&cache->lock);
+  while (got < want) {
+    struct FreeObject* obj = (struct FreeObject*)slab_alloc_locked(cache, class_index);
+    if (obj == NULL) {
+      break;
+    }
+    obj->next = chain;
+    chain = obj;
+    if (last == NULL) {
+      last = obj;
+    }
+    got++;
+  }
+  heap_unlock(&cache->lock);
+
+  *head = chain;
+  *tail = last;
+  return got;
+}
+
+// Return one object to its slab, moving the slab between the full, partial,
+// and empty lists as its free count changes. Caller holds cache->lock, and
+// cache must be the cache serving obj's size class.
+static void slab_free_locked(struct SlabCache* cache, void* obj) {
+  struct Slab* slab = slab_of(obj);
 
   ((struct FreeObject*)obj)->next = slab->free_list;
   slab->free_list = obj;
@@ -363,7 +394,18 @@ static void slab_free(void* obj) {
       cache->num_empty_slabs++;
     }
   }
+}
 
+// Return a NULL-terminated chain of size-class class_index objects to the
+// shared cache under a single cache-lock hold (see slab_alloc_batch()).
+static void slab_free_batch(int class_index, struct FreeObject* chain) {
+  struct SlabCache* cache = &slab_caches[class_index];
+  heap_lock(&cache->lock);
+  while (chain != NULL) {
+    struct FreeObject* next = chain->next;
+    slab_free_locked(cache, chain);
+    chain = next;
+  }
   heap_unlock(&cache->lock);
 }
 
@@ -373,25 +415,29 @@ static void slab_free(void* obj) {
 // The current thread stays pinned so `core` remains this core's PerCore, and
 // preemption is disabled whenever the per-core list is touched so another
 // thread on this core cannot interleave. Preemption is re-enabled around
-// slab_alloc() because it may block on the cache lock or physmem.
+// slab_alloc_batch() because it may block on the cache lock or physmem; the
+// batch is spliced in afterwards, so a list that another thread on this core
+// refilled meanwhile may briefly exceed the refill target (free() trims it).
 // Returns NULL only if both the per-core list and the slab cache are empty.
 static void* per_core_alloc(int class_index) {
   enum CoreAffinity core_was = core_pin();
   struct PerCore* core = get_per_core();
 
   bool preempt_was = preemption_disable();
-  if (core->free_list_sizes[class_index] <= MIN_PER_CORE_FREE_LIST) {
-    while (core->free_list_sizes[class_index] <= PER_CORE_FREE_LIST_REFILL) {
-      preemption_restore(preempt_was);
-      void* refill = slab_alloc(class_index);
-      preempt_was = preemption_disable();
-      if (refill == NULL) {
-        break; // slab cache is out of memory; use whatever we got so far
-      }
+  unsigned size = core->free_list_sizes[class_index];
+  if (size <= MIN_PER_CORE_FREE_LIST) {
+    preemption_restore(preempt_was);
+    struct FreeObject* head;
+    struct FreeObject* tail;
+    unsigned got = slab_alloc_batch(class_index,
+      PER_CORE_FREE_LIST_REFILL + 1 - size, &head, &tail);
+    preempt_was = preemption_disable();
 
-      ((struct FreeObject*)refill)->next = core->free_lists[class_index];
-      core->free_lists[class_index] = refill;
-      core->free_list_sizes[class_index]++;
+    // On exhaustion `got` may be short or zero; use whatever we got.
+    if (got > 0) {
+      tail->next = core->free_lists[class_index];
+      core->free_lists[class_index] = head;
+      core->free_list_sizes[class_index] += got;
     }
   }
 
@@ -496,16 +542,20 @@ void free(void* obj){
   struct PerCore* core = get_per_core();
 
   if (core->free_list_sizes[class_index] >= MAX_PER_CORE_FREE_LIST) {
-    // per-core free list is full; return a batch to the shared slab cache
+    // Per-core free list is full: detach the excess while preemption is off,
+    // then return it to the shared slab cache in one locked batch.
+    struct FreeObject* spill = NULL;
     while (core->free_list_sizes[class_index] > PER_CORE_FREE_LIST_REFILL) {
-      void* spill = core->free_lists[class_index];
-      core->free_lists[class_index] = ((struct FreeObject*)spill)->next;
+      struct FreeObject* victim = core->free_lists[class_index];
+      core->free_lists[class_index] = victim->next;
       core->free_list_sizes[class_index]--;
-
-      preemption_restore(preempt_was);
-      slab_free(spill);
-      preempt_was = preemption_disable();
+      victim->next = spill;
+      spill = victim;
     }
+
+    preemption_restore(preempt_was);
+    slab_free_batch(class_index, spill);
+    preempt_was = preemption_disable();
   }
 
   ((struct FreeObject*)obj)->next = core->free_lists[class_index];

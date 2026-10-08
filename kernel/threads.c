@@ -194,7 +194,7 @@ static void reaper(void){
 // Allocate a kernel-mode TCB whose first context switch enters thread_entry()
 // on a fresh stack and runs thread_fun. Every field not set here is zero.
 //
-// Daemon TCBs (setup_thread) live until shutdown and never enter user mode, so
+// Daemon TCBs (daemon()) live until shutdown and never enter user mode, so
 // their storage comes from leak() and they get no stdio descriptors. Ordinary
 // TCBs use reclaimable malloc() storage that free_tcb() later releases.
 static struct TCB* make_tcb(struct Fun* thread_fun, enum ThreadPriority priority,
@@ -260,7 +260,7 @@ void thread_(struct Fun* thread_fun,
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity){
+void daemon(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity){
   scheduler_wake_thread(make_tcb(thread_fun, priority, core_affinity, true));
 }
 
@@ -315,7 +315,7 @@ void threads_init(void){
   reaper_fun->func = (void (*)(void *))reaper;
   reaper_fun->arg = NULL;
 
-  setup_thread(reaper_fun, LOW_PRIORITY, ANY_CORE);
+  daemon(reaper_fun, LOW_PRIORITY, ANY_CORE);
 }
 
 // Switch away from the current thread and run func(arg) in the next context.

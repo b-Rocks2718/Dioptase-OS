@@ -120,7 +120,8 @@ audio_copy_word_no_wrap:
   ret
 
   .global mark_audio_handled
-# Mark the audio interrupt as handled in the device's MMIO status register.
+# Acknowledge the audio interrupt by clearing only ISR bit 7. The device's
+# LOW_WATER status is level state and is not changed.
 mark_audio_handled:
   eoi 7
   ret

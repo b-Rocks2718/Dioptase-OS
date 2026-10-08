@@ -18,6 +18,8 @@
 #include "constants.h"
 #include "machine.h"
 #include "TCB.h"
+#include "atomic.h"
+#include "watchdog.h"
 
 struct BlockingLock audio_lock;
 
@@ -31,6 +33,24 @@ struct BlockingLock audio_lock;
 
 static struct GenericSpinQueue audio_request_queue;
 static struct InterruptWaiter audio_request_waiter;
+
+/*
+ * Playback progress wait shared by the daemon, the audio ISR, and the kernel
+ * watchdog.
+ *
+ * audio_output_waiter: the daemon is its sole consumer (audio_wav_play() runs
+ * only in the daemon, under audio_lock). The ISR signals it on every LOW_WATER
+ * edge; the watchdog signals it when a wait's deadline passes.
+ *
+ * audio_wait_active/deadline/timed_out describe the daemon's current wait and
+ * are accessed only under audio_wait_lock, which both the daemon and the
+ * watchdog take from thread context. The ISR never takes it.
+ */
+static struct InterruptWaiter audio_output_waiter;
+static struct SpinLock audio_wait_lock;
+static bool audio_wait_active;
+static unsigned audio_wait_deadline;
+static bool audio_wait_timed_out;
 static int audio_queued_count;
 static bool audio_daemon_started;
 static struct TCB* audio_daemon_tcb;
@@ -141,8 +161,18 @@ static bool audio_request_release_owner(struct AudioRequest* request);
 static void audio_daemon(void* unused);
 static void audio_process_request(struct AudioRequest* request);
 
+static void audio_watchdog_check(unsigned now);
+
 // register audio isr and initialize control regs
 void audio_init(void){
+  // The ISR signals audio_output_waiter, so it must be valid before the
+  // handler is reachable.
+  interrupt_waiter_init(&audio_output_waiter);
+  spin_lock_init(&audio_wait_lock);
+  audio_wait_active = false;
+  audio_wait_deadline = 0;
+  audio_wait_timed_out = false;
+
   register_handler(audio_handler_, (void*)AUDIO_IVT_ENTRY);
   audio_output_reset(AUDIO_OUTPUT_DEFAULT_WATERMARK_BYTES);
   blocking_lock_init(&audio_lock);
@@ -155,8 +185,10 @@ void audio_init(void){
   struct Fun* daemon_fun = leak(sizeof(struct Fun));
   daemon_fun->func = audio_daemon;
   daemon_fun->arg = NULL;
-  setup_thread(daemon_fun, HIGH_PRIORITY, ANY_CORE);
+  daemon(daemon_fun, HIGH_PRIORITY, ANY_CORE);
   audio_daemon_started = true;
+
+  watchdog_register(audio_watchdog_check);
 }
 
 // to be called only from kernel_shutdown
@@ -172,13 +204,14 @@ void audio_destroy(void){
   audio_output_disable();
   generic_spin_queue_destroy(&audio_request_queue);
   interrupt_waiter_init(&audio_request_waiter);
+  interrupt_waiter_init(&audio_output_waiter);
   blocking_lock_destroy(&audio_lock);
 
-  struct TCB* daemon = (struct TCB*)__atomic_load_n((int*)&audio_daemon_tcb);
-  if (daemon != NULL){
-    assert_always(daemon->is_daemon,
+  struct TCB* daemon_tcb = (struct TCB*)__atomic_load_n((int*)&audio_daemon_tcb);
+  if (daemon_tcb != NULL){
+    assert_always(daemon_tcb->is_daemon,
       "audio destroy: recorded playback TCB must be a persistent daemon.\n");
-    assert_always(daemon->vme_list == NULL,
+    assert_always(daemon_tcb->vme_list == NULL,
       "audio destroy: playback daemon retained a VME after asynchronous work reached zero.\n");
 
     /*
@@ -187,9 +220,9 @@ void audio_destroy(void){
      * ever needed them, before VM and physmem teardown. A zero PID is the
      * expected state when no request reached the daemon.
      */
-    if (daemon->pid != 0){
-      vmem_destroy_address_space(daemon);
-      daemon->pid = 0;
+    if (daemon_tcb->pid != 0){
+      vmem_destroy_address_space(daemon_tcb);
+      daemon_tcb->pid = 0;
     }
     __atomic_store_n((int*)&audio_daemon_tcb, (int)NULL);
   }
@@ -524,6 +557,11 @@ void audio_output_disable(void){
   *AUDIO_CTRL = 0;
 }
 
+// Program the LOW_WATER threshold without touching playback state.
+static void audio_output_set_watermark(unsigned watermark_bytes){
+  *AUDIO_WATERMARK = watermark_bytes;
+}
+
 // Return whether the device reports that its PCM ring is below watermark.
 bool audio_output_low_water(void){
   return ((*AUDIO_STATUS) & AUDIO_STATUS_LOW_WATER) != 0;
@@ -675,6 +713,85 @@ unsigned audio_wav_num_samples(struct AudioWav* wav){
   return wav->data_size / AUDIO_SAMPLE_BYTES;
 }
 
+/*
+ * Block the playback daemon until ready() holds, or fail after
+ * AUDIO_PROGRESS_TIMEOUT_JIFFIES.
+ *
+ * ready() must be a device condition whose 0->1 transition raises the audio
+ * interrupt (LOW_WATER, possibly with a lowered watermark). The device only
+ * interrupts on that edge, never when IRQ_EN is enabled while the condition
+ * already holds (docs/mem_map.md). So each iteration prepares the waiter and
+ * then checks ready() directly before blocking: an edge after prepare signals
+ * the waiter and makes the wait return, and a condition that already held is
+ * caught by the check.
+ *
+ * The deadline exists only for a device that stops making progress. The
+ * kernel watchdog sets audio_wait_timed_out under audio_wait_lock and then
+ * signals the waiter. The flag is read after prepare, so a timeout that races
+ * with the check either is seen by the check or leaves the waiter signalled.
+ * Spurious wakeups (stale edges, a late watchdog signal) just re-check.
+ *
+ * Preconditions: kernel mode, the playback daemon thread holding audio_lock,
+ * no spinlock held. Returns true when ready() held, false on timeout.
+ */
+static bool audio_wait_for(bool (*ready)(void)){
+  unsigned deadline = (unsigned)__atomic_load_n((int*)&current_jiffies) +
+    AUDIO_PROGRESS_TIMEOUT_JIFFIES;
+
+  spin_lock_acquire(&audio_wait_lock);
+  audio_wait_deadline = deadline;
+  audio_wait_timed_out = false;
+  audio_wait_active = true;
+  spin_lock_release(&audio_wait_lock);
+
+  bool ok;
+  while (true){
+    interrupt_waiter_prepare(&audio_output_waiter);
+    if (ready()){
+      ok = true;
+      break;
+    }
+
+    spin_lock_acquire(&audio_wait_lock);
+    bool timed_out = audio_wait_timed_out;
+    spin_lock_release(&audio_wait_lock);
+    if (timed_out){
+      ok = false;
+      break;
+    }
+
+    interrupt_waiter_wait(&audio_output_waiter);
+  }
+
+  spin_lock_acquire(&audio_wait_lock);
+  audio_wait_active = false;
+  spin_lock_release(&audio_wait_lock);
+  return ok;
+}
+
+/*
+ * Kernel watchdog check (see watchdog.h): time out the daemon's current wait
+ * once its deadline passes. Runs in the watchdog daemon's thread context. The
+ * signal happens after the lock is released; if the daemon has meanwhile
+ * finished or started another wait, the extra signal is a spurious wakeup
+ * that the next prepare consumes or the wait loop re-checks.
+ */
+static void audio_watchdog_check(unsigned now){
+  bool notify = false;
+
+  spin_lock_acquire(&audio_wait_lock);
+  if (audio_wait_active && !audio_wait_timed_out &&
+      audio_deadline_reached(now, audio_wait_deadline)){
+    audio_wait_timed_out = true;
+    notify = true;
+  }
+  spin_lock_release(&audio_wait_lock);
+
+  if (notify){
+    interrupt_waiter_notify(&audio_output_waiter);
+  }
+}
+
 // Start playback of a loaded WAV if the device can accept its format.
 bool audio_wav_play(struct AudioWav* wav){
   assert(wav != NULL && wav->bytes != NULL,
@@ -703,28 +820,14 @@ bool audio_wav_play(struct AudioWav* wav){
   }
 
   while (playback_ok && next_data_bytes < wav->data_size){
-    unsigned wait_deadline =
-      (unsigned)__atomic_load_n((int*)&current_jiffies) +
-      AUDIO_PROGRESS_TIMEOUT_JIFFIES;
-
     /*
-     * Wait for LOW_WATER with an elapsed jiffy deadline. Poll one tick at a
-     * time so a silent device cannot strand the daemon forever holding
-     * audio_lock. AUDIO_PROGRESS_TIMEOUT_JIFFIES is within INT_MAX, so modular
-     * half-range ordering matches sleep/SD. The ISR only acknowledges the
-     * enabled low-water edge; this polling loop owns playback progress and
-     * remains deadline-bounded even if the device never raises that edge.
+     * Sleep until the ring drains to the watermark. The LOW_WATER interrupt
+     * wakes the daemon; the deadline only bounds a device that stops
+     * consuming, so a silent device cannot strand the daemon holding
+     * audio_lock.
      */
-    while (!audio_output_low_water()){
-      unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
-      if (audio_deadline_reached(now, wait_deadline)){
-        playback_ok = false;
-        break;
-      }
-      sleep(1);
-    }
-
-    if (!playback_ok){
+    if (!audio_wait_for(audio_output_low_water)){
+      playback_ok = false;
       break;
     }
 
@@ -744,17 +847,16 @@ bool audio_wav_play(struct AudioWav* wav){
   }
 
   if (playback_ok){
-    unsigned drain_deadline =
-      (unsigned)__atomic_load_n((int*)&current_jiffies) +
-      AUDIO_PROGRESS_TIMEOUT_JIFFIES;
-    while (!audio_output_empty()){
-      unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
-      if (audio_deadline_reached(now, drain_deadline)){
-        playback_ok = false;
-        break;
-      }
-      sleep(1);
-    }
+    /*
+     * Wait for the final samples to play. With a zero watermark LOW_WATER
+     * means "0 bytes buffered", i.e. empty, so the drain also completes on a
+     * LOW_WATER edge. Lowering the watermark can only clear LOW_WATER, which
+     * raises no interrupt; if the ring is already empty, the direct check in
+     * audio_wait_for() sees it. The next playback's audio_output_reset()
+     * restores the default watermark.
+     */
+    audio_output_set_watermark(0);
+    playback_ok = audio_wait_for(audio_output_empty);
   }
 
   if (!playback_ok){
@@ -776,17 +878,19 @@ bool audio_wav_play(struct AudioWav* wav){
 }
 
 /*
- * Audio interrupt handler.
+ * Audio interrupt handler: acknowledge one LOW_WATER edge and wake the
+ * playback daemon if it is waiting in audio_wait_for().
  *
- * Playback progress is deadline-bounded by polling LOW_WATER and the ring
- * indices in audio_wav_play(); no thread is published for an interrupt wake.
- * The device IRQ remains enabled, so this bounded handler must acknowledge
- * each low-water edge without touching scheduler or TCB state.
+ * The acknowledgement comes first so an edge raised while this handler runs
+ * pends again rather than being merged into this one. The wake goes through
+ * the bounded, lock-free interrupt path; an edge with no waiter only leaves
+ * the waiter's event pending, which the next prepare discards.
  *
  * CPU state: kernel ISR context with interrupts disabled by hardware.
  */
 void audio_handler(void){
   mark_audio_handled();
+  interrupt_waiter_notify_from_interrupt(&audio_output_waiter);
 }
 
 // Allocate an asynchronous audio request retaining one node reference.
@@ -987,17 +1091,17 @@ static void audio_request_finish_lifetime(void){
  * Postcondition: the current hardware PID and TCB PID identify one valid,
  * initially empty page directory owned by this daemon.
  */
-static void audio_daemon_prepare_address_space(struct TCB* daemon){
-  assert_always(daemon != NULL && daemon == get_current_tcb(),
+static void audio_daemon_prepare_address_space(struct TCB* daemon_tcb){
+  assert_always(daemon_tcb != NULL && daemon_tcb == get_current_tcb(),
     "audio daemon address space: caller must be the current daemon TCB.\n");
-  assert_always(daemon->is_daemon,
+  assert_always(daemon_tcb->is_daemon,
     "audio daemon address space: current TCB must be persistent.\n");
 
-  if (daemon->pid == 0){
-    daemon->pid = create_page_directory();
-    assert_always(daemon->pid != 0,
+  if (daemon_tcb->pid == 0){
+    daemon_tcb->pid = create_page_directory();
+    assert_always(daemon_tcb->pid != 0,
       "audio daemon: failed to allocate a page directory for playback mappings.\n");
-    set_pid(daemon->pid);
+    set_pid(daemon_tcb->pid);
     tlb_flush();
   }
 }

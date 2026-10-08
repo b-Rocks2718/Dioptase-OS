@@ -13,6 +13,7 @@
 #include "scheduler.h"
 #include "string.h"
 #include "threads.h"
+#include "watchdog.h"
 
 /*
  * SD DMA register blocks from docs/mem_map.md. Each controller exposes six
@@ -63,7 +64,6 @@
  *   about a hardware duration the specification does not define.
  */
 #define SD_RUNTIME_TIMEOUT_JIFFIES 30000
-#define SD_WATCHDOG_POLL_JIFFIES 30
 #define SD_BOOT_POLL_OPERATION_LIMIT 16777216
 
 // Identify the SD commands issued by the filesystem and boot paths.
@@ -104,20 +104,6 @@ struct SdDriveContext {
 
   unsigned last_status;
   unsigned last_error;
-
-  /*
-   * True after the watchdog publishes a terminal result without clearing the
-   * controller's sticky state. The hardware IRQ for that completed command may
-   * already be routed but delayed on another core. The next handler consumes
-   * this provenance even if a newer command has started; terminal status then
-   * belongs to the active command, while nonterminal status identifies the
-   * handler as the delayed edge and must not finish the newer generation.
-   *
-   * All access is under state_lock. Commands are serialized per drive and the
-   * interrupt source is a pending bit rather than a counted event, so one bit
-   * records all unconsumed terminal-watchdog completions safely.
-   */
-  bool late_terminal_irq_pending;
 
   // One page permanently owned by this drive. Hardware never receives a
   // caller address. Quarantine prevents restaging while an old generation may
@@ -625,49 +611,40 @@ bool sd_runtime_deadline_reached(unsigned now, unsigned deadline){
 }
 
 /*
- * Poll one active generation from the persistent watchdog.
+ * Enforce one active generation's software deadline from the persistent
+ * watchdog.
  *
- * The state lock makes the generation snapshot and terminal transition atomic
- * with respect to the SD ISR and command admission. If status is already
- * terminal, the watchdog returns the controller result and quarantines only
- * while BUSY says DMA still owns the fixed bounce page. It leaves DONE/ERR
- * untouched and records that the already-routed IRQ may arrive late. If status
- * has not progressed by the deadline, it publishes timeout and always applies
- * quarantine because hardware ownership is then unresolved.
+ * Before the deadline the watchdog never touches a request: every IRQ_EN
+ * command raises exactly one completion interrupt (docs/mem_map.md), which
+ * stays pending in ISR until acknowledged (docs/ISA.md, eoi), so sd_handler()
+ * always finishes it. The deadline exists only for hardware that violates that
+ * contract (a wedged controller or a lost interrupt line).
+ *
+ * At the deadline the watchdog publishes SD_DRIVER_ERR_TIMEOUT and always
+ * quarantines, even if status is already terminal: its interrupt may still be
+ * in flight, and quarantine keeps any new generation from starting until
+ * sd_handler() consumes that edge and observes BUSY clear. This makes a timed-
+ * out command the only one whose interrupt can arrive after its request was
+ * finished, and the handler's quarantine branch owns exactly that case. If the
+ * interrupt never arrives, the drive stays quarantined and later requests fail
+ * with SD_DRIVER_ERR_QUARANTINED.
+ *
+ * The state lock makes the deadline check and terminal transition atomic with
+ * respect to the SD ISR and command admission.
  */
 static void sd_watchdog_check(enum SdDrive drive, unsigned now){
   struct SdDriveContext* context = &sd_contexts[drive];
   bool publish = false;
 
   unsigned state_was = sd_state_lock_acquire(&context->state_lock);
-  if (context->request.active){
-    unsigned generation = context->request.generation;
-    unsigned status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
-    unsigned error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
-
-    if (sd_status_is_terminal(status, error)){
-      context->last_status = status;
-      context->last_error = error;
-      int result = sd_result_from_status(status, error);
-      bool still_busy = (status & SD_DMA_STATUS_BUSY) != 0;
-      publish = sd_request_state_finish_controller(&context->request,
-        generation, result, still_busy);
-      if (publish && !still_busy){
-        /*
-         * Do not acknowledge or clear the controller here: the routed handler
-         * owns the interrupt acknowledgement. Admission may safely start a new
-         * command because BUSY is clear, and the provenance bit lets that late
-         * handler distinguish its nonterminal edge from new completion.
-         */
-        context->late_terminal_irq_pending = true;
-      }
-    } else if (sd_runtime_deadline_reached(now,
-        context->deadline_jiffies)){
-      context->last_status = status;
-      context->last_error = error;
-      publish = sd_request_state_finish(&context->request, generation,
-        SD_DRIVER_ERR_TIMEOUT, true);
-    }
+  if (context->request.active &&
+      sd_runtime_deadline_reached(now, context->deadline_jiffies)){
+    // Record the controller state for the timeout diagnostic, but leave
+    // DONE/ERR untouched: the routed handler owns acknowledgement.
+    context->last_status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
+    context->last_error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
+    publish = sd_request_state_finish(&context->request,
+      context->request.generation, SD_DRIVER_ERR_TIMEOUT, true);
   }
   sd_state_lock_release(&context->state_lock, state_was);
 
@@ -676,15 +653,10 @@ static void sd_watchdog_check(enum SdDrive drive, unsigned now){
   }
 }
 
-/* One bounded-storage daemon supplies the independent PIT deadline wake path. */
-static void sd_watchdog(void* unused){
-  (void)unused;
-  while (true){
-    sleep(SD_WATCHDOG_POLL_JIFFIES);
-    unsigned now = (unsigned)__atomic_load_n((int*)&current_jiffies);
-    sd_watchdog_check(SD_DRIVE_0, now);
-    sd_watchdog_check(SD_DRIVE_1, now);
-  }
+// Kernel watchdog check (see watchdog.h): enforce both drives' deadlines.
+static void sd_watchdog_check_all(unsigned now){
+  sd_watchdog_check(SD_DRIVE_0, now);
+  sd_watchdog_check(SD_DRIVE_1, now);
 }
 
 // Initialize one controller context and its request synchronization.
@@ -701,7 +673,6 @@ static void sd_context_init(struct SdDriveContext* context){
   context->command = 0;
   context->last_status = 0;
   context->last_error = 0;
-  context->late_terminal_irq_pending = false;
   context->bounce_buffer = leak(SD_DMA_BOUNCE_BYTES);
   assert(((unsigned)context->bounce_buffer & (SD_DMA_ALIGNMENT_BYTES - 1)) == 0 &&
       (unsigned)context->bounce_buffer < SD_DMA_RAM_END_EXCLUSIVE &&
@@ -737,11 +708,8 @@ void sd_init(void){
   register_handler(sd0_handler_, (void*)SD_0_IVT_ENTRY);
   register_handler(sd1_handler_, (void*)SD_1_IVT_ENTRY);
 
-  // The sole watchdog is persistent and uses no per-request allocation.
-  struct Fun* watchdog_fun = leak(sizeof(struct Fun));
-  watchdog_fun->func = sd_watchdog;
-  watchdog_fun->arg = NULL;
-  setup_thread(watchdog_fun, HIGH_PRIORITY, ANY_CORE);
+  // Runtime deadlines are enforced by the shared kernel watchdog daemon.
+  watchdog_register(sd_watchdog_check_all);
 }
 
 // Stop SD workers and release controller synchronization during shutdown.
@@ -749,7 +717,7 @@ void sd_destroy(void){
   /*
    * Preconditions:
    * - All normal TCBs and all configured cores have entered shutdown.
-   * - The scheduler can no longer run the persistent watchdog.
+   * - The scheduler can no longer run the kernel watchdog daemon.
    * - No request is active, no waiter is published, and no new caller can
    *   acquire either command lock.
    */
@@ -842,8 +810,6 @@ void sd_handler(enum SdDrive drive){
   status = *sd_reg(drive, SD_DMA_STATUS_OFFSET);
   error = *sd_reg(drive, SD_DMA_ERR_OFFSET);
   generation = context->request.generation;
-  bool expected_late_irq = context->late_terminal_irq_pending;
-  context->late_terminal_irq_pending = false;
 
   if (!context->request.active && context->request.quarantined &&
       sd_status_is_terminal(status, error)){
@@ -871,24 +837,14 @@ void sd_handler(enum SdDrive drive){
     sd_clear_status(drive);
     publish = sd_request_state_finish_controller(&context->request,
       generation, result, still_busy);
-  } else if (expected_late_irq){
-    /*
-     * The watchdog already published this terminal command. If no newer
-     * command is active, discard its sticky terminal status. If a newer
-     * command is active and nonterminal, this is only the delayed old edge and
-     * its status must remain untouched. An active terminal command was handled
-     * by the preceding branch and is safely allowed to consume a coalesced IRQ.
-     */
-    if (sd_status_is_terminal(status, error)){
-      context->last_status = status;
-      context->last_error = error;
-      sd_clear_status(drive);
-    }
   } else {
     /*
-     * A nonterminal or ownerless IRQ is acknowledged but never wakes a TCB.
-     * If a command is active, its independent watchdog remains responsible for
-     * eventual completion/timeout. Clear only terminal sticky state.
+     * No request owns this edge. Only a timed-out command's interrupt can
+     * arrive after its request was finished, and quarantine routes that edge
+     * to the first branch; an active command's edge always finds terminal
+     * status. This edge is therefore stray (a controller contract violation).
+     * Acknowledge it without waking a TCB and clear only terminal sticky
+     * state.
      */
     unexpected_interrupt = true;
     if (sd_status_is_terminal(status, error)){

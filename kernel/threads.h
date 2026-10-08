@@ -96,7 +96,7 @@ void thread(struct Fun* thread_fun);
 // used to make stuff like reaper threads that won't count as active threads
 // and leave the system in the bootstrapping phase
 // leaks mem because it assumes these threads run forever
-void setup_thread(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
+void daemon(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
 
 /*
  * Keep the scheduler alive for asynchronous kernel work that outlives the
