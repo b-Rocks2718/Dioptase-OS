@@ -171,7 +171,7 @@ void mouse_init(void){
   mouse_worker_fun->func = (void (*)(void *))mouse_worker;
   mouse_worker_fun->arg = NULL;
 
-  setup_thread(mouse_worker_fun, HIGH_PRIORITY, ANY_CORE);
+  daemon(mouse_worker_fun, HIGH_PRIORITY, ANY_CORE);
 
   // Install last: the handler may run as soon as a core enables
   // MOUSE_INT_ENABLE, and it relies on the rings and waiter above.

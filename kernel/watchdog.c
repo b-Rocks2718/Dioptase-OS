@@ -16,7 +16,7 @@ static int watchdog_check_count = 0;
 /*
  * Persistent daemon: sleep one poll interval, then run every registered check.
  *
- * Runs as a setup_thread() daemon (HIGH_PRIORITY, any core, not counted in
+ * Runs as a daemon() thread (HIGH_PRIORITY, any core, not counted in
  * n_active), so it never delays shutdown. Shutdown only discards it while it
  * is parked in sleep() or runnable between sweeps; drivers' destroy paths
  * must therefore leave their check's state valid until every core has
@@ -53,6 +53,6 @@ void watchdog_register(void (*check)(unsigned now)){
     struct Fun* daemon_fun = leak(sizeof(struct Fun));
     daemon_fun->func = watchdog_daemon;
     daemon_fun->arg = NULL;
-    setup_thread(daemon_fun, HIGH_PRIORITY, ANY_CORE);
+    daemon(daemon_fun, HIGH_PRIORITY, ANY_CORE);
   }
 }

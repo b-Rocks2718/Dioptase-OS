@@ -100,7 +100,7 @@ void scheduler_init(void){
 //
 // Normal TCBs keep n_active nonzero until the reaper has freed them, so every
 // residual scheduler entry after all idle cores reach the shutdown barrier
-// must be a setup_thread() daemon, whose storage is intentionally never freed.
+// must be a daemon() thread, whose storage is intentionally never freed.
 static void scheduler_check_detached_daemon(void* arg){
   struct TCB* tcb = (struct TCB*)arg;
   if (!tcb->is_daemon){

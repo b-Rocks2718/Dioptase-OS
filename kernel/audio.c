@@ -185,7 +185,7 @@ void audio_init(void){
   struct Fun* daemon_fun = leak(sizeof(struct Fun));
   daemon_fun->func = audio_daemon;
   daemon_fun->arg = NULL;
-  setup_thread(daemon_fun, HIGH_PRIORITY, ANY_CORE);
+  daemon(daemon_fun, HIGH_PRIORITY, ANY_CORE);
   audio_daemon_started = true;
 
   watchdog_register(audio_watchdog_check);
@@ -207,11 +207,11 @@ void audio_destroy(void){
   interrupt_waiter_init(&audio_output_waiter);
   blocking_lock_destroy(&audio_lock);
 
-  struct TCB* daemon = (struct TCB*)__atomic_load_n((int*)&audio_daemon_tcb);
-  if (daemon != NULL){
-    assert_always(daemon->is_daemon,
+  struct TCB* daemon_tcb = (struct TCB*)__atomic_load_n((int*)&audio_daemon_tcb);
+  if (daemon_tcb != NULL){
+    assert_always(daemon_tcb->is_daemon,
       "audio destroy: recorded playback TCB must be a persistent daemon.\n");
-    assert_always(daemon->vme_list == NULL,
+    assert_always(daemon_tcb->vme_list == NULL,
       "audio destroy: playback daemon retained a VME after asynchronous work reached zero.\n");
 
     /*
@@ -220,9 +220,9 @@ void audio_destroy(void){
      * ever needed them, before VM and physmem teardown. A zero PID is the
      * expected state when no request reached the daemon.
      */
-    if (daemon->pid != 0){
-      vmem_destroy_address_space(daemon);
-      daemon->pid = 0;
+    if (daemon_tcb->pid != 0){
+      vmem_destroy_address_space(daemon_tcb);
+      daemon_tcb->pid = 0;
     }
     __atomic_store_n((int*)&audio_daemon_tcb, (int)NULL);
   }
@@ -1091,17 +1091,17 @@ static void audio_request_finish_lifetime(void){
  * Postcondition: the current hardware PID and TCB PID identify one valid,
  * initially empty page directory owned by this daemon.
  */
-static void audio_daemon_prepare_address_space(struct TCB* daemon){
-  assert_always(daemon != NULL && daemon == get_current_tcb(),
+static void audio_daemon_prepare_address_space(struct TCB* daemon_tcb){
+  assert_always(daemon_tcb != NULL && daemon_tcb == get_current_tcb(),
     "audio daemon address space: caller must be the current daemon TCB.\n");
-  assert_always(daemon->is_daemon,
+  assert_always(daemon_tcb->is_daemon,
     "audio daemon address space: current TCB must be persistent.\n");
 
-  if (daemon->pid == 0){
-    daemon->pid = create_page_directory();
-    assert_always(daemon->pid != 0,
+  if (daemon_tcb->pid == 0){
+    daemon_tcb->pid = create_page_directory();
+    assert_always(daemon_tcb->pid != 0,
       "audio daemon: failed to allocate a page directory for playback mappings.\n");
-    set_pid(daemon->pid);
+    set_pid(daemon_tcb->pid);
     tlb_flush();
   }
 }

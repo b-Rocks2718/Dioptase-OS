@@ -156,7 +156,7 @@ void ps2_init(void){
   ps2_worker_fun->func = (void (*)(void *))ps2_worker;
   ps2_worker_fun->arg = NULL;
 
-  setup_thread(ps2_worker_fun, HIGH_PRIORITY, ANY_CORE);
+  daemon(ps2_worker_fun, HIGH_PRIORITY, ANY_CORE);
 
   register_handler((void*)ps2_handler_, (void*)PS2_IVT_ENTRY);
 }
