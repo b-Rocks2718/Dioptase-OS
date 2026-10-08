@@ -4,7 +4,7 @@
  * Validates:
  * - one generation accepts exactly one terminal result
  * - timeout quarantine rejects a new generation until matching acknowledgement
- * - terminal watchdog completion without BUSY permits the next generation
+ * - terminal controller completion without BUSY permits the next generation
  * - terminal controller state with BUSY retains bounce-page quarantine
  * - a late result for an old generation cannot finish a newer request
  * - malformed drive/block/count/buffer/range inputs fail before DMA MMIO
@@ -69,13 +69,13 @@ static void test_terminal_controller_policy(void){ /* Verify controller completi
   assert(completed != 0,
     "sd validation: terminal-policy generation did not begin.\n");
   assert(sd_request_state_finish_controller(&state, completed, 0, false),
-    "sd validation: clean terminal watchdog result was not published.\n");
+    "sd validation: clean terminal controller result was not published.\n");
   assert(!state.active && !state.quarantined,
-    "sd validation: clean terminal watchdog result retained quarantine.\n");
+    "sd validation: clean terminal controller result retained quarantine.\n");
 
   unsigned next = sd_request_state_begin(&state);
   assert(next != 0 && next != completed,
-    "sd validation: clean terminal watchdog result blocked the next request.\n");
+    "sd validation: clean terminal controller result blocked the next request.\n");
   assert(sd_request_state_finish_controller(&state, next,
       SD_DRIVER_ERR_UNEXPECTED_STATUS, true),
     "sd validation: BUSY terminal controller result was not published.\n");

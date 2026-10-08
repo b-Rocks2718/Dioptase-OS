@@ -40,6 +40,7 @@ struct RenameWorkerArgs { /* Defines one synchronized rename race and its expect
 static struct Barrier rename_start_barrier;
 static struct Barrier rename_done_barrier;
 static struct Semaphore rename_worker_exit_sem;
+static int rename_workers_returned = 0;
 static unsigned expected_inumbers[RENAME_WORKERS];
 
 static char* initial_names[RENAME_WORKERS] = {
@@ -134,6 +135,11 @@ static void rename_worker(void* arg) {
   // threads.c frees Fun->arg in the reaper after this worker returns.
   barrier_sync(done);
   sem_up(&rename_worker_exit_sem);
+
+  // Receiving the permit only proves this sem_up() detached or counted its
+  // wake. Publish separately after the operation returns so main may safely
+  // destroy the semaphore.
+  __atomic_fetch_add(&rename_workers_returned, 1);
 }
 
 // Loads one worker fixture before the threaded phase so the test knows the
@@ -197,6 +203,9 @@ int kernel_main(void) {
 
   for (unsigned i = 0; i < RENAME_WORKERS; ++i) {
     sem_down(&rename_worker_exit_sem);
+  }
+  while (__atomic_load_n(&rename_workers_returned) != RENAME_WORKERS) {
+    yield();
   }
 
   barrier_destroy(&rename_start_barrier);

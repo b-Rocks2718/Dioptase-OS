@@ -86,7 +86,9 @@ global slab cache.
 
 - pins the current thread to its current core
 - disables preemption while reading or updating that core's free list
-- refills the per-core list from the global slab cache when the list is empty
+- refills the per-core list from the global slab cache when the list is empty,
+  taking up to `PER_CORE_FREE_LIST_REFILL + 1` objects under a single cache-lock
+  hold
 - temporarily restores preemption while calling into the blocking slab-cache path
 - returns one object from the per-core list
 
@@ -95,12 +97,18 @@ global slab cache.
 - pins the current thread to its current core
 - disables preemption while reading or updating that core's free list
 - drains the per-core list back toward `PER_CORE_FREE_LIST_REFILL = 32` when it
-  has reached `MAX_PER_CORE_FREE_LIST = 64`
+  has reached `MAX_PER_CORE_FREE_LIST = 64`, returning the excess under a single
+  cache-lock hold
 - temporarily restores preemption while calling into the blocking slab-cache path
 - pushes the freed object onto the per-core list
 
 The per-core lists are safe only because the current thread remains pinned while
 it may briefly re-enable preemption around blocking slab-cache calls.
+
+Refills and drains are batched because a cold per-core list is common: a thread
+that blocks and is woken through the global ready queue usually resumes on a
+different core. Taking the cache lock once per object made the first
+allocations after such a migration cost several jiffies per size class.
 
 #### Large Allocations
 
