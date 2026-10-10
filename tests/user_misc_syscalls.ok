@@ -50,44 +50,68 @@
 ***PASS mmap rejects pipe write descriptor: got -1 expected -1
 ***PASS seek rejects pipe read descriptor: got -1 expected -1
 ***PASS seek rejects pipe write descriptor: got -1 expected -1
-***PASS audio rejects pipe read descriptor: got -1 expected -1
-***PASS audio rejects pipe write descriptor: got -1 expected -1
+***PASS wav header rejects pipe read descriptor: got 2 expected 2
+***PASS wav header rejects pipe write descriptor: got 2 expected 2
 ***PASS close pipe read descriptor: got 0 expected 0
 ***PASS close pipe write descriptor: got 0 expected 0
 ***PASS empty_audio_fd >= 0: got 1 expected 1
-***PASS audio rejects empty regular file: got -1 expected -1
+***PASS wav rejects empty regular file: got 4 expected 4
 ***PASS close(empty_audio_fd): got 0 expected 0
 ***PASS short_audio_fd >= 0: got 1 expected 1
 ***PASS write truncated RIFF header: got 11 expected 11
-***PASS audio rejects truncated RIFF header: got -1 expected -1
+***PASS wav rejects truncated RIFF header: got 4 expected 4
 ***PASS close(short_audio_fd): got 0 expected 0
 ***PASS truncated_fmt_fd >= 0: got 1 expected 1
 ***PASS write truncated fmt chunk: got 24 expected 24
-***PASS audio rejects truncated fmt chunk: got -1 expected -1
+***PASS wav rejects truncated fmt chunk: got 11 expected 11
 ***PASS close(truncated_fmt_fd): got 0 expected 0
 ***PASS stereo_audio_fd >= 0: got 1 expected 1
 ***PASS write unsupported stereo WAV: got 46 expected 46
-***PASS audio rejects unsupported stereo WAV: got -1 expected -1
+***PASS wav rejects unsupported stereo WAV: got 15 expected 15
 ***PASS close(stereo_audio_fd): got 0 expected 0
 ***PASS sample_rate_fd >= 0: got 1 expected 1
 ***PASS write unsupported sample-rate WAV: got 46 expected 46
-***PASS audio rejects unsupported sample-rate WAV: got -1 expected -1
+***PASS wav rejects unsupported sample-rate WAV: got 16 expected 16
 ***PASS close(sample_rate_fd): got 0 expected 0
 ***PASS sample_width_fd >= 0: got 1 expected 1
 ***PASS write unsupported sample-width WAV: got 46 expected 46
-***PASS audio rejects unsupported sample-width WAV: got -1 expected -1
+***PASS wav rejects unsupported sample-width WAV: got 19 expected 19
 ***PASS close(sample_width_fd): got 0 expected 0
 ***PASS empty_data_fd >= 0: got 1 expected 1
 ***PASS write zero-data WAV: got 46 expected 46
-***PASS audio rejects zero-data WAV: got -1 expected -1
+***PASS wav rejects zero-data WAV: got 21 expected 21
 ***PASS close(empty_data_fd): got 0 expected 0
 ***PASS odd_data_fd >= 0: got 1 expected 1
 ***PASS write odd-data WAV: got 46 expected 46
-***PASS audio rejects odd-data WAV: got -1 expected -1
+***PASS wav rejects odd-data WAV: got 22 expected 22
 ***PASS close(odd_data_fd): got 0 expected 0
 ***PASS audio_fd >= 0: got 1 expected 1
 ***PASS write(audio_fd, wav_bytes, TEST_WAV_BYTES): got 46 expected 46
-***PASS seek(audio_fd, 0, SEEK_SET): got 0 expected 0
-***PASS play_audio_file(STDOUT): got -1 expected -1
-***PASS play_audio_file(audio_fd): got 0 expected 0
+***PASS wav accepts valid header: got 0 expected 0
+***PASS valid wav data offset: got 44 expected 44
+***PASS valid wav data size: got 2 expected 2
 ***PASS close(audio_fd): got 0 expected 0
+***PASS audio_write without ownership: got -1 expected -1
+***PASS audio_write without ownership errno: got 9 expected 9
+***PASS audio_buffered without ownership: got -1 expected -1
+***PASS audio_buffered without ownership errno: got 9 expected 9
+***PASS audio_close without ownership: got -1 expected -1
+***PASS audio_close without ownership errno: got 9 expected 9
+***PASS audio_open: got 0 expected 0
+***PASS second audio_open: got -1 expected -1
+***PASS second audio_open errno: got 16 expected 16
+***PASS child audio_open sees EBUSY: got 1 expected 1
+***PASS audio_write odd length: got -1 expected -1
+***PASS audio_write odd length errno: got 22 expected 22
+***PASS audio_write unreadable buffer: got -1 expected -1
+***PASS audio_write unreadable buffer errno: got 14 expected 14
+***PASS audio_write 4 samples: got 8 expected 8
+***PASS audio_buffered within written bytes: got 1 expected 1
+***PASS large audio_write accepted part: got 1 expected 1
+***PASS large audio_write fits the ring: got 1 expected 1
+***PASS audio_close: got 0 expected 0
+***PASS audio_close twice: got -1 expected -1
+***PASS audio_close twice errno: got 9 expected 9
+***PASS owning child played: got 1 expected 1
+***PASS audio_open after owner exit: got 0 expected 0
+***PASS audio_close after reopen: got 0 expected 0

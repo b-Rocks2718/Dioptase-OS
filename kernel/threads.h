@@ -98,27 +98,6 @@ void thread(struct Fun* thread_fun);
 // leaks mem because it assumes these threads run forever
 void daemon(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);
 
-/*
- * Keep the scheduler alive for asynchronous kernel work that outlives the
- * normal TCB which accepted it.
- *
- * begin preconditions:
- * - kernel mode in a normal, n_active-counted TCB
- * - called before the work is published to a daemon
- *
- * finish preconditions:
- * - kernel mode after the daemon has released every resource owned by exactly
- *   one previously acquired work reference
- *
- * The sequentially-consistent counter closes shutdown against accepted work:
- * event_loop() cannot leave while a reference exists. Each successful begin
- * must have exactly one finish. Exceeding the implementation's signed-count
- * safety limit is a kernel lifecycle error and panics without retaining the
- * rejected reference.
- */
-void kernel_async_work_begin(void);
-void kernel_async_work_finish(void);
-
 // create a thread to run the given function, and add it to the global ready queue
 // allows specifying the thread's priority and the core affinity
 void thread_(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffinity core_affinity);

@@ -40,18 +40,6 @@ violation and produces a diagnostic panic. Suspended daemon storage remains a
 documented boot-lifetime allocation; shutdown does not try to resume or free a
 kernel continuation retained by a device waiter.
 
-Finite asynchronous work accepted by a normal TCB is counted separately from
-both normal TCBs and persistent daemon TCBs. The accepting TCB calls
-`kernel_async_work_begin()` before publishing the work; the daemon calls
-`kernel_async_work_finish()` only after releasing every resource owned by that
-work item. `event_loop()` remains live while either `n_active` or this
-sequentially-consistent work count is nonzero. Consequently an asynchronous
-syscall may return without letting filesystem, VM, device, or heap teardown
-overtake the daemon that retained its resources. The first work reference must
-come from a live normal TCB, closing the zero-to-one transition against
-shutdown; persistent daemons themselves remain boot-lifetime objects.
-
-
 ### Tests
 - threads_yield.c
 - threads_preempt.c

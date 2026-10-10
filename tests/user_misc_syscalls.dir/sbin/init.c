@@ -1,7 +1,7 @@
 /*
  * user_misc_syscalls guest:
  * - validate the user-visible wrappers for jiffies, sleep, getkey, semaphore,
- *   mmap, request_priority, and play_audio_file
+ *   mmap, request_priority, and the audio device
  * - ensure semaphore exhaustion returns -1 instead of dereferencing an invalid
  *   descriptor slot
  * - ensure incrementing an INT_MAX semaphore returns -1 without overflowing
@@ -13,21 +13,27 @@
  *   address even though the kernel wrapper makes nested C calls
  * - reject malformed mmap arguments, user-range exhaustion, and pipe or
  *   directory descriptors without reaching kernel VM/Node assertions
- * - reject seek and audio operations on pipe endpoints before their Pipe
- *   storage can be mistaken for a filesystem Node
- * - reject an empty audio file inside worker admission before mmap sees size 0
- * - reject truncated headers/chunks, unsupported channels/sample rates/sample
- *   widths, empty data, and odd PCM byte counts through the worker-to-syscall
- *   validation handshake without panicking or wedging the serialized audio path
- * - generate a tiny valid WAV file in-place so play_audio_file can take a real
- *   success path after those failures without needing a checked-in fixture;
- *   return immediately afterward so kernel shutdown must wait for the retained
- *   asynchronous playback rather than tearing down its daemon-owned resources
+ * - reject seek on pipe endpoints before their Pipe storage can be mistaken
+ *   for a filesystem Node, and make the user-space WAV parser (crt/wav.h)
+ *   report a read failure for them rather than blocking or misparsing
+ * - make the WAV parser name the exact reason for an empty file, truncated
+ *   headers/chunks, unsupported channels/sample rate/sample width, empty
+ *   data, and an odd PCM byte count, then accept a tiny valid WAV generated
+ *   in place
+ * - exercise the audio device ownership contract: operations without
+ *   ownership fail with EBADF, a second open fails with EBUSY (also from a
+ *   forked child), odd lengths fail with EINVAL, an unreadable buffer fails
+ *   with EFAULT, writes accept at most the ring's free space, and a child
+ *   that exits while owning the device releases it before wait_child()
+ *   returns
  */
 
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/limits.h"
 #include "../../../root/crt/stdlib.h"
+#include "../../../root/crt/errno.h"
+#include "../../../root/crt/string.h"
+#include "../../../root/crt/wav.h"
 #include "../../user_test.h"
 
 #define TEST_WAV_BYTES 46
@@ -107,6 +113,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   int sems[100];
   int sem;
   char wav_bytes[TEST_WAV_BYTES];
+  struct WavInfo wav_info;
+  struct WavError wav_error;
   unsigned* anon;
   char* file_map;
   int pipe_fds[2];
@@ -223,17 +231,17 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
     seek(pipe_fds[0], 0, SEEK_SET), -1);
   user_test_expect_eq("seek rejects pipe write descriptor",
     seek(pipe_fds[1], 0, SEEK_END), -1);
-  user_test_expect_eq("audio rejects pipe read descriptor",
-    play_audio_file(pipe_fds[0]), -1);
-  user_test_expect_eq("audio rejects pipe write descriptor",
-    play_audio_file(pipe_fds[1]), -1);
+  user_test_expect_eq("wav header rejects pipe read descriptor",
+    wav_read_header(pipe_fds[0], &wav_info, &wav_error), WAV_ERROR_READ);
+  user_test_expect_eq("wav header rejects pipe write descriptor",
+    wav_read_header(pipe_fds[1], &wav_info, &wav_error), WAV_ERROR_READ);
   user_test_expect_eq("close pipe read descriptor", close(pipe_fds[0]), 0);
   user_test_expect_eq("close pipe write descriptor", close(pipe_fds[1]), 0);
 
   int empty_audio_fd = open("empty.wav");
   user_test_expect_eq("empty_audio_fd >= 0", empty_audio_fd >= 0, 1);
-  user_test_expect_eq("audio rejects empty regular file",
-    play_audio_file(empty_audio_fd), -1);
+  user_test_expect_eq("wav rejects empty regular file",
+    wav_read_header(empty_audio_fd, &wav_info, &wav_error), WAV_ERROR_FILE_TOO_SMALL);
   user_test_expect_eq("close(empty_audio_fd)", close(empty_audio_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -242,10 +250,11 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("write truncated RIFF header",
     write(short_audio_fd, wav_bytes, TEST_WAV_SHORT_HEADER_BYTES),
     TEST_WAV_SHORT_HEADER_BYTES);
-  user_test_expect_eq("audio rejects truncated RIFF header",
-    play_audio_file(short_audio_fd), -1);
+  user_test_expect_eq("wav rejects truncated RIFF header",
+    wav_read_header(short_audio_fd, &wav_info, &wav_error), WAV_ERROR_FILE_TOO_SMALL);
   user_test_expect_eq("close(short_audio_fd)", close(short_audio_fd), 0);
 
+  // The RIFF size ends the file 4 bytes into the 16-byte fmt chunk.
   fill_test_wav(wav_bytes);
   write_u32_le(wav_bytes + TEST_WAV_RIFF_SIZE_OFFSET,
     TEST_WAV_TRUNCATED_FMT_BYTES - TEST_WAV_RIFF_PREFIX_BYTES);
@@ -254,8 +263,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("write truncated fmt chunk",
     write(truncated_fmt_fd, wav_bytes, TEST_WAV_TRUNCATED_FMT_BYTES),
     TEST_WAV_TRUNCATED_FMT_BYTES);
-  user_test_expect_eq("audio rejects truncated fmt chunk",
-    play_audio_file(truncated_fmt_fd), -1);
+  user_test_expect_eq("wav rejects truncated fmt chunk",
+    wav_read_header(truncated_fmt_fd, &wav_info, &wav_error), WAV_ERROR_CHUNK_PAST_RIFF);
   user_test_expect_eq("close(truncated_fmt_fd)", close(truncated_fmt_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -265,8 +274,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("stereo_audio_fd >= 0", stereo_audio_fd >= 0, 1);
   user_test_expect_eq("write unsupported stereo WAV",
     write(stereo_audio_fd, wav_bytes, TEST_WAV_BYTES), TEST_WAV_BYTES);
-  user_test_expect_eq("audio rejects unsupported stereo WAV",
-    play_audio_file(stereo_audio_fd), -1);
+  user_test_expect_eq("wav rejects unsupported stereo WAV",
+    wav_read_header(stereo_audio_fd, &wav_info, &wav_error), WAV_ERROR_CHANNELS);
   user_test_expect_eq("close(stereo_audio_fd)", close(stereo_audio_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -276,8 +285,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("sample_rate_fd >= 0", sample_rate_fd >= 0, 1);
   user_test_expect_eq("write unsupported sample-rate WAV",
     write(sample_rate_fd, wav_bytes, TEST_WAV_BYTES), TEST_WAV_BYTES);
-  user_test_expect_eq("audio rejects unsupported sample-rate WAV",
-    play_audio_file(sample_rate_fd), -1);
+  user_test_expect_eq("wav rejects unsupported sample-rate WAV",
+    wav_read_header(sample_rate_fd, &wav_info, &wav_error), WAV_ERROR_SAMPLE_RATE);
   user_test_expect_eq("close(sample_rate_fd)", close(sample_rate_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -287,8 +296,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("sample_width_fd >= 0", sample_width_fd >= 0, 1);
   user_test_expect_eq("write unsupported sample-width WAV",
     write(sample_width_fd, wav_bytes, TEST_WAV_BYTES), TEST_WAV_BYTES);
-  user_test_expect_eq("audio rejects unsupported sample-width WAV",
-    play_audio_file(sample_width_fd), -1);
+  user_test_expect_eq("wav rejects unsupported sample-width WAV",
+    wav_read_header(sample_width_fd, &wav_info, &wav_error), WAV_ERROR_BITS_PER_SAMPLE);
   user_test_expect_eq("close(sample_width_fd)", close(sample_width_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -297,8 +306,8 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("empty_data_fd >= 0", empty_data_fd >= 0, 1);
   user_test_expect_eq("write zero-data WAV",
     write(empty_data_fd, wav_bytes, TEST_WAV_BYTES), TEST_WAV_BYTES);
-  user_test_expect_eq("audio rejects zero-data WAV",
-    play_audio_file(empty_data_fd), -1);
+  user_test_expect_eq("wav rejects zero-data WAV",
+    wav_read_header(empty_data_fd, &wav_info, &wav_error), WAV_ERROR_DATA_EMPTY);
   user_test_expect_eq("close(empty_data_fd)", close(empty_data_fd), 0);
 
   fill_test_wav(wav_bytes);
@@ -307,24 +316,84 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   user_test_expect_eq("odd_data_fd >= 0", odd_data_fd >= 0, 1);
   user_test_expect_eq("write odd-data WAV",
     write(odd_data_fd, wav_bytes, TEST_WAV_BYTES), TEST_WAV_BYTES);
-  user_test_expect_eq("audio rejects odd-data WAV",
-    play_audio_file(odd_data_fd), -1);
+  user_test_expect_eq("wav rejects odd-data WAV",
+    wav_read_header(odd_data_fd, &wav_info, &wav_error), WAV_ERROR_DATA_MISALIGNED);
   user_test_expect_eq("close(odd_data_fd)", close(odd_data_fd), 0);
 
   fill_test_wav(wav_bytes);
   int audio_fd = open("test.wav");
   user_test_expect_eq("audio_fd >= 0", audio_fd >= 0, 1);
   user_test_expect_eq("write(audio_fd, wav_bytes, TEST_WAV_BYTES)", write(audio_fd, wav_bytes, TEST_WAV_BYTES), 46);
-  user_test_expect_eq("seek(audio_fd, 0, SEEK_SET)", seek(audio_fd, 0, SEEK_SET), 0);
-  user_test_expect_eq("play_audio_file(STDOUT)", play_audio_file(STDOUT), -1);
-  user_test_expect_eq("play_audio_file(audio_fd)", play_audio_file(audio_fd), 0);
+  user_test_expect_eq("wav accepts valid header",
+    wav_read_header(audio_fd, &wav_info, &wav_error), WAV_OK);
+  user_test_expect_eq("valid wav data offset", wav_info.data_offset, 44);
+  user_test_expect_eq("valid wav data size", wav_info.data_size, TEST_WAV_DATA_BYTES);
   user_test_expect_eq("close(audio_fd)", close(audio_fd), 0);
-  /*
-   * Playback is still asynchronous after validation and owns an independent
-   * Node plus private mapping. Returning immediately verifies both that close
-   * does not revoke those bytes and that kernel shutdown waits for their
-   * daemon-owned lifetime to finish.
-   */
+
+  // Without ownership every operation is refused and the device is untouched.
+  char pcm[8];
+  memset(pcm, 0, sizeof(pcm));
+  errno = 0;
+  user_test_expect_eq("audio_write without ownership", audio_write(pcm, 8), -1);
+  user_test_expect_eq("audio_write without ownership errno", errno, EBADF);
+  errno = 0;
+  user_test_expect_eq("audio_buffered without ownership", audio_buffered(), -1);
+  user_test_expect_eq("audio_buffered without ownership errno", errno, EBADF);
+  errno = 0;
+  user_test_expect_eq("audio_close without ownership", audio_close(), -1);
+  user_test_expect_eq("audio_close without ownership errno", errno, EBADF);
+
+  user_test_expect_eq("audio_open", audio_open(), 0);
+  errno = 0;
+  user_test_expect_eq("second audio_open", audio_open(), -1);
+  user_test_expect_eq("second audio_open errno", errno, EBUSY);
+
+  // A different process cannot take the device while this one owns it.
+  int busy_child = fork();
+  if (busy_child == 0){
+    errno = 0;
+    int rc = audio_open();
+    return rc == -1 && errno == EBUSY ? 1 : 0;
+  }
+  user_test_expect_eq("child audio_open sees EBUSY", wait_child(busy_child), 1);
+
+  errno = 0;
+  user_test_expect_eq("audio_write odd length", audio_write(pcm, 3), -1);
+  user_test_expect_eq("audio_write odd length errno", errno, EINVAL);
+  // Address 4 is below the user half, so the accepted prefix is unreadable.
+  errno = 0;
+  user_test_expect_eq("audio_write unreadable buffer", audio_write((void*)4, 8), -1);
+  user_test_expect_eq("audio_write unreadable buffer errno", errno, EFAULT);
+
+  user_test_expect_eq("audio_write 4 samples", audio_write(pcm, 8), 8);
+  int buffered = audio_buffered();
+  user_test_expect_eq("audio_buffered within written bytes", buffered >= 0 && buffered <= 8, 1);
+
+  // The ring holds 16382 bytes, so a 20000-byte write is only partly accepted.
+  char* silence = malloc(20000);
+  memset(silence, 0, 20000);
+  int accepted = audio_write(silence, 20000);
+  user_test_expect_eq("large audio_write accepted part", accepted > 0 && accepted < 20000, 1);
+  user_test_expect_eq("large audio_write fits the ring", accepted + buffered <= 16382, 1);
+  free(silence);
+
+  user_test_expect_eq("audio_close", audio_close(), 0);
+  errno = 0;
+  user_test_expect_eq("audio_close twice", audio_close(), -1);
+  user_test_expect_eq("audio_close twice errno", errno, EBADF);
+
+  // A child that exits while owning the device must release it before its
+  // exit becomes visible to wait_child().
+  int owner_child = fork();
+  if (owner_child == 0){
+    if (audio_open() != 0 || audio_write(pcm, 8) != 8){
+      return 0;
+    }
+    return 1;
+  }
+  user_test_expect_eq("owning child played", wait_child(owner_child), 1);
+  user_test_expect_eq("audio_open after owner exit", audio_open(), 0);
+  user_test_expect_eq("audio_close after reopen", audio_close(), 0);
 
   return 0;
 }

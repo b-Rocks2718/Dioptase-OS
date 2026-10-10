@@ -20,7 +20,7 @@
 ***PASS seek(fd, 0, SEEK_SET): got 0 expected 0
 ***PASS read(fd, buf, 1): got 1 expected 1
 ***PASS updated hello.txt first byte: got 89 expected 89
-***PASS play_audio_file(STDOUT): got -1 expected -1
+***PASS wav_read_header(STDOUT): got 2 expected 2
 ***PASS close(fd): got 0 expected 0
 ***PASS close(fd): got -1 expected -1
 ***PASS create nested generated note: got 1 expected 1

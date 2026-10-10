@@ -210,51 +210,49 @@ exercise the SD path indirectly through the filesystem.
 
 ### Audio
 
-The OS audio path is kernel-driven. `play_audio_file(fd)` accepts a regular
-file descriptor for a supported signed 16-bit little-endian mono WAV file at
-25 kHz and submits it to one persistent high-priority audio daemon. Kernel VM
-mappings belong to one TCB, so the daemon reserves and parses its own private
-mapping. A ready/acknowledgement handoff keeps the request alive while the
-syscall waits for that validation result. Mapping failure, malformed or
-truncated RIFF/chunk metadata, unsupported fixed-format fields, empty or
-sample-misaligned data, and four already-outstanding requests (queued plus the
-request currently playing) are ordinary `-1` syscall results. A successful
-syscall then returns while playback continues asynchronously from the same
-retained mapping, independently of the caller's descriptor lifetime.
+The kernel audio driver (`kernel/audio.c`) only arbitrates and fills the
+device's MMIO PCM ring; reading files and parsing WAV headers happen in user
+mode (`root/crt/wav.h`). The device format is fixed: signed 16-bit
+little-endian mono PCM at 25 kHz, from a 16 KiB ring of which 16,382 bytes are
+usable (one sample stays empty so full and empty differ).
 
-The daemon drains a spin-protected request queue and parks through a
-sequentially-consistent `InterruptWaiter` handoff. A submitter publishes the
-request before signalling, so a notification racing with the daemon's
-post-context-switch TCB publication cannot be lost or enqueue the daemon twice.
-The daemon allocates its private page directory lazily after removing its first
-accepted request. Each accepted request holds one asynchronous-work reference
-from publication through that initialization, validation/playback, mapping and
-Node cleanup, request destruction, and capacity release. Kernel event loops
-therefore remain live until all retained audio resources are gone, while an
-unused daemon can be discarded without abandoning a page allocation or live
-allocator operation. During globally quiescent shutdown, the empty request
-queue is destroyed, the daemon's boot-lifetime TCB is detached from its waiter,
-and its private address space, if it was ever created, is explicitly reclaimed
-before VM/physmem teardown.
+One process owns the device at a time. `audio_open()` claims it,
+`audio_write()` copies as much PCM as currently fits and starts playback,
+`audio_buffered()` reports how much is still queued, and `audio_close()` stops
+playback and releases it. Every call is non-blocking: the owner keeps the ring
+fed itself (it holds about 0.33 s), and if it falls behind the device plays
+silence until refilled. Programs synchronize with the music by computing the
+playback position as bytes accepted minus bytes still buffered.
 
-This path owns the `AUDIO_*` control block. Playback progress is
-interrupt-driven. After each refill the daemon blocks on an `InterruptWaiter`
-that the audio ISR signals on every LOW_WATER edge. Because the device
-interrupts only on LOW_WATER's 0->1 transition, and not when IRQ_EN is enabled
-while LOW_WATER already holds, the daemon checks the status directly after
-preparing the waiter and before blocking. For the final drain it lowers
-`AUDIO_WATERMARK` to 0, so LOW_WATER means "empty" and the last sample also
-ends with an edge.
+Ownership is also the synchronization:
 
-Each wait has an implementation-defined 30,000-jiffy progress deadline (same
-modular half-range ordering as sleep/SD), enforced by the shared kernel
-watchdog daemon (`kernel/watchdog.c`), which also enforces SD deadlines. If the
-device never reaches LOW_WATER or never drains within that budget, the
-watchdog marks the wait timed out and wakes the daemon, which disables the
-device, releases the audio lock, cleans the retained mapping, and accepts the
-next queued request.
-Every refill of a validated source must also consume at least one complete
-sample; a zero-byte refill is treated as the same asynchronous failure class.
+- `audio_owner` changes from NULL to a TCB only in `audio_open()`, under a
+  spinlock that makes the check-then-set atomic among competing openers. It
+  changes from a TCB back to NULL only in that same TCB's context:
+  `audio_close()`, a successful `execv()`, or `stop()` when the process exits
+  or is terminated by a signal.
+- Only the owner writes the producer side of the device (`AUDIO_CTRL`,
+  `AUDIO_WRITE_IDX`, `AUDIO_WATERMARK`, ring bytes) and the driver's staging
+  buffer. User processes are single-threaded and signals are delivered only
+  at syscall return, so an owner never runs two audio operations at once and
+  these paths take no lock, including the user copy, which may demand-page.
+- Release stops the device before publishing NULL, so the next owner never
+  overlaps the previous one's accesses. It never blocks or spins, so `stop()`
+  can run it on the signal-termination path, which has interrupts disabled.
+  `stop()` releases before publishing the exit, so a parent returning from
+  `wait_child()` can open the device immediately.
+
+`audio_write()` copies the user buffer into a kernel staging buffer at the
+same address mod 4 as its ring destination, so the bulk of every write uses
+word copies into the ring (`kernel/audio.s`) whatever the user buffer's
+alignment. The driver never enables the LOW_WATER interrupt; a handler stays
+installed only to acknowledge a stray one. Kernel tests may use the low-level
+`audio_output_*` helpers directly, which bypass ownership.
+
+Tested in `audio_smoke.c` (device consumption through the low-level helpers)
+and `user_misc_syscalls` (WAV validation and the ownership contract: EBADF
+without ownership, EBUSY for a second opener including another process,
+EINVAL, EFAULT, partial writes, and release on exit).
 
 ### Timer
 

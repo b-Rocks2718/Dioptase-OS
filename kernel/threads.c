@@ -25,25 +25,10 @@
 // final kernel-return path can enter a user signal handler in user mode.
 #define USER_RETURNABLE_PSR_DEPTH 1
 
-/*
- * Reserve one speculative fetch-add slot per hardware core. At most MAX_CORES
- * callers can enter begin concurrently, so even when every caller rejects and
- * rolls back at this threshold, the signed counter cannot overflow. The
- * bootstrap compiler requires a literal global constant; threads_init()
- * verifies this remains INT_MAX - MAX_CORES.
- */
-#define KERNEL_ASYNC_WORK_LIMIT 0x7FFFFFFB
-
 struct SpinQueue global_ready_queue[PRIORITY_LEVELS][MLFQ_LEVELS];
 struct SpinQueue reaper_queue;
 
 volatile int n_active = 0;
-/*
- * Work accepted by a normal TCB but completed by a persistent daemon. This
- * counts finite resource-owning operations, not the boot-lifetime daemon TCBs
- * themselves (which are never counted in n_active).
- */
-static int kernel_async_work_count = 0;
 bool bootstrapping = true;
 
 int shutdown_barrier = 0;
@@ -264,49 +249,8 @@ void daemon(struct Fun* thread_fun, enum ThreadPriority priority, enum CoreAffin
   scheduler_wake_thread(make_tcb(thread_fun, priority, core_affinity, true));
 }
 
-// Hold the shutdown barrier while a TCB-owned async operation runs elsewhere.
-void kernel_async_work_begin(void){
-  struct TCB* current = get_current_tcb();
-  int active_threads = __atomic_load_n((int*)&n_active);
-
-  if (current == NULL || current->is_daemon || active_threads <= 0){
-    int args[3] = {(int)current,
-      current == NULL ? -1 : current->is_daemon,
-      active_threads};
-    say("| async work begin rejected tcb=0x%X daemon=%d n_active=%d\n",
-      args);
-    panic("async work begin: first publication must be owned by a live normal thread.\n");
-  }
-
-  int previous = __atomic_fetch_add(&kernel_async_work_count, 1);
-  if (previous < 0 || previous >= KERNEL_ASYNC_WORK_LIMIT){
-    __atomic_fetch_add(&kernel_async_work_count, -1);
-    int args[2] = {previous, KERNEL_ASYNC_WORK_LIMIT};
-    say("| async work begin rejected previous=%d limit=%d\n", args);
-    panic("async work begin: outstanding-work count is invalid or exhausted.\n");
-  }
-}
-
-// Complete one async operation and release its shutdown barrier reference.
-void kernel_async_work_finish(void){
-  int previous = __atomic_fetch_add(&kernel_async_work_count, -1);
-  if (previous <= 0){
-    __atomic_fetch_add(&kernel_async_work_count, 1);
-    int args[1] = {previous};
-    say("| async work finish rejected previous=%d\n", args);
-    panic("async work finish: no outstanding work reference exists.\n");
-  }
-}
-
 // initialize thread structures; should only be called once on one core
 void threads_init(void){
-  if (KERNEL_ASYNC_WORK_LIMIT != INT_MAX - MAX_CORES){
-    int args[3] = {KERNEL_ASYNC_WORK_LIMIT, INT_MAX, MAX_CORES};
-    say("| threads init rejected async_limit=%d int_max=%d max_cores=%d\n",
-      args);
-    panic("threads init: asynchronous-work limit must reserve one RMW slot per core.\n");
-  }
-
   scheduler_init();
 
   shutdown_barrier = CONFIG.num_cores;
@@ -671,8 +615,7 @@ void kernel_shutdown(void){
 void event_loop(void) {
   /* only the idle thread can enter this function */
   while (__atomic_load_n(&bootstrapping) ||
-      (__atomic_load_n((int*)&n_active) > 0) ||
-      (__atomic_load_n(&kernel_async_work_count) > 0)) {
+      (__atomic_load_n((int*)&n_active) > 0)) {
     // on each iteration, try to find a thread to switch to
 
     struct PerCore* core = get_per_core();
@@ -794,11 +737,18 @@ void sleep(unsigned jiffies){
 //
 // Postcondition: this function does not return; the reaper owns current.
 void stop(unsigned rc) {
+  struct TCB* current = get_current_tcb();
+
+  // Release audio ownership before exit publication, so a parent returning
+  // from wait_child() never finds the device still held by this process.
+  // audio_release_owner() never blocks, so this is safe on every stop() path,
+  // including signal termination with interrupts disabled.
+  audio_release_owner(current);
+
   // There is intentionally no matching preemption_restore(): after terminal
   // state becomes externally visible, this TCB may never be scheduled again.
   preemption_disable();
 
-  struct TCB* current = get_current_tcb();
   assert_always(current != &get_per_core()->idle_thread,
     "idle thread cannot call stop().\n");
   assert(n_active > 0, "no active threads to stop.\n");

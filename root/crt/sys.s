@@ -993,9 +993,9 @@ execv.errno_done:
 
   ret
 
-  .global play_audio_file
-# Marshal arguments and issue the play audio file system-call wrapper.
-play_audio_file:
+  .global audio_open
+# Issue the audio device open system-call wrapper (trap 58).
+audio_open:
   push r20
   push r21
   push r22
@@ -1008,13 +1008,12 @@ play_audio_file:
   push bp
   push ra
 
-  mov  r2, r1
-  movi r1, 25
+  movi r1, 58
   trap
   cmp  r2, r0
-  bz   play_audio_file.errno_done
+  bz   audio_open.errno_done
   sw   r2, [errno]
-play_audio_file.errno_done:
+audio_open.errno_done:
   pop ra
   pop bp
   pop r28
@@ -1026,7 +1025,114 @@ play_audio_file.errno_done:
   pop r22
   pop r21
   pop r20
-  
+
+  ret
+
+  .global audio_write
+# Issue the audio ring write system-call wrapper (trap 59).
+audio_write:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 59
+  trap
+  cmp  r2, r0
+  bz   audio_write.errno_done
+  sw   r2, [errno]
+audio_write.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global audio_buffered
+# Issue the audio buffered-bytes query system-call wrapper (trap 60).
+audio_buffered:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 60
+  trap
+  cmp  r2, r0
+  bz   audio_buffered.errno_done
+  sw   r2, [errno]
+audio_buffered.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global audio_close
+# Issue the audio device close system-call wrapper (trap 61).
+audio_close:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 61
+  trap
+  cmp  r2, r0
+  bz   audio_close.errno_done
+  sw   r2, [errno]
+audio_close.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
   ret
 
   .global set_text_color

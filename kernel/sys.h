@@ -33,7 +33,8 @@ enum TrapCode {
   TRAP_MMAP = 22,
   TRAP_FORK = 23,
   TRAP_EXEC = 24,
-  TRAP_PLAY_AUDIO = 25,
+  // Code 25 belonged to the removed asynchronous play_audio_file() trap,
+  // replaced by the non-blocking audio device traps 58-61.
   TRAP_SET_TEXT_COLOR = 26,
   TRAP_WAIT_CHILD = 27,
   TRAP_CHDIR = 28,
@@ -68,6 +69,10 @@ enum TrapCode {
   // making an old code name a different operation.
   TRAP_OPEN_EXISTING = 56,
   TRAP_GET_MOUSE = 57,
+  TRAP_AUDIO_OPEN = 58,
+  TRAP_AUDIO_WRITE = 59,
+  TRAP_AUDIO_BUFFERED = 60,
+  TRAP_AUDIO_CLOSE = 61,
 };
 
 #define SEEK_SET 0
@@ -219,6 +224,12 @@ void deallocate_descriptor(struct TCB* tcb, enum DescriptorType type, int index)
 
 // Release every descriptor the TCB still owns (thread teardown and failed fork).
 void deallocate_all_descriptors(struct TCB* tcb);
+
+// Validate that [src, src + n) is readable user memory of `tcb` and copy it to
+// kernel memory at `dest`. Returns 0, or -1 without a complete copy if the
+// range is not a readable user mapping or a fault occurs mid-copy. Kernel
+// mode in `tcb`'s address space; may block on demand paging.
+int copy_from_user(void* dest, void* src, unsigned n, struct TCB* tcb);
 
 extern void trap_handler_(void);
 

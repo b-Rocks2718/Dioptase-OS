@@ -27,7 +27,7 @@
 // jiffies count emulated cycles, so jiffy-based pacing speeds up and slows down
 // with emulator performance, while VGA frames track wall-clock time on both the
 // emulator and hardware. 2 frames is 30 moves per second.
-#define STEP_FRAMES 2
+#define STEP_FRAMES 4
 
 // Turns pressed between steps are buffered and applied one per step, so quick
 // sequences such as "up, left" both register instead of the latest key
