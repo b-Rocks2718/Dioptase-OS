@@ -13,7 +13,7 @@ concurrency:
 
 env:
   # Override this repository variable only with a tested, full root commit SHA.
-  DIOPTASE_STACK_REF: ${{ vars.DIOPTASE_STACK_REF || 'a1f5936561631cb443c52d327a9999442372ae67' }}
+  DIOPTASE_STACK_REF: ${{ vars.DIOPTASE_STACK_REF || '496df0fae0a44aaaf93fdac8785172b05ae143f4' }}
 
 jobs:
   tests:
