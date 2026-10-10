@@ -369,12 +369,19 @@ int main(void){ /* Exercise miscellaneous user syscall validation paths. */
   int buffered = audio_buffered();
   user_test_expect_eq("audio_buffered within written bytes", buffered >= 0 && buffered <= 8, 1);
 
-  // The ring holds 16382 bytes, so a 20000-byte write is only partly accepted.
+  // The ring holds 16382 bytes, so a 20000-byte write is only partly accepted:
+  // exactly the free space at the moment of the write. Playback keeps
+  // draining the 8 bytes above while this code runs, so the fill at write time
+  // is only known to lie in [0, buffered] (this process is the only producer).
+  // The accepted count must therefore lie in [16382 - buffered, 16382].
+  // Comparing against 16382 - buffered alone would race with the device: a
+  // sample played after audio_buffered() legitimately grows the free space.
   char* silence = malloc(20000);
   memset(silence, 0, 20000);
   int accepted = audio_write(silence, 20000);
   user_test_expect_eq("large audio_write accepted part", accepted > 0 && accepted < 20000, 1);
-  user_test_expect_eq("large audio_write fits the ring", accepted + buffered <= 16382, 1);
+  user_test_expect_eq("large audio_write fits the ring",
+    accepted >= 16382 - buffered && accepted <= 16382, 1);
   free(silence);
 
   user_test_expect_eq("audio_close", audio_close(), 0);
