@@ -14,6 +14,7 @@
 
 #include "../../../root/crt/sys.h"
 #include "../../../root/crt/string.h"
+#include "../../../root/crt/wav.h"
 #include "../../user_test.h"
 
 #define DEEP_DIRECTORY_PATH "/d00/d01/d02/d03/d04/d05/d06/d07/d08/d09/d10/d11/d12/d13/d14/d15/d16/d17/d18/d19"
@@ -58,7 +59,10 @@ int main(void){ /* Exercise the user file-system syscall suite. */
   user_test_expect_eq("read(fd, buf, 1)", read(fd, buf, 1), 1);
   user_test_expect_eq("updated hello.txt first byte", buf[0], 'Y');
 
-  user_test_expect_eq("play_audio_file(STDOUT)", play_audio_file(STDOUT), -1);
+  struct WavInfo wav_info;
+  struct WavError wav_error;
+  user_test_expect_eq("wav_read_header(STDOUT)",
+    wav_read_header(STDOUT, &wav_info, &wav_error), WAV_ERROR_READ);
   user_test_expect_eq("close(fd)", close(fd), 0);
   user_test_expect_eq("close(fd)", close(fd), -1);
 

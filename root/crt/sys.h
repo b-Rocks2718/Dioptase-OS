@@ -68,7 +68,34 @@ int sem_down(int sem);
 
 int sem_close(int sem);
 
-int play_audio_file(int fd);
+/*
+ * Audio output device (docs/syscalls.md, "Audio"). The device plays signed
+ * 16-bit little-endian mono PCM at 25 kHz from a ring of about 0.33 s. One
+ * process owns it at a time; exit or exec releases it automatically. Every
+ * call is non-blocking: keep calling audio_write() to keep the ring fed, or the
+ * device plays silence until it is refilled. root/crt/wav.h wraps this for WAV
+ * files.
+ */
+
+// Claim the audio device, reset to empty and stopped. Returns 0, or -1 with
+// errno EBUSY if another process (or this one) already owns it.
+int audio_open(void);
+
+// Queue up to `bytes` (even) of PCM and start playback. Returns how many bytes
+// were accepted, which is less than `bytes` (possibly 0) when the ring is
+// full; resubmit the rest later. Returns -1 with errno EBADF (not the owner),
+// EINVAL (odd byte count), or EFAULT (unreadable buffer).
+int audio_write(void* pcm, unsigned bytes);
+
+// Return how many queued bytes have not been played yet, or -1 with errno
+// EBADF if the caller does not own the device. Playback position in bytes is
+// (total bytes accepted) - audio_buffered().
+int audio_buffered(void);
+
+// Stop immediately, discard queued audio, and release the device. Returns 0,
+// or -1 with errno EBADF if the caller does not own it. To let queued audio
+// finish first, wait until audio_buffered() reaches 0.
+int audio_close(void);
 
 void set_text_color(int color);
 

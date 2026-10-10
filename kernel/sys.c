@@ -137,7 +137,7 @@ static bool user_range_ok(struct TCB* tcb, void* user_ptr, unsigned n,
 
 // validate that a user memory range is safe to copy from
 // if so perform the copy, otherwise return -1
-static int copy_from_user(void* dest, void* src, unsigned n, struct TCB* tcb){
+int copy_from_user(void* dest, void* src, unsigned n, struct TCB* tcb){
   if (!user_range_ok(tcb, src, n, MMAP_READ)){
     return -1;
   }
@@ -1174,43 +1174,6 @@ int handle_dup(int fd){
   return new_fd;
 }
 
-// Submit a WAV file descriptor to the asynchronous audio daemon.
-int handle_play_audio(int fd){
-  struct TCB* tcb = get_current_tcb();
-
-  struct FileDescriptor* descriptor = lookup_file_descriptor(tcb, fd);
-  if (descriptor == NULL){
-    return -1;
-  }
-  if (descriptor->type != FILE_DESCRIPTOR_NORMAL){
-    return -1;
-  }
-
-  struct Node* audio_file = descriptor->file;
-  if (audio_file == NULL || !node_is_file(audio_file)){
-    return -1;
-  }
-
-  /*
-   * The persistent audio daemon validates and plays from its own address space,
-   * so this syscall only clones the Node into a request and waits for the
-   * daemon's admission result. A full request queue is an ordinary -1.
-   */
-  struct AudioRequest* audio_request = audio_request_create(audio_file);
-  if (!audio_request_submit(audio_request)){
-    audio_request_destroy_unsubmitted(audio_request);
-    return -1;
-  }
-
-  /*
-   * Playback remains asynchronous after admission. Do not report success until
-   * the daemon has mapped and parsed the exact VME it retains for playback;
-   * once this helper returns, request ownership belongs exclusively to the
-   * daemon and this syscall must not dereference it again.
-   */
-  return audio_request_wait_until_ready(audio_request) ? 0 : -1;
-}
-
 // Return one heap-owned absolute lexical normalization of `path`, resolving
 // repeated '/', '.', and '..' (with ".." at the root staying at the root). It
 // does not perform filesystem or symlink traversal. `path` is split in place
@@ -1589,6 +1552,10 @@ int handle_exec(char* path, int argc, char** argv){
     tcb->signal_handlers[i] = NULL;
   }
   tcb->in_signal_handler = false;
+
+  // Audio ownership belongs to the retired image, which can no longer feed
+  // the ring; release it so the new program starts without it.
+  audio_release_owner(tcb);
 
   destroy_inactive_address_space(tcb, old_pid, old_vme_list);
 
@@ -2088,6 +2055,18 @@ int trap_handler(unsigned code,
     case TRAP_GET_KEY: {
       return getkey();
     }
+    case TRAP_AUDIO_OPEN: {
+      return handle_audio_open();
+    }
+    case TRAP_AUDIO_WRITE: {
+      return handle_audio_write((char*)arg1, (unsigned)arg2);
+    }
+    case TRAP_AUDIO_BUFFERED: {
+      return handle_audio_buffered();
+    }
+    case TRAP_AUDIO_CLOSE: {
+      return handle_audio_close();
+    }
     case TRAP_GET_MOUSE: {
       return getmouse();
     }
@@ -2170,9 +2149,6 @@ int trap_handler(unsigned code,
     }
     case TRAP_EXEC: {
       return handle_exec((char*)arg1, arg2, (char**)arg3);
-    }
-    case TRAP_PLAY_AUDIO: {
-      return handle_play_audio(arg1);
     }
     case TRAP_SET_TEXT_COLOR: {
       int color = arg1;

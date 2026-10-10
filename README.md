@@ -88,6 +88,10 @@ These tools are expected to be built already (default `VERSION=release`):
   assembles `kernel/config.s` and `bios/config.s` with `-DUSE_AUDIO=1`. This
   mode is for host listening only; it intentionally changes guest-visible audio
   timing so playback stays close to wall clock even when emulation is slow.
+- Unless set explicitly, `EMU_AUDIO` defaults to the value of `EMU_VGA`, and
+  `EMU_AUDIO_FAST` defaults to the value of `EMU_AUDIO`. So `EMU_VGA=yes` alone
+  gives fast-mode host audio, `EMU_VGA=yes EMU_AUDIO=no` gives no audio, and
+  `EMU_AUDIO_FAST=no` selects emulated-tick audio.
 
 ### Notes
 

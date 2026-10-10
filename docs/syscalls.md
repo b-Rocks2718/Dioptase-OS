@@ -84,8 +84,11 @@ Codes (shared by `kernel/syscall_errors.h` and `root/crt/errno.h`):
 | Code | Name | Meaning |
 | --- | --- | --- |
 | `2` | `ENOENT` | The path did not resolve to an existing inode. |
+| `9` | `EBADF` | The caller does not hold the object it operated on (audio: does not own the device). |
 | `14` | `EFAULT` | A user pointer argument is not accessible. |
+| `16` | `EBUSY` | The device is owned by another process (or already by the caller). |
 | `20` | `ENOTDIR` | A non-final path component exists but is not a directory. |
+| `22` | `EINVAL` | An argument value is outside the syscall's contract. |
 | `24` | `EMFILE` | The caller's file-descriptor table is full. |
 | `36` | `ENAMETOOLONG` | A path exceeds the path-argument bound, or a component exceeds 255 bytes. |
 
@@ -99,6 +102,8 @@ Syscalls that currently report causes:
   `EMFILE`. `ENOENT` covers every lookup failure, including a missing or
   non-directory intermediate component and a dangling symlink, because
   pathname lookup does not distinguish them.
+- `audio_open()`, `audio_write()`, `audio_buffered()`, `audio_close()`: every
+  failure reports a cause (`EBUSY`, `EBADF`, `EINVAL`, `EFAULT`; see Audio).
 
 All other failures report `0` until their handlers are converted.
 
@@ -205,7 +210,7 @@ and returns `-1` without terminating the caller. Concurrent writers therefore
 cannot change the bytes that will be loaded, and a late load error cannot
 leave the process without an address space.
 
-### Filesystem, Pipes, and Audio
+### Filesystem and Pipes
 
 | Code | Wrapper | Arguments | Result |
 | --- | --- | --- | --- |
@@ -214,7 +219,6 @@ leave the process without an address space.
 | `15` | `read(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count into `buf`. Returns the number of bytes read, `0` at file/pipe EOF, or `-1` on failure. A pipe read validates the complete clamped destination before consuming data. A process whose fd `0` still names the default stdin descriptor blocks waiting for keyboard input; if fd `0` has been replaced with a pipe or file, it follows that descriptor's normal read behavior. |
 | `16` | `write(fd, buf, count)` | `fd`, `buf`, `count` | Copies up to the clamped byte count from `buf`. Returns the number of bytes written or `-1` on failure. A pipe write interrupted by final-reader close returns its positive committed prefix, or `-1` if it committed no byte. `STDOUT` and `STDERR` write characters to the console; each clamped write is one serialized console transaction and cannot interleave with an independently owned transaction on another core. A same-core interrupt diagnostic may nest without deadlocking; while a VGA transaction is interrupted, its diagnostic bytes are routed to UART instead of touching VGA state. |
 | `17` | `close(fd)` | `fd` | Closes a valid file descriptor and returns `0`, or returns `-1` for an invalid descriptor. |
-| `25` | `play_audio_file(fd)` | `fd` | Validates a supported WAV through a playback worker, starts asynchronous playback, and returns `0`. Returns `-1` if `fd` is invalid, names another descriptor kind, names an empty file, cannot be mapped by the worker, or contains a malformed/unsupported WAV. |
 | `28` | `chdir(path)` | `path` | Resolves `path` relative to the current cwd unless absolute, requires the result to be a directory, updates the cwd, and returns `0`. Returns `-1` on copy or lookup failure, or if the target is not a directory. |
 | `29` | `pipe(fds)` | `fds` | Allocates a pipe and writes `{read_fd, write_fd}` into the user array `fds[0..1]`. Returns `0` on success or `-1` on copy or descriptor-allocation failure. |
 | `30` | `dup(fd)` | `fd` | Returns a new file descriptor that references the same underlying descriptor object, including the shared current offset. Returns `-1` on failure. |
@@ -284,22 +288,36 @@ Additional file-descriptor notes:
 - Successful `unlink()` and `rmdir()` remove the pathname immediately, but
   final inode/block reclamation may still be deferred until the last live
   wrapper for that inode is released.
-- `play_audio_file()` submits playback to one persistent audio daemon because
-  kernel VM mappings belong to one TCB/address space. The syscall waits only
-  until that daemon has mapped and validated the exact private mapping it will
-  retain. Mapping failure, truncation, malformed RIFF/chunk bounds, an empty or
-  odd-sized data payload, unsupported format fields, and four already-
-  outstanding requests (queued plus playing) return `-1` with an inode/size
-  diagnostic when applicable. After a `0` result, playback proceeds
-  asynchronously from the retained mapping; the
-  descriptor may be closed without revoking the daemon's source. Playback waits
-  for device progress with an implementation-defined 30,000-jiffy deadline.
-  Accepted playback holds a kernel asynchronous-work reference until all
-  daemon-owned mappings, Nodes, and request state have been cleaned, so global
-  shutdown cannot overtake the asynchronous operation.
-- The accepted hardware format is signed 16-bit little-endian mono PCM at
-  exactly 25,000 samples/second. The WAV `byte_rate` and `block_align` fields
-  must agree with that fixed format.
+
+### Audio
+
+The audio device plays signed 16-bit little-endian mono PCM at exactly 25,000
+samples/second from a 16 KiB MMIO ring (docs/mem_map.md, audio output control
+block); 16,382 bytes (about 0.33 s) are usable. One process owns the device at
+a time and feeds it directly. WAV parsing and file streaming are user-mode
+library code in `root/crt/wav.h`.
+
+| Code | Wrapper | Arguments | Result |
+| --- | --- | --- | --- |
+| `58` | `audio_open()` | none | Claims the device for the calling process and resets it to empty and stopped. Returns `0`, or `-1` with `EBUSY` if any process, including the caller, already owns it. |
+| `59` | `audio_write(pcm, bytes)` | `pcm`, `bytes` | Copies `min(bytes, free ring space)` bytes from `pcm` into the ring and starts playback if it was stopped. Returns the number of bytes accepted, which is `0` when the ring is full. Returns `-1` with `EBADF` if the caller does not own the device, `EINVAL` if `bytes` is odd, or `EFAULT` if the accepted prefix of `pcm` is not readable user memory. |
+| `60` | `audio_buffered()` | none | Returns the number of accepted bytes the device has not played yet (`0..16382`), or `-1` with `EBADF` if the caller does not own the device. |
+| `61` | `audio_close()` | none | Stops playback immediately, discards queued audio, and releases the device. Returns `0`, or `-1` with `EBADF` if the caller does not own it. |
+
+Audio details that matter to user mode:
+
+- Every audio syscall is non-blocking; none waits for the device. Playback
+  position is `(total bytes accepted - audio_buffered()) / 2` samples.
+- The owner must keep refilling the ring. If it runs empty the device plays
+  silence and latches `AUDIO_STATUS.UNDERRUN` until the next accepted write,
+  then continues from the new data.
+- Ownership ends with `audio_close()`, process exit (including termination by
+  a signal), or a successful `execv()`. Exit releases it before the exit is
+  published, so a parent returning from `wait_child()` can open the device
+  immediately. A forked child does not inherit ownership.
+- To let queued audio finish, wait until `audio_buffered()` returns `0`
+  before closing; closing earlier cuts the sound off.
+
 ### Synchronization and Virtual Memory
 
 | Code | Wrapper | Arguments | Result |

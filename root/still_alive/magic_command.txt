@@ -1,4 +1,5 @@
-# `still_alive.mp3` is intentionally clipped to the first 50 seconds.
+# Convert the full-length still_alive.mp3 to the audio device's PCM format
+# (25 kHz mono signed 16-bit, docs/mem_map.md audio output control block).
 ffmpeg -i still_alive.mp3 -vn -ac 1 -ar 25000 -c:a pcm_s16le still_alive.wav
 
 # test command

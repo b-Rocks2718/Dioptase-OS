@@ -1,0 +1,112 @@
+# Still Alive timeline for /sbin/still_alive.
+#
+# Each event line is "<seconds> <command>", where seconds count from the
+# start of playback with up to two decimal places. Events must be in time
+# order. Commands:
+#   >TEXT      move to a new lyric row and type TEXT (">" alone leaves a
+#              blank row)
+#   +TEXT      keep typing TEXT on the current lyric row
+#   clear      clear the lyric panel
+#   art NAME   draw the art.txt image NAME in the picture panel
+#   end        stop the show; the closing screen stays up until q
+# Lyric text is taken verbatim after the ">" or "+".
+#
+# Times are positions in the song (seconds of audio played), so they stay in
+# sync however fast the audio actually plays. They were estimated from the
+# audio (120 BPM, with verses repeating every 52 seconds) and checked against
+# two tapped recordings.
+
+0.00 art aperture
+0.00 >This was a triumph.
+3.90 >I'm making a note here:
+5.90 >HUGE SUCCESS.
+7.50 >
+9.10 >It's hard to overstate
+10.90 >my satisfaction.
+14.00 >
+16.00 >Aperture Science
+19.90 art radiation
+19.90 >We do what we must
+21.60 >because we can.
+25.10 >For the good of all of us.
+28.60 >Except the ones who are dead.
+30.30 >
+30.60 >But there's no sense crying
+32.60 >over every mistake.
+34.60 >You just keep on trying
+36.60 >till you run out of cake.
+38.60 art atom
+38.60 >And the Science gets done.
+40.60 >And you make a neat gun.
+42.60 art aperture
+42.60 >For the people who are
+44.60 >still alive.
+50.00 clear
+52.00 >I'm not even angry.
+55.90 >I'm being so sincere right now.
+59.50 >
+61.10 art heart
+61.10 >Even though you broke my heart.
+64.10 >And killed me.
+66.50 >
+68.00 art explosion
+68.00 >And tore me to pieces.
+71.90 >And threw every piece
+73.60 art fire
+73.60 + into a fire.
+77.10 >As they burned it hurt because
+80.60 >I was so happy for you!
+82.30 >
+82.60 >Now these points of data
+84.60 >make a beautiful line.
+86.60 >And we're out of beta.
+88.60 art check
+88.60 >We're releasing on time.
+90.60 art fire
+90.60 >So I'm GLaD. I got burned.
+92.60 art atom
+92.60 >Think of all the things we learned
+94.60 art aperture
+94.60 >for the people who are
+96.60 >still alive.
+102.00 clear
+104.10 >Go ahead and leave me.
+107.90 >I think I prefer to stay inside.
+111.50 >
+113.10 >Maybe you'll find someone else
+116.50 >to help you.
+118.50 >
+120.00 art mesa
+120.00 >Maybe Black Mesa...
+123.90 >THAT WAS A JOKE.
+125.60 + HA HA. FAT CHANCE.
+129.10 art cake
+129.10 >Anyway, this cake is great.
+132.60 >It's so delicious and moist.
+134.30 >
+134.60 art glados
+134.60 >Look at me still talking
+136.60 >when there's science to do.
+138.60 >When I look out there,
+140.60 >it makes me GLaD I'm not you.
+142.60 art atom
+142.60 >I've experiments to run.
+144.60 >There is research to be done
+146.60 art aperture
+146.60 >on the people who are
+148.60 >still alive.
+150.30 >
+150.60 >And believe me I am still alive.
+154.60 art atom
+154.60 >I'm doing science and I'm still alive.
+158.60 art check
+158.60 >I feel FANTASTIC and I'm still alive.
+162.60 art radiation
+162.60 >While you're dying I'll be still alive.
+166.60 art explosion
+166.60 >And when you're dead I will be still alive.
+170.40 art aperture
+170.40 >
+170.60 >Still alive.
+172.60 >Still alive.
+179.00 end

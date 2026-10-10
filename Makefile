@@ -9,8 +9,8 @@
 NUM_CORES ?= 4
 SCHEDULER ?= free # emulator scheduler, determines when cores run. free, rr, or random
 EMU_VGA ?= no # whether to build with VGA support and emulate a VGA device
-EMU_AUDIO ?= no # whether to emulate host audio playback for the MMIO audio device
-EMU_AUDIO_FAST ?= no # whether to consume MMIO audio from wall-clock time for host playback
+EMU_AUDIO ?= $(EMU_VGA) # whether to emulate host audio playback for the MMIO audio device
+EMU_AUDIO_FAST ?= $(EMU_AUDIO) # whether to consume MMIO audio from wall-clock time for host playback
 TRACE_INTS ?= no # print a line for every interrupt delivery
 SD_DMA_TICKS ?= 1 # number of emulator ticks per 4-byte SD DMA transfer
 

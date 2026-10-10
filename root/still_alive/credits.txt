@@ -1,0 +1,81 @@
+Forms FORM-DIOPTASE-01:
+System Assessment Report
+
+
+Subject: Dioptase
+  An FPGA computer built
+  from scratch: ISA,
+  processor, assembler,
+  compiler, and OS.
+
+Devices:
+  VGA monitor
+  PS/2 keyboard and mouse
+  PWM audio
+  SD card storage
+  UART
+  programmable timer
+
+EMULATORS
+  Dioptase-Emulator-Simple
+    single core emulator
+    status: complete
+  Dioptase-Emulator-Full
+    multicore emulator
+    status: complete
+
+ASSEMBLER
+  basm
+  status: complete
+
+C COMPILER
+  bcc
+  optimizations:
+  - constant folding
+  - copy propogation
+  - dead code elimination
+  - dead store elimination
+  - inlining
+  - register allocation
+  status: complete
+
+KERNEL
+  preemptive threads
+  multicore scheduler
+  virtual memory
+  ext2 filesystem
+  pipes and signals
+
+USERLAND PROGRAMS
+  init
+  terminal
+  shell
+  bmacs
+  snake
+  dino
+  mandelbrot
+  still_alive
+
+HARDWARE
+  Dioptase-Pipe-Simple
+    status: complete
+  Dioptase-Pipe-Full
+    status: in progress
+
+CONTRIBUTORS
+  Brooks Bryant
+  Jiaying Song
+  Saffron Liu
+
+WITH THANKS TO
+  Ahmed Gheith
+
+
+Result: still alive.
+
+
+
+THANK YOU FOR
+PARTICIPATING IN THIS
+ENRICHMENT CENTER
+ACTIVITY!!
