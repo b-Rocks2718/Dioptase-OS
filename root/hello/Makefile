@@ -6,7 +6,8 @@ VERSION ?= release
 OS_BCC_DEFINES ?=
 # Root programs are always compiled with bcc's optimizer, whether built here
 # or through the top-level root-sbin target (which may pass -opt in
-# OS_BCC_DEFINES as well).
+# OS_BCC_DEFINES as well). Compiled assembly depends on the bcc binary and on
+# these flags (BCC_STAMP below), so a compiler or flag change rebuilds it.
 BCC_FLAGS := $(filter-out -opt,$(OS_BCC_DEFINES)) -opt
 TOOLCHAIN_ROOT ?= ../../../
 CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc

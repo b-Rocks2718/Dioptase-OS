@@ -5,7 +5,8 @@ VERSION ?= release
 OS_BCC_DEFINES ?=
 # Root programs are always compiled with bcc's optimizer, whether built here
 # or through the top-level root-sbin target (which may pass -opt in
-# OS_BCC_DEFINES as well).
+# OS_BCC_DEFINES as well). Compiled assembly depends on the bcc binary and on
+# these flags (BCC_STAMP below), so a compiler or flag change rebuilds it.
 BCC_FLAGS := $(filter-out -opt,$(OS_BCC_DEFINES)) -opt
 TOOLCHAIN_ROOT ?= ../../../
 CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
@@ -34,13 +35,13 @@ all: $(ALL_ASMS)
 $(ASM_ONLY_ASMS): $(BUILD_DIR)/%.s: %.s Makefile | $(BUILD_DIR)
 	cp $< $@
 
-$(C_ONLY_ASMS): $(BUILD_DIR)/%.s: %.c Makefile $(BCC_STAMP) | $(BUILD_DIR)
+$(C_ONLY_ASMS): $(BUILD_DIR)/%.s: %.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
 # When both foo.c and foo.s exist, the generated build/foo.s needs both pieces.
 # Compile the C source first, then append the handwritten assembly so callers
 # still consume a single foo.s output in build/.
-$(MERGED_ASMS): $(BUILD_DIR)/%.s: %.c %.s Makefile $(BCC_STAMP) | $(BUILD_DIR)
+$(MERGED_ASMS): $(BUILD_DIR)/%.s: %.c %.s Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@.tmp $<
 	cat $(word 2,$^) >> $@.tmp
 	mv $@.tmp $@
