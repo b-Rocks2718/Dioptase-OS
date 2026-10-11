@@ -3,10 +3,15 @@
 VERSION ?= release
 # Optional -D flags from the top-level OS Makefile (e.g. -DOS_RELEASE=1).
 OS_BCC_DEFINES ?=
+# Root programs are always compiled with bcc's optimizer, whether built here
+# or through the top-level root-sbin target (which may pass -opt in
+# OS_BCC_DEFINES as well).
+BCC_FLAGS := $(filter-out -opt,$(OS_BCC_DEFINES)) -opt
 TOOLCHAIN_ROOT ?= ../../../
 CC = $(TOOLCHAIN_ROOT)Dioptase-Languages/Dioptase-C-Compiler/build/$(VERSION)/bcc
 BASM = $(TOOLCHAIN_ROOT)Dioptase-Assembler/build/$(VERSION)/basm
 BUILD_DIR = build
+BCC_STAMP := $(BUILD_DIR)/bcc_flags
 PROGRAM ?= $(notdir $(CURDIR))
 SBIN_DIR := ../sbin
 PROGRAM_OUTPUT := $(SBIN_DIR)/$(PROGRAM)
@@ -40,8 +45,8 @@ $(PROGRAM): $(PROGRAM_OUTPUT)
 $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 	$(BASM) -bin -o $@ $(LINK_ASM_SRCS)
 
-$(BUILD_DIR)/%.s: %.c Makefile | $(BUILD_DIR)
-	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
+$(BUILD_DIR)/%.s: %.c Makefile $(BCC_STAMP) | $(BUILD_DIR)
+	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
 # These generated objects consume the shared shell interfaces directly. Keep
 # their header dependencies explicit so a command-buffer contract change cannot
@@ -50,8 +55,18 @@ $(BUILD_DIR)/shell.s: shell.h dirs.h line_editor.h
 $(BUILD_DIR)/line_editor.s: line_editor.h shell.h dirs.h
 $(BUILD_DIR)/dirs.s: dirs.h
 
-$(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
-	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
+$(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile $(BCC_STAMP) | $(BUILD_DIR)
+	$(CC) $(BCC_FLAGS) -s -o $@ $<
+
+# The bcc flags the generated assembly was built with. make compares only
+# timestamps, so assembly from an earlier build with other flags (say, without
+# -opt) would otherwise be reused silently; this file changes, and the
+# assembly that depends on it is rebuilt, only when BCC_FLAGS changes.
+$(BCC_STAMP): FORCE | $(BUILD_DIR)
+	@echo '$(BCC_FLAGS)' | cmp -s - $@ || echo '$(BCC_FLAGS)' > $@
+
+.PHONY: FORCE
+FORCE:
 
 $(BUILD_DIR):
 	mkdir -p $@
