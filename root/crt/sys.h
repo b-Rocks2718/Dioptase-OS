@@ -38,6 +38,15 @@ unsigned getkey(void);
 // Non-blocking. Decode the word with the macros in mouse.h.
 int getmouse(void);
 
+// Ask the terminal for raw (1) or cooked (0) keyboard input on STDIN and wait
+// until it has switched; input from before the switch is discarded. Raw input
+// is two-byte records: the guest keycode, then TERMINAL_RAW_RELEASE (1) for a
+// release or 0 for a press (root/crt/terminal.h). Not a trap: implemented in
+// keyboard.c with the terminal's in-band requests (docs/terminal.md). Returns
+// 0, or -1 (errno EINVAL for a bad mode) when no terminal answered, for
+// example when STDIN is not the terminal's input pipe.
+int set_keyboard_raw(int enabled);
+
 void set_tile_scale(unsigned scale);
 
 void set_vscroll(unsigned value);
