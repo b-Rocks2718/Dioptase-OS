@@ -6,6 +6,11 @@ procedurally generated levels, a boss, chiptune music, and a high-score table
 saved to disk. Everything — code, art, music — is generated or written for
 this machine; the game runs as an ordinary user program on Dioptase-OS.
 
+| | |
+| --- | --- |
+| ![Title screen with the attract-mode demo behind it](../../docs/delve/title.png) | ![A fireball lights up a corridor on its way to a slime](../../docs/delve/fireball.png) |
+| ![The Warden charges a volley](../../docs/delve/warden.png) | ![The rune key breaks the seal on the Heart of Dioptase](../../docs/delve/heart.png) |
+
 ## Running it
 
 From `Dioptase-OS/`:
