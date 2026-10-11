@@ -37,9 +37,11 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
 // Needs pointer to current_thread entry of the core's PerCore struct
 // Assumes interrupts are disabled when this is called, and will re-enable them in the new thread's context
 // run_with_interrupts determines whether to re-enable interrupts before calling the callback function, or after
+// flush_tlb clears this core's TLB after installing next's PID; callers get it
+// from vmem_tlb_switch_needs_flush() (or pass false when next has pid 0)
 // Assumes callback doesn't modify the 'next' TCB 
 extern void context_switch(struct TCB* me, struct TCB* next, void (*func)(void *), void *arg, 
-  struct TCB** cur_thread, int was, bool run_with_interrupts);
+  struct TCB** cur_thread, int was, bool run_with_interrupts, bool flush_tlb);
 
 // Claim a resource guarded by `lock`, blocking FIFO on `waiters` until granted.
 //

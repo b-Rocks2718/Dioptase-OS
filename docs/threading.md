@@ -15,6 +15,13 @@ Blocking simply context switches to the core's idle thread, and the idle thread 
 which thread to run next. Because this can be done in O(1), it is safe to block from 
 and interrupt handler. 
 
+Neither switch clears the TLB unless it has to: switching to the idle thread
+(PID 0) never does, and switching from it to a thread whose translations the
+core's TLB already holds and that have not changed since does not either. A
+thread that blocks and resumes on the same core therefore keeps its cached
+translations. The rule and why it is safe are in `vmem.md` ("TLB Ownership
+Across Context Switches").
+
 ### Idle threads
 While there are active threads, the idle threads loop forever. On each loop they call the scheduler to get the next thread to switch to, and then switch to it if it is not NULL. During
 this call the scheduler does some work, such as load balancing. To avoid reentrance, the idle threads can never block. In particular they cannot use the heap.

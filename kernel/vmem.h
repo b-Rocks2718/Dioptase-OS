@@ -73,6 +73,21 @@ bool vmem_truncate_file(struct Node* node, unsigned target_size);
 // Per-core virtual memory initialization
 void vmem_core_init(void);
 
+// Give tcb's address space a fresh TLB generation (see TCB.tlb_generation).
+// Call after giving it a new page directory, and before removing or
+// narrowing any of its translations.
+void vmem_new_tlb_generation(struct TCB* tcb);
+
+// Decide whether switching this core to `next` must clear the TLB, and if
+// so record next's address space as the TLB's new owner. Interrupts must be
+// disabled, and the caller must clear the TLB when this returns true.
+bool vmem_tlb_switch_needs_flush(struct TCB* next);
+
+// Record that this core's TLB was just cleared while tcb's address space is
+// installed, so it now holds only that space's current entries. Interrupts
+// must be disabled from the clear through this call.
+void vmem_tlb_adopt(struct TCB* tcb);
+
 // allocate a new page directory, with all entries invalid
 unsigned create_page_directory(void);
 

@@ -1,0 +1,6 @@
+***tlb ownership test start
+***tlb ownership kept ok
+***tlb ownership munmap after migration ok
+***tlb ownership generations ok
+***tlb ownership decisions ok
+***tlb ownership test complete

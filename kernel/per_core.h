@@ -24,6 +24,14 @@ struct PerCore {
   volatile bool rebalance_pending;
 
   struct CLHNode* idle_clh_node;
+
+  // The one address space whose (non-global) TLB entries this core may hold,
+  // as (page directory = PID, tlb_generation) when they were last known
+  // current. Only this core reads or writes these fields, with interrupts
+  // disabled (the context switch path, exec). tlb_owner_pid 0 means none:
+  // no page directory lives at physical address 0.
+  unsigned tlb_owner_pid;
+  unsigned tlb_owner_generation;
   
   // I/O: per-core SPSC rings filled by this core's device ISRs
   struct EventBuf key_events;

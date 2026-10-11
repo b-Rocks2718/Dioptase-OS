@@ -1439,13 +1439,21 @@ int handle_wait_child(int child_desc){
 }
 
 // Make (pid, vme_list) the TCB's address space and install it in hardware.
-// Caller is the current TCB in kernel mode.
+// Caller is the current TCB in kernel mode. Interrupts stay disabled from the
+// TCB update through the PID change, the TLB clear, and the owner record: a
+// context switch saves the hardware PID register into tcb->pid, so a
+// preemption in between would rewind tcb->pid, and this core's record must
+// describe the TLB it actually holds.
 static void install_address_space(struct TCB* tcb, unsigned pid,
     struct VME* vme_list){
+  unsigned was = interrupts_disable();
   tcb->pid = pid;
   tcb->vme_list = vme_list;
+  vmem_new_tlb_generation(tcb);
   set_pid(pid);
   tlb_flush();
+  vmem_tlb_adopt(tcb);
+  interrupts_restore(was);
 }
 
 // Destroy an address space that is not installed in hardware. The TCB only
