@@ -37489,6 +37489,10 @@ song_table:
   .fill 32
   .fill 0
   .fill 1024
+  .fill 5357
+  .fill 64
+  .fill 1
+  .fill 1152
   .global song_data
 song_data:
   .fill 19740929
@@ -37779,6 +37783,70 @@ song_data:
   .fill 0
   .fill 0
   .fill 16843009
+  .fill 958939212
+  .fill 2015904513
+  .fill 1681147724
+  .fill 2015904591
+  .fill 958939214
+  .fill 958940929
+  .fill 1681146700
+  .fill 2015905537
+  .fill 958676047
+  .fill 2015641600
+  .fill 1680884480
+  .fill 2015641600
+  .fill 958676044
+  .fill 958677760
+  .fill 1680883784
+  .fill 2015642368
+  .fill 958807626
+  .fill 2015773185
+  .fill 1681016138
+  .fill 2015773262
+  .fill 958807633
+  .fill 958809345
+  .fill 1681015374
+  .fill 2015773953
+  .fill 958610251
+  .fill 2015575808
+  .fill 1680818688
+  .fill 2015575808
+  .fill 958610247
+  .fill 958611968
+  .fill 1680817920
+  .fill 2015576577
+  .fill 958939212
+  .fill 2015904591
+  .fill 1681147731
+  .fill 2015904591
+  .fill 958939212
+  .fill 958941007
+  .fill 1681146707
+  .fill 2015905615
+  .fill 958676052
+  .fill 2015641600
+  .fill 1680884563
+  .fill 2015641600
+  .fill 958676047
+  .fill 958677760
+  .fill 1680883788
+  .fill 2015642368
+  .fill 958807630
+  .fill 2015773184
+  .fill 1681016145
+  .fill 2015773184
+  .fill 958807638
+  .fill 958809344
+  .fill 1681015380
+  .fill 2015774035
+  .fill 958610259
+  .fill 2015575808
+  .fill 1680818688
+  .fill 2015575808
+  .fill 958610251
+  .fill 958611968
+  .fill 1680817998
+  .fill 2015576576
   .align 4
   .global font_small
 font_small:

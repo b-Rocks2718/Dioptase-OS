@@ -375,8 +375,8 @@ extern int sin_table[4096];
 extern unsigned char sprite_texels[57344];
 extern unsigned char sprite_spans[3584];
 extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
-extern int song_table[12];                    /* per song: row samples, rows, loop, offset */
-extern unsigned char song_data[1152];         /* 4 bytes (lead, arp, bass, drums) per row */
+extern int song_table[16];                    /* per song: row samples, rows, loop, offset */
+extern unsigned char song_data[1408];         /* 4 bytes (lead, arp, bass, drums) per row */
 extern unsigned short overlay_staff[2048];   /* two 32x32 sprites, 12-bit */
 extern unsigned short overlay_cursor[1024];
 extern unsigned short overlay_staff_glow[1024]; /* top staff sprite while casting */
@@ -478,6 +478,7 @@ void show_message(char* text);
 #define MUSIC_TITLE 1
 #define MUSIC_DUNGEON 2
 #define MUSIC_VICTORY 3
+#define MUSIC_BOSS 4
 void sfx(int id);
 void audio_start(void);
 void audio_stop(void);

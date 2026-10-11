@@ -1027,6 +1027,7 @@ static void tick(void){
         state = STATE_PLAY;
         state_t = 0;
         enter_level(g_stats.depth + 1);
+        if (g_stats.depth == FINAL_DEPTH) audio_music(MUSIC_BOSS);
         fade = LIGHT_LEVELS;
         static char buf[40];
         char num[12];

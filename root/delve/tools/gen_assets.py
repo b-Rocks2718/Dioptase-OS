@@ -1111,6 +1111,9 @@ def add_song(name, bpm, lead, arpeggio, bass, drums, loop=True):
     SONGS.append((name, row_samples, length, loop, tracks))
 
 
+add_song_later = []   # songs whose ids follow the ones added in order
+
+
 def build_music():
     # 1: title -- slow A minor, bell lead over a soft arpeggio
     add_song(
@@ -1136,6 +1139,16 @@ def build_music():
         bass=bass_line(["D2", "D2", "Bb1", "C2", "D2", "D2", "G1", "A1"] * 2, "drive"),
         drums=kit,
     )
+    # 4 (emitted after victory): the Warden's depth -- fast E minor
+    boss_kit = "K h S h K K S h | " * 8
+    add_song_later.append(dict(
+        name="boss", bpm=140,
+        lead="E5 . E5 G5 F#5 . E5 . | G5 - - - E5 - C5 - | D5 . D5 F#5 A5 . F#5 . | D#5 - - - B4 - - . | "
+             "E5 G5 B5 G5 E5 G5 B5 G5 | C6 - B5 - G5 - E5 - | F#5 - A5 - D6 - C6 B5 | B5 - - - D#5 - F#5 - |",
+        arpeggio=arp(["E4 G4 B4", "C4 E4 G4", "D4 F#4 A4", "B3 D#4 F#4"] * 2, pattern=(0, 1, 2, 1, 0, 2, 1, 2)),
+        bass=bass_line(["E2", "C2", "D2", "B1"] * 2, "drive"),
+        drums=boss_kit,
+    ))
     # 3: victory fanfare (plays once)
     add_song(
         "victory", 120,
@@ -1145,6 +1158,8 @@ def build_music():
         drums="K . . . S . . . | K . . . S . . . | K . K . S . S . | K - - - - - - . |",
         loop=False,
     )
+    for song in add_song_later:
+        add_song(song["name"], song["bpm"], song["lead"], song["arpeggio"], song["bass"], song["drums"])
 
 
 # ---------------------------------------------------------------------------
