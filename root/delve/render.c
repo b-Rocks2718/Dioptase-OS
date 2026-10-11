@@ -6,17 +6,21 @@
  * Walls use a grid DDA per screen column (Lode Vandevenne's formulation:
  * ray direction = camera direction + camera plane * screen x, so the
  * perpendicular wall distance falls out of the side distances without a
- * fisheye correction). Every per-column multiply goes through umul16 in
- * gfx.s and the single division through udiv32; the expensive per-ray
- * reciprocals are cached per camera angle because the camera only turns
- * during the short turn animation.
+ * fisheye correction). The ISA has no multiply or divide instruction, so the
+ * per-column arithmetic is built to avoid both: multiplies are single 16x16
+ * umul16 calls (gfx.s), wall heights and texture steps come from tables, and
+ * the per-ray reciprocals are cached per camera angle because the camera
+ * only turns during the short turn animation.
+ *
+ * Rendering can be confined to a strip of tile columns so several processes
+ * can share a frame (parallel.c); all per-strip state is process-local.
  */
 
 static void draw_billboards(struct Camera* cam);
 static int light_bonus(int x, int y, int face_side, int ray_d);
 
 /* Per-angle ray tables, rebuilt whenever the camera angle changes. */
-static int g_table_angle = -1;
+static int table_angle = -1;
 static int ray_dx[VIEW_W];
 static int ray_dy[VIEW_W];
 static int delta_x[VIEW_W];   /* |1 / ray_dx| in 16.16, capped */
@@ -103,7 +107,8 @@ static int frac_mul(unsigned frac, unsigned delta){
   return (umul16(frac, delta & 0xFFFF) >> 16) + umul16(frac, delta >> 16);
 }
 
-/* Rebuild the per-column ray directions and reciprocals for `angle`. */
+/* Rebuild the per-angle tables for `angle`: each column's ray direction and
+ * reciprocals, and each floor row's starting offset and per-pixel step. */
 static void build_ray_tables(int angle){
   int dir_x = icos(angle);
   int dir_y = isin(angle);
@@ -133,7 +138,7 @@ static void build_ray_tables(int angle){
     row_du[k] = fixmul(d, step_x);
     row_dv[k] = fixmul(d, step_y);
   }
-  g_table_angle = angle;
+  table_angle = angle;
 }
 
 /* Light levels added to everything (negative during fades). */
@@ -185,7 +190,7 @@ void render_init(void){
   ceil_tex = flat_textures + FLAT_CEILING_BEAMS * TEX_BYTES;
 }
 
-/* Cast the floor and ceiling over the whole view; walls are drawn on top. */
+/* Per-row floor casting state handed to draw_flats_asm(). */
 static struct FlatRow flat_rows[VIEW_HALF_H];
 
 /* This frame's lights that can reach anything visible: within reach of the
@@ -257,9 +262,10 @@ static int wall_height(int dist){
   return udiv32(PROJ_K << 16, dist);
 }
 
-/* (a * b) >> 16 for a positive distance `a` below 32 cells and a ray
- * component |b| below 2.0, with ~10 fractional bits: plenty for a texture
- * coordinate or a light position, and one umul16 instead of a full fixmul. */
+/* (a * b) >> 16 for a positive distance `a` below 64 cells and a ray
+ * component |b| below 4.0 (both operands then fit umul16's 16 bits after the
+ * shifts), with ~10 fractional bits: plenty for a texture coordinate or a
+ * light position, and one umul16 instead of a full fixmul. */
 static int dist_mul(int a, int b){
   if (b < 0) return -(int)(umul16((unsigned)a >> 6, (unsigned)(-b) >> 2) >> 8);
   return umul16((unsigned)a >> 6, (unsigned)b >> 2) >> 8;
@@ -403,7 +409,7 @@ void render_view(struct Camera* cam){
 void render_view_strip(struct Camera* cam, int g0, int g1){
   strip_x0 = g0 * 8;
   strip_x1 = g1 * 8;
-  if (cam->angle != g_table_angle){
+  if (cam->angle != table_angle){
     build_ray_tables(cam->angle);
   }
   floor_tex = flat_textures + g_floor_flat * TEX_BYTES;

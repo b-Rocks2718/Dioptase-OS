@@ -130,6 +130,7 @@ static void hud_redraw(void);
 
 /* ---- Small helpers ---- */
 
+/* World coordinate (16.16) of the center of cell index c along one axis. */
 static int cell_center(int c){
   return (c << 16) + FIX_HALF;
 }
@@ -670,6 +671,7 @@ static void upload_sprite(int sprite, unsigned short* pixels){
   copy_words((void*)(g_spritemap + sprite * SPRITE_SHORTS), pixels, SPRITE_SHORTS / 2);
 }
 
+/* Whether the staff sprite currently holds the blazing (casting) image. */
 static bool staff_glowing;
 
 /* Position the hardware-sprite overlays (staff and crosshair) for this frame:
