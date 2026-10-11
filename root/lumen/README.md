@@ -6,7 +6,8 @@ colored relays, outwit the sentries, and bring the last sun home.
 LUMEN is an original user program for Dioptase: a textured integer raycaster,
 three procedural decks, tactical combat, a scanner map, crew transmissions,
 upgrades, and an original synthesized score. No external artwork, music files,
-engine, kernel modifications, or host graphics library is needed by the game.
+engine or host graphics library is needed by the game. Its menu is signed
+**gpt-6-astra**.
 
 ![LUMEN running as a Dioptase user program](screenshots/game.png)
 
@@ -26,14 +27,21 @@ lumen
 ```
 
 Press **Enter** to play or **D** on the title screen to watch an autonomous
-expedition. Movement takes one cell at a time, with animated transitions.
+expedition. Enter first shows a mission briefing; press Enter again to begin.
+A persistent green objective line keeps the next step visible during play.
+
+Turning uses fine 11.25-degree increments instead of quarter-turns. Movement
+takes one cell at a time in the nearest of eight directions, with animated
+transitions; your aim stays at the angle you selected. Diagonal steps need
+both adjoining cells clear. Beams follow your aim, with forgiving cell-sized
+hitboxes for relays and sentries.
 Enemies act when you move, fire, wait, open a door, or read a transmission.
 You can take your time looking, changing colors, and studying the map.
 
 | Key | Action |
 | --- | --- |
 | W / S, Up / Down | Forward / backward |
-| A / D, Left / Right | Turn |
+| A / D, Left / Right | Aim left / right |
 | Z / C | Sidestep left / right |
 | Space or F | Fire the prism beam |
 | 1 / 2 / 3 | Cyan / amber / magenta beam |
@@ -92,7 +100,7 @@ make -C root/lumen
 ```
 
 Run the actual optimized guest binary, including deterministic rule tests and
-five scenes published to and read back from the real tile/sprite mappings:
+seven scenes published to and read back from the real tile/sprite mappings:
 
 ```sh
 make lumen.test TEST_RUNS=1 TIMEOUT_SECONDS=600 EMU_VGA=no EMU_AUDIO=no
@@ -116,9 +124,12 @@ root/lumen/build/check --exhaustive
 ```
 
 The host checks exercise deterministic generation, complete campaigns,
-movement, collision, colored beams, relay idempotence, sentry warning/dodge/
-death, resource limits, logs, upgrades, every UI mode, extreme render views,
-wall occlusion, and PCM synthesis. `--exhaustive` runs 1,000 complete campaigns.
+eight-way movement, corner collision, oblique beams, relay idempotence, sentry
+warning/dodge/death, resource limits, logs, upgrades, every UI mode, extreme views,
+wall occlusion, HUD/projection cache invalidation, and PCM synthesis. The guest
+self-test additionally checks briefing input, queued movement, repeated turns,
+and camera timing across frame-counter wrap. `--exhaustive` runs 1,000 complete
+campaigns.
 The integration test executes the same game, renderer, and synth with bcc and
 basm under the full emulator; host checks alone are not evidence of guest
 compiler correctness.
@@ -146,23 +157,61 @@ compiler correctness.
   It hides the cursor and drains terminal output before taking over graphics.
   The shell restores its display after the foreground program exits.
 - Writes use volatile mapped pointers and stay within each documented region.
+  Packed pixel publication uses the current emulator's little-endian word
+  stores. General word-store endianness is unspecified in the ISA text; this
+  dependency is verified through actual guest MMIO readbacks.
   The display has no documented atomic buffer swap; a frame can briefly tear
   during publication. Animation is paced by the VGA counter, which requires
-  `--vga` in the emulator. Gameplay remains turn based at any rendering speed.
+  `--vga` or `--headless` in the emulator. Gameplay remains turn based at any rendering speed.
 - The sample loop uses fixed-point lookup tables because multiplication itself
   is a software routine on this ISA. The original score, **Afterlight**, has
   three deck arrangements and synthesized cues; all visuals are procedural.
 
-## Verified results
+## Performance
 
-The optimized guest self-tests and five MMIO capture scenes pass in the full
-four-core emulator. All five captured scenes match the native renderer exactly.
-AddressSanitizer/UndefinedBehaviorSanitizer pass across 8,204 rendered frames,
-624 floor cells, and 128 full campaigns. A separate 1,000-seed campaign sweep
-also reaches victory through ordinary game actions. The standard `root-sbin`
-build and the selected input, foreground display, audio, and timer OS
-regressions pass.
+The renderer can publish on every VGA tick instead of imposing a 15 fps cap.
+Camera interpolation uses elapsed ticks, so animation duration does not depend
+on rendering throughput. Direction-dependent projection arithmetic is cached,
+unchanged HUD content is retained, and aligned word stores publish two VGA
+pixels at once. The seven guest captures check the resulting pixels against
+the native renderer, including the new briefing and an oblique view.
 
-The checked-in screenshots are guest MMIO readbacks. No interactive GUI session
-or audible listening test was performed in this environment; input integration
-follows the existing foreground games, and PCM is checked numerically.
+This branch also adapts Claude's OS optimizations from `claude-demo` commits
+`ae850820` (per-core/queue arithmetic) and `29156c76` (empty pending-signal
+fast path), credited upstream to Brooks Bryant and Claude Opus 5.5. The queue
+walk preserves nested C array bounds. Emulator commit `6edcc5e` reduces VGA
+lock contention and is already present in the tested `claude-demo` emulator.
+No new graphics syscalls are required.
+
+For a finite, uncapped rendering benchmark without audio, run:
+
+```text
+lumen --benchmark
+```
+
+Use a VGA window or the emulator's `--headless` mode so the 60 Hz counter
+advances. The benchmark renders 96 frames each of a stationary view, camera
+translation, and camera rotation, including real MMIO publication. It reports
+VGA ticks; frames per second are `96 * 60 / ticks`. Startup and console output
+are excluded. This measures rendering throughput; live audio and gameplay can
+add work. On the same four-core full emulator, the original renderer measured
+about 24 fps uncapped, while the final renderer measured about 43–52 fps
+(111/110/135 ticks versus 233/236/234 for stationary/moving/turning views).
+A second final run measured 110/111/135 ticks. One baseline repeat was slower
+(621/619/619 ticks); these are host wall-clock measurements, not ISA cycle counts.
+Actual gameplay previously also had a 15 fps cap; it now targets each VGA tick.
+
+
+## Verified follow-up
+
+- Optimized guest `lumen.test`: **1/1**, including input and gameplay self-tests.
+- Seven final guest MMIO captures match the native renderer pixel-for-pixel.
+- Native checks and ASan/UBSan: **8,334 frames and 128 campaigns** each.
+  The exhaustive sweep passed **1,000 campaigns** and **17,550 frames**.
+- Six selected OS regressions passed **3/3 before and after** the kernel changes:
+  `user_kill`, `user_foreground_display`, `user_syscall_invalid_ptr`,
+  `simple_fork`, `user_fork_wait_mmap_sem`, and `threads_race_stress`.
+- `root-sbin` builds, and a headless keyboard script launched Lumen through the
+  real terminal/shell, entered the briefing, turned, moved, opened help/map,
+  and returned to the shell. Audio capture contains nonzero bounded PCM;
+  no audible listening test was performed.

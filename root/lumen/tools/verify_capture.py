@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    for scene in ("title", "game", "map", "action", "lift"):
+    for scene in ("title", "game", "map", "action", "lift", "briefing", "oblique"):
         native = args.output / f"native-{scene}.ppm"
         subprocess.run([str(args.preview.resolve()), str(native), scene,
                         "35" if scene == "action" else "0"], check=True)

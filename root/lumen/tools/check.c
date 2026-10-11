@@ -55,10 +55,74 @@ static void check_pixel_range(unsigned seed){
     }
 }
 
-/* Poison both planes so incomplete redraws cannot inherit plausible old pixels. */
+/* Deliberate external writes invalidate the retained HUD before a fresh draw. */
 static void poison_pixels(void){
+    render_invalidate_hud();
     for (int i = 0; i < VIEW_W * VIEW_H; i++) view_pixels[i] = 0xFFFF;
     for (int i = 0; i < HUD_W * HUD_H; i++) hud_pixels[i] = 0xFFFF;
+}
+
+/* Every visible HUD input must invalidate the cache, and retained pixels must
+ * match a forced redraw even when text becomes shorter or entirely empty. */
+static void check_hud_cache(struct Coverage* coverage){
+    struct Game game;
+    game_start(&game, 42);
+    render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                 game.angle, 0, SCREEN_GAME);
+    for (int field = 0; field < 11; field++){
+        uint32_t before = pixels_hash(hud_pixels, HUD_W * HUD_H);
+        unsigned revision = render_hud_revision;
+        if (field == 0) game.hp--;
+        if (field == 1) game.max_hp += 5;
+        if (field == 2) game.energy--;
+        if (field == 3) game.relays = 3;
+        if (field == 4) game.color = (game.color + 1) % 3;
+        if (field == 5) game.message[0] = 'Z';
+        if (field == 6) game.detail[0] = 'Z';
+        if (field == 7) game.message[1] = 0;
+        if (field == 8) game.detail[1] = 0;
+        if (field == 9) game.message[0] = 0;
+        if (field == 10) game.detail[0] = 0;
+        render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                     game.angle, 0, SCREEN_GAME);
+        uint32_t expected = pixels_hash(hud_pixels, HUD_W * HUD_H);
+        if (render_hud_revision != revision + 1 || expected == before){
+            fail("visible HUD input did not redraw", game.seed, field);
+        }
+        revision = render_hud_revision;
+        render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                     game.angle + TURN_STEP, 8, SCREEN_MAP);
+        if (render_hud_revision != revision ||
+            pixels_hash(hud_pixels, HUD_W * HUD_H) != expected){
+            fail("unchanged HUD cache changed pixels or revision", game.seed, field);
+        }
+        poison_pixels();
+        render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                     game.angle, 0, SCREEN_GAME);
+        if (render_hud_revision != revision + 1 ||
+            pixels_hash(hud_pixels, HUD_W * HUD_H) != expected){
+            fail("cached HUD differs from forced redraw", game.seed, field);
+        }
+        check_pixel_range(game.seed);
+        coverage->frames += 3;
+    }
+    unsigned revision = render_hud_revision;
+    uint32_t expected = pixels_hash(hud_pixels, HUD_W * HUD_H);
+    game.score++;
+    game.turns++;
+    render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                 game.angle, 0, SCREEN_BRIEFING);
+    if (render_hud_revision != revision){
+        fail("hidden gameplay state invalidated HUD", game.seed, 0);
+    }
+    render_init();
+    render_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                 game.angle, 0, SCREEN_GAME);
+    if (render_hud_revision != revision + 1 ||
+        pixels_hash(hud_pixels, HUD_W * HUD_H) != expected){
+        fail("renderer initialization did not refresh retained HUD", game.seed, 0);
+    }
+    coverage->frames += 3;
 }
 
 /* Repeat identical inputs after poisoning storage; drawing must not mutate rules. */
@@ -155,7 +219,7 @@ static void check_overlays(struct Coverage* coverage){
     game.score = INT_MAX;
     for (int mode = MODE_TITLE; mode <= MODE_WON; mode++){
         game.mode = mode;
-        for (int screen = SCREEN_GAME; screen <= SCREEN_PAUSE; screen++){
+        for (int screen = SCREEN_GAME; screen <= SCREEN_BRIEFING; screen++){
             for (int variant = 0; variant < 3; variant++){
                 game.color = variant;
                 game.hp = variant == 0 ? 0 : (variant == 1 ? 1 : game.max_hp);
@@ -176,7 +240,7 @@ static void make_render_room(struct Game* game){
     game->entity_count = 0;
     game->x = 3;
     game->y = 9;
-    game->dir = 1;
+    game->angle = 64;
     game->exit_x = 1;
     game->exit_y = 1;
     game->shot = 0;
@@ -252,6 +316,59 @@ static void check_sentry_occlusion(struct Coverage* coverage){
     game.entities[0].active = 0;
     check_frame(&game, 3 * 256 + 128, 9 * 256 + 128, 64, 0, SCREEN_GAME, coverage);
     if (center_changes(before) < 20) fail("sentry visible through doorway", game.seed, 0);
+}
+
+/* An exact diagonal corner cannot reveal a target through either touching
+ * wall: the center camera ray must agree with conservative beam traversal. */
+static void check_corner_occlusion(struct Coverage* coverage){
+    int dx[4] = {1, 1, -1, -1};
+    int dy[4] = {-1, 1, 1, -1};
+    for (int direction = 0; direction < 4; direction++){
+        for (int side = 0; side < 2; side++){
+            struct Game game;
+            unsigned short before[VIEW_W * VIEW_H];
+            make_render_room(&game);
+            game.x = 10;
+            game.y = 9;
+            game.angle = 32 + direction * 64;
+            game.entity_count = 1;
+            struct Entity* sentry = &game.entities[0];
+            sentry->type = ENTITY_DRONE;
+            sentry->x = game.x + dx[direction] * 3;
+            sentry->y = game.y + dy[direction] * 3;
+            sentry->color = 0;
+            sentry->health = 4;
+            sentry->active = 0;
+            sentry->alert = 0;
+            int wall_x = game.x + (side == 0 ? dx[direction] : 0);
+            int wall_y = game.y + (side == 1 ? dy[direction] : 0);
+            game.cells[wall_y * WORLD_W + wall_x] = CELL_WALL;
+            check_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                        game.angle, 0, SCREEN_GAME, coverage);
+            memcpy(before, view_pixels, sizeof(before));
+            sentry->active = 1;
+            check_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                        game.angle, 0, SCREEN_GAME, coverage);
+            for (int y = 16; y < 68; y++){
+                if (before[y * VIEW_W + 80] != view_pixels[y * VIEW_W + 80]){
+                    fail("center ray leaks target through touching wall", game.seed,
+                         direction * 2 + side);
+                }
+            }
+            game.cells[wall_y * WORLD_W + wall_x] = CELL_FLOOR;
+            check_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                        game.angle, 0, SCREEN_GAME, coverage);
+            memcpy(before, view_pixels, sizeof(before));
+            sentry->active = 0;
+            check_frame(&game, game.x * 256 + 128, game.y * 256 + 128,
+                        game.angle, 0, SCREEN_GAME, coverage);
+            int changes = 0;
+            for (int y = 16; y < 68; y++){
+                if (before[y * VIEW_W + 80] != view_pixels[y * VIEW_W + 80]) changes++;
+            }
+            if (changes < 2) fail("diagonal target visible after corner opens", game.seed, direction);
+        }
+    }
 }
 
 /* Fill the documented entity capacity and include the additional lift marker. */
@@ -373,8 +490,10 @@ int main(int argc, char** argv){
     }
     check_camera_edges(&coverage);
     check_overlays(&coverage);
+    check_hud_cache(&coverage);
     check_lift_visibility(&coverage);
     check_sentry_occlusion(&coverage);
+    check_corner_occlusion(&coverage);
     check_entity_capacity(&coverage);
     check_audio_chunks();
     check_campaigns(exhaustive ? 1000 : 128, &coverage);

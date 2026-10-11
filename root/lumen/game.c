@@ -1,7 +1,7 @@
 /*
  * LUMEN expedition rules. This file is pure, deterministic user-mode game
  * logic: it does not access devices, clocks, shared memory, or OS services.
- * Positions are map cells, directions run clockwise from north, and beam
+ * Positions are map cells; 256-unit headings run clockwise from north. Beam
  * colors are cyan, amber, and magenta. Enemy decisions happen only on turns
  * spent moving, firing, opening a door, reading a log, or waiting.
  */
@@ -15,9 +15,34 @@
 #define MEDKIT_HEAL 12
 #define CELL_CHARGE 10
 
-/* Cardinal offsets share the direction numbering used by the renderer. */
+/* Cardinal offsets keep sentry pathfinding and the demo route orthogonal. */
 static int step_x[4] = {0, 1, 0, -1};
 static int step_y[4] = {-1, 0, 1, 0};
+
+/* Q10 unit-circle samples are shared so beams and the crosshair agree exactly. */
+static const int sine[256] = {
+    0, 25, 50, 75, 100, 125, 150, 175, 200, 224, 249, 273, 297, 321, 345, 369,
+    392, 415, 438, 460, 483, 505, 526, 548, 569, 590, 610, 630, 650, 669, 688, 706,
+    724, 742, 759, 775, 792, 807, 822, 837, 851, 865, 878, 891, 903, 915, 926, 936,
+    946, 955, 964, 972, 980, 987, 993, 999, 1004, 1009, 1013, 1016, 1019, 1021, 1023, 1024,
+    1024, 1024, 1023, 1021, 1019, 1016, 1013, 1009, 1004, 999, 993, 987, 980, 972, 964, 955,
+    946, 936, 926, 915, 903, 891, 878, 865, 851, 837, 822, 807, 792, 775, 759, 742,
+    724, 706, 688, 669, 650, 630, 610, 590, 569, 548, 526, 505, 483, 460, 438, 415,
+    392, 369, 345, 321, 297, 273, 249, 224, 200, 175, 150, 125, 100, 75, 50, 25,
+    0, -25, -50, -75, -100, -125, -150, -175, -200, -224, -249, -273, -297, -321, -345, -369,
+    -392, -415, -438, -460, -483, -505, -526, -548, -569, -590, -610, -630, -650, -669, -688, -706,
+    -724, -742, -759, -775, -792, -807, -822, -837, -851, -865, -878, -891, -903, -915, -926, -936,
+    -946, -955, -964, -972, -980, -987, -993, -999, -1004, -1009, -1013, -1016, -1019, -1021, -1023, -1024,
+    -1024, -1024, -1023, -1021, -1019, -1016, -1013, -1009, -1004, -999, -993, -987, -980, -972, -964, -955,
+    -946, -936, -926, -915, -903, -891, -878, -865, -851, -837, -822, -807, -792, -775, -759, -742,
+    -724, -706, -688, -669, -650, -630, -610, -590, -569, -548, -526, -505, -483, -460, -438, -415,
+    -392, -369, -345, -321, -297, -273, -249, -224, -200, -175, -150, -125, -100, -75, -50, -25,
+};
+
+/* Heading arithmetic wraps explicitly; no signed shifts or floating point. */
+int game_sine(int angle){
+    return sine[angle & 255];
+}
 
 /* Copy one short HUD sentence without depending on a host C library. */
 static void sentence(char* target, const char* source){
@@ -88,6 +113,65 @@ static int actor_blocked(struct Game* game, int x, int y){
 static int open_cell(struct Game* game, int x, int y){
     int cell = game_cell(game, x, y);
     return cell == CELL_FLOOR || cell == CELL_EXIT;
+}
+
+/* A ray starts at a cell center; crossings count half-cell distances per axis. */
+struct BeamRay {
+    int x;
+    int y;
+    int dx;
+    int dy;
+    int sx;
+    int sy;
+    int cross_x;
+    int cross_y;
+};
+
+/* Keep unsigned magnitudes separate from signs so comparisons need no divide. */
+static void beam_start(struct Game* game, struct BeamRay* ray){
+    int vx = game_sine(game->angle);
+    int vy = -game_sine(game->angle + 64);
+    ray->x = game->x;
+    ray->y = game->y;
+    ray->dx = magnitude(vx);
+    ray->dy = magnitude(vy);
+    ray->sx = vx < 0 ? -1 : 1;
+    ray->sy = vy < 0 ? -1 : 1;
+    ray->cross_x = 1;
+    ray->cross_y = 1;
+}
+
+/* Visit cells in beam order using cross-products of bounded map distances.
+ * Exact corner crossings require both side cells clear; neither a beam nor
+ * an interaction may slip between touching walls or physical pylons. */
+static void beam_step(struct Game* game, struct BeamRay* ray){
+    int x_first = ray->cross_x * ray->dy;
+    int y_first = ray->cross_y * ray->dx;
+    if (ray->dx == 0 || (ray->dy != 0 && y_first < x_first)){
+        ray->y += ray->sy;
+        ray->cross_y += 2;
+    } else if (ray->dy == 0 || x_first < y_first){
+        ray->x += ray->sx;
+        ray->cross_x += 2;
+    } else {
+        int nx = ray->x + ray->sx;
+        int ny = ray->y + ray->sy;
+        /* Solid map geometry wins a tie with an actor touching that corner. */
+        if (!open_cell(game, nx, ray->y)){
+            ray->x = nx;
+        } else if (!open_cell(game, ray->x, ny)){
+            ray->y = ny;
+        } else if (actor_blocked(game, nx, ray->y)){
+            ray->x = nx;
+        } else if (actor_blocked(game, ray->x, ny)){
+            ray->y = ny;
+        } else {
+            ray->x = nx;
+            ray->y = ny;
+        }
+        ray->cross_x += 2;
+        ray->cross_y += 2;
+    }
 }
 
 /* Carve only interior cells, preserving a solid boundary around every map. */
@@ -177,7 +261,7 @@ static void build_sector(struct Game* game){
     game->relays = 0;
     game->x = 3;
     game->y = 3;
-    game->dir = 1;
+    game->angle = 64;
     game->exit_x = 17;
     game->exit_y = 15;
     game->sound = SOUND_NONE;
@@ -410,17 +494,18 @@ static void shoot_relay(struct Game* game, struct Entity* relay){
     }
 }
 
-/* Resolve a straight beam against the nearest solid object in front. */
+/* Trace the actual camera heading, stopping at the nearest solid cell or actor. */
 static void fire(struct Game* game){
     game->energy -= SHOT_COST;
     game->shot = 4;
     game->sound = SOUND_SHOT;
     announce(game, "PRISM BEAM / NO TARGET", "LINE UP A RELAY OR SENTRY IN THE CROSSHAIR.");
-    int x = game->x;
-    int y = game->y;
+    struct BeamRay ray;
+    beam_start(game, &ray);
     for (int length = 0; length < WORLD_W + WORLD_H; length++){
-        x += step_x[game->dir];
-        y += step_y[game->dir];
+        beam_step(game, &ray);
+        int x = ray.x;
+        int y = ray.y;
         int cell = game_cell(game, x, y);
         if (cell == CELL_WALL || cell == CELL_GLASS || cell == CELL_DOOR){
             if (cell == CELL_DOOR) announce(game, "BULKHEAD BLOCKS THE BEAM", "STAND NEXT TO IT AND PRESS E TO OPEN IT.");
@@ -496,10 +581,33 @@ static void use_exit(struct Game* game){
     }
 }
 
+/* Select a nearby target along the same ray as the crosshair, never through
+ * blockers. The current cell remains eligible for standing on logs or lifts;
+ * remote targets must be in one of the eight immediately neighboring cells. */
+static void interaction_target(struct Game* game, int* x, int* y){
+    struct BeamRay ray;
+    beam_start(game, &ray);
+    *x = game->x;
+    *y = game->y;
+    for (int length = 0; length < 3; length++){
+        beam_step(game, &ray);
+        if (magnitude(ray.x - game->x) > 1 || magnitude(ray.y - game->y) > 1) return;
+        int cell = game_cell(game, ray.x, ray.y);
+        int index = game_entity(game, ray.x, ray.y);
+        if (!open_cell(game, ray.x, ray.y) || actor_blocked(game, ray.x, ray.y) ||
+            cell == CELL_EXIT || (index >= 0 && game->entities[index].type == ENTITY_LOG)){
+            *x = ray.x;
+            *y = ray.y;
+            return;
+        }
+    }
+}
+
 /* Interactions without a useful target are free and explain the requirement. */
 static int interact(struct Game* game){
-    int x = game->x + step_x[game->dir];
-    int y = game->y + step_y[game->dir];
+    int x;
+    int y;
+    interaction_target(game, &x, &y);
     if (game_cell(game, x, y) == CELL_DOOR){
         game->cells[y * WORLD_W + x] = CELL_FLOOR;
         game->sound = SOUND_STEP;
@@ -528,22 +636,26 @@ static int interact(struct Game* game){
 int game_act(struct Game* game, int action){
     if (game->mode != MODE_PLAY) return 0;
     game->sound = SOUND_NONE;
-    game->shot = 0;
-    game->flash = 0;
     if (action == ACT_LEFT || action == ACT_RIGHT){
-        game->dir = (game->dir + (action == ACT_LEFT ? 3 : 1)) % 4;
-        reveal(game);
+        /* A free look cannot erase effects from an action awaiting presentation. */
+        game->angle = (game->angle + (action == ACT_LEFT ? 256 - TURN_STEP : TURN_STEP)) & 255;
         return 0;
     }
+    game->shot = 0;
+    game->flash = 0;
     int spent = 0;
     if (action == ACT_FORWARD || action == ACT_BACK ||
         action == ACT_STRAFE_LEFT || action == ACT_STRAFE_RIGHT){
-        int direction = game->dir;
-        if (action == ACT_BACK) direction = (direction + 2) % 4;
-        if (action == ACT_STRAFE_LEFT) direction = (direction + 3) % 4;
-        if (action == ACT_STRAFE_RIGHT) direction = (direction + 1) % 4;
-        int x = game->x + step_x[direction];
-        int y = game->y + step_y[direction];
+        /* Quantize the step, never the view. One diagonal still costs one turn. */
+        int direction = game->angle;
+        if (action == ACT_BACK) direction += 128;
+        if (action == ACT_STRAFE_LEFT) direction += 192;
+        if (action == ACT_STRAFE_RIGHT) direction += 64;
+        direction = ((direction + 16) & 255) / 32;
+        int dx = direction >= 1 && direction <= 3 ? 1 : (direction >= 5 ? -1 : 0);
+        int dy = direction >= 3 && direction <= 5 ? 1 : (direction == 7 || direction <= 1 ? -1 : 0);
+        int x = game->x + dx;
+        int y = game->y + dy;
         if (!open_cell(game, x, y)){
             if (game_cell(game, x, y) == CELL_DOOR){
                 announce(game, "CLOSED BULKHEAD", "FACE THE DOOR AND PRESS E TO OPEN IT.");
@@ -552,6 +664,12 @@ int game_act(struct Game* game, int action){
         }
         if (actor_blocked(game, x, y)){
             announce(game, "THE WAY IS OCCUPIED.", "RELAYS NEED MATCHING LIGHT. SENTRIES NEED LESS.");
+            return 0;
+        }
+        if (dx != 0 && dy != 0 &&
+            (!open_cell(game, x, game->y) || !open_cell(game, game->x, y) ||
+             actor_blocked(game, x, game->y) || actor_blocked(game, game->x, y))){
+            announce(game, "CORNER BLOCKED / STEP AROUND IT", "DIAGONAL STEPS NEED BOTH SIDES CLEAR.");
             return 0;
         }
         game->x = x;
@@ -604,11 +722,16 @@ void game_upgrade(struct Game* game, int choice){
     build_sector(game);
 }
 
-/* Turn one quarter-step toward an intended command without spending a turn. */
+/* Group ordinary free turns into one demo decision so its pacing stays brisk.
+ * Demo headings start aligned to TURN_STEP; interactive headings may retain
+ * any of the 256 angles and never need to enter this cardinal route planner. */
 static int face_direction(struct Game* game, int direction){
-    if (game->dir == direction) return 1;
-    int clockwise = (direction - game->dir + 4) % 4;
-    game_act(game, clockwise == 3 ? ACT_LEFT : ACT_RIGHT);
+    int target = direction * 64;
+    if (game->angle == target) return 1;
+    int clockwise = (target - game->angle + 256) & 255;
+    int action = clockwise > 128 ? ACT_LEFT : ACT_RIGHT;
+    int remaining = clockwise > 128 ? 256 - clockwise : clockwise;
+    for (int turn = 0; turn < remaining; turn += TURN_STEP) game_act(game, action);
     return 0;
 }
 
@@ -697,7 +820,7 @@ void game_autoplay(struct Game* game){
         return;
     }
     if (game->mode != MODE_PLAY) return;
-    int direction = game->dir;
+    int direction = 0;
     int target = demo_target(game, &direction);
     if (target >= 0){
         if (!face_direction(game, direction)) return;
@@ -770,7 +893,7 @@ int game_validate(struct Game* game){
     int colors = 0;
     if (game->entity_count < 0 || game->entity_count > MAX_ENTITIES) return 1;
     if (game->sector < 1 || game->sector > SECTOR_COUNT) return 2;
-    if (game->dir < 0 || game->dir > 3 || !open_cell(game, game->x, game->y)) return 3;
+    if (game->angle < 0 || game->angle > 255 || !open_cell(game, game->x, game->y)) return 3;
     if (game->hp < 0 || game->hp > game->max_hp || game->max_hp <= 0) return 4;
     if (game->energy < 0 || game->energy > game->max_energy) return 5;
     for (int y = 0; y < WORLD_H; y++){
@@ -847,7 +970,7 @@ static void test_arena(struct Game* game){
     game->cells[game->exit_y * WORLD_W + game->exit_x] = CELL_EXIT;
     game->x = 3;
     game->y = 3;
-    game->dir = 1;
+    game->angle = 64;
 }
 
 /* Check seeded maps and core action contracts; each failure has a stable ID. */
@@ -873,7 +996,7 @@ int game_selftest(void){
     }
     test_arena(&game);
     game_act(&game, ACT_LEFT);
-    if (game.dir != 0 || game.turns != 0) return 110;
+    if (game.angle != 56 || game.turns != 0) return 110;
     game_act(&game, ACT_RIGHT);
     game.cells[3 * WORLD_W + 4] = CELL_DOOR;
     if (game_act(&game, ACT_FORWARD) || game.x != 3 || game.turns) return 111;
@@ -881,7 +1004,50 @@ int game_selftest(void){
     game_act(&game, ACT_FORWARD);
     if (game.x != 4 || game.y != 3 || game.turns != 2) return 113;
     game_act(&game, ACT_STRAFE_RIGHT);
-    if (game.x != 4 || game.y != 4 || game.dir != 1) return 114;
+    if (game.x != 4 || game.y != 4 || game.angle != 64) return 114;
+    /* Gentle turns wrap without advancing a locked sentry or changing position. */
+    test_arena(&game);
+    add_entity(&game, ENTITY_DRONE, 6, 3, 0);
+    game.entities[0].alert = 2;
+    game.angle = 0;
+    game.shot = 4;
+    game.flash = 5;
+    game_act(&game, ACT_LEFT);
+    if (game.angle != 248 || game.turns || game.hp != 30 ||
+        game.entities[0].alert != 2 || game.x != 3 || game.y != 3) return 115;
+    if (game.shot != 4 || game.flash != 5) return 193;
+    game_act(&game, ACT_RIGHT);
+    if (game.angle != 0 || game.turns || game.entities[0].alert != 2) return 116;
+    if (game.shot != 4 || game.flash != 5) return 194;
+    /* Each eighth-turn permits one step; looking remains at the original angle. */
+    int forward_x[8] = {3, 4, 4, 4, 3, 2, 2, 2};
+    int forward_y[8] = {2, 2, 3, 4, 4, 4, 3, 2};
+    for (int direction = 0; direction < 8; direction++){
+        test_arena(&game);
+        game.angle = direction * 32 + 8;
+        if (!game_act(&game, ACT_FORWARD) || game.x != forward_x[direction] || game.y != forward_y[direction] ||
+            game.angle != direction * 32 + 8 || game.turns != 1) return 117;
+        if (!game_act(&game, ACT_BACK) || game.x != 3 || game.y != 3 || game.turns != 2) return 118;
+    }
+    test_arena(&game);
+    game.angle = 40;
+    if (!game_act(&game, ACT_STRAFE_RIGHT) || game.x != 4 || game.y != 4 || game.angle != 40) return 119;
+    if (!game_act(&game, ACT_STRAFE_LEFT) || game.x != 3 || game.y != 3 || game.angle != 40) return 123;
+    /* Walls, glass, doors, and pylons all close a diagonal corner for movement. */
+    for (int cell = CELL_WALL; cell <= CELL_DOOR; cell++){
+        test_arena(&game);
+        game.angle = 32;
+        game.cells[3 * WORLD_W + 4] = (unsigned char)cell;
+        if (game_act(&game, ACT_FORWARD) || game.x != 3 || game.y != 3 || game.turns) return 124;
+        game.cells[3 * WORLD_W + 4] = CELL_FLOOR;
+        game.cells[2 * WORLD_W + 3] = (unsigned char)cell;
+        if (game_act(&game, ACT_FORWARD) || game.x != 3 || game.y != 3 || game.turns) return 125;
+    }
+    test_arena(&game);
+    game.angle = 32;
+    add_entity(&game, ENTITY_RELAY, 4, 3, 0);
+    game.entities[0].active = 0;
+    if (game_act(&game, ACT_FORWARD) || game.x != 3 || game.y != 3 || game.turns) return 126;
     test_arena(&game);
     add_entity(&game, ENTITY_RELAY, 5, 3, 1);
     game_act(&game, ACT_FIRE);
@@ -891,6 +1057,62 @@ int game_selftest(void){
     if (game.relays != 1 || game.entities[0].active || game.sound != SOUND_RELAY) return 121;
     game_act(&game, ACT_FIRE);
     if (game.relays != 1 || game.score != 100) return 122;
+    /* An oblique shot must follow the crosshair rather than its nearest cardinal. */
+    test_arena(&game);
+    game.angle = 80;
+    add_entity(&game, ENTITY_RELAY, 8, 5, 0);
+    add_entity(&game, ENTITY_RELAY, 7, 3, 0);
+    game_act(&game, ACT_FIRE);
+    if (game.entities[0].active || !game.entities[1].active || game.relays != 1) return 183;
+    for (int cell = CELL_WALL; cell <= CELL_DOOR; cell++){
+        test_arena(&game);
+        game.angle = 80;
+        add_entity(&game, ENTITY_RELAY, 8, 5, 0);
+        game.cells[4 * WORLD_W + 6] = (unsigned char)cell;
+        game_act(&game, ACT_FIRE);
+        if (!game.entities[0].active || game.relays) return 184;
+    }
+    test_arena(&game);
+    game.angle = 80;
+    add_entity(&game, ENTITY_RELAY, 8, 5, 0);
+    add_entity(&game, ENTITY_RELAY, 5, 4, 0);
+    game_act(&game, ACT_FIRE);
+    if (!game.entities[0].active || game.entities[1].active || game.relays != 1) return 185;
+    game_act(&game, ACT_FIRE);
+    if (!game.entities[0].active || game.relays != 1) return 186;
+    /* A ray exactly through a tile corner cannot leak past either side wall. */
+    for (int side = 0; side < 2; side++){
+        test_arena(&game);
+        game.angle = 96;
+        add_entity(&game, ENTITY_RELAY, 5, 5, 0);
+        game.cells[side == 0 ? 3 * WORLD_W + 4 : 4 * WORLD_W + 3] = CELL_WALL;
+        game_act(&game, ACT_FIRE);
+        if (!game.entities[0].active || game.relays) return 187;
+    }
+    /* When a wall and actor touch the same corner, wall occlusion wins. */
+    for (int side = 0; side < 2; side++){
+        test_arena(&game);
+        game.angle = 96;
+        add_entity(&game, ENTITY_RELAY, side == 0 ? 4 : 3, side == 0 ? 3 : 4, 0);
+        game.cells[side == 0 ? 4 * WORLD_W + 3 : 3 * WORLD_W + 4] = CELL_WALL;
+        game_act(&game, ACT_FIRE);
+        if (!game.entities[0].active || game.relays) return 192;
+    }
+    test_arena(&game);
+    game.angle = 96;
+    add_entity(&game, ENTITY_RELAY, 5, 5, 0);
+    game_act(&game, ACT_FIRE);
+    if (game.entities[0].active || game.relays != 1) return 188;
+    /* Interaction follows an oblique line to the neighboring diagonal cell. */
+    test_arena(&game);
+    game.angle = 40;
+    game.cells[2 * WORLD_W + 4] = CELL_DOOR;
+    if (!game_act(&game, ACT_USE) || game_cell(&game, 4, 2) != CELL_FLOOR || game.turns != 1) return 189;
+    add_entity(&game, ENTITY_LOG, 4, 2, 0);
+    game.cells[3 * WORLD_W + 4] = CELL_WALL;
+    if (game_act(&game, ACT_USE) || game.secrets || !game.entities[0].active) return 190;
+    game.cells[3 * WORLD_W + 4] = CELL_FLOOR;
+    if (!game_act(&game, ACT_USE) || game.secrets != 1 || game.entities[0].active) return 191;
     test_arena(&game);
     add_entity(&game, ENTITY_DRONE, 6, 3, 2);
     game_act(&game, ACT_FIRE);
@@ -938,7 +1160,7 @@ int game_selftest(void){
     if (game.secrets != 1 || game.entities[2].active || game.energy != game.max_energy) return 152;
     game.x = game.exit_x;
     game.y = game.exit_y - 1;
-    game.dir = 2;
+    game.angle = 128;
     add_entity(&game, ENTITY_LOG, game.x, game.y, 1);
     game_act(&game, ACT_USE);
     if (game.secrets != 2 || game.entities[3].active || game.mode != MODE_PLAY) return 153;

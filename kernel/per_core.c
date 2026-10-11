@@ -5,11 +5,25 @@
 
 struct PerCore per_core_data[MAX_CORES];
 
-// return a pointer to the PerCore struct for the current core
-// Precondition: interrupts or preemption are disabled, or the current thread is pinned to this core
+// Find this core's state without the software multiply emitted for array indexing.
+// Kernel callers must prevent migration while obtaining and using this pointer:
+// disable interrupts or preemption, or pin the calling thread to this core.
+// CID is below MAX_CORES; the physical kernel array bypasses the MMU. This
+// function changes no interrupt, preemption, or shared synchronization state.
+// Each set CID bit adds the corresponding power-of-two multiple of the struct
+// size, so the current four-core maximum needs at most two loop iterations.
 struct PerCore* get_per_core(void){
-  int me = get_core_id();
-  return &per_core_data[me];
+  unsigned me = get_core_id();
+  char* slot = (char*)&per_core_data;
+  unsigned stride = sizeof(struct PerCore);
+  while (me != 0){
+    if (me & 1){
+      slot += stride;
+    }
+    stride <<= 1;
+    me >>= 1;
+  }
+  return (struct PerCore*)slot;
 }
 
 // Return the TCB running on this core. The core-ID read and the

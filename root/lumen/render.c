@@ -14,35 +14,53 @@
 
 unsigned short view_pixels[15360];
 unsigned short hud_pixels[10240];
+unsigned render_hud_revision;
 static unsigned short textures[12288];
 static int depth_buffer[VIEW_W];
 static int draw_order[41]; /* MAX_ENTITIES plus the lift marker. */
 static int draw_depth[41]; /* MAX_ENTITIES plus the lift marker. */
 static unsigned short object_pixels[6912]; /* Six object kinds, three colors, 16 by 24. */
 static const unsigned short colors[3] = {0xFE3, 0x3BF, 0xF5E};
+static unsigned short accents[24]; /* Three deck colors at eight distances. */
 
-/* One full turn in Q10; the table makes camera animation integer-only. */
-static const int sine[256] = {
-    0, 25, 50, 75, 100, 125, 150, 175, 200, 224, 249, 273, 297, 321, 345, 369,
-    392, 415, 438, 460, 483, 505, 526, 548, 569, 590, 610, 630, 650, 669, 688, 706,
-    724, 742, 759, 775, 792, 807, 822, 837, 851, 865, 878, 891, 903, 915, 926, 936,
-    946, 955, 964, 972, 980, 987, 993, 999, 1004, 1009, 1013, 1016, 1019, 1021, 1023, 1024,
-    1024, 1024, 1023, 1021, 1019, 1016, 1013, 1009, 1004, 999, 993, 987, 980, 972, 964, 955,
-    946, 936, 926, 915, 903, 891, 878, 865, 851, 837, 822, 807, 792, 775, 759, 742,
-    724, 706, 688, 669, 650, 630, 610, 590, 569, 548, 526, 505, 483, 460, 438, 415,
-    392, 369, 345, 321, 297, 273, 249, 224, 200, 175, 150, 125, 100, 75, 50, 25,
-    0, -25, -50, -75, -100, -125, -150, -175, -200, -224, -249, -273, -297, -321, -345, -369,
-    -392, -415, -438, -460, -483, -505, -526, -548, -569, -590, -610, -630, -650, -669, -688, -706,
-    -724, -742, -759, -775, -792, -807, -822, -837, -851, -865, -878, -891, -903, -915, -926, -936,
-    -946, -955, -964, -972, -980, -987, -993, -999, -1004, -1009, -1013, -1016, -1019, -1021, -1023, -1024,
-    -1024, -1024, -1023, -1021, -1019, -1016, -1013, -1009, -1004, -999, -993, -987, -980, -972, -964, -955,
-    -946, -936, -926, -915, -903, -891, -878, -865, -851, -837, -822, -807, -792, -775, -759, -742,
-    -724, -706, -688, -669, -650, -630, -610, -590, -569, -548, -526, -505, -483, -460, -438, -415,
-    -392, -369, -345, -321, -297, -273, -249, -224, -200, -175, -150, -125, -100, -75, -50, -25,
+/* A floor scanline has direction-dependent Q12 offsets and texture increments. */
+struct PlaneProjection {
+    int x;
+    int y;
+    int step_x;
+    int step_y;
+    unsigned short* texture;
 };
 
+/* Each wall ray reuses its direction and DDA distances while the player moves. */
+struct WallProjection {
+    int x;
+    int y;
+    int delta_x;
+    int delta_y;
+};
+
+static struct PlaneProjection plane_projection[VIEW_H];
+static struct WallProjection wall_projection[VIEW_W];
+static int projection_angle = -1;
+
+/* Only visible HUD inputs participate in invalidation; one user thread owns
+ * both this snapshot and the retained image, with no concurrent readers. */
+struct HudState {
+    int hp;
+    int max_hp;
+    int energy;
+    int relays;
+    int color;
+    char message[96];
+    char detail[96];
+};
+
+static struct HudState hud_state;
+static int hud_valid;
+
 /* Original compact 5x7 glyphs, packed as five-bit rows from top to bottom. */
-static const unsigned char font[43][7] = {
+static const unsigned char font[69][7] = {
  {14,17,17,31,17,17,17},{30,17,17,30,17,17,30},{14,17,16,16,16,17,14},
  {30,17,17,17,17,17,30},{31,16,16,30,16,16,31},{31,16,16,30,16,16,16},
  {14,17,16,23,17,17,15},{17,17,17,31,17,17,17},{14,4,4,4,4,4,14},
@@ -58,7 +76,16 @@ static const unsigned char font[43][7] = {
  {14,17,17,15,1,1,14},
  {0,4,4,0,4,4,0},{0,0,0,31,0,0,0},{0,0,0,0,0,4,4},
  {0,4,4,31,4,4,0},{1,2,2,4,8,8,16},{4,4,4,4,4,0,4},
- {0,8,4,2,4,8,0}
+ {0,8,4,2,4,8,0},
+ {0,0,14,1,15,17,15},{16,16,30,17,17,17,30},{0,0,14,16,16,17,14},
+ {1,1,15,17,17,17,15},{0,0,14,17,31,16,14},{6,8,8,28,8,8,8},
+ {0,0,15,17,15,1,14},{16,16,30,17,17,17,17},{4,0,12,4,4,4,14},
+ {2,0,6,2,2,18,12},{16,16,18,20,24,20,18},{12,4,4,4,4,4,14},
+ {0,0,26,21,21,21,21},{0,0,30,17,17,17,17},{0,0,14,17,17,17,14},
+ {0,0,30,17,30,16,16},{0,0,15,17,15,1,1},{0,0,22,25,16,16,16},
+ {0,0,15,16,14,1,30},{8,8,28,8,8,9,6},{0,0,17,17,17,19,13},
+ {0,0,17,17,17,10,4},{0,0,17,17,21,21,10},{0,0,17,10,4,10,17},
+ {0,0,17,17,15,1,14},{0,0,31,2,4,8,31}
 };
 
 /* Clamp raster edges before touching the row-major target. */
@@ -79,7 +106,7 @@ static void rect(unsigned short* out, int width, int height,
 
 /* Translate supported UI characters; unsupported punctuation becomes space. */
 static int glyph(char c) {
-    if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 43;
     if (c >= 'A' && c <= 'Z') return c - 'A';
     if (c >= '0' && c <= '9') return c - '0' + 26;
     if (c == ':') return 36;
@@ -170,6 +197,13 @@ static int object_pixel(int type, int color, int x, int y) {
 
 /* Build immutable textured metal, glass, bulkheads, floor, ceiling, and exit. */
 void render_init(void) {
+    projection_angle = -1;
+    render_invalidate_hud();
+    for (int color = 0; color < 3; color++) {
+        for (int level = 0; level < SHADE_COUNT; level++) {
+            accents[color * SHADE_COUNT + level] = shade(colors[color], 8 - level);
+        }
+    }
     for (int kind = 0; kind < TEXTURE_COUNT; kind++) {
         for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
@@ -222,9 +256,18 @@ void render_init(void) {
     }
 }
 
-/* Interpolate floor/ceiling in Q12 across each scanline. Extra fractional bits
- * keep distant textures stable while avoiding per-pixel division. */
-static void planes(int px, int py, int vx, int vy) {
+/* Invalidation is consumed by the next frame; revision changes after drawing. */
+void render_invalidate_hud(void) {
+    hud_valid = 0;
+}
+
+/* Cache direction-only divisions until the camera turns. Camera translation
+ * and live map cells remain uncached, so motion and opened doors are immediate.
+ * Expressions retain the original signed-division rounding at each step. */
+static void prepare_projection(int angle, int vx, int vy) {
+    angle &= 255;
+    if (angle == projection_angle) return;
+    projection_angle = angle;
     for (int y = 0; y < VIEW_H; y++) {
         int offset = y - HORIZON;
         int kind = offset > 0 ? 3 : 4;
@@ -235,12 +278,37 @@ static void planes(int px, int py, int vx, int vy) {
         if (level > 7) level = 7;
         int side_x = -vy * distance / 64;
         int side_y = vx * distance / 64;
-        int world_x = px * 16 + vx * distance / 64 - side_x * 80 / PROJECTION;
-        int world_y = py * 16 + vy * distance / 64 - side_y * 80 / PROJECTION;
-        int step_x = side_x / PROJECTION;
-        int step_y = side_y / PROJECTION;
+        struct PlaneProjection* row = &plane_projection[y];
+        row->x = vx * distance / 64 - side_x * 80 / PROJECTION;
+        row->y = vy * distance / 64 - side_y * 80 / PROJECTION;
+        row->step_x = side_x / PROJECTION;
+        row->step_y = side_y / PROJECTION;
+        row->texture = textures + (kind * SHADE_COUNT + level) * 256;
+    }
+    for (int x = 0; x < VIEW_W; x++) {
+        struct WallProjection* ray = &wall_projection[x];
+        ray->x = vx - vy * (x - 80) / PROJECTION;
+        ray->y = vy + vx * (x - 80) / PROJECTION;
+        int abs_x = ray->x < 0 ? -ray->x : ray->x;
+        int abs_y = ray->y < 0 ? -ray->y : ray->y;
+        ray->delta_x = abs_x ? 262144 / abs_x : 1000000;
+        ray->delta_y = abs_y ? 262144 / abs_y : 1000000;
+    }
+}
+
+/* Interpolate floor/ceiling in Q12 across each scanline. Extra fractional bits
+ * keep distant textures stable while avoiding per-pixel division. */
+static void planes(int px, int py) {
+    int camera_x = px * 16;
+    int camera_y = py * 16;
+    for (int y = 0; y < VIEW_H; y++) {
+        struct PlaneProjection* row = &plane_projection[y];
+        int world_x = camera_x + row->x;
+        int world_y = camera_y + row->y;
+        int step_x = row->step_x;
+        int step_y = row->step_y;
         unsigned short* target = view_pixels + y * VIEW_W;
-        unsigned short* texture = textures + (kind * SHADE_COUNT + level) * 256;
+        unsigned short* texture = row->texture;
         for (int x = 0; x < VIEW_W; x++) {
             int tx = ((unsigned)world_x >> 8) & 15;
             int ty = ((unsigned)world_y >> 8) & 15;
@@ -252,14 +320,14 @@ static void planes(int px, int py, int vx, int vy) {
 }
 
 /* Cast a bounded grid ray per column, retaining perpendicular depth for sprites. */
-static void walls(struct Game* g, int px, int py, int vx, int vy) {
+static void walls(struct Game* g, int px, int py) {
+    unsigned short* deck_accents = accents + ((g->sector - 1) % 3) * SHADE_COUNT;
     for (int x = 0; x < VIEW_W; x++) {
-        int ray_x = vx - vy * (x - 80) / PROJECTION;
-        int ray_y = vy + vx * (x - 80) / PROJECTION;
-        int abs_x = ray_x < 0 ? -ray_x : ray_x;
-        int abs_y = ray_y < 0 ? -ray_y : ray_y;
-        int delta_x = abs_x ? 262144 / abs_x : 1000000;
-        int delta_y = abs_y ? 262144 / abs_y : 1000000;
+        struct WallProjection* ray = &wall_projection[x];
+        int ray_x = ray->x;
+        int ray_y = ray->y;
+        int delta_x = ray->delta_x;
+        int delta_y = ray->delta_y;
         int map_x = px / 256;
         int map_y = py / 256;
         int step_x = ray_x < 0 ? -1 : 1;
@@ -270,7 +338,21 @@ static void walls(struct Game* g, int px, int py, int vx, int vy) {
         int side = 0;
         int cell = CELL_WALL;
         for (int step = 0; step < WORLD_W + WORLD_H; step++) {
-            if (side_x < side_y) {
+            int x_first = side_x < side_y;
+            if (side_x == side_y) {
+                /* Integer DDA ties can be rounded; only an exact geometric
+                 * corner needs both side walls checked, like the beam ray.
+                 * Give the x wall priority; the normal y step tests the other. */
+                int gap_x = ray_x < 0 ? px - map_x * 256 : (map_x + 1) * 256 - px;
+                int gap_y = ray_y < 0 ? py - map_y * 256 : (map_y + 1) * 256 - py;
+                int abs_x = ray_x < 0 ? -ray_x : ray_x;
+                int abs_y = ray_y < 0 ? -ray_y : ray_y;
+                if (gap_x * abs_y == gap_y * abs_x) {
+                    int corner = game_cell(g, map_x + step_x, map_y);
+                    if (corner == CELL_WALL || corner == CELL_GLASS || corner == CELL_DOOR) x_first = 1;
+                }
+            }
+            if (x_first) {
                 distance = side_x;
                 side_x += delta_x;
                 map_x += step_x;
@@ -301,7 +383,7 @@ static void walls(struct Game* g, int px, int py, int vx, int vy) {
         int tex_pos = (first - top) * tex_step;
         unsigned short* target = view_pixels + first * VIEW_W;
         unsigned short* texture = textures + (kind * SHADE_COUNT + level) * 256;
-        int accent = shade(colors[(g->sector - 1) % 3], 8 - level);
+        int accent = deck_accents[level];
         for (int y = first; y < last; y++) {
             int tex_y = tex_pos >> 8;
             if (tex_y > 15) tex_y = 15;
@@ -367,16 +449,25 @@ static void objects(struct Game* g, int px, int py, int vx, int vy, unsigned fra
         int color = e->color % 3;
         if (color < 0) color = 0;
         int step = 6144 / height;
+        int tx = (start - left) * 16 / width;
+        int tx_remainder = (start - left) * 16 - tx * width;
+        int tx_step = 16 / width;
+        int tx_fraction = 16 - tx_step * width;
+        unsigned short* texture = object_pixels + (kind * 3 + color) * 384;
         for (int x = start; x < end; x++) {
+            /* Quotient/remainder stepping exactly matches (x-left)*16/width
+             * while removing software division from every sprite column. */
+            int sample_x = tx;
+            tx += tx_step;
+            tx_remainder += tx_fraction;
+            if (tx_remainder >= width) { tx++; tx_remainder -= width; }
             if (depth >= depth_buffer[x]) continue;
-            int tx = (x - left) * 16 / width;
             int pos = (first - top) * step;
             unsigned short* target = view_pixels + first * VIEW_W;
-            unsigned short* texture = object_pixels + (kind * 3 + color) * 384;
             for (int y = first; y < last; y++) {
                 int ty = pos >> 8;
                 if (ty > 23) ty = 23;
-                int pixel = texture[ty * 16 + tx];
+                int pixel = texture[ty * 16 + sample_x];
                 if (pixel != CLEAR_PIXEL) {
                     if (e->type == ENTITY_RELAY && !e->active && pixel == colors[color]) pixel = 0xFFF;
                     if (e->type == ENTITY_DRONE && e->alert >= 2 && ty < 6) pixel = 0x33F;
@@ -462,30 +553,66 @@ static void number(char* out, int value) {
     out[j] = 0;
 }
 
-/* Use the higher-resolution sprite strip for readable status and radio text. */
+/* Compare bounded radio strings without reading beyond their terminators. */
+static int same_radio(char* left, char* right) {
+    for (int i = 0; i < 96; i++) {
+        if (left[i] != right[i]) return 0;
+        if (!left[i]) return 1;
+    }
+    return 1;
+}
+
+/* Snapshot a radio line without inheriting unused bytes after its terminator. */
+static void copy_radio(char* target, char* source) {
+    for (int i = 0; i < 95; i++) {
+        target[i] = source[i];
+        if (!source[i]) return;
+    }
+    target[95] = 0;
+}
+
+/* Keep the objective beside both radio lines, redrawing only on input changes.
+ * The output buffer remains renderer-owned between calls; its revision lets
+ * main skip display publication entirely when the retained HUD is unchanged. */
 static void hud(struct Game* g) {
+    if (hud_valid && hud_state.hp == g->hp && hud_state.max_hp == g->max_hp &&
+        hud_state.energy == g->energy && hud_state.relays == g->relays &&
+        hud_state.color == g->color && same_radio(hud_state.message, g->message) &&
+        same_radio(hud_state.detail, g->detail)) return;
+    hud_state.hp = g->hp;
+    hud_state.max_hp = g->max_hp;
+    hud_state.energy = g->energy;
+    hud_state.relays = g->relays;
+    hud_state.color = g->color;
+    copy_radio(hud_state.message, g->message);
+    copy_radio(hud_state.detail, g->detail);
     rect(hud_pixels, HUD_W, HUD_H, 0, 0, HUD_W, HUD_H, 0x211);
     rect(hud_pixels, HUD_W, HUD_H, 0, 0, HUD_W, 1, 0x754);
     char n[12];
-    text(hud_pixels, HUD_W, HUD_H, 3, 3, "HULL", 0xBBA, 1);
+    text(hud_pixels, HUD_W, HUD_H, 3, 1, "HULL", 0xBBA, 1);
     number(n, g->hp);
-    text(hud_pixels, HUD_W, HUD_H, 33, 3, n, g->hp * 3 < g->max_hp ? 0x55F : 0xBF7, 1);
-    rect(hud_pixels, HUD_W, HUD_H, 58, 4, 33, 5, 0x433);
-    rect(hud_pixels, HUD_W, HUD_H, 59, 5, g->hp * 31 / (g->max_hp ? g->max_hp : 1), 3, 0xAD4);
-    text(hud_pixels, HUD_W, HUD_H, 97, 3, "CHARGE", 0xBBA, 1);
+    text(hud_pixels, HUD_W, HUD_H, 33, 1, n, g->hp * 3 < g->max_hp ? 0x55F : 0xBF7, 1);
+    rect(hud_pixels, HUD_W, HUD_H, 58, 2, 33, 5, 0x433);
+    rect(hud_pixels, HUD_W, HUD_H, 59, 3, g->hp * 31 / (g->max_hp ? g->max_hp : 1), 3, 0xAD4);
+    text(hud_pixels, HUD_W, HUD_H, 97, 1, "CHARGE", 0xBBA, 1);
     number(n, g->energy);
-    text(hud_pixels, HUD_W, HUD_H, 139, 3, n, 0xFC6, 1);
-    text(hud_pixels, HUD_W, HUD_H, 162, 3, "RELAYS", 0xBBA, 1);
+    text(hud_pixels, HUD_W, HUD_H, 139, 1, n, 0xFC6, 1);
+    text(hud_pixels, HUD_W, HUD_H, 162, 1, "RELAYS", 0xBBA, 1);
     number(n, g->relays);
-    text(hud_pixels, HUD_W, HUD_H, 204, 3, n, 0xFFF, 1);
-    text(hud_pixels, HUD_W, HUD_H, 210, 3, "/3", 0x887, 1);
+    text(hud_pixels, HUD_W, HUD_H, 204, 1, n, 0xFFF, 1);
+    text(hud_pixels, HUD_W, HUD_H, 210, 1, "/3", 0x887, 1);
     for (int i = 0; i < 3; i++) {
-        rect(hud_pixels, HUD_W, HUD_H, 239 + i * 26, 3, 21, 8, g->color == i ? colors[i] : 0x544);
+        rect(hud_pixels, HUD_W, HUD_H, 239 + i * 26, 1, 21, 7, g->color == i ? colors[i] : 0x544);
         number(n, i + 1);
-        text(hud_pixels, HUD_W, HUD_H, 247 + i * 26, 3, n, g->color == i ? 0x111 : colors[i], 1);
+        text(hud_pixels, HUD_W, HUD_H, 247 + i * 26, 1, n, g->color == i ? 0x111 : colors[i], 1);
     }
-    text(hud_pixels, HUD_W, HUD_H, 3, 14, g->message, 0xDDB, 1);
-    text(hud_pixels, HUD_W, HUD_H, 3, 24, g->detail, 0xA97, 1);
+    char* objective = g->relays < 3 ? "RELAYS: MATCH 1/2/3 + SPACE   M SCAN  H HELP" :
+                      "RELAYS LIT: GREEN LIFT + E   M SCAN  H HELP";
+    text(hud_pixels, HUD_W, HUD_H, 3, 9, objective, 0xBF7, 1);
+    text(hud_pixels, HUD_W, HUD_H, 3, 17, g->message, 0xDDB, 1);
+    text(hud_pixels, HUD_W, HUD_H, 3, 25, g->detail, 0xA97, 1);
+    hud_valid = 1;
+    render_hud_revision++;
 }
 
 /* Dim the already-rendered scene beneath a sharply bordered instrument panel. */
@@ -494,7 +621,7 @@ static void panel(int x, int y, int w, int h) {
         unsigned short* target = view_pixels + row * VIEW_W + x;
         for (int col = x; col < x + w && col < VIEW_W; col++) {
             int p = *target;
-            *target++ = (p & 0xEEE) >> 1;
+            *target++ = (p & 0xCCC) >> 2;
         }
     }
     rect(view_pixels, VIEW_W, VIEW_H, x, y, w, 1, 0x875);
@@ -528,13 +655,13 @@ static void map_screen(struct Game* g) {
     }
     int x = 13 + g->x * 3;
     int y = 23 + g->y * 3;
-    line(x, y, x + sine[(g->dir * 64) & 255] * 4 / 1024,
-         y - sine[(g->dir * 64 + 64) & 255] * 4 / 1024, 0xFFF);
+    line(x, y, x + game_sine(g->angle) * 4 / 1024,
+         y - game_sine(g->angle + 64) * 4 / 1024, 0xFFF);
     rect(view_pixels, VIEW_W, VIEW_H, x - 1, y - 1, 2, 2, 0xFFF);
     text(view_pixels, VIEW_W, VIEW_H, 83, 24, "YOU", 0xFFF, 1);
     text(view_pixels, VIEW_W, VIEW_H, 83, 35, "SENTRY", 0x44F, 1);
     text(view_pixels, VIEW_W, VIEW_H, 83, 46, "RELAY", 0xFE3, 1);
-    text(view_pixels, VIEW_W, VIEW_H, 83, 57, "AIRLOCK", 0xBF5, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 83, 57, "LIFT", 0xBF5, 1);
     text(view_pixels, VIEW_W, VIEW_H, 83, 72, "M CLOSE", 0xAAA, 1);
 }
 
@@ -543,40 +670,56 @@ static void help_screen(void) {
     panel(4, 4, 152, 88);
     text(view_pixels, VIEW_W, VIEW_H, 12, 10, "FIELD MANUAL", 0xFE7, 1);
     text(view_pixels, VIEW_W, VIEW_H, 12, 24, "W S   MOVE", 0xDDD, 1);
-    text(view_pixels, VIEW_W, VIEW_H, 12, 34, "A D   TURN", 0xDDD, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 12, 34, "A D   AIM FREELY", 0xDDD, 1);
     text(view_pixels, VIEW_W, VIEW_H, 12, 44, "Z C   SIDESTEP", 0xDDD, 1);
     text(view_pixels, VIEW_W, VIEW_H, 12, 54, "SPACE FIRE  E USE", 0xDDD, 1);
     text(view_pixels, VIEW_W, VIEW_H, 12, 64, "1 2 3 BEAM  X WAIT", 0xDDD, 1);
     text(view_pixels, VIEW_W, VIEW_H, 12, 78, "H CLOSE  M MAP  Q QUIT", 0xA97, 1);
 }
 
+/* Teach the mission before play begins; reading and looking never spend turns. */
+static void briefing_screen(void) {
+    panel(4, 3, 152, 91);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 8, "RESTORE THE STATION", 0xFE7, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 21, "FIND 3 RELAYS PER DECK", 0xDDD, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 31, "MATCH 1/2/3 + SPACE", 0xFE7, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 41, "THEN GREEN LIFT: E", 0xBF7, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 54, "W/S MOVE  A/D AIM", 0xDDD, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 64, "M SCAN  H HELP", 0xDDD, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 14, 74, "LOOKING COSTS NO TURN", 0xA97, 1);
+    text(view_pixels, VIEW_W, VIEW_H, 38, 84, "ENTER TO BEGIN", 0xFFF, 1);
+}
+
 /* Compose animated 3D, state-specific overlays, and the independent HUD strip. */
 void render_frame(struct Game* g, int px, int py, int angle, unsigned frame, int screen) {
-    int vx = sine[angle & 255];
-    int vy = -sine[(angle + 64) & 255];
-    planes(px, py, vx, vy);
-    walls(g, px, py, vx, vy);
+    int vx = game_sine(angle);
+    int vy = -game_sine(angle + 64);
+    prepare_projection(angle, vx, vy);
+    planes(px, py);
+    walls(g, px, py);
     objects(g, px, py, vx, vy, frame);
     if (g->mode == MODE_PLAY) {
         weapon(g, frame);
         char deck[11] = "DECK 1 / 3";
         deck[5] = '0' + g->sector;
         text(view_pixels, VIEW_W, VIEW_H, 3, 3, deck, 0xCCC, 1);
-        char* direction = g->dir == 0 ? "N" : (g->dir == 1 ? "E" : (g->dir == 2 ? "S" : "W"));
-        text(view_pixels, VIEW_W, VIEW_H, 151, 3, direction, 0xFE7, 1);
+        char* directions[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+        text(view_pixels, VIEW_W, VIEW_H, 145, 3, directions[((angle + 16) & 255) / 32], 0xFE7, 1);
         if (screen == SCREEN_MAP) map_screen(g);
         if (screen == SCREEN_HELP) help_screen();
+        if (screen == SCREEN_BRIEFING) briefing_screen();
         if (screen == SCREEN_PAUSE) {
             panel(20, 28, 120, 38);
             text(view_pixels, VIEW_W, VIEW_H, 43, 35, "SUSPENDED", 0xFE7, 1);
             text(view_pixels, VIEW_W, VIEW_H, 34, 51, "P TO CONTINUE", 0xAAA, 1);
         }
     } else if (g->mode == MODE_TITLE) {
-        panel(7, 8, 146, 80);
+        panel(7, 5, 146, 87);
         text(view_pixels, VIEW_W, VIEW_H, 13, 12, "A DIOPTASE EXPEDITION", 0xA97, 1);
         text(view_pixels, VIEW_W, VIEW_H, 36, 28, "LUMEN", 0xFE7, 3);
         text(view_pixels, VIEW_W, VIEW_H, 26, 54, "THE GLASS STATION", 0xCCC, 1);
-        if ((frame / 30 & 1) == 0) text(view_pixels, VIEW_W, VIEW_H, 32, 72, "ENTER TO DESCEND", 0xFFF, 1);
+        text(view_pixels, VIEW_W, VIEW_H, 47, 66, "gpt-6-astra", 0xA97, 1);
+        if ((frame / 30 & 1) == 0) text(view_pixels, VIEW_W, VIEW_H, 32, 81, "ENTER TO DESCEND", 0xFFF, 1);
     } else if (g->mode == MODE_UPGRADE) {
         panel(4, 5, 152, 86);
         text(view_pixels, VIEW_W, VIEW_H, 15, 12, "RELAY LINK RESTORED", 0xBF7, 1);
@@ -603,8 +746,8 @@ int render_selftest(void) {
     game_start(&g, 42);
     render_init();
     unsigned checksum = 0;
-    for (int screen = 0; screen <= SCREEN_PAUSE; screen++) {
-        render_frame(&g, g.x * 256 + 128, g.y * 256 + 128, g.dir * 64, 0, screen);
+    for (int screen = 0; screen <= SCREEN_BRIEFING; screen++) {
+        render_frame(&g, g.x * 256 + 128, g.y * 256 + 128, g.angle, 0, screen);
         for (int i = 0; i < VIEW_W * VIEW_H; i++) {
             if (view_pixels[i] > 0xFFF) return 1;
             checksum += view_pixels[i];

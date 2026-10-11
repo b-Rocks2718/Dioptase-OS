@@ -30,13 +30,15 @@ int main(int argc, char** argv) {
     if (argc > 2 && strcmp(argv[2], "title") == 0) g.mode = MODE_TITLE;
     if (argc > 2 && strcmp(argv[2], "map") == 0) screen = SCREEN_MAP;
     if (argc > 2 && strcmp(argv[2], "help") == 0) screen = SCREEN_HELP;
+    if (argc > 2 && strcmp(argv[2], "briefing") == 0) screen = SCREEN_BRIEFING;
+    if (argc > 2 && strcmp(argv[2], "oblique") == 0) g.angle = 80;
     if (argc > 2 && strcmp(argv[2], "lift") == 0) {
         g.x = g.exit_x;
         g.y = g.exit_y - 1;
-        g.dir = 2;
+        g.angle = 128;
         g.relays = 3;
     }
-    render_frame(&g, g.x * 256 + 128, g.y * 256 + 128, g.dir * 64, 0, screen);
+    render_frame(&g, g.x * 256 + 128, g.y * 256 + 128, g.angle, 0, screen);
     FILE* file = fopen(argv[1], "wb");
     if (!file) { perror(argv[1]); return 1; }
     fprintf(file, "P6\n640 480\n255\n");

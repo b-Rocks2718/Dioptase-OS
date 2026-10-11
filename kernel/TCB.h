@@ -98,8 +98,11 @@ struct TCB {
 
   // Cross-core senders and the current thread's final user-return path
   // serialize this bitmap through parent_promise->state_lock while child_tcb
-  // is live. The scheduler must not consume pending signals: a runnable TCB
-  // may still have a suspended kernel continuation that owns resources.
+  // is live. Senders only set bits and only this thread clears them, so the
+  // final user-return path may test the bitmap for zero with one sequentially
+  // consistent word load before taking the lock (has_unhandled_signal).
+  // The scheduler must not consume pending signals: a runnable TCB may still
+  // have a suspended kernel continuation that owns resources.
   unsigned pending_signals;
 
   // A set bit defers the corresponding maskable signal; it does not discard a

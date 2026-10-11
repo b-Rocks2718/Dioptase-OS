@@ -7,6 +7,9 @@
 #define MAX_ENTITIES 40
 #define SECTOR_COUNT 3
 
+/* A full clockwise heading has 256 units; eight units is one gentle turn. */
+#define TURN_STEP 8
+
 #define CELL_FLOOR 0
 #define CELL_WALL 1
 #define CELL_GLASS 2
@@ -44,7 +47,9 @@
 #define SOUND_HURT 6
 #define SOUND_EXIT 7
 
-/* An object occupies one floor cell; disabled objects remain for relay display. */
+/* Objects occupy floor cells; disabled relays remain as physical pylons.
+ * Relay and sentry beam hitboxes fill their cells, giving forgiving aim even
+ * though their rendered silhouettes are narrower than a passage. */
 struct Entity {
     int type;
     int x;
@@ -64,7 +69,7 @@ struct Game {
     int mode;
     int x;
     int y;
-    int dir;
+    int angle; /* Clockwise heading: north 0, east 64, south 128, west 192. */
     int hp;
     int max_hp;
     int energy;
@@ -89,6 +94,8 @@ struct Game {
     char detail[96];
 };
 
+/* Return a Q10 sine for a wrapping 256-unit angle, shared by beams and camera. */
+int game_sine(int angle);
 /* Start a replayable three-sector expedition; seed zero is also accepted. */
 void game_start(struct Game* game, unsigned seed);
 /* Apply a discrete action, advancing enemies only for actions that cost a turn. */
