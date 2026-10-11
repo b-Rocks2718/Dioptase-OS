@@ -17,3 +17,5 @@ tests/*.dir/sbin/init
 tests/*.dir/test/init
 root/hello/bmake
 root/snake/init
+# DELVE high scores, copied back from the guest filesystem by `make run`
+root/delve.hi
