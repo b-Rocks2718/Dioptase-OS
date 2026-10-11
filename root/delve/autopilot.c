@@ -7,8 +7,10 @@
  *
  * Every tick it produces the same controls a human holds (struct Controls):
  *   - an awake monster in clear sight within range: turn to face it, cast
- *     when lined up, and back off when it comes close or mana runs dry;
- *   - a cracked wall beside it: face the wall and fireball it open;
+ *     when lined up (sparks, or fire at a wraith or the Warden that is not
+ *     too close), and back off when it comes close or mana runs dry;
+ *   - a cracked wall beside it: back off out of the blast's reach, face the
+ *     wall, and fireball it open;
  *   - otherwise walk toward the center of the next cell on the shortest path
  *     (BFS) to the most useful target: a potion when hurt, the rune key,
  *     crystals, the sealed door once the key is held, the portal, a seen
@@ -147,6 +149,16 @@ static int check_y;
 static int evade_t;
 static int evade_turn;
 
+/* Vault opening: the cracked wall being blasted (cell index, or -1), ticks
+ * left before giving up on it (no room to back away), and a wall given up
+ * on, which is not tried again. A fireball's blast burns a caster within
+ * FIRE_SELF_RADIUS, so the autopilot backs off to VAULT_RANGE first. */
+#define VAULT_RANGE 0x20000
+#define VAULT_PATIENCE 300
+static int vault_cell = -1;
+static int vault_t;
+static int vault_skip = -1;
+
 /* Turn rate in angle units per radian: 4096 / (2 pi). */
 #define UNITS_PER_RADIAN 652
 
@@ -211,25 +223,43 @@ void autopilot_steer(int x, int y, int angle, bool has_key, int mp, struct Contr
   if (m != NULL){
     int aim = face_point(x, y, angle, m->x, m->y, c);
     if (aim == 2){
-      if (mp >= 40 && mdist >= 0x28000) c->cast = SHOT_FIRE + 1;
-      else if (mp >= 5) c->cast = SHOT_SPARK + 1;
+      /* sparks by default; fire for what shrugs sparks off or soaks them up,
+       * and only from far enough that the blast does not reach us */
+      bool tough = m->kind == MON_WRAITH || m->kind == MON_WARDEN;
+      if (tough && mp >= FIRE_COST && mdist >= FIRE_SELF_RADIUS + 0x8000) c->cast = SHOT_FIRE + 1;
+      else if (mp >= SPARK_COST) c->cast = SHOT_SPARK + 1;
     }
     /* keep out of reach; with no mana left, fall back */
-    if (mdist < MONSTER_REACH + 0x8000 || mp < 5) c->forward = -1;
+    if (mdist < MONSTER_REACH + 0x8000 || mp < SPARK_COST) c->forward = -1;
     check_t = 0;
     return;
   }
 
-  /* a cracked wall beside us: blast it open */
-  if (mp >= 22){
+  /* a cracked wall beside us: back away to VAULT_RANGE, then blast it */
+  if (vault_cell < 0 && mp >= FIRE_COST){
     for (int k = 0; k < 4; ++k){
       int wx = cx + ap_dx[k];
       int wy = cy + ap_dy[k];
       if (wx < 0 || wy < 0 || wx >= MAP_W || wy >= MAP_H) continue;
-      if (g_map[wy * MAP_W + wx] != TEX_CRACKED + 1) continue;
-      if (face_point(x, y, angle, (wx << 16) + FIX_HALF, (wy << 16) + FIX_HALF, c) == 2){
-        c->cast = SHOT_FIRE + 1;
-      }
+      int w = wy * MAP_W + wx;
+      if (g_map[w] != TEX_CRACKED + 1 || w == vault_skip) continue;
+      vault_cell = w;
+      vault_t = VAULT_PATIENCE;
+      break;
+    }
+  }
+  if (vault_cell >= 0){
+    if (g_map[vault_cell] != TEX_CRACKED + 1){
+      vault_cell = -1;                     /* opened */
+    } else if (--vault_t <= 0){
+      vault_skip = vault_cell;             /* no room to back away: leave it */
+      vault_cell = -1;
+    } else {
+      int wx = ((vault_cell & (MAP_W - 1)) << 16) + FIX_HALF;
+      int wy = ((vault_cell >> 5) << 16) + FIX_HALF;
+      int aim = face_point(x, y, angle, wx, wy, c);
+      if (approx_dist(wx - x, wy - y) < VAULT_RANGE) c->forward = -1;
+      else if (aim == 2 && mp >= FIRE_COST) c->cast = SHOT_FIRE + 1;
       check_t = 0;
       return;
     }
@@ -276,4 +306,6 @@ void autopilot_reset(void){
   way_valid = false;
   evade_t = 0;
   check_t = 0;
+  vault_cell = -1;
+  vault_skip = -1;
 }

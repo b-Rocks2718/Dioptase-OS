@@ -22,8 +22,8 @@
  * record, so movement follows the keys actually held. Ctrl-C still reaches
  * the terminal, which leaves raw mode and terminates us; the shell turns raw
  * mode off after we exit in any case. The mouse stream is ours alone (the
- * terminal never reads it), so aiming and casting use real button state from
- * getmouse().
+ * terminal never reads it): its horizontal motion turns the view (mouse
+ * look) and its real button state casts through the centered crosshair.
  *
  * Timing: game logic runs in 60 Hz ticks paced by the VGA frame counter,
  * which follows wall-clock time on both the emulator and hardware (PIT
@@ -48,25 +48,31 @@ unsigned g_frame;
 #define TURN_ACCEL 3
 #define STEP_DISTANCE 0xA000       /* walking distance per footstep sound */
 
-/* Spell costs and cooldowns (ticks); speeds in cells per tick (16.16). */
-#define SPARK_COST 5
-#define SPARK_COOLDOWN 14
-#define SPARK_SPEED 0x4800
-#define FIRE_COST 22
-#define FIRE_COOLDOWN 42
-#define FIRE_SPEED 0x3200
-#define MANA_REGEN_TICKS 5
+/* Mouse look: horizontal mouse motion turns the view. Motion arrives in
+ * screen pixels (640 across the window); each sensitivity level turns by a
+ * number of eighths of an angle unit per pixel, so at the default a sweep
+ * across the whole window turns about 180 degrees. There is no pointer grab
+ * (the emulator cannot hold the host cursor under WSLg), so motion stops at
+ * the window edge; the turn keys still work for big turns. */
+#define MOUSE_SENS_LEVELS 9
+#define MOUSE_SENS_DEFAULT 5       /* 1-based */
+static int mouse_sens_eighths[MOUSE_SENS_LEVELS] = { 8, 12, 16, 20, 26, 32, 40, 52, 64 };
+
+/* Spell timings (ticks) and speeds (cells per tick, 16.16); costs and the
+ * rest of the spell rules are in delve.h. */
+#define SPARK_COOLDOWN 10
+#define SPARK_SPEED 0x7000
+#define FIRE_COOLDOWN 45
+#define FIRE_SPEED 0x2800
+#define NOMANA_COOLDOWN 20
 
 /* The crosshair is the only hardware sprite (scale 1: 2x2 screen pixels per
- * sprite pixel). The staff is drawn into the view (render.c), resting with
- * its top-left at (STAFF_X, STAFF_Y) and its sleeve running off the bottom. */
+ * sprite pixel), fixed at the center of the view: spells fly straight ahead.
+ * The staff is drawn into the view (render.c), resting with its top-left at
+ * (STAFF_X, STAFF_Y) and its sleeve running off the bottom. */
 #define CURSOR_SPRITE 0
 #define STAFF_X 232
 #define STAFF_Y 100
-
-/* Mouse cursor bounds: the 3D view in screen pixels. */
-#define CURSOR_MAX_X 639
-#define CURSOR_MAX_Y 383
 
 #define STATE_TITLE 0
 #define STATE_PLAY 1
@@ -90,7 +96,9 @@ struct Player {
   int cy;
   int cooldown;    /* ticks until the next spell */
   int cast_t;      /* staff thrust animation */
-  int regen;
+  int regen;       /* ticks toward the next point of mana */
+  int regen_delay; /* ticks until mana starts coming back after a cast */
+  int nomana_t;    /* ticks before another "no mana" message */
   int walk_phase;  /* staff bob phase, advanced by walking */
   int stride;      /* distance walked since the last footstep sound */
   int bump_t;      /* ticks before another bump or door message */
@@ -112,9 +120,12 @@ static bool show_map;
 static bool show_fps;
 static int fade;               /* light levels removed from the whole view */
 
-static int cursor_x = 320;
-static int cursor_y = 192;
+/* Mouse: buttons held, horizontal motion not yet turned into a turn, and the
+ * fraction of an angle unit left over from the last turn (in eighths). */
 static int mouse_buttons;
+static int mouse_dx;
+static int look_frac;
+static int mouse_sens = MOUSE_SENS_DEFAULT;
 
 /* Keys held right now, by keycode (raw keyboard records, see poll_input). */
 static bool key_down[256];
@@ -307,17 +318,19 @@ static void reset_stats(void){
   g_stats.hp = MAX_HP;
   g_stats.max_hp = MAX_HP;
   g_stats.mp = MAX_MP;
+  g_stats.max_mp = MAX_MP;
   g_stats.crystals = 0;
   g_stats.score = 0;
   g_stats.kills = 0;
   g_stats.hurt = 0;
   g_stats.shake = 0;
   g_stats.spark_damage = 2;
-  g_stats.fire_damage = 5;
-  g_stats.splash_damage = 3;
+  g_stats.fire_damage = 6;
+  g_stats.splash_damage = 4;
   g_stats.regen_ticks = MANA_REGEN_TICKS;
   player.cooldown = 0;
   player.cast_t = 0;
+  player.regen_delay = 0;
 }
 
 /* Start a real game at depth 1 with a new random dungeon seed. */
@@ -443,50 +456,33 @@ static void move_player(void){
   }
 }
 
-/* Unit vector (16.16) through view column `col` at the current camera angle. */
-static void aim_dir(int col, int* ux, int* uy){
-  int dir_x = icos(camera.angle);
-  int dir_y = isin(camera.angle);
-  /* tangent of the column's angle off center: camX * plane length */
-  int t = fixmul(((2 * col + 1 - VIEW_W) * FIX_ONE) / VIEW_W, PLANE_LEN);
-  /* rotate (1, t) by the camera angle and scale by 1/sqrt(1 + t^2), using
-   * 1 - t^2/2 + 3t^4/8 (|t| <= 0.7 keeps the error under 2%) */
-  int t2 = fixmul(t, t);
-  int inv = FIX_ONE - (t2 >> 1) + fixmul(fixmul(t2, t2), 24576);
-  int x = dir_x - fixmul(t, dir_y);
-  int y = dir_y + fixmul(t, dir_x);
-  *ux = fixmul(x, inv);
-  *uy = fixmul(y, inv);
-}
-
-/* Cast a spell toward view column `col`. */
-static void cast(int kind, int col){
+/* Cast a spell straight ahead, through the crosshair. Without the mana for
+ * it the staff fizzles, and the HUD says so now and then; a successful cast
+ * holds off mana regeneration for MANA_REGEN_DELAY ticks. */
+static void cast(int kind){
   if (player.cooldown > 0) return;
   int cost = kind == SHOT_FIRE ? FIRE_COST : SPARK_COST;
   if (g_stats.mp < cost){
     sfx(SFX_NOMANA);
-    player.cooldown = 20;
+    player.cooldown = NOMANA_COOLDOWN;
+    if (player.nomana_t == 0){
+      show_message(kind == SHOT_FIRE ? "NOT ENOUGH MANA FOR FIRE" : "OUT OF MANA - FALL BACK");
+      player.nomana_t = 120;
+    }
     return;
   }
   g_stats.mp -= cost;
-  int ux;
-  int uy;
-  aim_dir(col, &ux, &uy);
+  int ux = icos(camera.angle);
+  int uy = isin(camera.angle);
   int speed = kind == SHOT_FIRE ? FIRE_SPEED : SPARK_SPEED;
   int x = camera.x + (ux >> 2);
   int y = camera.y + (uy >> 2);
   spawn_shot(kind, x, y, fixmul(ux, speed), fixmul(uy, speed), true);
   player.cooldown = kind == SHOT_FIRE ? FIRE_COOLDOWN : SPARK_COOLDOWN;
   player.cast_t = 12;
+  player.regen_delay = MANA_REGEN_DELAY;
   sfx(kind == SHOT_FIRE ? SFX_FIRE : SFX_SPARK);
   hud_redraw();
-}
-
-/* View column under the mouse crosshair. */
-static int cursor_col(void){
-  int col = cursor_x * VIEW_W / 640;
-  if (col >= VIEW_W) col = VIEW_W - 1;
-  return col;
 }
 
 /* Whether the key with this keycode is held. */
@@ -499,12 +495,23 @@ static bool shift_held(void){
   return held(KEY_LEFT_SHIFT) || held(KEY_RIGHT_SHIFT);
 }
 
-/* Read this tick's controls from the held keys and mouse buttons. A held
- * turn key turns slowly at first and speeds up (player.turn_rate). */
+/* Turn for the mouse motion gathered since the last tick, carrying the
+ * fraction of an angle unit over so slow motion still turns. */
+static int mouse_turn(void){
+  int eighths = mouse_dx * mouse_sens_eighths[mouse_sens - 1] + look_frac;
+  mouse_dx = 0;
+  int units = eighths >> 3;           /* floor, also for negative motion */
+  look_frac = eighths - (units << 3);
+  return units;
+}
+
+/* Read this tick's controls from the held keys and the mouse. Mouse motion
+ * turns directly; a held turn key turns slowly at first and speeds up
+ * (player.turn_rate). The mouse buttons cast through the crosshair. */
 static void read_controls(struct Controls* c){
   c->forward = 0;
   c->strafe = 0;
-  c->turn = 0;
+  c->turn = mouse_turn();
   c->cast = 0;
   if (held('w') || held(KEY_UP)) c->forward += 1;
   if (held('s') || held(KEY_DOWN)) c->forward -= 1;
@@ -518,11 +525,11 @@ static void read_controls(struct Controls* c){
   } else {
     player.turn_rate = player.turn_rate < TURN_MIN ? TURN_MIN : player.turn_rate + TURN_ACCEL;
     if (player.turn_rate > TURN_MAX) player.turn_rate = TURN_MAX;
-    c->turn = turn > 0 ? player.turn_rate : -player.turn_rate;
+    c->turn += turn > 0 ? player.turn_rate : -player.turn_rate;
   }
   c->run = shift_held();
-  if (held(' ')) c->cast = SHOT_SPARK + 1;
-  else if (held('f')) c->cast = SHOT_FIRE + 1;
+  if (held(' ') || (mouse_buttons & MOUSE_BUTTON_LEFT)) c->cast = SHOT_SPARK + 1;
+  else if (held('f') || (mouse_buttons & MOUSE_BUTTON_RIGHT)) c->cast = SHOT_FIRE + 1;
 }
 
 /* Advance the player one tick under controls `c`: turn, accelerate toward
@@ -556,12 +563,8 @@ static bool update_player(struct Controls* c){
     player.stride -= STEP_DISTANCE;
     sfx(SFX_STEP);
   }
-  if (c->cast == SHOT_SPARK + 1) cast(SHOT_SPARK, VIEW_W / 2);
-  else if (c->cast == SHOT_FIRE + 1) cast(SHOT_FIRE, VIEW_W / 2);
-  if (state == STATE_PLAY && !autopilot && player.cooldown == 0){
-    if (mouse_buttons & MOUSE_BUTTON_LEFT) cast(SHOT_SPARK, cursor_col());
-    else if (mouse_buttons & MOUSE_BUTTON_RIGHT) cast(SHOT_FIRE, cursor_col());
-  }
+  if (c->cast == SHOT_SPARK + 1) cast(SHOT_SPARK);
+  else if (c->cast == SHOT_FIRE + 1) cast(SHOT_FIRE);
   camera.x = player.x;
   camera.y = player.y;
   camera.angle = player.angle;
@@ -569,13 +572,14 @@ static bool update_player(struct Controls* c){
   if (player.bump_t > 0) player.bump_t -= 1;
   if (player.cooldown > 0) player.cooldown -= 1;
   if (player.cast_t > 0) player.cast_t -= 1;
-  player.regen += 1;
-  if (player.regen >= g_stats.regen_ticks){
+  if (player.nomana_t > 0) player.nomana_t -= 1;
+  /* mana flows back only once the hero stops casting */
+  if (player.regen_delay > 0){
+    player.regen_delay -= 1;
     player.regen = 0;
-    if (g_stats.mp < MAX_MP){
-      g_stats.mp += 1;
-      if ((g_stats.mp & 3) == 0) hud_redraw();
-    }
+  } else if (++player.regen >= g_stats.regen_ticks){
+    player.regen = 0;
+    if (g_stats.mp < g_stats.max_mp) g_stats.mp += 1;
   }
   int cx = player.x >> 16;
   int cy = player.y >> 16;
@@ -630,6 +634,15 @@ static void handle_key(int key){
         autopilot = !autopilot;
         autopilot_reset();
         show_message(autopilot ? "AUTOPILOT ON" : "AUTOPILOT OFF");
+      } else if (key == ',' || key == '.'){
+        /* mouse-look sensitivity, one digit on the message line */
+        mouse_sens += key == '.' ? 1 : -1;
+        if (mouse_sens < 1) mouse_sens = 1;
+        if (mouse_sens > MOUSE_SENS_LEVELS) mouse_sens = MOUSE_SENS_LEVELS;
+        char text[16];
+        copy_text(text, "MOUSE SPEED 0", sizeof(text));
+        text[12] = '0' + mouse_sens;
+        show_message(text);
       }
       break;
     case STATE_PAUSE:
@@ -680,8 +693,10 @@ static void handle_key(int key){
 /* Drain the terminal's raw key records and the mouse. A record is two bytes
  * (keycode, then TERMINAL_RAW_RELEASE or 0); a read may end between the two,
  * so the first byte waits in pending_code. Only a key's first press reaches
- * handle_key, so held keys never repeat menu actions. Mouse motion moves the
- * crosshair within the view; held buttons cast toward it (update_player). */
+ * handle_key, so held keys never repeat menu actions. Horizontal mouse motion
+ * collects in mouse_dx for the next tick's turn (read_controls) while the
+ * hero is ours to steer; elsewhere it is dropped, so moving the mouse on a
+ * menu does not swing the view once play starts. */
 static void poll_input(void){
   unsigned char buf[32];
   int avail = fd_bytes_available(STDIN);
@@ -706,13 +721,12 @@ static void poll_input(void){
   }
   int event;
   while ((event = getmouse()) != 0){
-    cursor_x += MOUSE_DX(event);
-    cursor_y += MOUSE_DY(event);
-    if (cursor_x < 0) cursor_x = 0;
-    if (cursor_y < 0) cursor_y = 0;
-    if (cursor_x > CURSOR_MAX_X) cursor_x = CURSOR_MAX_X;
-    if (cursor_y > CURSOR_MAX_Y) cursor_y = CURSOR_MAX_Y;
+    mouse_dx += MOUSE_DX(event);
     mouse_buttons = MOUSE_BUTTONS(event);
+  }
+  if (state != STATE_PLAY || autopilot){
+    mouse_dx = 0;
+    look_frac = 0;
   }
 }
 
@@ -828,11 +842,12 @@ static void view_extras(struct ViewExtras* e){
   }
 }
 
-/* Show the crosshair at the mouse while playing (it is a scale-1 sprite, so
- * its coordinates are in 2-pixel units). */
+/* Show the crosshair at the center of the view while playing. It is a
+ * scale-1 sprite, so its coordinates are in 2-pixel screen units: the view's
+ * center is screen pixel (VIEW_W, VIEW_H), and the sprite is 32 units wide. */
 static void place_cursor(void){
   if (state == STATE_PLAY && !map_open()){
-    set_sprite_coords(CURSOR_SPRITE, (cursor_x >> 1) - 16, (cursor_y >> 1) - 16);
+    set_sprite_coords(CURSOR_SPRITE, VIEW_W / 2 - 16, VIEW_H / 2 - 16);
   } else {
     set_sprite_coords(CURSOR_SPRITE, SPRITE_HIDDEN, SPRITE_HIDDEN);
   }
@@ -919,19 +934,32 @@ static void draw_minimap(void){
             py + (isin(player.angle) * 3 >> 16) - 1, 1, 1, 0x02CF);
 }
 
+/* What the status bar's pixels show of the stats: both bars' filled widths
+ * and whether the rune key is held, packed so play_tick() can redraw the
+ * bar whenever any of them changes (pickups, regeneration, damage). */
+static int hud_shown = -1;
+
+static int hud_state(void){
+  if (g_stats.max_hp <= 0 || g_stats.max_mp <= 0) return 0;   /* before the first game */
+  int hp = g_stats.hp < 0 ? 0 : g_stats.hp;
+  return (hp * BAR_W / g_stats.max_hp) | ((g_stats.mp * BAR_W / g_stats.max_mp) << 8) |
+         ((g_stats.keys > 0) << 16);
+}
+
 /* Redraw the status bar's pixels from the current stats (the upload happens
  * once per frame in hud_upload). */
 static void hud_redraw(void){
   if (!hud_bg_ready) hud_background();
   copy_words(g_hud, hud_bg, HUD_PIXELS / 2);
   hud_touch();
+  hud_shown = hud_state();
   /* these screens write their own lines of text across the whole panel */
   if (state == STATE_TITLE || state == STATE_HELP || state == STATE_NAME) return;
   /* dividers between the stat bars, the counters, and the minimap */
   fill_rect(SURF_HUD, 138, 5, 1, 31, 0x0136);
   fill_rect(SURF_HUD, 243, 5, 1, 31, 0x0136);
   draw_bar(HP_BAR_Y, g_stats.hp, g_stats.max_hp, 0x022E, 0x0215);
-  draw_bar(MP_BAR_Y, g_stats.mp, MAX_MP, 0x0E73, 0x0522);
+  draw_bar(MP_BAR_Y, g_stats.mp, g_stats.max_mp, 0x0E73, 0x0522);
   /* a little gem beside the crystal count */
   fill_rect(SURF_HUD, 143, 9, 5, 1, 0x0BFA);
   fill_rect(SURF_HUD, 142, 10, 7, 3, 0x07D3);
@@ -1028,24 +1056,29 @@ static void title_text(void){
   }
 }
 
-/* Controls and goals over the darkened demo. */
+/* Controls, the two spells' trade-offs, and goals over the darkened demo. */
 static void help_text(void){
   int white = rgb332(0x0FFF);
   int blue = rgb332(0x0ACE);
+  int spark = rgb332(0x0FE8);
+  int fire = rgb332(0x03AF);
   tile_text_centered(1, "HOW TO PLAY", rgb332(0x02CF));
-  tile_text(3, 3, "W S       WALK FORWARD / BACK", white);
-  tile_text(3, 4, "A D       SIDESTEP LEFT / RIGHT", white);
-  tile_text(3, 5, "Q E       TURN (OR ARROW KEYS)", white);
-  tile_text(3, 6, "SHIFT     RUN", white);
-  tile_text(3, 8, "MOUSE     AIM THE CROSSHAIR", blue);
-  tile_text(3, 9, "LEFT      SPARK BOLT   (SPACE)", blue);
-  tile_text(3, 10, "RIGHT     FIREBALL     (F)", blue);
-  tile_text(3, 12, "M MAP    P PAUSE    ` FRAME RATE", rgb332(0x0999));
-  tile_text(3, 13, "(ESC CLOSES THE EMULATOR)", rgb332(0x0777));
-  tile_text_centered(15, "FIREBALLS SHATTER CRACKED WALLS.", rgb332(0x03AF));
-  tile_text_centered(17, "GATHER CRYSTALS. FIND THE RUNE KEY.", rgb332(0x09F4));
-  tile_text_centered(18, "BREAK THE SEAL, ENTER THE PORTAL.", rgb332(0x09F4));
-  tile_text_centered(20, "AT DEPTH 8 THE HEART AWAITS.", rgb332(0x0FF8));
+  tile_text(3, 3, "W S A D   WALK AND SIDESTEP", white);
+  tile_text(3, 4, "MOUSE     TURN (OR Q E, ARROWS)", white);
+  tile_text(3, 5, "SHIFT     RUN", white);
+  tile_text(3, 7, "LEFT      SPARK     6 MANA (SPACE)", blue);
+  tile_text(3, 8, "RIGHT     FIREBALL 30 MANA (F)", blue);
+  tile_text_centered(10, "SPARKS ARE CHEAP AND QUICK BUT WEAK.", spark);
+  tile_text_centered(11, "WRAITHS SHRUG THEM OFF.", spark);
+  tile_text_centered(12, "FIREBALLS BLAST AND STUN A WHOLE PACK", fire);
+  tile_text_centered(13, "AND SHATTER CRACKED WALLS - BUT THEY", fire);
+  tile_text_centered(14, "BURN YOU TOO IF YOU STAND TOO CLOSE.", fire);
+  tile_text_centered(15, "MANA RETURNS ONCE YOU STOP CASTING.", blue);
+  tile_text_centered(17, "M MAP  P PAUSE  , . MOUSE SPEED  ` FPS", rgb332(0x0999));
+  tile_text_centered(18, "(ESC CLOSES THE EMULATOR)", rgb332(0x0777));
+  tile_text_centered(20, "GATHER CRYSTALS. FIND THE RUNE KEY.", rgb332(0x09F4));
+  tile_text_centered(21, "BREAK THE SEAL, ENTER THE PORTAL.", rgb332(0x09F4));
+  tile_text_centered(22, "AT DEPTH 8 THE HEART AWAITS.", rgb332(0x0FF8));
 }
 
 /* In-game text: the message line, the boss's health, the automap label, and
@@ -1170,7 +1203,7 @@ static void play_tick(void){
   if (g_stats.hurt > 0) g_stats.hurt -= 1;
   if (g_stats.shake > 0) g_stats.shake -= 1;
   world_tick(player.cx, player.cy, player.x, player.y, entered);
-  if (!demo && facing() != old_facing) hud_redraw();
+  if (!demo && (facing() != old_facing || hud_state() != hud_shown)) hud_redraw();
 }
 
 /* Advance the whole game by one 60 Hz tick according to the current state. */
@@ -1270,14 +1303,19 @@ static void render_frame(void){
   }
 }
 
-/* Read `seed=N` (decimal) from the command line: every game then descends
- * through the same dungeon, for sharing a run or for repeatable tests. */
+/* Read the command line options: `seed=N` (decimal) makes every game descend
+ * through the same dungeon, for sharing a run or for repeatable tests;
+ * `sens=N` (1..9) sets the mouse-look sensitivity (, and . change it in play). */
 static void parse_args(int argc, char** argv){
   for (int i = 1; i < argc; ++i){
     char* a = argv[i];
     if (a[0] == 's' && a[1] == 'e' && a[2] == 'e' && a[3] == 'd' && a[4] == '='){
       int pos = 5;
       fixed_seed = (unsigned)parse_int(a, &pos);
+    } else if (a[0] == 's' && a[1] == 'e' && a[2] == 'n' && a[3] == 's' && a[4] == '='){
+      int pos = 5;
+      int level = parse_int(a, &pos);
+      if (level >= 1 && level <= MOUSE_SENS_LEVELS) mouse_sens = level;
     }
   }
 }

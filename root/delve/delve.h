@@ -228,6 +228,7 @@ struct Monster {
   int flash;
   int anim;
   int awake;
+  int stun;        /* ticks left reeling from a fireball blast */
 };
 #define MAX_MONSTERS 24
 
@@ -317,8 +318,27 @@ struct Light {
 #define MAX_LIGHTS 24
 
 #define MAX_HP 100
-#define MAX_MP 100
+#define MAX_MP 100        /* starting mana pool; a crystal milestone deepens it */
 #define FINAL_DEPTH 8
+
+/* ---- Spells ----
+ * The two spells are meant to be chosen between, not spammed:
+ * - a spark is cheap and fast but weak, and wraiths shrug it off (half
+ *   damage, see world.c);
+ * - a fireball costs five times as much and flies slowly, but its blast
+ *   hurts everything near the impact, stuns what it hurts, shatters cracked
+ *   walls, and scorches a caster standing too close.
+ * Mana comes back only after MANA_REGEN_DELAY ticks without casting, so a
+ * burst of spells has to be followed by a breather (or a potion). Costs in
+ * mana points; timings in 60 Hz ticks; distances in 16.16 cells. */
+#define SPARK_COST 6
+#define FIRE_COST 30
+#define MANA_REGEN_DELAY 40
+#define MANA_REGEN_TICKS 10       /* ticks per point of mana regained */
+#define FIRE_SPLASH_RADIUS 0x18000
+#define FIRE_STUN_TICKS 45        /* monsters hurt by a blast stop acting */
+#define FIRE_SELF_RADIUS 0x14000  /* a blast this close also burns the caster */
+#define FIRE_SELF_DAMAGE 12
 
 /* The player is a square of half-width PLAYER_RADIUS (16.16 cells) for
  * collisions; corridors are one cell wide. Biting monsters reach the player
@@ -330,6 +350,7 @@ struct PlayerStats {
   int hp;
   int max_hp;
   int mp;
+  int max_mp;
   int crystals;
   int keys;
   int depth;

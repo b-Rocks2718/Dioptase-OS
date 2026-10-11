@@ -21,7 +21,8 @@ make run EMU_VGA=yes
 
 then type `delve` at the shell prompt. `make run` builds every program under
 `root/`, including this one, into `root/sbin/`. `delve seed=N` descends
-through the same dungeon in every game, for sharing a run with a friend.
+through the same dungeon in every game, for sharing a run with a friend, and
+`delve sens=N` (1 to 9, default 5) sets the mouse-look speed.
 
 ## How to play
 
@@ -40,24 +41,43 @@ and take the **Heart of Dioptase** to win.
 | --- | --- |
 | `W` `S` / up, down | walk forward / back |
 | `A` `D` | sidestep left / right |
-| `Q` `E` / left, right | turn (tap to fine-tune, hold to spin) |
+| mouse | turn (mouse look) |
+| `Q` `E` / left, right | turn with the keys too (tap to fine-tune, hold to spin) |
 | `Shift` | run |
-| mouse | aim (the crosshair) |
-| left button / `Space` | spark bolt (cheap, fast; `Space` fires straight ahead) |
-| right button / `F` | fireball (costly, slow, splash damage) |
+| left button / `Space` | spark (6 mana) |
+| right button / `F` | fireball (30 mana) |
+| `,` `.` | mouse-look speed down / up |
 | `M` or `Tab` | automap |
 | `P` | pause (`X` from the pause panel gives up) |
 | `H` (title screen) | how to play |
 | `X` (title screen) | quit to the shell |
 
-Mana regenerates over time; red potions restore health, blue ones mana.
+Spells fly straight through the crosshair at the center of the view. The
+mouse is not grabbed (the emulator cannot hold the host cursor under WSLg),
+so for a big turn either sweep across the window or hold a turn key.
+
+**Two spells, one pool of mana.** Mana comes back only once you stop casting
+for a moment, about six points a second, so a fight is a burst of spells and
+then a breather (or a blue potion, worth 50; each crystal you pick up also
+gives 3).
+
+- A **spark** is cheap, quick, and nearly instant, but weak: two damage.
+  It is the answer to bats (one spark) and to eyes that keep their distance,
+  but **wraiths shrug sparks off**, taking half damage.
+- A **fireball** costs five sparks' worth and flies slowly enough for a bat
+  to flutter out of its way, but its blast hurts everything within a cell
+  and a half, **stuns** whatever it hurts for most of a second, lights up the
+  corridor, and shatters cracked walls. A direct hit kills a wraith outright.
+  Stand back: a blast within about a cell of you **burns you too**.
+
 Crystals are power as well as score: at 10, 25, 40, 60, and 85 crystals your
-sparks, health, mana flow, and fireballs grow stronger for the rest of the
-run. Some walls are cracked, with light seeping through — a fireball shatters
-them and opens a hidden vault.
-Monsters wake when you come near: slimes and bats bite, floating eyes spit
-bolts you can sidestep, and wraiths hit hard. Hold a spell key or mouse
-button to keep casting as fast as your mana allows. Ctrl-C quits at any time.
+sparks, health, mana pool, fireballs, and finally health and mana flow grow
+stronger for the rest of the run. Some walls are cracked, with light seeping
+through — a fireball shatters them and opens a hidden vault.
+Monsters wake when you come near: slimes (often in packs) and bats bite,
+floating eyes spit bolts you can sidestep, and wraiths hit hard. Hold a
+spell key or mouse button to keep casting as fast as your mana allows.
+Ctrl-C quits at any time.
 
 Cheats, for exploring the deep levels quickly: `Shift+G` toggles invulnerable
 mode, `=` takes the portal immediately, `\` hands the controls to the

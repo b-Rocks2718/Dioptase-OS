@@ -83,15 +83,28 @@ struct MonsterKind {
   int aggro;          /* flow distance at which it notices the player */
 };
 
+/* Hit points are tuned against the spells (delve.h): a spark deals 2 at
+ * first, a fireball 6 plus 4 of splash. Bats die to one spark but dodge
+ * slow fireballs; slimes come in packs a blast can catch; eyes keep their
+ * distance, where quick sparks reach them; a wraith takes half damage from
+ * sparks, so a fireball (10 on a direct hit) is the clean answer. */
 static struct MonsterKind kinds[MONSTER_KINDS] = {
   /* hp step think dmg ranged atk  sprite      frames size   z      score aggro */
   {  4, 22,  10,  8,  0,  45, SPR_SLIME,   4, 46000,     0, 10,  9 },
   {  2,  9,   4,  5,  0,  30, SPR_BAT,     4, 30000, 22000, 15, 12 },
-  {  5, 26,  20, 10,  1,  90, SPR_EYE,     3, 42000, 10000, 25, 11 },
-  {  8, 14,   8, 14,  0,  40, SPR_WRAITH,  4, 52000,  4000, 40, 14 },
-  { 36, 30,  14, 16,  2,  80, SPR_WARDEN,  2, 62000,  2000, 500, 30 },
+  {  6, 26,  20, 10,  1,  90, SPR_EYE,     3, 42000, 10000, 25, 11 },
+  { 10, 14,   8, 14,  0,  40, SPR_WRAITH,  4, 52000,  4000, 40, 14 },
+  { 40, 30,  14, 16,  2,  80, SPR_WARDEN,  2, 62000,  2000, 500, 30 },
 };
 #define WARDEN_CHARGE_TICKS 28
+
+/* Mana restored by pickups (capped at the pool, g_stats.max_mp). */
+#define MANA_POTION_MP 50
+#define CRYSTAL_MP 3
+
+/* Per-level hints, each shown the first time it applies on a level. */
+static bool hint_wraith_sparks;
+static bool hint_self_burn;
 
 /* ---- Map helpers ---- */
 
@@ -452,6 +465,7 @@ static void add_monster(int kind, int cx, int cy){
     m->flash = 0;
     m->anim = rng_range(64);
     m->awake = 0;
+    m->stun = 0;
     occupant[cell_at(cx, cy)] = i + 1;
     return;
   }
@@ -465,6 +479,8 @@ static int theme_accent[6] = { TEX_BRICK_MOSS, TEX_BRICK, TEX_ROCK_GEM, TEX_RUNE
  * facing *sdir (0 east .. 3 north). */
 void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
   rng_seed(seed * 2654435761u + depth * 40503u + 7);
+  hint_wraith_sparks = false;
+  hint_self_burn = false;
   world_layout(depth, sx, sy, sdir);
 }
 
@@ -686,7 +702,8 @@ static void world_layout(int depth, int* sx, int* sy, int* sdir){
     }
   }
 
-  /* monsters, never in the start room */
+  /* monsters, never in the start room. Slimes ooze about in packs of two or
+   * three in one room, the kind of crowd a fireball's blast is for. */
   int count = 3 + depth + depth / 2;
   if (count > MAX_MONSTERS - 2) count = MAX_MONSTERS - 2;
   for (int i = 0; i < count; ++i){
@@ -701,6 +718,13 @@ static void world_layout(int depth, int* sx, int* sy, int* sdir){
     if (depth >= 4 && roll >= 80) kind = MON_WRAITH;
     if (depth == 1 && roll < 25) kind = MON_BAT;
     add_monster(kind, x, y);
+    if (kind == MON_SLIME){
+      int pack = 1 + rng_range(2);
+      for (int j = 0; j < pack && i + 1 < count && random_room_cell(r, &x, &y); ++j){
+        add_monster(MON_SLIME, x, y);
+        i += 1;
+      }
+    }
   }
 
   bfs_from(*sx, *sy, flow, false);
@@ -843,8 +867,26 @@ static void damage_monster(struct Monster* m, int amount){
   }
 }
 
-/* Detonate a projectile where it stopped: burst, sparks, and for fireballs
- * splash damage within about 1.25 cells plus a camera shake. */
+/* Hurt monster m with the player's spell of kind `shot` (SHOT_SPARK or
+ * SHOT_FIRE): wraiths take half damage from sparks (at least 1), and
+ * whatever a fireball hurts is stunned for FIRE_STUN_TICKS. */
+static void spell_hit(struct Monster* m, int shot, int amount){
+  if (shot == SHOT_SPARK && m->kind == MON_WRAITH){
+    amount >>= 1;
+    if (amount < 1) amount = 1;
+    if (!hint_wraith_sparks){
+      hint_wraith_sparks = true;
+      show_message("SPARKS BARELY HURT WRAITHS - USE FIRE");
+    }
+  }
+  if (shot == SHOT_FIRE) m->stun = FIRE_STUN_TICKS;
+  damage_monster(m, amount);
+}
+
+/* Detonate a projectile where it stopped: burst and sparks, and for a
+ * fireball a camera shake, cracked walls shattered, and splash damage (with
+ * a stun) within FIRE_SPLASH_RADIUS, which also burns the caster if they
+ * stand within FIRE_SELF_RADIUS. */
 static void explode(struct Projectile* p){
   p->active = 0;
   int kind = p->kind;
@@ -872,12 +914,18 @@ static void explode(struct Projectile* p){
       g_stats.score += 50 * g_stats.depth;
       show_message("A HIDDEN VAULT!");
     }
-    /* splash damage within about 1.3 cells */
     for (int i = 0; i < MAX_MONSTERS; ++i){
       struct Monster* m = &g_monsters[i];
       if (!m->alive) continue;
-      if (approx_dist(m->x - p->x, m->y - p->y) < 0x14000){
-        damage_monster(m, g_stats.splash_damage);
+      if (approx_dist(m->x - p->x, m->y - p->y) < FIRE_SPLASH_RADIUS){
+        spell_hit(m, SHOT_FIRE, g_stats.splash_damage);
+      }
+    }
+    if (approx_dist(player_x - p->x, player_y - p->y) < FIRE_SELF_RADIUS){
+      player_hurt(FIRE_SELF_DAMAGE);
+      if (!hint_self_burn){
+        hint_self_burn = true;
+        show_message("TOO CLOSE - YOUR OWN BLAST BURNS");
       }
     }
   } else {
@@ -911,7 +959,7 @@ static void update_shots(int px, int py){
           struct Monster* m = &g_monsters[j];
           if (!m->alive) continue;
           if (approx_dist(m->x - p->x, m->y - p->y) < 0x6000){
-            damage_monster(m, p->kind == SHOT_FIRE ? g_stats.fire_damage : g_stats.spark_damage);
+            spell_hit(m, p->kind, p->kind == SHOT_FIRE ? g_stats.fire_damage : g_stats.spark_damage);
             explode(p);
             break;
           }
@@ -1101,6 +1149,10 @@ static void update_monsters(int px, int py){
       }
       continue;
     }
+    if (m->stun > 0){
+      m->stun -= 1;               /* reeling from a blast: no decisions */
+      continue;
+    }
     if (m->cooldown > 0){
       m->cooldown -= 1;
       continue;
@@ -1112,7 +1164,8 @@ static void update_monsters(int px, int py){
 /* ---- Items ---- */
 
 /* Crystals are also power: at these totals the hero's staff and body grow
- * stronger for the rest of the run. */
+ * stronger for the rest of the run. Mana stays scarce enough to matter: the
+ * pool deepens and its flow quickens only late, and a little. */
 static void crystal_milestone(int total){
   switch (total){
     case 10:
@@ -1125,18 +1178,19 @@ static void crystal_milestone(int total){
       show_message("CRYSTAL POWER: VITALITY +25");
       break;
     case 40:
-      g_stats.regen_ticks = 3;
-      show_message("CRYSTAL POWER: MANA FLOWS FASTER");
+      g_stats.max_mp += 25;
+      g_stats.mp += 25;
+      show_message("CRYSTAL POWER: DEEPER MANA +25");
       break;
     case 60:
-      g_stats.fire_damage = 7;
+      g_stats.fire_damage = 8;
       g_stats.splash_damage = 5;
       show_message("CRYSTAL POWER: FIREBALLS ROAR");
       break;
     case 85:
       g_stats.max_hp += 25;
       g_stats.hp += 25;
-      g_stats.spark_damage = 4;
+      g_stats.regen_ticks = 7;
       show_message("CRYSTAL POWER: THE DEEP ANSWERS YOU");
       break;
     default:
@@ -1156,6 +1210,8 @@ static void update_items(int pcx, int pcy){
     switch (it->type){
       case ITEM_CRYSTAL:
         g_stats.crystals += 1;
+        g_stats.mp += CRYSTAL_MP;
+        if (g_stats.mp > g_stats.max_mp) g_stats.mp = g_stats.max_mp;
         crystal_milestone(g_stats.crystals);
         g_stats.score += 10 * g_stats.depth;
         spawn_effect(EFFECT_GEM_PUFF, x, y, 0x3000);
@@ -1172,9 +1228,9 @@ static void update_items(int pcx, int pcy){
         it->active = 0;
         break;
       case ITEM_POTION_MP:
-        if (g_stats.mp >= MAX_MP) break;
-        g_stats.mp += 60;
-        if (g_stats.mp > MAX_MP) g_stats.mp = MAX_MP;
+        if (g_stats.mp >= g_stats.max_mp) break;
+        g_stats.mp += MANA_POTION_MP;
+        if (g_stats.mp > g_stats.max_mp) g_stats.mp = g_stats.max_mp;
         sfx(SFX_POTION);
         show_message("MANA RESTORED");
         it->active = 0;
@@ -1330,6 +1386,7 @@ void world_draw(int frame, int cam_x, int cam_y){
     if (m->kind == MON_BAT || m->kind == MON_EYE || m->kind == MON_WRAITH || m->kind == MON_WARDEN){
       z += isin(m->anim * 40 + i * 300) >> 4;   /* hover bob */
     }
+    if (m->stun > 0) z += isin(m->stun * 340) >> 4;   /* reeling from a blast */
     int size = k->size;
     if (m->attack_t > 0 && !k->ranged) size += size >> 3;   /* lunge */
     struct Billboard* b = add_billboard(m->x, m->y, z, size, k->sprite + frame_index);
