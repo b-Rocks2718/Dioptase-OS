@@ -104,6 +104,7 @@ Syscalls that currently report causes:
   pathname lookup does not distinguish them.
 - `audio_open()`, `audio_write()`, `audio_buffered()`, `audio_close()`: every
   failure reports a cause (`EBUSY`, `EBADF`, `EINVAL`, `EFAULT`; see Audio).
+- `set_keyboard_raw()`: `EINVAL` when the mode is not 0 or 1.
 
 All other failures report `0` until their handlers are converted.
 
@@ -150,7 +151,8 @@ Signal numbers, delivery order, masking, handler arguments, and synchronous
 fault behavior are specified in `signals.md`.
 
 Each foreground child descriptor records whether its live child used a direct
-display trap. The display traps are codes `4..10`, `36`, `37`, and `43..46`;
+display trap. The display traps are codes `4..10`, `36`, `37`, `43..46`, `62`,
+and `63`;
 invalid sprite-number requests do not set the claim. Calls made by the terminal,
 shell, or a background child do not set the foreground descriptor's claim.
 `set_text_color()` is console output state and does not count as a direct
@@ -375,8 +377,22 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `44` | `set_sprite_coords(sprite_num, x, y)` | `sprite_num`, `x`, `y` | Writes one sprite coordinate pair and returns `0`, or returns `-1` for an invalid sprite number. |
 | `45` | `load_text_tiles_colored(fg_color, bg_color)` | `fg_color`, `bg_color` | Loads the built-in text tileset with explicit colors, clears the display, and returns `0`. |
 | `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. |
+| `62` | `get_pixel_fb()` | none | Maps a page-aligned prefix of the pixel framebuffer into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. The mapped length is `0x25000` bytes (rows 0..235 of the 320-wide buffer are complete). The final 2048 bytes of the hardware buffer are omitted so the mapping cannot include the PS/2, UART, PIT, SD, and audio registers on the following page. |
+| `63` | `set_pixel_scale(scale)` | `scale` | Writes the pixel-scale register and returns `0`. Hardware displays each pixel at `2**(n+1)` (`docs/mem_map.md`). |
+| `64` | `set_keyboard_raw(enabled)` | `enabled` | Sets the calling thread's keyboard mode. `1` asks the terminal to write raw PS/2 press and release words to the process stdin pipe; `0` restores cooked characters. Returns `0`, or `-1` with `EINVAL` if `enabled` is not 0 or 1. A successful `execv()` clears the mode. A forked child starts cooked. |
+| `65` | `foreground_keyboard_raw()` | none | Returns `1` if the live foreground child has raw keyboard mode set, otherwise `0`. |
 
-The three display mapping getters are idempotent within one process: repeating
+`set_keyboard_raw(1)` does not redirect `getkey()`. The terminal still owns the
+kernel keyboard queue. In raw mode it writes each hardware event to the
+foreground pipe as two little-endian bytes: the low byte is the guest keycode
+and bit 8 of the word is the release flag (`docs/mem_map.md`, PS/2 keyboard
+input stream). Cooked translation (shift, newline, dropping releases) is not
+applied. The terminal still turns Ctrl-C into `signal_foreground(SIGNAL_TERMINATE)`
+in raw mode. If fewer than two bytes are free in the 1024-byte pipe, the
+terminal drops that event instead of blocking, so a program that stops reading
+cannot stall Ctrl-C handling.
+
+The four display mapping getters are idempotent within one process: repeating
 an exact getter returns the same pointer and does not reserve another virtual
 range. A child inherits an existing display mapping at the same virtual
 address. Parent and child mappings alias the same live physical/MMIO pages,

@@ -4,7 +4,7 @@
 
 ### VGA
 
-The display hardware exposes separate tile and pixel framebuffers plus tile scroll/scale, pixel scale, status, and sprite registers. `vga.h` exports the tile and pixel framebuffer pointers directly, helper routines load the text tileset and clear the screen, and `make_tiles_transparent()` can blank the tile layer so pixel output shows through underneath.
+The display hardware exposes separate tile and pixel framebuffers plus tile scroll/scale, pixel scale, status, and sprite registers. `vga.h` exports the tile and pixel framebuffer pointers directly, helper routines load the text tileset and clear the screen, and `make_tiles_transparent()` can blank the tile layer so pixel output shows through underneath. User programs reach the pixel buffer through `get_pixel_fb()` (`docs/syscalls.md`). That mapping stops at a page boundary before the PS/2 register so it cannot alias the devices that follow the framebuffer.
 
 Most visible VGA behavior comes from `print.c`. When `CONFIG.use_vga` is true,
 `putchar_color()` writes ASCII tiles into `TILE_FB`, advances a software cursor,

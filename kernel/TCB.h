@@ -131,6 +131,16 @@ struct TCB {
   // creation. Only the owning thread reads or writes it, so no lock is needed.
   int syscall_error;
 
+  // Cooked vs raw keyboard delivery for this thread. The owning thread writes
+  // it from set_keyboard_raw(); new TCBs are zeroed so cooked mode is the
+  // default, and exec clears it when the new image commits. The terminal
+  // reads the foreground child's flag while holding foreground_child_lock and
+  // that descriptor's state_lock, which is what keeps child_tcb stable. The
+  // flag itself is one aligned byte on a sequentially consistent machine, so
+  // the terminal may observe either the old or the new value across the
+  // writer's store without a further lock.
+  bool keyboard_raw;
+
   struct TCB* next;
 };
 

@@ -29,14 +29,15 @@ void console_set_text_color(int color);
 int console_get_text_color(void);
 
 /*
- * Serialized access to the kernel-owned tile scale and signed 16-bit scroll
- * MMIO registers. The move operations serialize the complete MMIO
- * read/modify/write with console scrolling, including same-core interrupt
- * diagnostics. Each function restores the caller's exact IMR and preemption
- * state. Display-mutating accessors run in ordinary kernel/trap context; only
- * console output is supported from interrupt context.
+ * Serialized access to the kernel-owned tile scale, pixel scale, and signed
+ * 16-bit scroll MMIO registers. The move operations serialize the complete
+ * MMIO read/modify/write with console scrolling, including same-core
+ * interrupt diagnostics. Each function restores the caller's exact IMR and
+ * preemption state. Display-mutating accessors run in ordinary kernel/trap
+ * context; only console output is supported from interrupt context.
  */
 void console_set_tile_scale(int scale);
+void console_set_pixel_scale(int scale);
 void console_set_tile_vscroll(int scroll);
 void console_set_tile_hscroll(int scroll);
 void console_move_tile_vscroll(int delta);

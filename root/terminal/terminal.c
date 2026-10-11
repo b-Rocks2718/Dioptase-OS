@@ -16,6 +16,11 @@
 // directly to input latency in games like snake. Keep it at one tick.
 #define MAIN_LOOP_DELAY_INTERVAL 1
 
+// docs/syscalls.md: the foreground input pipe holds 1024 bytes. A raw event
+// is two bytes, and write() blocks once the ring is full, which would stop
+// this loop from seeing Ctrl-C. Leave the event unsent unless both bytes fit.
+#define TERMINAL_INPUT_PIPE_BYTES 1024
+
 #define TAB_WIDTH 8
 
 #define MAX_ESCAPE_SEQUENCE_LENGTH 16
@@ -144,6 +149,21 @@ static void write_terminal_input_char(char c){
   write(STDOUT, &c, 1);
 }
 
+// Forward one raw PS/2 event as a little-endian word. Bit 8 is the release
+// flag, matching getkey() and docs/mem_map.md. Drops the event when the pipe
+// has fewer than two free bytes so the terminal loop cannot block in write.
+static void forward_raw_key_event(short key){
+  int queued = fd_bytes_available(STDOUT);
+  if (queued < 0 || queued > TERMINAL_INPUT_PIPE_BYTES - 2){
+    return;
+  }
+
+  char bytes[2];
+  bytes[0] = (char)(key & 0xFF);
+  bytes[1] = (char)((key >> 8) & 0xFF);
+  write(STDOUT, bytes, 2);
+}
+
 // Dispatch a control key to the corresponding terminal editing action.
 static void handle_ctrl_key(short key){
   if (key == 'c'){
@@ -159,30 +179,59 @@ static void handle_ctrl_key(short key){
 }
 
 // Consume one keyboard event and update terminal input state.
+// Cooked mode forwards translated presses only. Raw mode, requested by the
+// foreground child through set_keyboard_raw(), forwards every press and
+// release as a 16-bit PS/2 word. Ctrl-C still terminates that child in both
+// modes so a program that stops reading cannot trap the console.
 static void handle_keyboard_event(short key){
-  if (key & 0xFF00){
-    key = key & 0xFF;
-    if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
+  short code = (short)(key & 0xFF);
+  int release = (key & 0xFF00) != 0;
+  int raw = foreground_keyboard_raw();
+
+  if (release){
+    if (code == KEY_LEFT_SHIFT || code == KEY_RIGHT_SHIFT){
       input_shift_held = false;
-    } else if (key == KEY_LEFT_CTRL || key == KEY_RIGHT_CTRL){
+    } else if (code == KEY_LEFT_CTRL || code == KEY_RIGHT_CTRL){
       input_ctrl_held = false;
+    }
+    if (raw){
+      forward_raw_key_event(key);
     }
     return;
   }
 
-  if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
+  if (code == KEY_LEFT_SHIFT || code == KEY_RIGHT_SHIFT){
     input_shift_held = true;
+    if (raw){
+      forward_raw_key_event(key);
+    }
     return;
   }
-  if (key == KEY_LEFT_CTRL || key == KEY_RIGHT_CTRL){
+  if (code == KEY_LEFT_CTRL || code == KEY_RIGHT_CTRL){
     input_ctrl_held = true;
+    if (raw){
+      forward_raw_key_event(key);
+    }
+    return;
+  }
+
+  if (raw){
+    if (input_ctrl_held && code == 'c'){
+      if (signal_foreground(SIGNAL_TERMINATE) != 0){
+        forward_raw_key_event(key);
+      }
+      return;
+    }
+    forward_raw_key_event(key);
     return;
   }
 
   if (input_ctrl_held){
-    handle_ctrl_key(key);
+    handle_ctrl_key(code);
     return;
   }
+
+  key = code;
 
   if (input_shift_held && key >= 32 && key < 127){
     key = apply_shift_to_char((char)key);
@@ -335,13 +384,14 @@ static void cursor_home(void){
 //   happen before that prompt is rendered.
 //
 // Postconditions:
-// - Tile scale and both scroll registers match terminal startup state.
+// - Tile scale, pixel scale, and both scroll registers match terminal startup.
 // - The built-in text tiles are loaded and every sprite is hidden.
 // - The visible framebuffer, cursor, scrolling, color, saved cursor, wrapping,
 //   and blink state match a freshly cleared terminal.
 static void reset_display_state(void){
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_pixel_scale(0);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 
@@ -895,6 +945,7 @@ int main(void){
   TILE_FB = get_tile_fb();
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_pixel_scale(0);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 

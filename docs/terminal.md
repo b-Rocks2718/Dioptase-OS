@@ -6,6 +6,9 @@
 - The terminal reads shell/program output from `STDIN` and renders those bytes.
 - The terminal reads raw keyboard events with `getkey()` and writes translated
   input bytes to `STDOUT`, which `/sbin/init` connects to the shell's `STDIN`.
+- If the foreground child has called `set_keyboard_raw(1)`, the terminal
+  instead writes each PS/2 event as a little-endian 16-bit word, including
+  key releases. Ctrl-C still signals that child. See `docs/syscalls.md`.
 - The visible screen is `80` columns by `60` rows.
 - Each character cell is one `8x8` tile.
 - The low byte of each tile framebuffer entry is the tile index.

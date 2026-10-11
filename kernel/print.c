@@ -275,6 +275,16 @@ void console_set_tile_scale(int scale){
   console_lock_release(interrupt_state);
 }
 
+// Set the pixel-layer scale (docs/mem_map.md: pixels display at 2**(n+1)).
+// The console does not draw the pixel layer, but the same lock orders this
+// register with every other console-owned VGA write so two cores cannot
+// interleave MMIO updates to the display control block.
+void console_set_pixel_scale(int scale){
+  unsigned interrupt_state = console_lock_acquire();
+  *PIXEL_SCALE = scale;
+  console_lock_release(interrupt_state);
+}
+
 // Set the VGA tile vertical scroll offset.
 void console_set_tile_vscroll(int scroll){
   unsigned interrupt_state = console_lock_acquire();

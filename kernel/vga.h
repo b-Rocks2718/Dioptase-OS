@@ -22,6 +22,14 @@
 #define FB_WIDTH 320
 #define FB_HEIGHT 240
 
+// User mapping of PIXEL_FB. The hardware buffer is 320*240*2 = 153600 bytes
+// (0x7FC0000 through 0x7FE57FF, docs/mem_map.md). mmap_physmem rounds up to
+// whole pages, and the next page also contains the PS/2, UART, PIT, SD, and
+// audio registers at 0x7FE5800. Map only the page-aligned prefix that ends at
+// 0x7FE5000 so a user store cannot reach those devices. Rows 0..235 are
+// complete; row 236 is only partially mapped.
+#define PIXEL_FB_USER_SIZE 0x25000
+
 #define TRANSPARENT 255
 
 // Display MMIO from docs/mem_map.md. Each pointer is a fixed device address.

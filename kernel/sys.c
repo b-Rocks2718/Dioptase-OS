@@ -1553,6 +1553,10 @@ int handle_exec(char* path, int argc, char** argv){
   }
   tcb->in_signal_handler = false;
 
+  // The retired image's input mode must not leak into the new program.
+  // This TCB stays current across exec, so the flag would otherwise survive.
+  tcb->keyboard_raw = false;
+
   // Audio ownership belongs to the retired image, which can no longer feed
   // the ring; release it so the new program starts without it.
   audio_release_owner(tcb);
@@ -1868,9 +1872,12 @@ static void claim_foreground_display(void){
   blocking_lock_release(&foreground_child_lock);
 }
 
-// Map one display MMIO window (tilemap, tile framebuffer, or spritemap) into
-// the caller and record a foreground display claim. Returns the user address,
-// or -1 if the caller's virtual address space has no room.
+// Map one display MMIO window (tilemap, tile framebuffer, pixel framebuffer,
+// or spritemap) into the caller and record a foreground display claim.
+// Returns the user address, or -1 if the caller's virtual address space has
+// no room. `size` is the byte length passed to mmap_physmem; the pixel
+// framebuffer uses PIXEL_FB_USER_SIZE so the rounded page does not cover the
+// PS/2, UART, PIT, SD, or audio registers that follow it.
 static int map_display_window(unsigned size, unsigned paddr){
   void* mapping = mmap_physmem(size, paddr, MMAP_READ | MMAP_WRITE | MMAP_USER);
   if (mapping == NULL){
@@ -1936,6 +1943,42 @@ int handle_signal_child(int child_desc, int signal){
     return -1;
   }
   return send_signal_to_child(tcb->child_descriptors[index], signal);
+}
+
+// Select cooked (0) or raw (1) keyboard delivery for the calling thread.
+// Raw mode asks the terminal to write PS/2 press and release words to the
+// caller's stdin pipe. Any other argument is outside the contract.
+static int handle_set_keyboard_raw(int enabled){
+  if (enabled != 0 && enabled != 1){
+    set_syscall_error(EINVAL);
+    return -1;
+  }
+
+  // Only this thread writes its flag. The terminal's later load is ordered
+  // by sequential consistency; see TCB.keyboard_raw.
+  get_current_tcb()->keyboard_raw = enabled ? true : false;
+  return 0;
+}
+
+// Report whether the live foreground child asked for raw keyboard delivery.
+// Returns 0 when no foreground child is installed or that child has exited
+// (child_tcb cleared under state_lock). Does not consume keyboard events.
+static int handle_foreground_keyboard_raw(void){
+  int raw = 0;
+
+  blocking_lock_acquire(&foreground_child_lock);
+  struct ChildDescriptor* descriptor = foreground_child;
+  if (descriptor != NULL){
+    // Same lock order as claim_foreground_display: foreground_child_lock,
+    // then state_lock. state_lock is what makes child_tcb safe to read.
+    clh_lock_acquire(&descriptor->state_lock);
+    if (descriptor->child_tcb != NULL && descriptor->child_tcb->keyboard_raw){
+      raw = 1;
+    }
+    clh_lock_release(&descriptor->state_lock);
+  }
+  blocking_lock_release(&foreground_child_lock);
+  return raw;
 }
 
 // Queue a signal for the process currently owning the foreground display.
@@ -2100,6 +2143,20 @@ int trap_handler(unsigned code,
     }
     case TRAP_GET_TILE_FB: {
       return map_display_window(TILE_FB_SIZE, (unsigned)TILE_FB);
+    }
+    case TRAP_GET_PIXEL_FB: {
+      return map_display_window(PIXEL_FB_USER_SIZE, (unsigned)PIXEL_FB);
+    }
+    case TRAP_SET_PIXEL_SCALE: {
+      claim_foreground_display();
+      console_set_pixel_scale(arg1);
+      return 0;
+    }
+    case TRAP_SET_KEYBOARD_RAW: {
+      return handle_set_keyboard_raw(arg1);
+    }
+    case TRAP_FOREGROUND_KEYBOARD_RAW: {
+      return handle_foreground_keyboard_raw();
     }
     case TRAP_GET_VGA_STATUS: {
       return (unsigned char)(*VGA_STATUS);

@@ -1,0 +1,15 @@
+***PASS pixel mapped: got 1 expected 1
+***PASS pixel idempotent: got 1 expected 1
+***PASS pixel readback: got 291 expected 291
+***PASS pixel scale: got 0 expected 0
+***PASS pixel scale restore: got 0 expected 0
+***PASS raw invalid: got -1 expected -1
+***PASS raw on: got 0 expected 0
+***PASS raw off: got 0 expected 0
+***PASS no foreground raw: got 0 expected 0
+***PASS set foreground: got 0 expected 0
+***PASS child starts cooked: got 0 expected 0
+***PASS foreground raw on: got 1 expected 1
+***PASS foreground raw off: got 0 expected 0
+***PASS wait child: got 0 expected 0
+***PASS clear foreground: got 0 expected 0
