@@ -13,7 +13,9 @@
 #define CURSOR_BLINK_FRAMES 15
 // Jiffies to sleep between polls of the keyboard and stdin. Keys reach the
 // foreground program only when this loop forwards them, so this delay adds
-// directly to input latency in games like snake. Keep it at one tick.
+// directly to input latency in games like snake. Ten jiffies is 3.3 ms at the
+// kernel's 3,000-Hz PIT, well under one 60-Hz frame, and polling less often
+// leaves more CPU time to the foreground program.
 #define MAIN_LOOP_DELAY_INTERVAL 10
 
 // docs/syscalls.md: a pipe holds 1024 bytes, and a full pipe blocks write().

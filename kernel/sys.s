@@ -110,7 +110,11 @@ jump_to_user:
   mov  imr, r10
   # interrupts will be restored on rfe
 
-  # save caller-saved registers for when returning to user mode
+  # Save the kernel caller's bp, ra, and callee-saved registers. User code
+  # may clobber every register, and return_to_kernel restores these when the
+  # user context ends (exit, a fatal fault, or sigreturn from a handler that
+  # jump_to_user started), so this returns to its C caller like any call.
+  # r28 is reserved as a future TLS base (docs/abi.md) and is kept as well.
   push bp
   push ra
   push r20
