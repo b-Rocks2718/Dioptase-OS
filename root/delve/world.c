@@ -861,7 +861,7 @@ static void explode(struct Projectile* p){
       struct Monster* m = &g_monsters[i];
       if (!m->alive) continue;
       if (approx_dist(m->x - p->x, m->y - p->y) < 0x14000){
-        damage_monster(m, 3);
+        damage_monster(m, g_stats.splash_damage);
       }
     }
   } else {
@@ -895,7 +895,7 @@ static void update_shots(int px, int py){
           struct Monster* m = &g_monsters[j];
           if (!m->alive) continue;
           if (approx_dist(m->x - p->x, m->y - p->y) < 0x6000){
-            damage_monster(m, p->kind == SHOT_FIRE ? 5 : 2);
+            damage_monster(m, p->kind == SHOT_FIRE ? g_stats.fire_damage : g_stats.spark_damage);
             explode(p);
             break;
           }
@@ -1009,6 +1009,25 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
     m->cooldown = k->attack_ticks;
     return;
   }
+  /* bats flutter: now and then they lurch to a random open neighbor */
+  bool erratic = m->kind == MON_BAT && rng_range(100) < 35;
+  /* eyes keep their distance: too close, they back away (uphill) */
+  bool retreat = m->kind == MON_EYE && here <= 2;
+  if (erratic || retreat){
+    int start = rng_range(4);
+    for (int j = 0; j < 4; ++j){
+      int dir = (start + j) & 3;
+      int nx = m->cx + (dir == 0) - (dir == 2);
+      int ny = m->cy + (dir == 1) - (dir == 3);
+      if (!in_map(nx, ny)) continue;
+      int c = cell_at(nx, ny);
+      if (occupant[c] || (nx == pcx && ny == pcy) || g_map[c] != CELL_EMPTY) continue;
+      if (retreat && flow[c] <= here) continue;
+      monster_start_move(m, index, nx, ny);
+      m->cooldown = k->think_ticks;
+      return;
+    }
+  }
   /* step downhill on the flow field */
   int best = here;
   int bx = -1;
@@ -1069,6 +1088,40 @@ static void update_monsters(int pcx, int pcy, int px, int py){
 
 /* ---- Items ---- */
 
+/* Crystals are also power: at these totals the hero's staff and body grow
+ * stronger for the rest of the run. */
+static void crystal_milestone(int total){
+  switch (total){
+    case 10:
+      g_stats.spark_damage = 3;
+      show_message("CRYSTAL POWER: SPARKS BITE DEEPER");
+      break;
+    case 25:
+      g_stats.max_hp += 25;
+      g_stats.hp += 25;
+      show_message("CRYSTAL POWER: VITALITY +25");
+      break;
+    case 40:
+      g_stats.regen_ticks = 3;
+      show_message("CRYSTAL POWER: MANA FLOWS FASTER");
+      break;
+    case 60:
+      g_stats.fire_damage = 7;
+      g_stats.splash_damage = 5;
+      show_message("CRYSTAL POWER: FIREBALLS ROAR");
+      break;
+    case 85:
+      g_stats.max_hp += 25;
+      g_stats.hp += 25;
+      g_stats.spark_damage = 4;
+      show_message("CRYSTAL POWER: THE DEEP ANSWERS YOU");
+      break;
+    default:
+      return;
+  }
+  sfx(SFX_KEY);
+}
+
 static void update_items(int pcx, int pcy){
   for (int i = 0; i < MAX_ITEMS; ++i){
     struct Item* it = &g_items[i];
@@ -1080,6 +1133,7 @@ static void update_items(int pcx, int pcy){
     switch (it->type){
       case ITEM_CRYSTAL:
         g_stats.crystals += 1;
+        crystal_milestone(g_stats.crystals);
         g_stats.score += 10 * g_stats.depth;
         spawn_effect(EFFECT_GEM_PUFF, x, y, 0x3000);
         spawn_burst(x, y, 0x2000, 8, 0x0CFA, 0x0A00);

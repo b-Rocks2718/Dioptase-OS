@@ -289,6 +289,11 @@ struct PlayerStats {
   int exit_reached;   /* 1 portal, 2 the Heart (victory) */
   int shake;          /* camera shake ticks */
   int hurt;           /* red flash ticks */
+  /* powers bought by crystal milestones (see world.c crystal_milestone) */
+  int spark_damage;
+  int fire_damage;
+  int splash_damage;
+  int regen_ticks;    /* ticks per point of mana regained */
 };
 
 /* Sound effects (audio.c). */

@@ -45,6 +45,10 @@ and take the **Heart of Dioptase** to win.
 | `X` (title screen) | quit to the shell |
 
 Mana regenerates over time; red potions restore health, blue ones mana.
+Crystals are power as well as score: at 10, 25, 40, 60, and 85 crystals your
+sparks, health, mana flow, and fireballs grow stronger for the rest of the
+run. Some walls are cracked, with light seeping through — a fireball shatters
+them and opens a hidden vault.
 Monsters wake when you come near: slimes and bats bite, floating eyes spit
 bolts you can sidestep, and wraiths hit hard. Ctrl-C quits at any time.
 

@@ -304,6 +304,10 @@ static void reset_stats(void){
   g_stats.kills = 0;
   g_stats.hurt = 0;
   g_stats.shake = 0;
+  g_stats.spark_damage = 2;
+  g_stats.fire_damage = 5;
+  g_stats.splash_damage = 3;
+  g_stats.regen_ticks = MANA_REGEN_TICKS;
   player.cooldown = 0;
   player.cast_t = 0;
 }
@@ -525,7 +529,7 @@ static bool update_player(void){
   if (player.cooldown > 0) player.cooldown -= 1;
   if (player.cast_t > 0) player.cast_t -= 1;
   player.regen += 1;
-  if (player.regen >= MANA_REGEN_TICKS){
+  if (player.regen >= g_stats.regen_ticks){
     player.regen = 0;
     if (g_stats.mp < MAX_MP){
       g_stats.mp += 1;
