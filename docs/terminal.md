@@ -122,8 +122,12 @@ processes recovery before rendering that prompt.
 Recovery restores the terminal's established startup state:
 
 - reload the built-in text tiles
-- set tile scale and both tile scroll registers to `0`
+- set tile scale, pixel scale, and both tile scroll registers to `0`
 - hide every sprite by moving it to `HIDDEN_SPRITE_COORD`
+- clear the user-visible part of the pixel framebuffer (pixels `0..75775`,
+  mapped by the terminal with `get_pixel_fb()`) to black, because text tiles
+  are transparent where their pixels are `0xFXXX` and a program's last frame
+  would otherwise show through
 - reset circular-scroll state and clear the visible framebuffer
 - home and show the cursor
 - reset saved-cursor, delayed-wrap, blink, and text-color state

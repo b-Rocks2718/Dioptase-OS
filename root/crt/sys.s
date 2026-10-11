@@ -1900,6 +1900,78 @@ get_spritemap.errno_done:
 
   ret
 
+  .global get_pixel_fb
+# Marshal arguments and issue the get pixel framebuffer system-call wrapper.
+get_pixel_fb:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 62
+  trap
+  cmp  r2, r0
+  bz   get_pixel_fb.errno_done
+  sw   r2, [errno]
+get_pixel_fb.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global set_pixel_scale
+# Marshal arguments and issue the set pixel scale system-call wrapper.
+set_pixel_scale:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r2, r1
+  movi r1, 63
+  trap
+  cmp  r2, r0
+  bz   set_pixel_scale.errno_done
+  sw   r2, [errno]
+set_pixel_scale.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
   .global signal_child
 # Marshal arguments and issue the signal child system-call wrapper.
 signal_child:

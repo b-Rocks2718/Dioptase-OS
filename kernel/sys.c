@@ -1868,9 +1868,11 @@ static void claim_foreground_display(void){
   blocking_lock_release(&foreground_child_lock);
 }
 
-// Map one display MMIO window (tilemap, tile framebuffer, or spritemap) into
-// the caller and record a foreground display claim. Returns the user address,
-// or -1 if the caller's virtual address space has no room.
+// Map one display MMIO window (tilemap, tile framebuffer, spritemap, or the
+// user-visible part of the pixel framebuffer) into the caller and record a
+// foreground display claim. `size` is rounded up to whole pages, so every
+// window must end where rounding exposes no device registers. Returns the user
+// address, or -1 if the caller's virtual address space has no room.
 static int map_display_window(unsigned size, unsigned paddr){
   void* mapping = mmap_physmem(size, paddr, MMAP_READ | MMAP_WRITE | MMAP_USER);
   if (mapping == NULL){
@@ -2232,6 +2234,16 @@ int trap_handler(unsigned code,
     }
     case TRAP_GET_SPRITEMAP: {
       return map_display_window(SPRITEMAP_SIZE, (unsigned)SPRITEMAP);
+    }
+    case TRAP_GET_PIXEL_FB: {
+      // Whole framebuffer pages only: the rounded tail page holds device
+      // registers (see PIXEL_FB_USER_SIZE in vga.h).
+      return map_display_window(PIXEL_FB_USER_SIZE, (unsigned)PIXEL_FB);
+    }
+    case TRAP_SET_PIXEL_SCALE: {
+      claim_foreground_display();
+      console_set_pixel_scale(arg1);
+      return 0;
     }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);

@@ -24,10 +24,16 @@
 
 #define TERMINAL_BUF_SIZE 128
 #define TERMINAL_DEFAULT_TILE_SCALE 0
+#define TERMINAL_DEFAULT_PIXEL_SCALE 0
 #define TERMINAL_SCROLL_ORIGIN 0
 #define TERMINAL_DEFAULT_TEXT_COLOR 0xFF
 
 volatile short* TILE_FB = NULL;
+
+// The terminal's mapping of the pixel framebuffer, used only to blank the
+// layer under the tiles during display recovery (programs may draw there).
+// Accessed as words so recovery clears two pixels per store.
+volatile int* PIXEL_FB = NULL;
 
 // Cursor movement is relative to visible screen coordinates. Once the terminal
 // starts scrolling, visible row 0 no longer matches physical TILE_FB row 0, so
@@ -335,13 +341,22 @@ static void cursor_home(void){
 //   happen before that prompt is rendered.
 //
 // Postconditions:
-// - Tile scale and both scroll registers match terminal startup state.
+// - Tile scale, pixel scale, and both scroll registers match terminal startup
+//   state.
 // - The built-in text tiles are loaded and every sprite is hidden.
+// - The user-mapped part of the pixel framebuffer is black, so a program's
+//   last frame cannot show through transparent tiles later.
 // - The visible framebuffer, cursor, scrolling, color, saved cursor, wrapping,
 //   and blink state match a freshly cleared terminal.
 static void reset_display_state(void){
+  if (PIXEL_FB != NULL){
+    for (int i = 0; i < PIXEL_FB_USER_PIXELS / 2; ++i){
+      PIXEL_FB[i] = 0;
+    }
+  }
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_pixel_scale(TERMINAL_DEFAULT_PIXEL_SCALE);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 
@@ -893,8 +908,13 @@ void render_bytes(int n){
 int main(void){
   clear_screen();
   TILE_FB = get_tile_fb();
+  volatile short* pixel_fb = get_pixel_fb();
+  if ((int)pixel_fb != -1){
+    PIXEL_FB = (volatile int*)pixel_fb;
+  }
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
+  set_pixel_scale(TERMINAL_DEFAULT_PIXEL_SCALE);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 
