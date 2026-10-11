@@ -54,6 +54,27 @@ volatile short* get_tilemap(void);
 // Map the tile framebuffer MMIO into this process.
 volatile short* get_tile_fb(void);
 
+// Map the pixel framebuffer into this process. The window is the page-aligned
+// prefix of the 320x240 buffer that stops before the PS/2, UART, PIT, SD, and
+// audio registers (0x25000 bytes: rows 0..235 are complete, stride 320).
+// Returns the same pointer on repeat calls, or (short*)-1 if no virtual
+// range is available.
+volatile short* get_pixel_fb(void);
+
+// Write the pixel-scale register and return 0. Hardware displays each pixel
+// at 2**(n+1), so 0 fills 640x480 from the 320x240 buffer and 1 shows the
+// top-left 160x120 of that buffer at 4x. Claims the foreground display.
+int set_pixel_scale(unsigned scale);
+
+// Ask the terminal to deliver raw PS/2 events on stdin: each event is the
+// same 16-bit getkey() word, little-endian, including releases (bit 8).
+// `enabled` must be 0 (cooked characters) or 1 (raw). Returns 0, or -1 with
+// errno EINVAL. Exec clears the mode. Forked children start cooked.
+int set_keyboard_raw(int enabled);
+
+// Return 1 when the live foreground child has raw keyboard mode set, else 0.
+int foreground_keyboard_raw(void);
+
 unsigned get_vga_status(void);
 
 unsigned get_vga_frame_counter(void);

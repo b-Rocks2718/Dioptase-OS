@@ -2175,3 +2175,145 @@ unmask_signal.errno_done:
   pop r20
 
   ret
+
+  .global get_pixel_fb
+# Map the pixel framebuffer into this process (trap 62).
+get_pixel_fb:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 62
+  trap
+  cmp  r2, r0
+  bz   get_pixel_fb.errno_done
+  sw   r2, [errno]
+get_pixel_fb.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global set_pixel_scale
+# Write the pixel-scale register (trap 63). Argument is the caller's r1.
+set_pixel_scale:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 63
+  trap
+  cmp  r2, r0
+  bz   set_pixel_scale.errno_done
+  sw   r2, [errno]
+set_pixel_scale.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global set_keyboard_raw
+# Select cooked or raw keyboard delivery for this thread (trap 64).
+set_keyboard_raw:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 64
+  trap
+  cmp  r2, r0
+  bz   set_keyboard_raw.errno_done
+  sw   r2, [errno]
+set_keyboard_raw.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global foreground_keyboard_raw
+# Read the foreground child's raw-keyboard flag (trap 65).
+foreground_keyboard_raw:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  movi r1, 65
+  trap
+  cmp  r2, r0
+  bz   foreground_keyboard_raw.errno_done
+  sw   r2, [errno]
+foreground_keyboard_raw.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
