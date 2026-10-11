@@ -87,8 +87,23 @@
 #define MAP_CELLS 1024
 
 /* Cell contents: 0 is open floor. Values 1..15 are solid walls using texture
- * (value - 1). */
+ * (value - 1). Values from CELL_DOOR_BASE are doors, indexing g_doors. */
 #define CELL_EMPTY 0
+#define CELL_DOOR_BASE 64
+
+/* Doors are thin sliding panels on a cell's center plane. `axis_x` means the
+ * panel lies on the plane x = cx + 0.5 (the doorway runs east-west). `open`
+ * is how far the panel has slid aside (16.16, FIX_ONE = fully open). */
+struct Door {
+  int cx;
+  int cy;
+  int axis_x;
+  int locked;
+  int open;
+  int opening;
+};
+#define MAX_DOORS 40
+#define DOOR_PASSABLE 0xC000
 
 /* ---- Textures (assets.s order) ---- */
 #define TEX_SIZE 64
@@ -101,6 +116,164 @@
 #define TEX_DOOR_LOCKED 5
 #define TEX_RUNES 6
 #define TEX_BRICK_DARK 7
+
+/* ---- Billboard sprites (assets.s order) ---- */
+#define SPR_SIZE 32
+#define SPR_BYTES 1024
+#define SPR_SLIME 0        /* 4 frames */
+#define SPR_BAT 4          /* 4 frames */
+#define SPR_EYE 8          /* 5 frames: 0-2 look, 3 blink, 4 charge */
+#define SPR_WRAITH 13      /* 4 frames */
+#define SPR_CRYSTAL 17     /* 4 frames */
+#define SPR_POTION_HP 21
+#define SPR_POTION_MP 22
+#define SPR_KEY 23
+#define SPR_PORTAL 24      /* 4 frames */
+#define SPR_ORB_SPARK 28
+#define SPR_ORB_FIRE 29
+#define SPR_ORB_ENEMY 30
+#define SPR_PUFF_FIRE 31   /* 4 frames */
+#define SPR_PUFF_GEM 35    /* 4 frames */
+#define SPR_COUNT 39
+
+/* One sprite to draw this frame. Positions are world 16.16; `z` is the
+ * height of the sprite's bottom edge above the floor and `size` its world
+ * height (and width). */
+struct Billboard {
+  int x;
+  int y;
+  int z;
+  int size;
+  int frame;
+  int light;       /* extra light levels (negative darkens) */
+  int flags;
+  int depth;       /* filled in by the renderer */
+};
+#define BB_FULLBRIGHT 1    /* ignore distance fog (glowing things) */
+#define BB_FLASH 2         /* draw blown-out white (damage flash) */
+#define MAX_BILLBOARDS 64
+
+/* ---- World entities ---- */
+#define MONSTER_KINDS 4
+#define MON_SLIME 0
+#define MON_BAT 1
+#define MON_EYE 2
+#define MON_WRAITH 3
+
+struct Monster {
+  int alive;
+  int kind;
+  int hp;
+  int cx;          /* cell it occupies (or is moving into) */
+  int cy;
+  int x;           /* drawn position, 16.16 */
+  int y;
+  int from_x;
+  int from_y;
+  int move_t;
+  int move_len;    /* 0 when not moving */
+  int cooldown;
+  int attack_t;
+  int flash;
+  int anim;
+  int awake;
+};
+#define MAX_MONSTERS 24
+
+#define ITEM_CRYSTAL 0
+#define ITEM_POTION_HP 1
+#define ITEM_POTION_MP 2
+#define ITEM_KEY 3
+#define ITEM_PORTAL 4
+#define ITEM_HEART 5
+
+struct Item {
+  int active;
+  int type;
+  int cx;
+  int cy;
+  int phase;
+};
+#define MAX_ITEMS 40
+
+#define SHOT_SPARK 0
+#define SHOT_FIRE 1
+#define SHOT_ENEMY 2
+
+struct Projectile {
+  int active;
+  int kind;
+  int x;
+  int y;
+  int vx;          /* per tick, 16.16 */
+  int vy;
+  int from_player;
+  int life;
+};
+#define MAX_SHOTS 24
+
+#define EFFECT_FIRE_PUFF 0
+#define EFFECT_GEM_PUFF 1
+
+struct Effect {
+  int active;
+  int kind;
+  int x;
+  int y;
+  int z;
+  int t;
+};
+#define MAX_EFFECTS 24
+
+/* Point light for this frame: adds up to `strength` light levels within
+ * `radius` (16.16) of (x, y). */
+struct Light {
+  int x;
+  int y;
+  int radius;
+  int strength;
+  int scale;       /* (strength << 20) / radius, for the renderer */
+};
+#define MAX_LIGHTS 12
+
+#define MAX_HP 100
+#define MAX_MP 100
+#define FINAL_DEPTH 8
+
+struct PlayerStats {
+  int hp;
+  int max_hp;
+  int mp;
+  int crystals;
+  int keys;
+  int depth;
+  int score;
+  int kills;
+  int exit_reached;   /* 1 portal, 2 the Heart (victory) */
+  int shake;          /* camera shake ticks */
+  int hurt;           /* red flash ticks */
+};
+
+/* Sound effects (audio.c). */
+#define SFX_SPARK 1
+#define SFX_FIRE 2
+#define SFX_EXPLODE 3
+#define SFX_FIZZLE 4
+#define SFX_MONSTER_HURT 5
+#define SFX_MONSTER_DIE 6
+#define SFX_PLAYER_HURT 7
+#define SFX_CRYSTAL 8
+#define SFX_POTION 9
+#define SFX_KEY 10
+#define SFX_DOOR 11
+#define SFX_STEP 12
+#define SFX_GROWL 13
+#define SFX_ENEMY_SHOOT 14
+#define SFX_LOCKED 15
+#define SFX_PORTAL 16
+#define SFX_NOMANA 17
+#define SFX_DEATH 18
+#define SFX_BUMP 19
 
 /* ---- Camera ---- */
 struct Camera {
@@ -129,6 +302,10 @@ void draw_wall(unsigned short* dst, int count, unsigned char* texcol,
 void fill_rows(unsigned short* dst, int count, unsigned short* colors, int advance);
 unsigned umul16(unsigned a, unsigned b);
 unsigned udiv32(unsigned n, unsigned d);
+void draw_sprite_col(unsigned short* dst, int count, unsigned char* texcol,
+                     int texpos, int texstep, unsigned short* shade);
+void dim_view(unsigned short* view);
+void tint_view(unsigned short* view, int and_mask, int or_mask);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
                     unsigned char* floor_tex, unsigned char* ceil_tex);
 
@@ -141,6 +318,10 @@ extern unsigned char flat_textures[16384];
 #define FLAT_FLOOR_MOSS 2
 #define FLAT_CEILING_ROCK 3
 extern int sin_table[4096];
+extern unsigned char sprite_texels[39936];
+extern unsigned char sprite_spans[2496];
+extern unsigned short overlay_staff[2048];   /* two 32x32 sprites, 12-bit */
+extern unsigned short overlay_cursor[1024];
 extern unsigned char font_small[320];
 extern unsigned char font_big[768];
 extern unsigned char font_big_spans[192];
@@ -161,6 +342,10 @@ int icos(int angle);
 int fixmul(int a, int b);
 void render_init(void);
 void render_view(struct Camera* cam);
+void set_light_offset(int levels);
+extern struct Billboard g_bills[MAX_BILLBOARDS];
+extern int g_bill_count;
+struct Billboard* add_billboard(int x, int y, int z, int size, int frame);
 
 /* ---- hud.c ---- */
 extern unsigned g_hud_words[1920];
@@ -177,7 +362,48 @@ void hud_upload(void);
 
 /* ---- world.c ---- */
 extern unsigned char g_map[MAP_CELLS];
-void world_init_test_map(void);
+extern unsigned char g_seen[MAP_CELLS];
+extern struct Door g_doors[MAX_DOORS];
+extern int g_door_count;
+extern struct Monster g_monsters[MAX_MONSTERS];
+extern struct Item g_items[MAX_ITEMS];
+extern struct Projectile g_shots[MAX_SHOTS];
+extern struct Light g_lights[MAX_LIGHTS];
+extern int g_light_count;
+extern struct PlayerStats g_stats;
+extern int g_floor_flat;
+extern int g_ceiling_flat;
+void rng_seed(unsigned seed);
+unsigned rng_next(void);
+int rng_range(int n);
+int approx_dist(int dx, int dy);
 bool cell_solid(int cx, int cy);
+struct Door* door_at(int cx, int cy);
+bool door_open(int cx, int cy);
+struct Monster* monster_at(int cx, int cy);
+void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir);
+void world_tick(int pcx, int pcy, int px, int py, bool player_moved);
+void world_draw(int frame);
+void spawn_shot(int kind, int x, int y, int vx, int vy, bool from_player);
+void spawn_effect(int kind, int x, int y, int z);
+int world_monsters_left(void);
+int world_flow(int cx, int cy);
+
+/* ---- autopilot.c ---- */
+int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp);
+
+/* ---- main.c (game) ---- */
+void player_hurt(int amount);
+void show_message(char* text);
+
+/* ---- audio.c ---- */
+#define MUSIC_NONE 0
+#define MUSIC_TITLE 1
+#define MUSIC_DUNGEON 2
+#define MUSIC_VICTORY 3
+void sfx(int id);
+void audio_start(void);
+void audio_stop(void);
+void audio_music(int song);
 
 #endif // DELVE_H

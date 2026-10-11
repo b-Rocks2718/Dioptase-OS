@@ -252,3 +252,61 @@ flats_pixel:
   pop  r21
   pop  r20
   ret
+
+# Draw one column of a billboard sprite; palette index 0 is transparent.
+# Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
+#          r3 = sprite texel column (32 bytes), r4 = texel position (16.16),
+#          r5 = step per pixel (16.16), r6 = shade table.
+# Outputs: none. Clobbers r1, r2, r4, r7, r8.
+  .global draw_sprite_col
+draw_sprite_col:
+  lsr  r7, r4, 16
+  add  r7, r3, r7
+  lba  r7, [r7]
+  cmp  r7, r0
+  bz   draw_sprite_col_skip
+  lsl  r7, r7, 1
+  add  r7, r6, r7
+  lda  r8, [r7]
+  sda  r8, [r1]
+draw_sprite_col_skip:
+  add  r1, r1, 16
+  add  r4, r4, r5
+  add  r2, r2, -1
+  bnz  draw_sprite_col
+  ret
+
+# Halve every channel of the view (darkened backdrop for menus and the map).
+# Inputs:  r1 = back buffer (word aligned). Outputs: none. Clobbers r1-r5.
+  .global dim_view
+dim_view:
+  movi r2, 7680                # words in the 160x96 view
+  movi r4, 0x07770777          # per-halfword channel mask after the shift
+dim_view_loop:
+  lwa  r3, [r1]
+  lsr  r3, r3, 1
+  and  r3, r3, r4
+  swa  r3, [r1], 4
+  add  r2, r2, -1
+  bnz  dim_view_loop
+  ret
+
+# Recolor every view pixel as (pixel & and_mask) | or_mask (damage flash).
+# Inputs:  r1 = back buffer (word aligned), r2 = and mask, r3 = or mask
+#          (12-bit 0x0BGR values, applied to both halves of each word).
+# Outputs: none. Clobbers r1-r6.
+  .global tint_view
+tint_view:
+  lsl  r4, r2, 16
+  or   r2, r2, r4
+  lsl  r4, r3, 16
+  or   r3, r3, r4
+  movi r5, 7680
+tint_view_loop:
+  lwa  r6, [r1]
+  and  r6, r6, r2
+  or   r6, r6, r3
+  swa  r6, [r1], 4
+  add  r5, r5, -1
+  bnz  tint_view_loop
+  ret

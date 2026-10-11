@@ -476,6 +476,378 @@ def ceiling_beams(rng=RNG):
     return out
 
 
+SPR = 32  # billboard sprite size
+
+
+class Canvas:
+    """A 32x32 sprite canvas of palette indices (0 = transparent)."""
+
+    def __init__(self):
+        self.px = np.zeros((SPR, SPR), dtype=np.int64)
+
+    def set(self, x, y, ramp, shade):
+        x, y = int(round(x)), int(round(y))
+        if 0 <= x < SPR and 0 <= y < SPR:
+            self.px[y, x] = idx(ramp, max(1, min(15, shade)))
+
+    def outline(self, ramp=GRAY, shade=1):
+        """Add a dark one-pixel outline around opaque pixels."""
+        src = self.px.copy()
+        for y in range(SPR):
+            for x in range(SPR):
+                if src[y, x]:
+                    continue
+                for (dy, dx) in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                    yy, xx = y + dy, x + dx
+                    if 0 <= yy < SPR and 0 <= xx < SPR and src[yy, xx]:
+                        self.px[y, x] = idx(ramp, shade)
+                        break
+
+
+def shaded_blob(c, cx, cy, rx, ry, ramp, base=8, light=(-0.55, -0.65), spec=True,
+                squash_bottom=True):
+    """Fill an ellipse with sphere-like shading lit from `light`."""
+    lx, ly = light
+    lz = np.sqrt(max(0.0, 1 - lx * lx - ly * ly))
+    for y in range(SPR):
+        for x in range(SPR):
+            nx = (x + 0.5 - cx) / rx
+            ny = (y + 0.5 - cy) / ry
+            if squash_bottom and ny > 0:
+                ny *= 1.0
+            d = nx * nx + ny * ny
+            if d > 1.0:
+                continue
+            nz = np.sqrt(1 - d)
+            diff = max(0.0, nx * lx + ny * ly + nz * lz)
+            shade = base - 4 + diff * 8
+            if spec and diff > 0.93:
+                shade = 15
+            c.set(x, y, ramp, shade)
+
+
+def sprite_slime(phase):
+    """Green slime: squashes and stretches as it hops (phase 0..3)."""
+    c = Canvas()
+    squash = [0.0, 0.12, 0.0, -0.12][phase % 4]
+    rx = 12 * (1 + squash)
+    ry = 9 * (1 - squash)
+    cy = 31 - ry
+    shaded_blob(c, 16, cy, rx, ry, SLIME, base=8)
+    # flat bottom shadow line
+    for x in range(int(16 - rx) + 1, int(16 + rx)):
+        c.set(x, 30, SLIME, 3)
+    # eyes
+    ey = int(cy - ry * 0.25)
+    for ex in (12, 20):
+        c.set(ex, ey, GRAY, 15)
+        c.set(ex, ey + 1, GRAY, 15)
+        c.set(ex + (1 if ex < 16 else 0), ey + 1, GRAY, 1)
+    # mouth
+    for x in range(14, 19):
+        c.set(x, ey + 4, SLIME, 2)
+    # floating bits inside
+    c.set(10, int(cy + 2), SLIME, 12)
+    c.set(22, int(cy + 3), SLIME, 11)
+    c.outline(SLIME, 1)
+    return c.px
+
+
+def sprite_bat(phase):
+    """Cave bat with flapping wings (phase 0..3)."""
+    c = Canvas()
+    flap = [-5, 0, 5, 0][phase % 4]
+    shaded_blob(c, 16, 16, 4.5, 5.5, PURPLE, base=6)
+    for side in (-1, 1):
+        for i in range(12):
+            x = 16 + side * (4 + i)
+            tip = flap * (i / 11.0)
+            top = 13 + tip - (3 if i < 6 else 1) * np.sin(i / 11.0 * np.pi)
+            bottom = 18 + tip * 0.8 - (i % 4 == 3) * 2
+            for y in range(int(top), int(bottom)):
+                c.set(x, y, PURPLE, 5 + (y == int(top)) * 3)
+    for ex in (14, 18):
+        c.set(ex, 14, RED, 14)
+    c.set(15, 18, GRAY, 15)
+    c.set(17, 18, GRAY, 15)
+    # ears
+    c.set(13, 10, PURPLE, 6)
+    c.set(19, 10, PURPLE, 6)
+    c.outline(PURPLE, 1)
+    return c.px
+
+
+def sprite_eye(phase):
+    """Floating eye; phase 0..2 looks around, 3 is mid-blink, 4 charges."""
+    c = Canvas()
+    shaded_blob(c, 16, 15, 11, 11, BONE, base=10)
+    # veins
+    rng = np.random.default_rng(99)
+    for _ in range(6):
+        a = rng.uniform(0, 2 * np.pi)
+        for r in np.linspace(7, 10.5, 6):
+            c.set(16 + np.cos(a) * r, 15 + np.sin(a) * r, RED, 8)
+            a += rng.uniform(-0.25, 0.25)
+    look = [(0, 0), (-3, 1), (3, 1), (0, 0), (0, 0)][phase % 5]
+    ix, iy = 16 + look[0], 15 + look[1]
+    iris_ramp = FIRE if phase == 4 else RED
+    for y in range(SPR):
+        for x in range(SPR):
+            d = np.hypot(x + 0.5 - ix, y + 0.5 - iy)
+            if d < 5.5:
+                c.set(x, y, iris_ramp, 6 + (5.5 - d) * 1.4)
+            if d < 2.5:
+                c.set(x, y, GRAY, 1)
+    c.set(ix - 2, iy - 3, GRAY, 15)
+    if phase == 3:
+        for y in range(5, 25):
+            for x in range(6, 27):
+                if c.px[y, x] and abs(y - 15) > 2:
+                    c.set(x, y, BONE, 6 if y < 15 else 5)
+    # tentacles below
+    for t, x0 in enumerate((10, 16, 22)):
+        for i in range(6):
+            x = x0 + np.sin(i * 0.9 + phase + t) * 1.2
+            c.set(x, 26 + i, PINK, 7 - i // 2)
+    c.outline(RED, 2)
+    return c.px
+
+
+def sprite_wraith(phase):
+    """Translucent-looking wraith with a waving hem (phase 0..3)."""
+    c = Canvas()
+    for y in range(4, 31):
+        half = 4 + min(y - 4, 10) * 0.8
+        for x in range(SPR):
+            dx = x + 0.5 - 16
+            wave = np.sin(x * 0.7 + phase * 1.5) * 2
+            if abs(dx) < half and y < 28 + wave:
+                shade = 11 - abs(dx) / half * 5 + (y < 10) * 2
+                if (x + y) % 2 == 0 and y > 20:
+                    shade -= 2
+                c.set(x, y, ICE, shade)
+    for ex in (13, 19):
+        for dy in range(3):
+            c.set(ex, 10 + dy, BLUE, 2)
+            c.set(ex + 1, 10 + dy, BLUE, 2)
+    c.set(13, 10, ICE, 15)
+    c.set(19, 10, ICE, 15)
+    for x in range(14, 19):
+        c.set(x, 16, BLUE, 3)
+    # arms reaching out
+    for i in range(6):
+        y = 15 + i * 0.6 + np.sin(phase + i) * 0.5
+        c.set(9 - i, y, ICE, 9)
+        c.set(23 + i, y, ICE, 9)
+    c.outline(BLUE, 3)
+    return c.px
+
+
+def sprite_crystal(phase):
+    """Dioptase crystal cluster on the floor with a moving glint."""
+    c = Canvas()
+    shards = [(16, 30, 4.5, 15, 0.0), (11, 30, 3.0, 9, -0.35), (21, 30, 3.0, 10, 0.3)]
+    for (bx, by, w, h, lean) in shards:
+        for y in range(int(by - h), by):
+            t = (by - y) / h
+            half = w * (1.0 if t < 0.75 else (1 - t) / 0.25)
+            cx = bx + lean * (by - y)
+            for x in range(SPR):
+                dx = x + 0.5 - cx
+                if abs(dx) <= half:
+                    facet = 12 if dx < -half * 0.3 else (7 if dx > half * 0.3 else 10)
+                    c.set(x, y, GEM, facet)
+    glint_y = 30 - (phase % 4) * 4 - 3
+    for d in range(-1, 2):
+        c.set(16 + d, glint_y, GRAY, 15)
+        c.set(16, glint_y + d, GRAY, 15)
+    c.outline(GEM, 2)
+    return c.px
+
+
+def sprite_potion(ramp):
+    """Round-bottomed flask with liquid and a cork."""
+    c = Canvas()
+    shaded_blob(c, 16, 24, 7, 7, ramp, base=9)
+    for y in range(12, 19):
+        for x in range(13, 19):
+            c.set(x, y, ICE, 11 if x < 15 else 8)
+    for y in range(9, 12):
+        for x in range(13, 19):
+            c.set(x, y, WOOD, 8 if x < 16 else 6)
+    c.set(13, 21, GRAY, 15)
+    c.set(13, 22, GRAY, 13)
+    c.outline(GRAY, 1)
+    return c.px
+
+
+def sprite_key():
+    c = Canvas()
+    for y in range(SPR):
+        for x in range(SPR):
+            d = np.hypot(x + 0.5 - 10, y + 0.5 - 22)
+            if 2.2 < d < 5.2:
+                c.set(x, y, GOLD, 12 - (y > 22) * 4)
+    for x in range(14, 27):
+        c.set(x, 21, GOLD, 13)
+        c.set(x, 22, GOLD, 9)
+    for x in (21, 24):
+        for y in range(23, 26):
+            c.set(x, y, GOLD, 8)
+    c.outline(GOLD, 2)
+    return c.px
+
+
+def sprite_portal(phase):
+    """Swirling green descent portal (phase 0..3 rotates the arms)."""
+    c = Canvas()
+    for y in range(SPR):
+        for x in range(SPR):
+            dx = x + 0.5 - 16
+            dy = (y + 0.5 - 16) * 1.0
+            r = np.hypot(dx, dy)
+            if r > 15:
+                continue
+            a = np.arctan2(dy, dx)
+            swirl = np.sin(a * 3 + r * 0.55 - phase * np.pi / 2)
+            shade = 4 + (15 - r) * 0.45 + swirl * 3
+            if r < 3:
+                shade = 15
+            c.set(x, y, GEM if swirl > -0.2 else ICE, shade)
+    return c.px
+
+
+def sprite_orb(ramp, radius=6.0):
+    """Glowing spell orb: bright core fading to a soft rim."""
+    c = Canvas()
+    for y in range(SPR):
+        for x in range(SPR):
+            r = np.hypot(x + 0.5 - 16, y + 0.5 - 16)
+            if r < radius:
+                c.set(x, y, ramp, 15 - (r / radius) * 7)
+            elif r < radius + 2.5 and (x + y) % 2 == 0:
+                c.set(x, y, ramp, 6)
+    return c.px
+
+
+def sprite_puff(phase, ramp):
+    """Expanding burst for impacts and deaths (phase 0..3)."""
+    c = Canvas()
+    rng = np.random.default_rng(7 + phase)
+    radius = 4 + phase * 3.5
+    for _ in range(90):
+        a = rng.uniform(0, 2 * np.pi)
+        r = rng.uniform(0, radius)
+        shade = 15 - (r / radius) * 6 - phase * 2
+        c.set(16 + np.cos(a) * r, 16 + np.sin(a) * r, ramp, shade)
+    return c.px
+
+
+def overlay_staff():
+    """The player's crystal-tipped staff: 32x64 palette indices, held from the
+    lower right and leaning into the view."""
+    img = np.zeros((64, 32), dtype=np.int64)
+
+    def put(x, y, ramp, shade):
+        x, y = int(round(x)), int(round(y))
+        if 0 <= x < 32 and 0 <= y < 64:
+            img[y, x] = idx(ramp, max(1, min(15, shade)))
+
+    # shaft from the bottom right up toward the upper left
+    for t in np.linspace(0, 1, 160):
+        cx = 27 - t * 13 + np.sin(t * 9) * 0.8
+        cy = 63 - t * 50
+        for w in range(-2, 3):
+            shade = 7 - w * 1.5 + np.sin(t * 40) * 0.6
+            put(cx + w, cy, WOOD, shade)
+    # crystal head
+    for y in range(0, 16):
+        for x in range(6, 22):
+            dx = x + 0.5 - 14
+            dy = y + 0.5 - 8
+            if abs(dx) * 1.6 + abs(dy) <= 8.5:
+                facet = 13 if dx < -1 else (8 if dx > 1.5 else 11)
+                if abs(dx) * 1.6 + abs(dy) > 7.5:
+                    facet = 4
+                put(x, y, GEM, facet - (y > 10) * 2)
+    put(12, 4, GRAY, 15)
+    put(12, 5, GRAY, 15)
+    put(11, 5, GEM, 15)
+    # claw prongs holding the crystal
+    for (x, y) in ((9, 14), (10, 15), (18, 14), (17, 15), (13, 16), (14, 16), (15, 16)):
+        put(x, y, GOLD, 9)
+    # hand gripping the shaft
+    for y in range(36, 50):
+        for x in range(15, 30):
+            dx = x + 0.5 - 22
+            dy = y + 0.5 - 43
+            if (dx / 7.0) ** 2 + (dy / 6.5) ** 2 <= 1.0:
+                shade = 10 - dy * 0.35 - dx * 0.15
+                if abs(dy) < 6 and (int(y) - 37) % 4 == 3 and dx < 3:
+                    shade = 5   # finger creases
+                put(x, y, BONE, shade)
+    for x in range(14, 30):
+        for y in range(50, 64):
+            if x - 14 > (y - 50) * 0.3:
+                put(x, y, BLUE, 4 + (x - 14) * 0.15)   # sleeve
+    return img
+
+
+def overlay_cursor():
+    """Crosshair: 11x11 cross with a hollow center, centered in 32x32."""
+    img = np.zeros((32, 32), dtype=np.int64)
+    for d in range(2, 6):
+        for (x, y) in ((16 + d, 16), (16 - d, 16), (16, 16 + d), (16, 16 - d)):
+            img[y, x] = idx(GRAY, 15)
+    for (x, y) in ((17, 17), (15, 15), (17, 15), (15, 17)):
+        img[y, x] = idx(GEM, 12)
+    out = img.copy()
+    for y in range(32):
+        for x in range(32):
+            if img[y, x]:
+                continue
+            for (dy, dx) in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < 32 and 0 <= xx < 32 and img[yy, xx] and img[yy, xx] != idx(GEM, 12):
+                    out[y, x] = idx(GRAY, 1)
+                    break
+    return out
+
+
+def to_sprite_pixels(img, full_table):
+    """Palette indices -> 12-bit hardware sprite pixels (0xF000 = clear)."""
+    flat = img.reshape(-1)
+    return [0xF000 if v == 0 else int(full_table[v]) for v in flat]
+
+
+SPRITES = []  # (name, 32x32 row-major palette indices)
+
+
+def build_sprites():
+    for p in range(4):
+        SPRITES.append((f"slime{p}", sprite_slime(p)))
+    for p in range(4):
+        SPRITES.append((f"bat{p}", sprite_bat(p)))
+    for p in range(5):
+        SPRITES.append((f"eye{p}", sprite_eye(p)))
+    for p in range(4):
+        SPRITES.append((f"wraith{p}", sprite_wraith(p)))
+    for p in range(4):
+        SPRITES.append((f"crystal{p}", sprite_crystal(p)))
+    SPRITES.append(("potion_hp", sprite_potion(RED)))
+    SPRITES.append(("potion_mp", sprite_potion(BLUE)))
+    SPRITES.append(("key", sprite_key()))
+    for p in range(4):
+        SPRITES.append((f"portal{p}", sprite_portal(p)))
+    SPRITES.append(("orb_spark", sprite_orb(ICE, 4.5)))
+    SPRITES.append(("orb_fire", sprite_orb(FIRE, 6.5)))
+    SPRITES.append(("orb_enemy", sprite_orb(PINK, 5.0)))
+    for p in range(4):
+        SPRITES.append((f"puff_fire{p}", sprite_puff(p, FIRE)))
+    for p in range(4):
+        SPRITES.append((f"puff_gem{p}", sprite_puff(p, GEM)))
+
+
 FLATS = []  # floor/ceiling textures, row-major
 
 
@@ -561,6 +933,20 @@ def preview(dirname, shade_tables):
         x0 = c * (TEX * scale + 4)
         sheet[y0:y0 + TEX * scale, x0:x0 + TEX * scale] = rgb
     write_png(os.path.join(dirname, "textures.png"), sheet)
+    # sprites sheet, 4x scale, 8 per row, on a dark checker background
+    scale = 4
+    per_row = 8
+    rows = (len(SPRITES) + per_row - 1) // per_row
+    cell = SPR * scale + 4
+    sheet = np.zeros((rows * cell, per_row * cell, 3), dtype=np.uint8)
+    for k, (_, img) in enumerate(SPRITES):
+        r, c = divmod(k, per_row)
+        rgb = rgb_of[img].astype(np.uint8)
+        check = ((np.arange(SPR)[:, None] // 4 + np.arange(SPR)[None, :] // 4) % 2) * 20 + 30
+        rgb = np.where((img == 0)[:, :, None], check[:, :, None].astype(np.uint8), rgb)
+        rgb = np.repeat(np.repeat(rgb, scale, 0), scale, 1)
+        sheet[r * cell:r * cell + SPR * scale, c * cell:c * cell + SPR * scale] = rgb
+    write_png(os.path.join(dirname, "sprites.png"), sheet)
 
 
 def main():
@@ -574,6 +960,7 @@ def main():
 
     shade_tables = build_shade_tables()
     build_textures()
+    build_sprites()
 
     out = [
         "# Generated by tools/gen_assets.py -- do not edit by hand.",
@@ -608,6 +995,24 @@ def main():
         out.append(f"  # {name}")
         emit_bytes(out, None, img.reshape(-1))
     out.append("  .align 4")
+    # Billboards: column-major texels plus each column's opaque [top, bottom)
+    # span so the renderer can skip transparent rows and empty columns.
+    out.append("  .global sprite_texels")
+    out.append("sprite_texels:")
+    spans = []
+    for name, img in SPRITES:
+        out.append(f"  # {name}")
+        emit_bytes(out, None, img.T.reshape(-1))
+        for x in range(SPR):
+            col = np.nonzero(img[:, x])[0]
+            spans.extend([int(col[0]), int(col[-1]) + 1] if len(col) else [0, 0])
+    emit_bytes(out, "sprite_spans", spans)
+    out.append("  .align 4")
+    full = shade_tables[LIGHT_FULL]
+    staff = overlay_staff()
+    emit_halfs(out, "overlay_staff", to_sprite_pixels(staff[:32], full) + to_sprite_pixels(staff[32:], full))
+    emit_halfs(out, "overlay_cursor", to_sprite_pixels(overlay_cursor(), full))
+    out.append("  .align 4")
     emit_bytes(out, "font_small", small_font_bytes())
     here = os.path.dirname(os.path.abspath(__file__))
     rows, spans = big_font_bytes(os.path.join(here, "..", "..", "..", "common", "text_tiles.s"))
@@ -618,7 +1023,9 @@ def main():
         f.write("\n".join(out))
     if preview_dir:
         preview(preview_dir, shade_tables)
-    print(f"wrote {out_path}: {len(TEXTURES)} textures")
+    print(f"wrote {out_path}: {len(TEXTURES)} textures, {len(FLATS)} flats, {len(SPRITES)} sprites")
+    for i, (name, _) in enumerate(SPRITES):
+        print(f"  sprite {i:2d} {name}")
 
 
 if __name__ == "__main__":
