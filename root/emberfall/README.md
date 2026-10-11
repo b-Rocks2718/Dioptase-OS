@@ -39,6 +39,14 @@ pacing follows the 60 Hz frame counter. Audio is optional; use
 Spells: Ember Bolt, Fireball splash, Frost slow, Lightning chain, Holy Nova
 ring. Passives: Boots speed, Rune damage, Heart HP plus regen, Magnet pickup,
 Tome XP. Foes: slimes, bats, skeletons, orcs, wraiths, golems, and bosses.
+The warden sprite turns to face the last move direction (8 pre-rotated
+frames), and every level-up card shows its upgrade icon.
+
+Performance notes: bcc lowers `*` `/` `%` to software routines, so the hot
+per-frame paths (enemy steering, gem magnet, projectile and player collision,
+blitters, HUD numbers) use pointer iteration, shifts, and lookup tables
+instead. The e2e frame budget is 100 jiffies; the scripted run averages ~3
+with a max of 15.
 
 ## Checks
 
@@ -60,9 +68,14 @@ help, confirm, upgrade picks, restart, score, streaks, level-up, death, game
 over, and best-score persistence. It reads back tile text and pixel words from
 real MMIO, asserts zero transparent-marker leaks, times every frame in
 jiffies, and dumps the framebuffers to SD1 output. The render below is composited
-from one such dumped guest framebuffer, not drawn by hand.
+from one such dumped guest framebuffer with `tools/render_shot.py`, which
+follows the emulator's compositor exactly; it is not drawn by hand.
 
 ![Emberfall e2e guest framebuffer](e2e_shot.png)
+
+`make test` also builds `tools/dump_art.c`, which renders the sprite art on
+the host against stub MMIO, checks the facing map plus art invariants, and
+writes `/tmp/facings.ppm` and `/tmp/icons.ppm` for visual review.
 
 ## Device contracts
 

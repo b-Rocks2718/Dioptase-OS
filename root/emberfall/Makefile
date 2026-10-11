@@ -22,6 +22,7 @@ CRT_ASM_SRCS_ORDERED := $(CRT_STARTUP_SRC) \
 	$(filter-out $(CRT_STARTUP_SRC),$(CRT_ASM_SRCS))
 
 C_SRCS := $(wildcard *.c)
+C_HDRS := $(wildcard *.h)
 LEGACY_C_ASMS := $(C_SRCS:.c=.s)
 LEGACY_CRT_C_ASMS := $(patsubst $(CRT_DIR)/%.c,crt_%.gen.s,$(CRT_C_SRCS))
 C_ASMS := $(patsubst %.c,$(BUILD_DIR)/%.s,$(C_SRCS))
@@ -40,7 +41,7 @@ $(PROGRAM): $(PROGRAM_OUTPUT)
 $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 	$(BASM) -bin -o $@ $(LINK_ASM_SRCS)
 
-$(BUILD_DIR)/%.s: %.c Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.s: %.c Makefile $(C_HDRS) | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
 
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
@@ -62,3 +63,8 @@ test: | $(BUILD_DIR)
 	gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 	  -fno-omit-frame-pointer -o $(BUILD_DIR)/game_test game.c tests/game_test.c
 	ASAN_OPTIONS=detect_leaks=0 ./$(BUILD_DIR)/game_test
+	@# Art checks build render.c against stub MMIO; -Werror is off because
+	@# the CRT headers redeclare NULL under host libc headers.
+	gcc -std=c11 -Wall -Wextra -fsanitize=address,undefined \
+	  -fno-omit-frame-pointer -o $(BUILD_DIR)/dump_art tools/dump_art.c game.c
+	ASAN_OPTIONS=detect_leaks=0 ./$(BUILD_DIR)/dump_art

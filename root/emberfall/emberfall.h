@@ -120,6 +120,9 @@ struct Player {
   int spell_level[5];
   int passive_level[5];
   int cooldown[5];
+  /* Last nonzero move direction, each -1/0/1; picks the player sprite. */
+  int face_x;
+  int face_y;
 };
 
 /* One live enemy seeking the warden. */

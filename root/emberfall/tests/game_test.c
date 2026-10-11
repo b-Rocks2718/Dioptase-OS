@@ -296,6 +296,37 @@ static void test_separation_streak(void) {
   printf("separation/streak ok\n");
 }
 
+static void test_player_facing(void) {
+  struct GameInput in;
+  start_run();
+  /* Fresh warden faces south. */
+  assert(game.player.face_x == 0);
+  assert(game.player.face_y == 1);
+  /* Each axis tracks its last nonzero input independently. */
+  in = blank_input();
+  in.move_x = 1;
+  game_tick(&game, in);
+  assert(game.player.face_x == 1);
+  assert(game.player.face_y == 1);
+  in.move_x = 0;
+  in.move_y = -1;
+  game_tick(&game, in);
+  assert(game.player.face_x == 1);
+  assert(game.player.face_y == -1);
+  /* Diagonal input turns both axes at once. */
+  in.move_x = -1;
+  in.move_y = 1;
+  game_tick(&game, in);
+  assert(game.player.face_x == -1);
+  assert(game.player.face_y == 1);
+  /* Standing still keeps the last facing. */
+  in = blank_input();
+  game_tick(&game, in);
+  assert(game.player.face_x == -1);
+  assert(game.player.face_y == 1);
+  printf("facing ok\n");
+}
+
 int main(void) {
   test_move_clamp();
   test_spells_fire();
@@ -306,6 +337,7 @@ int main(void) {
   test_spell_spread();
   test_fireball_second_target();
   test_separation_streak();
+  test_player_facing();
   printf("ALL EMBERFALL HOST TESTS PASS\n");
   return 0;
 }
