@@ -88,6 +88,47 @@ the matching TLB value in `rA`.
 `vmem_core_init()` flushes the local core's TLB and clears the active PID to 0
 at boot.
 
+#### TLB Ownership Across Context Switches
+
+A context switch clears the TLB (`tlbc`) only when the entries in it might be
+stale for the next thread; otherwise the thread resumes with its translations
+still cached. `vmem_tlb_switch_needs_flush()` decides, and `context_switch()`
+clears the TLB when told to. The rule relies on the TLB being keyed by `PID`
+(the page directory's physical address), so entries of different address
+spaces never match each other:
+
+- Every address space carries a TLB generation (`TCB.tlb_generation`), a
+  never-reused value from a global counter. It is replaced when the TCB gets a
+  new page directory (thread creation, `fork()`, exec) and before any
+  translation is removed or narrowed (`munmap()`, `vme_change_perms()`).
+- Each core records the one address space whose entries its TLB may hold, as
+  (page directory, generation) (`PerCore.tlb_owner_pid` and
+  `tlb_owner_generation`).
+- Switching to a thread with PID 0 (the idle thread, `daemon()` threads)
+  keeps the TLB and the record: those threads have no page directory or VMEs,
+  so they never create or use TLB-mapped translations.
+- Switching to a thread whose (page directory, generation) matches the record
+  keeps the TLB. Any other switch clears it and records the new thread.
+
+Why stale entries are never used:
+
+- A thread that unmaps memory on one core may still have entries for it on a
+  core it ran on before. The unmap gave its address space a new generation
+  first, so that core no longer matches and clears its TLB before the thread
+  runs there again. The bump precedes the page-table changes, so a thread
+  preempted part way through an unmap and resumed elsewhere is covered too.
+- A freed page directory can come back as a new address space with the same
+  PID, but always with a new generation, so no core takes the old space's
+  entries for the new one's.
+- Each address space has exactly one thread, so no other core can be running
+  in it while it changes.
+
+The common case this saves is a thread that blocks (a context switch to the
+idle thread) and resumes on the same core. `tests/vmem_tlb_ownership.c`
+checks both the kept and the cleared cases. A 32-bit generation could repeat
+after 2^32 address-space changes; the kernel does not guard against a core
+holding a record that old.
+
 ### Supported VM Features
 
 #### Global Initialization
@@ -160,6 +201,8 @@ Current caller requirements:
 
 - requires `p` to equal the exact start address returned by `mmap()`
 - removes the entire VME; there is no partial unmap or VME splitting
+- first gives the address space a new TLB generation (see "TLB Ownership
+  Across Context Switches"), so other cores' cached entries for it are retired
 - frees or releases any resident backing pages for that VME
 - invalidates the local core's TLB entries covering that range
 
@@ -347,7 +390,9 @@ Current VM code assumes:
 - one address space is active on only one core at a time
 
 That last point matters because `munmap()` invalidates TLB entries only on the
-current core. There is no cross-core TLB shootdown mechanism yet.
+current core. There is no cross-core TLB shootdown mechanism: entries other
+cores still hold are retired by the TLB generation check when the address
+space next runs there.
 
 Shared file-backed page sharing is implemented with the global page cache, which
 has its own lock and reference counts. Cache fill, dirty publication, final
@@ -390,8 +435,11 @@ break sharing later on write.
 
 #### Local-Core-Only TLB Invalidation
 
-Unmap invalidates the current core's TLB only. If future work introduces
-simultaneously active shared address spaces, this will need real TLB shootdown.
+Unmap invalidates the current core's TLB only and relies on TLB generations
+for the other cores. If future work introduces simultaneously active shared
+address spaces, this will need real TLB shootdown: a generation check happens
+only when a core switches to the address space, not while another of its
+threads is already running there.
 
 #### Page-Aligned File Offsets Only
 

@@ -237,6 +237,7 @@ void thread_(struct Fun* thread_fun,
   tcb->pid = create_page_directory();
   assert_always(tcb->pid != 0,
     "thread: failed to allocate a page directory for a new kernel thread.\n");
+  vmem_new_tlb_generation(tcb);
 
   scheduler_wake_thread(tcb);
 }
@@ -276,7 +277,10 @@ void block(unsigned was, void (*func)(void *), void *arg, bool run_with_interrup
 
   assert_always(me != idle, "threads block: idle thread attempted to block.\n");
 
-  context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts);
+  // The idle thread has pid 0 and never uses TLB-mapped memory, so this
+  // switch keeps the TLB (see vmem_tlb_switch_needs_flush).
+  context_switch(me, idle, func, arg, &core->current_thread, was, run_with_interrupts,
+    false);
 }
 
 // Arguments carried from acquire_or_block() into its block() continuation.
@@ -641,7 +645,9 @@ void event_loop(void) {
     // the final trap/interrupt/exception epilogue processes pending signals
     // only after that continuation has released its resources.
     int was = interrupts_disable();
-    context_switch(me, next, nothing, NULL, &core->current_thread, was, true);
+    bool flush_tlb = vmem_tlb_switch_needs_flush(next);
+    context_switch(me, next, nothing, NULL, &core->current_thread, was, true,
+      flush_tlb);
   }
 
   kernel_shutdown();

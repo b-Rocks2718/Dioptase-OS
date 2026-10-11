@@ -130,10 +130,74 @@ bool vmem_truncate_file(struct Node* node, unsigned target_size){
   return page_cache_shrink_file(&page_cache, node, target_size);
 }
 
+// Source of TLB generations. Every value handed out is new, so a (pid,
+// generation) pair names one state of one address space even after that page
+// directory is freed and its address reused as another space's pid. A 32-bit
+// counter could repeat after 2^32 address-space changes; a core would then
+// have to hold a 4-billion-change-old record that happens to match, which
+// this kernel does not guard against.
+static unsigned tlb_generation_counter;
+
 // Initialize per-core page-table/TLB state before scheduling starts.
 void vmem_core_init(void){
+  unsigned was = interrupts_disable();
   tlb_flush();
   set_pid(0);
+  struct PerCore* core = get_per_core();
+  core->tlb_owner_pid = 0;
+  core->tlb_owner_generation = 0;
+  interrupts_restore(was);
+}
+
+// See vmem.h. The new value must be visible before any page this space maps
+// is freed or remapped; the atomic store orders it before the caller's later
+// page-table writes (the memory model is sequentially consistent).
+void vmem_new_tlb_generation(struct TCB* tcb){
+  unsigned generation = __atomic_fetch_add((int*)&tlb_generation_counter, 1) + 1;
+  __atomic_store_n((int*)&tcb->tlb_generation, (int)generation);
+}
+
+// See vmem.h.
+//
+// Why skipping the flush is safe. The TLB is tagged with the PID register (the
+// page directory's physical address), so entries of different address spaces
+// never match each other; the dangers are entries that outlived a change to
+// their own address space:
+// - Each core's TLB holds entries of at most one address space with a nonzero
+//   pid, the owner recorded here: switching to any other such space clears it.
+// - Threads with pid 0 (the idle thread, daemons) have no page directory and
+//   no VMEs, so they never create or use TLB-mapped translations (a kernel
+//   access above physical memory would find no VME and panic). Switching to
+//   them keeps the owner's entries, which cannot match while PID is 0.
+// - Removing or narrowing a translation first gives the address space a new
+//   generation (munmap, vme_change_perms), and the thread then invalidates
+//   its current core's entries. Any other core still holding older entries
+//   has an older generation on record, so it clears its TLB before the
+//   thread runs there again. The bump comes before the change, so a thread
+//   preempted part way through and resumed elsewhere is also caught.
+// - A freed page directory reused as a new pid always arrives with a new
+//   generation, so no core treats the old space's entries as the new one's.
+// - Each address space has exactly one thread (vmem.md), so no other core can
+//   be running in it while it changes.
+bool vmem_tlb_switch_needs_flush(struct TCB* next){
+  if (next->pid == 0){
+    return false;
+  }
+  struct PerCore* core = get_per_core();
+  unsigned generation = (unsigned)__atomic_load_n((int*)&next->tlb_generation);
+  if (next->pid == core->tlb_owner_pid && generation == core->tlb_owner_generation){
+    return false;
+  }
+  core->tlb_owner_pid = next->pid;
+  core->tlb_owner_generation = generation;
+  return true;
+}
+
+// See vmem.h.
+void vmem_tlb_adopt(struct TCB* tcb){
+  struct PerCore* core = get_per_core();
+  core->tlb_owner_pid = tcb->pid;
+  core->tlb_owner_generation = (unsigned)__atomic_load_n((int*)&tcb->tlb_generation);
 }
 
 // Invalidate every local TLB entry covering the half-open page range.
@@ -329,6 +393,7 @@ bool vmem_fork(struct TCB* src, struct TCB* dst){
     dst->vme_list = NULL;
     return false;
   }
+  vmem_new_tlb_generation(dst);
   unsigned* src_pd = (unsigned*)src->pid;
   unsigned* dst_pd = (unsigned*)dst->pid;
 
@@ -678,6 +743,11 @@ void* mmap_physmem(unsigned size, unsigned paddr, unsigned flags){
 void munmap(void* p){
   struct TCB* tcb = get_current_tcb();
 
+  // A new generation before any translation goes away, so every core that
+  // may still hold entries for this address space clears its TLB before
+  // running it again (see vmem_tlb_switch_needs_flush).
+  vmem_new_tlb_generation(tcb);
+
   struct VME* prev = NULL;
   struct VME* curr = tcb->vme_list;
 
@@ -709,8 +779,12 @@ void munmap(void* p){
   panic("munmap called with invalid address\n");
 }
 
-// Change a mapping's permissions and invalidate affected TLB entries.
+// Change a mapping's permissions and invalidate affected TLB entries. The
+// mapping must belong to the current thread's installed address space.
 void vme_change_perms(struct VME* vme, unsigned new_flags){
+  // New permissions may be narrower: retire entries other cores may hold
+  // first (see munmap).
+  vmem_new_tlb_generation(get_current_tcb());
   vme->flags = new_flags;
 
   // traverse the page tables corresponding to this VME and update the permissions

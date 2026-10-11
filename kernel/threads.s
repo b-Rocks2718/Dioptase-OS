@@ -14,6 +14,9 @@
   # r5 = struct TCB** cur_thread
   # r6 = int was
   # r7 = bool run_with_interrupts
+  # r8 = bool flush_tlb: clear the TLB after installing next's PID. The C
+  #      caller decides (vmem_tlb_switch_needs_flush in vmem.c); the TLB is
+  #      PID-tagged, so a kept TLB only ever holds entries next may use.
   .global context_switch
 context_switch:
   # save current state
@@ -85,7 +88,10 @@ context_switch:
   lwa  r10, [r2, 72]
   crmv ksp, r10
 
+  cmp  r8, r0
+  bz   context_switch_keep_tlb
   tlbc # clear tlb
+context_switch_keep_tlb:
 
   lwa  r10, [r2, 64]
   mov  tlba, r10
