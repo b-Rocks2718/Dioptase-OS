@@ -305,6 +305,7 @@ unsigned udiv32(unsigned n, unsigned d);
 void draw_sprite_col(unsigned short* dst, int count, unsigned char* texcol,
                      int texpos, int texstep, unsigned short* shade);
 void dim_view(unsigned short* view);
+void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
 void tint_view(unsigned short* view, int and_mask, int or_mask);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
                     unsigned char* floor_tex, unsigned char* ceil_tex);
@@ -320,6 +321,9 @@ extern unsigned char flat_textures[16384];
 extern int sin_table[4096];
 extern unsigned char sprite_texels[39936];
 extern unsigned char sprite_spans[2496];
+extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
+extern int song_table[12];                    /* per song: row samples, rows, loop, offset */
+extern unsigned char song_data[1152];         /* 4 bytes (lead, arp, bass, drums) per row */
 extern unsigned short overlay_staff[2048];   /* two 32x32 sprites, 12-bit */
 extern unsigned short overlay_cursor[1024];
 extern unsigned char font_small[320];
@@ -405,5 +409,7 @@ void sfx(int id);
 void audio_start(void);
 void audio_stop(void);
 void audio_music(int song);
+void audio_heartbeat(void);
+void audio_mute_sfx(bool on);
 
 #endif // DELVE_H

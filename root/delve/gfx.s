@@ -310,3 +310,23 @@ tint_view_loop:
   add  r5, r5, -1
   bnz  tint_view_loop
   ret
+
+# Add one wavetable voice into the audio mix accumulator.
+# Inputs:  r1 = int accumulator (count words), r2 = sample count (> 0),
+#          r3 = wavetable (64 signed halfwords for the voice's volume),
+#          r4 = phase (top 6 bits select the table entry), r5 = phase step.
+# Outputs: none. Clobbers r1, r2, r4, r6-r8.
+  .global mix_add
+mix_add:
+  lsr  r6, r4, 26
+  lsl  r6, r6, 1
+  add  r6, r3, r6
+  lda  r7, [r6]
+  sxtd r7, r7
+  lwa  r8, [r1]
+  add  r8, r8, r7
+  swa  r8, [r1], 4
+  add  r4, r4, r5
+  add  r2, r2, -1
+  bnz  mix_add
+  ret

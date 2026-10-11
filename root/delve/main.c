@@ -980,6 +980,8 @@ int main(void){
     blit_view(g_tilemap, g_view);
     place_overlays();
     hud_upload();
+    audio_heartbeat();
+    audio_mute_sfx(demo);
   }
   audio_stop();
   return 0;
