@@ -828,9 +828,10 @@ static void draw_help(void){
   draw_text_shadow(SURF_VIEW, 8, 50, "RIGHT  FIREBALL     (F)", 0x0ACE);
   draw_text_shadow(SURF_VIEW, 8, 59, "M MAP  P PAUSE  (NOT ESC: IT", 0x0999);
   draw_text_shadow(SURF_VIEW, 8, 65, "               CLOSES THE EMULATOR)", 0x0777);
-  draw_centered(73, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
-  draw_centered(80, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
-  draw_centered(88, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
+  draw_text_shadow(SURF_VIEW, 8, 72, "FIREBALLS SHATTER CRACKED WALLS.", 0x03AF);
+  draw_centered(79, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
+  draw_centered(85, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
+  draw_centered(91, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
 }
 
 /* In-game overlays: automap, boss health bar, messages, and the pause panel. */
@@ -913,8 +914,16 @@ static void run_autopilot(void){
   autopilot_wait = 6;
 }
 
+/* Ticks until the next ambient water drip. */
+static int drip_wait = 300;
+
 /* One tick of live gameplay (also drives the attract-mode demo). */
 static void play_tick(void){
+  drip_wait -= 1;
+  if (drip_wait <= 0){
+    sfx(SFX_DRIP);
+    drip_wait = 240 + rng_range(600);
+  }
   if (fade > 0 && (state_t & 1)) fade -= 1;
   if (autopilot) run_autopilot();
   bool arrived = update_player();

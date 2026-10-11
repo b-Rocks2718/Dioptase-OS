@@ -51,7 +51,7 @@
 #define VOICES 8
 #define MUSIC_VOICES 4
 #define SFX_FIRST 4
-#define SFX_IDS 20
+#define SFX_IDS 22
 
 /* ---- Game side ---- */
 
@@ -168,7 +168,7 @@ struct SfxSeg {
   int last;      /* 1 on the final segment of an effect */
 };
 
-static struct SfxSeg sfx_segs[34] = {
+static struct SfxSeg sfx_segs[39] = {
   /* 0 SPARK */          { WAVE_SQUARE,  1400, 2600,  90, 10, 0, 1 },
   /* 1 FIRE */           { WAVE_NOISE,   2000,  500, 120, 12, 9, 0 },
   /* 2 */                { WAVE_SAW,      240,   90, 260, 10, 0, 1 },
@@ -203,11 +203,16 @@ static struct SfxSeg sfx_segs[34] = {
   /* 31 */               { WAVE_SQUARE,   294,  262, 260, 10, 8, 0 },
   /* 32 */               { WAVE_SAW,      220,   55, 900, 12, 0, 1 },
   /* 33 BUMP */          { WAVE_NOISE,    160,  100,  60, 6, 0, 1 },
+  /* 34 DRIP */          { WAVE_SINE,    1500,  520,  60, 6, 0, 0 },
+  /* 35 */               { WAVE_SINE,       1,    1, 140, 0, 0, 0 },
+  /* 36 */               { WAVE_SINE,    1400,  480,  50, 2, 0, 1 },
+  /* 37 CRUMBLE */       { WAVE_NOISE,    900,  120, 200, 15, 10, 0 },
+  /* 38 */               { WAVE_NOISE,    200,   40, 700, 11, 0, 1 },
 };
 
 /* First segment of each SFX_* id (index = id, -1 = unused). */
 static int sfx_start[SFX_IDS] = {
-  -1, 0, 1, 3, 5, 6, 7, 9, 10, 12, 15, 19, 20, 21, 22, 23, 26, 28, 29, 33
+  -1, 0, 1, 3, 5, 6, 7, 9, 10, 12, 15, 19, 20, 21, 22, 23, 26, 28, 29, 33, 34, 37
 };
 
 /* Sequencer state. */

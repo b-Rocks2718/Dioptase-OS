@@ -13,6 +13,7 @@ unsigned char g_map[MAP_CELLS];
 unsigned char g_seen[MAP_CELLS];       /* cells the player has seen (automap) */
 static unsigned char occupant[MAP_CELLS]; /* monster index + 1, 0 = none */
 static unsigned char flow[MAP_CELLS];  /* BFS steps to the player, 255 = none */
+static bool map_changed;               /* a wall fell: rebuild the flow field */
 
 struct Door g_doors[MAX_DOORS];
 int g_door_count;
@@ -162,6 +163,7 @@ struct Monster* monster_at(int cx, int cy){
 /* ---- Level generation ---- */
 
 static void world_layout(int depth, int* sx, int* sy, int* sdir);
+static void add_item(int type, int cx, int cy);
 
 struct Room {
   int x;
@@ -250,6 +252,66 @@ static int add_door(int cx, int cy, bool axis_x, bool locked){
   g_map[cell_at(cx, cy)] = CELL_DOOR_BASE + g_door_count;
   g_door_count += 1;
   return g_door_count - 1;
+}
+
+/* Whether every cell around the w x h block at (x, y), including the block,
+ * is solid wall (so a vault carved there touches nothing open). */
+static bool block_buried(int x, int y, int w, int h){
+  for (int cy = y - 1; cy <= y + h; ++cy){
+    for (int cx = x - 1; cx <= x + w; ++cx){
+      if (!in_map(cx, cy) || cx == 0 || cy == 0 || cx == MAP_W - 1 || cy == MAP_H - 1){
+        if (cx >= x && cx < x + w && cy >= y && cy < y + h) return false;
+        continue;
+      }
+      int v = g_map[cell_at(cx, cy)];
+      if (v == CELL_EMPTY || v >= CELL_DOOR_BASE) return false;
+    }
+  }
+  return true;
+}
+
+/* Hide a 2x2 vault of crystals behind a cracked wall of some room. The
+ * cracked cell is the only way in; a fireball breaks it (see explode()). */
+static void place_vault(void){
+  for (int tries = 0; tries < 60; ++tries){
+    int r = rng_range(room_count);
+    int dir = rng_range(4);
+    int dx = (dir == 0) - (dir == 2);
+    int dy = (dir == 1) - (dir == 3);
+    /* a wall cell just outside the room on side `dir` */
+    int wx;
+    int wy;
+    if (dx != 0){
+      wx = dx > 0 ? rooms[r].x + rooms[r].w : rooms[r].x - 1;
+      wy = rooms[r].y + rng_range(rooms[r].h);
+    } else {
+      wy = dy > 0 ? rooms[r].y + rooms[r].h : rooms[r].y - 1;
+      wx = rooms[r].x + rng_range(rooms[r].w);
+    }
+    if (!in_map(wx, wy) || g_map[cell_at(wx, wy)] == CELL_EMPTY ||
+        g_map[cell_at(wx, wy)] >= CELL_DOOR_BASE) continue;
+    /* the vault's near corner sits beyond the wall */
+    int vx = wx + dx;
+    int vy = wy + dy;
+    int bx = dx < 0 ? vx - 1 : vx;
+    int by = dy < 0 ? vy - 1 : vy;
+    if (dx == 0) bx = vx - rng_range(2);
+    if (dy == 0) by = vy - rng_range(2);
+    if (!block_buried(bx, by, 2, 2)) continue;
+    /* the cracked wall's other neighbors must stay solid too */
+    if (!cell_solid(wx + dy, wy + dx) || !cell_solid(wx - dy, wy - dx)) continue;
+    for (int y = by; y < by + 2; ++y){
+      for (int x = bx; x < bx + 2; ++x){
+        g_map[cell_at(x, y)] = CELL_EMPTY;
+      }
+    }
+    g_map[cell_at(wx, wy)] = TEX_CRACKED + 1;
+    add_item(ITEM_CRYSTAL, bx, by);
+    add_item(ITEM_CRYSTAL, bx + 1, by + 1);
+    add_item(ITEM_CRYSTAL, bx + 1, by);
+    add_item(rng_range(2) ? ITEM_POTION_HP : ITEM_POTION_MP, bx, by + 1);
+    return;
+  }
 }
 
 /* Mount one or two torches on the walls of most rooms. A torch hangs just in
@@ -555,6 +617,7 @@ static void world_layout(int depth, int* sx, int* sy, int* sdir){
   }
 
   place_torches();
+  if (depth >= 2 || rng_range(2)) place_vault();
 
   /* floor clutter: mostly bones, mushrooms deeper down */
   prop_count = 0;
@@ -777,6 +840,22 @@ static void explode(struct Projectile* p){
   if (kind == SHOT_FIRE){
     sfx(SFX_EXPLODE);
     g_stats.shake = 10;
+    /* the blast shatters a cracked wall next to it */
+    int ex = p->x >> 16;
+    int ey = p->y >> 16;
+    for (int k = 0; k < 5; ++k){
+      int cx = ex + (k == 1) - (k == 2);
+      int cy = ey + (k == 3) - (k == 4);
+      if (!in_map(cx, cy) || g_map[cell_at(cx, cy)] != TEX_CRACKED + 1) continue;
+      if (approx_dist(((cx << 16) + FIX_HALF) - p->x, ((cy << 16) + FIX_HALF) - p->y) > 0x13000) continue;
+      g_map[cell_at(cx, cy)] = CELL_EMPTY;
+      map_changed = true;
+      spawn_burst((cx << 16) + FIX_HALF, (cy << 16) + FIX_HALF, FIX_HALF, 20, 0x0668, 0x1400);
+      spawn_effect(EFFECT_GEM_PUFF, (cx << 16) + FIX_HALF, (cy << 16) + FIX_HALF, FIX_HALF - 0x2000);
+      sfx(SFX_CRUMBLE);
+      g_stats.score += 50 * g_stats.depth;
+      show_message("A HIDDEN VAULT!");
+    }
     /* splash damage within about 1.3 cells */
     for (int i = 0; i < MAX_MONSTERS; ++i){
       struct Monster* m = &g_monsters[i];
@@ -1048,8 +1127,9 @@ static void update_items(int pcx, int pcy){
  * (pcx, pcy) the cell the player occupies (or is moving into). */
 void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
   g_light_count = 0;
-  if (player_moved){
+  if (player_moved || map_changed){
     bfs_from(pcx, pcy, flow, false);
+    map_changed = false;
   }
   for (int i = 0; i < g_door_count; ++i){
     struct Door* d = &g_doors[i];

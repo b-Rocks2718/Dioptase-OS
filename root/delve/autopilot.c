@@ -10,9 +10,11 @@
  * grid pose:
  *   - a monster in a straight, clear line ahead within range: cast at it;
  *   - a monster in a straight line to the side or behind: turn toward it;
+ *   - a cracked wall beside it: turn to it and fireball it open;
  *   - otherwise walk the shortest path (BFS) to the most useful target: a
  *     potion when hurt, the rune key, crystals, the sealed door once the key
- *     is held, the portal, and finally the nearest unexplored frontier.
+ *     is held, the portal, a seen cracked wall, and finally the nearest
+ *     unexplored frontier.
  */
 
 static unsigned char dist[MAP_CELLS];
@@ -82,6 +84,25 @@ static int path_step(int cx, int cy, bool has_key){
     }
   }
   if (target < 0){
+    /* a cell beside a cracked wall we have seen (a vault to blast open) */
+    int best = 255;
+    for (int c = 0; c < MAP_CELLS; ++c){
+      if (g_map[c] != TEX_CRACKED + 1 || !g_seen[c]) continue;
+      int x = c & (MAP_W - 1);
+      int y = c >> 5;
+      for (int k = 0; k < 4; ++k){
+        int nx = x + ap_dx[k];
+        int ny = y + ap_dy[k];
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        int n = ny * MAP_W + nx;
+        if (dist[n] < best && dist[n] > 0){
+          best = dist[n];
+          target = n;
+        }
+      }
+    }
+  }
+  if (target < 0){
     /* the nearest reachable cell next to unexplored space */
     for (int i = 1; i < tail && target < 0; ++i){
       int c = queue[i];
@@ -145,6 +166,15 @@ int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp){
     }
     if (mdir == ((facing + 1) & 3)) return 'e';
     return 'q';
+  }
+  /* a cracked wall beside us: face it and blast it open with a fireball */
+  for (int k = 0; k < 4; ++k){
+    int x = cx + ap_dx[k];
+    int y = cy + ap_dy[k];
+    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+    if (g_map[y * MAP_W + x] != TEX_CRACKED + 1) continue;
+    if (k == facing) return mp >= 22 ? 'f' : 0;
+    return k == ((facing + 1) & 3) ? 'e' : 'q';
   }
   int dir = path_step(cx, cy, has_key);
   if (dir < 0) return 'e';

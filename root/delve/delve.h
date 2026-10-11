@@ -116,6 +116,7 @@ struct Door {
 #define TEX_DOOR_LOCKED 5
 #define TEX_RUNES 6
 #define TEX_BRICK_DARK 7
+#define TEX_CRACKED 8          /* breakable wall hiding a vault */
 
 /* ---- Billboard sprites (assets.s order) ---- */
 #define SPR_SIZE 32
@@ -310,6 +311,8 @@ struct PlayerStats {
 #define SFX_NOMANA 17
 #define SFX_DEATH 18
 #define SFX_BUMP 19
+#define SFX_DRIP 20
+#define SFX_CRUMBLE 21
 
 /* ---- Camera ---- */
 struct Camera {
@@ -356,7 +359,7 @@ void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
-extern unsigned char wall_textures[32768];
+extern unsigned char wall_textures[36864];
 extern unsigned char flat_textures[16384];
 #define FLAT_FLOOR_STONE 0
 #define FLAT_CEILING_BEAMS 1

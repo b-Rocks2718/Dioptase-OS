@@ -433,6 +433,37 @@ def big_font_bytes(text_tiles_path):
     return rows, spans
 
 
+def cracked_wall(rng=RNG):
+    """Bricks split by a jagged crack with warm light seeping through: the
+    tell for a secret vault that a fireball can open."""
+    img = bricks(STONE, rng=rng, base=6.5)
+    ramps = img // 16
+    shade = (img % 16).astype(np.float64)
+    x = 30.0
+    for y in range(4, 60):
+        x += rng.uniform(-1.6, 1.6)
+        x = min(max(x, 8), 56)
+        w = 1 + (16 < y < 48)
+        for dx in range(-w, w + 1):
+            xx = int(round(x)) + dx
+            if abs(dx) < w or w == 1 and dx == 0:
+                ramps[y, xx] = FIRE if abs(dx) == 0 else GOLD
+                shade[y, xx] = 14 if abs(dx) == 0 else 11
+            else:
+                ramps[y, xx] = STONE
+                shade[y, xx] = 2
+        if rng.random() < 0.12:
+            # side branch
+            bx = int(round(x))
+            for k in range(1, rng.integers(4, 9)):
+                xx = bx + k * (1 if rng.random() < 0.5 else -1)
+                yy = y + k // 2
+                if 0 <= xx < TEX and 0 <= yy < TEX:
+                    ramps[yy, xx] = FIRE
+                    shade[yy, xx] = 9
+    return idx(ramps, shade)
+
+
 def flagstones(ramp=STONE, rng=RNG, base=6.0):
     """Irregular square flagstones for the floor (tiles every cell)."""
     noise = fbm(4, 8, rng)
@@ -1000,6 +1031,7 @@ def build_textures():
     add_texture("door_locked", iron_door(np.random.default_rng(6)))
     add_texture("runes", rune_wall(np.random.default_rng(7)))
     add_texture("brick_dark", bricks(DEEP, rows=8, cols=2, base=6.0, rng=np.random.default_rng(8)))
+    add_texture("cracked", cracked_wall(np.random.default_rng(9)))
     FLATS.append(("floor_stone", flagstones(STONE, np.random.default_rng(20))))
     FLATS.append(("ceiling_beams", ceiling_beams(np.random.default_rng(21))))
     FLATS.append(("floor_moss", flagstones(MOSS, np.random.default_rng(22), base=5.0)))
