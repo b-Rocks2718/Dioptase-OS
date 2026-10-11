@@ -16,6 +16,9 @@ import os
 
 import numpy as np
 
+# root/ is packaged into the guest filesystem image, so keep it free of
+# __pycache__ directories.
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pngout import write_png  # noqa: E402
 
@@ -898,6 +901,48 @@ def sprite_warden(phase):
     return c.px
 
 
+def sprite_bones():
+    """A skull and a few scattered bones lying on the floor."""
+    c = Canvas()
+    # skull
+    shaded_blob(c, 13, 25, 5, 4.5, BONE, base=9, spec=False)
+    for x in range(10, 17):
+        c.set(x, 29, BONE, 7)
+    for (x, y) in ((11, 25), (12, 25), (15, 25), (14, 25)):
+        c.set(x, y, GRAY, 1)
+    c.set(13, 27, GRAY, 2)
+    # bones
+    for t in np.linspace(0, 1, 14):
+        c.set(18 + t * 10, 28 - t * 3, BONE, 11)
+        c.set(18 + t * 10, 29 - t * 3, BONE, 7)
+    for (x, y) in ((17, 27), (17, 29), (28, 24), (28, 26)):
+        c.set(x, y, BONE, 12)
+    for t in np.linspace(0, 1, 9):
+        c.set(4 + t * 6, 30 - t * 1, BONE, 9)
+    c.outline(GRAY, 2)
+    return c.px
+
+
+def sprite_mushrooms():
+    """Glowing cave mushrooms: three luminous caps on pale stalks."""
+    c = Canvas()
+    for (cx, base, h, r, ramp) in ((10, 31, 9, 5.5, ICE), (19, 31, 13, 6.5, ICE), (25, 31, 6, 3.5, PURPLE)):
+        top = base - h
+        for y in range(top, base):
+            c.set(cx, y, BONE, 11)
+            c.set(cx + 1, y, BONE, 8)
+        for y in range(int(top - r), top + 1):
+            for x in range(int(cx - r - 1), int(cx + r + 2)):
+                dx = (x + 0.5 - cx - 0.5) / r
+                dy = (y + 0.5 - top) / r
+                if dx * dx + dy * dy <= 1.0 and dy <= 0.2:
+                    shade = 15 - (dx + 1) * 2 - (dy + 1) * 2
+                    c.set(x, y, ramp, shade)
+        c.set(cx - 1, int(top - r * 0.5), GRAY, 15)
+    c.outline(DEEP, 2)
+    return c.px
+
+
 SPRITES = []  # (name, 32x32 row-major palette indices)
 
 
@@ -932,6 +977,8 @@ def build_sprites():
         SPRITES.append((f"torch{p}", sprite_torch(p)))
     for p in range(3):
         SPRITES.append((f"warden{p}", sprite_warden(p)))
+    SPRITES.append(("bones", sprite_bones()))
+    SPRITES.append(("mushrooms", sprite_mushrooms()))
 
 
 FLATS = []  # floor/ceiling textures, row-major

@@ -139,6 +139,7 @@ static int ease(int t, int len){
   return fixmul(u2, 3 * FIX_ONE - 2 * u);
 }
 
+/* Bounded string copy that always NUL-terminates `dst` (capacity `cap`). */
 static void copy_text(char* dst, char* src, int cap){
   int i = 0;
   while (src[i] && i < cap - 1){
@@ -148,11 +149,14 @@ static void copy_text(char* dst, char* src, int cap){
   dst[i] = 0;
 }
 
+/* Show `text` centered at the top of the view for about 2.5 seconds. */
 void show_message(char* text){
   copy_text(message, text, 40);
   message_t = 150;
 }
 
+/* Apply damage to the player (flash, shake, sound) and end the run at 0 HP.
+ * In the attract demo only the health changes. */
 void player_hurt(int amount){
   if (demo){
     g_stats.hp -= amount;
@@ -161,7 +165,7 @@ void player_hurt(int amount){
   if (state != STATE_PLAY) return;
   if (god_mode) amount = 0;
   g_stats.hp -= amount;
-  g_stats.hurt = 12;
+  g_stats.hurt = 9;
   g_stats.shake = 6;
   sfx(SFX_PLAYER_HURT);
   if (g_stats.hp <= 0){
@@ -187,6 +191,7 @@ static void scores_default(void){
   }
 }
 
+/* Parse a decimal number at s[*pos] (after spaces) and advance *pos. */
 static int parse_int(char* s, int* pos){
   int v = 0;
   while (s[*pos] == ' ') *pos += 1;
@@ -222,6 +227,7 @@ static void scores_load(void){
   }
 }
 
+/* Rewrite /delve.hi from the in-memory table (one line per entry). */
 static void scores_save(void){
   int fd = open("/delve.hi");
   if (fd < 0) return;
@@ -252,6 +258,7 @@ static int score_rank(int score){
   return -1;
 }
 
+/* Insert the finished run at `slot` with the entered initials and save. */
 static void score_insert(int slot){
   for (int i = SCORE_SLOTS - 1; i > slot; --i){
     copy_text(score_names[i], score_names[i - 1], 4);
@@ -286,6 +293,7 @@ static void enter_level(int depth){
   hud_redraw();
 }
 
+/* Fresh hero: full health and mana, no crystals, score, or kills. */
 static void reset_stats(void){
   g_stats.hp = MAX_HP;
   g_stats.max_hp = MAX_HP;
@@ -299,6 +307,7 @@ static void reset_stats(void){
   player.cast_t = 0;
 }
 
+/* Start a real game at depth 1 with a new random dungeon seed. */
 static void new_game(void){
   game_seed = rng_next() ^ (get_vga_frame_counter() * 2654435761u);
   demo = false;
@@ -324,6 +333,7 @@ static void demo_start(void){
   fade = LIGHT_LEVELS;
 }
 
+/* Show the title screen, with the attract demo playing behind it. */
 static void title_init(void){
   state = STATE_TITLE;
   state_t = 0;
@@ -375,6 +385,7 @@ static void try_move(int dir){
   sfx(SFX_STEP);
 }
 
+/* Start a quarter turn: +1 clockwise (right), -1 counterclockwise (left). */
 static void try_turn(int delta){
   player.anim = 2;
   player.anim_t = 0;
@@ -423,12 +434,14 @@ static void cast(int kind, int col){
   hud_redraw();
 }
 
+/* View column under the mouse crosshair (screen x / 4). */
 static int cursor_col(void){
   int col = cursor_x >> 2;
   if (col >= VIEW_W) col = VIEW_W - 1;
   return col;
 }
 
+/* Begin the step or turn bound to `key`, relative to the current facing. */
 static void start_command(int key){
   int f = player.facing;
   switch (key){
@@ -442,6 +455,7 @@ static void start_command(int key){
   }
 }
 
+/* Whether `key` is one of the step/turn keys (buffered while animating). */
 static bool is_motion_key(int key){
   switch (key){
     case 'w': case 'W': case KEY_UP: case 's': case 'S': case KEY_DOWN:
@@ -576,6 +590,8 @@ static void handle_key(int key){
   }
 }
 
+/* Drain terminal key bytes and mouse events. Mouse motion moves the
+ * crosshair within the view; a fresh button press casts toward it. */
 static void poll_input(void){
   int avail = fd_bytes_available(STDIN);
   while (avail > 0){
@@ -612,6 +628,8 @@ static void upload_sprite(int sprite, unsigned short* pixels){
 
 static bool staff_glowing;
 
+/* Position the hardware-sprite overlays (staff and crosshair) for this frame:
+ * the staff bobs with each step and thrusts when casting. */
 static void place_overlays(void){
   bool glow = player.cast_t > 4 && state == STATE_PLAY;
   if (glow != staff_glowing){
@@ -619,6 +637,14 @@ static void place_overlays(void){
     staff_glowing = glow;
   }
   bool playing = state == STATE_PLAY || state == STATE_PAUSE;
+  if (state == STATE_DEAD && state_t < 120){
+    /* the staff slips from the fallen hero's hand */
+    int y = STAFF_Y + state_t / 2 + (state_t * state_t) / 160;
+    set_sprite_coords(STAFF_SPRITE_TOP, STAFF_X + state_t / 8, y);
+    set_sprite_coords(STAFF_SPRITE_BOTTOM, STAFF_X + state_t / 8, y + 32);
+    set_sprite_coords(CURSOR_SPRITE, SPRITE_HIDDEN, SPRITE_HIDDEN);
+    return;
+  }
   if (playing && !show_map){
     int bob = isin(player.walk_phase * 160) >> 14;
     if (bob < 0) bob = -bob;
@@ -635,6 +661,9 @@ static void place_overlays(void){
   }
 }
 
+/* Take over the display: map the tile and sprite memory, switch the tile
+ * layer to 4x, point the 20x12 view cells at tiles 0..239 column-major,
+ * blank the rest, and set up the status-bar, staff, and crosshair sprites. */
 static void display_init(void){
   /* Clear the terminal and hide its cursor, then give the terminal time to
    * act on that before we start writing the tile framebuffer. */
@@ -687,6 +716,7 @@ static void draw_bar(int x, int y, int w, int value, int max, unsigned short fg,
   if (filled > 0) fill_rect(SURF_HUD, x, y, filled, 1, fg | 0x0444);
 }
 
+/* Redraw the whole status bar from the current stats and upload it. */
 static void hud_redraw(void){
   char buf[16];
   fill_rect(SURF_HUD, 0, 0, HUD_W, HUD_H, 0x0211);
@@ -726,12 +756,15 @@ static void draw_centered(int y, char* s, unsigned short color){
   draw_text_shadow(SURF_VIEW, (VIEW_W - text_width(s)) / 2, y, s, color);
 }
 
+/* Draw scaled 8x8-font text centered in the view, with a drop shadow. */
 static void draw_big_centered(int y, char* s, unsigned short color, int scale){
   int x = (VIEW_W - big_text_width(s) * scale) / 2;
   draw_big_text(SURF_VIEW, x + 1, y + 1, s, 0x0000, scale);
   draw_big_text(SURF_VIEW, x, y, s, color, scale);
 }
 
+/* Overlay the explored map: 3x3 pixels per cell, doors in orange (sealed in
+ * gold), items as colored dots, the player as a white dot plus heading. */
 static void draw_automap(void){
   dim_view(g_view);
   int ox = (VIEW_W - MAP_W * 3) / 2;
@@ -763,13 +796,10 @@ static void draw_automap(void){
   draw_text_shadow(SURF_VIEW, 2, 90, "MAP", 0x0ACE);
 }
 
+/* Title screen text over the darkened attract demo. */
 static void draw_title(void){
   dim_view(g_view);
-  /* the logo pulses between deep and bright dioptase green */
-  int glow = (isin(state_t * 24) >> 13) + 8;   /* 0..16 */
-  if (glow > 15) glow = 15;
-  unsigned short logo = 0x0002 | ((4 + (glow >> 1)) << 8) | ((8 + (glow >> 1)) << 4);
-  draw_big_centered(8, "DELVE", logo, 3);
+  draw_logo((VIEW_W - big_text_width("DELVE") * 3) / 2, 6, "DELVE", 3, state_t);
   draw_centered(36, "INTO THE DIOPTASE DEEP", 0x0ACE);
   draw_centered(50, "ENTER - DESCEND", (state_t & 32) ? 0x0FFF : 0x0BBB);
   draw_centered(57, "H - HOW TO PLAY    X - QUIT", 0x0999);
@@ -785,6 +815,7 @@ static void draw_title(void){
   }
 }
 
+/* Controls and goals, over a doubly darkened demo. */
 static void draw_help(void){
   dim_view(g_view);
   dim_view(g_view);
@@ -795,12 +826,14 @@ static void draw_help(void){
   draw_text_shadow(SURF_VIEW, 8, 36, "MOUSE  AIM", 0x0ACE);
   draw_text_shadow(SURF_VIEW, 8, 43, "LEFT   SPARK BOLT   (SPACE)", 0x0ACE);
   draw_text_shadow(SURF_VIEW, 8, 50, "RIGHT  FIREBALL     (F)", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 59, "M MAP    P PAUSE", 0x0999);
-  draw_centered(69, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
-  draw_centered(76, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
-  draw_centered(86, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
+  draw_text_shadow(SURF_VIEW, 8, 59, "M MAP  P PAUSE  (NOT ESC: IT", 0x0999);
+  draw_text_shadow(SURF_VIEW, 8, 65, "               CLOSES THE EMULATOR)", 0x0777);
+  draw_centered(73, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
+  draw_centered(80, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
+  draw_centered(88, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
 }
 
+/* In-game overlays: automap, boss health bar, messages, and the pause panel. */
 static void draw_play_overlays(void){
   if (show_map){
     draw_automap();
@@ -823,6 +856,7 @@ static void draw_play_overlays(void){
   }
 }
 
+/* Victory or death summary with the run's statistics. */
 static void draw_end_screen(bool won){
   char buf[12];
   if (won){
@@ -845,6 +879,7 @@ static void draw_end_screen(bool won){
   }
 }
 
+/* High-score initials entry with a blinking cursor. */
 static void draw_name_entry(void){
   dim_view(g_view);
   draw_big_centered(12, "NEW RECORD", 0x02CF, 2);
@@ -889,6 +924,7 @@ static void play_tick(void){
   if (arrived && !demo) hud_redraw();
 }
 
+/* Advance the whole game by one 60 Hz tick according to the current state. */
 static void tick(void){
   state_t += 1;
   g_frame += 1;
@@ -940,11 +976,29 @@ static void tick(void){
       if (fade < 6 && (state_t & 7) == 0) fade += 1;
       world_tick(player.cx, player.cy, camera.x, camera.y, false);
       break;
+    case STATE_WON:
+      /* crystal fireworks bloom in front of the hero */
+      camera.angle = (camera.angle + 3) & ANGLE_MASK;
+      if ((state_t & 15) == 0){
+        /* the hero may be standing in the Heart's one-cell alcove, so the
+         * bursts start inside the camera's own cell, just ahead of it */
+        static int colors[4] = {0x0BFA, 0x02DF, 0x0FE8, 0x0B5F};
+        int ux = icos(camera.angle);
+        int uy = isin(camera.angle);
+        int side = (rng_range(5) - 2) * 0x1000;
+        int x = camera.x + fixmul(ux, 0x6000) - fixmul(uy, side);
+        int y = camera.y + fixmul(uy, 0x6000) + fixmul(ux, side);
+        spawn_burst(x, y, 0xA000 + rng_range(0x3000), 14, colors[rng_range(4)], 0x0900);
+        sfx(SFX_CRYSTAL);
+      }
+      world_tick(player.cx, player.cy, camera.x, camera.y, false);
+      break;
     default:
       break;
   }
 }
 
+/* Render the 3D view plus the overlays for the current state into g_view. */
 static void render_frame(void){
   struct Camera view = camera;
   if (g_stats.shake > 0 && state == STATE_PLAY){
@@ -972,6 +1026,8 @@ static void render_frame(void){
   }
 }
 
+/* Set up display, renderer, sound, and scores, then run the frame loop:
+ * catch up on elapsed 60 Hz ticks, render, blit, and update the overlays. */
 int main(void){
   display_init();
   render_init();

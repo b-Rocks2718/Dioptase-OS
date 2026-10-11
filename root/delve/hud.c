@@ -140,3 +140,45 @@ void hud_upload(void){
   }
   hud_dirty = false;
 }
+
+/* Gradient for the title logo, top to bottom: pale mint to deep emerald
+ * (12-bit 0x0BGR). */
+static unsigned short logo_ramp[8] = {
+  0x0EFC, 0x0BFA, 0x08F7, 0x06E5, 0x05C3, 0x04A2, 0x0381, 0x0260
+};
+
+/* Draw the title logo: `s` in the 8x8 font at `scale`, filled with a
+ * vertical crystal gradient over a dark outline, with a glint that sweeps
+ * across the letters as `t` advances. */
+void draw_logo(int x, int y, char* s, int scale, int t){
+  for (int oy = -1; oy <= 2; ++oy){
+    for (int ox = -1; ox <= 2; ++ox){
+      if (ox == 0 && oy == 0) continue;
+      draw_big_text(SURF_VIEW, x + ox, y + oy, s, oy == 2 || ox == 2 ? 0x0000 : 0x0120, scale);
+    }
+  }
+  int glint = (t >> 1) % (big_text_width(s) * scale + 60) - 30;
+  int cx = x;
+  for (char* p = s; *p; ++p){
+    int c = *p;
+    if (c < 32 || c > 127) c = '?';
+    int left = font_big_spans[(c - 32) * 2];
+    int width = font_big_spans[(c - 32) * 2 + 1];
+    unsigned char* rows = font_big + (c - 32) * 8;
+    for (int r = 0; r < 8; ++r){
+      for (int col = 0; col < width; ++col){
+        if (!(rows[r] & (0x80 >> (left + col)))) continue;
+        for (int sy = 0; sy < scale; ++sy){
+          int py = y + r * scale + sy;
+          unsigned short color = logo_ramp[((r * scale + sy) * 8) / (8 * scale)];
+          for (int sx = 0; sx < scale; ++sx){
+            int px = cx + col * scale + sx;
+            int d = px - x - glint + (r * scale + sy) / 2;
+            plot(SURF_VIEW, px, py, (d >= 0 && d < 3) ? 0x0FFF : color);
+          }
+        }
+      }
+    }
+    cx += (width + 1) * scale;
+  }
+}

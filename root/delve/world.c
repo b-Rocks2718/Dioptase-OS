@@ -24,6 +24,8 @@ struct Light g_lights[MAX_LIGHTS];
 int g_light_count;
 static struct Torch torches[MAX_TORCHES];
 static int torch_count;
+static struct Prop props[MAX_PROPS];
+static int prop_count;
 struct Particle g_particles[MAX_PARTICLES];
 static int next_particle;
 struct PlayerStats g_stats;
@@ -35,10 +37,12 @@ int g_ceiling_flat;
 /* ---- Random numbers (xorshift32) ---- */
 static unsigned rng_state = 0x1234567;
 
+/* Reseed the level generator's random stream (0 picks a fixed seed). */
 void rng_seed(unsigned seed){
   rng_state = seed ? seed : 0x1234567;
 }
 
+/* Next 32-bit value from the xorshift32 stream. */
 unsigned rng_next(void){
   unsigned x = rng_state;
   x ^= x << 13;
@@ -85,6 +89,7 @@ static int cell_at(int cx, int cy){
   return cy * MAP_W + cx;
 }
 
+/* Whether cell (cx, cy) is inside the 32x32 map. */
 static bool in_map(int cx, int cy){
   return cx >= 0 && cy >= 0 && cx < MAP_W && cy < MAP_H;
 }
@@ -138,6 +143,7 @@ bool door_open(int cx, int cy){
   return true;
 }
 
+/* Number of living monsters on the level. */
 static int monster_count_alive(void){
   int n = 0;
   for (int i = 0; i < MAX_MONSTERS; ++i){
@@ -155,6 +161,8 @@ struct Monster* monster_at(int cx, int cy){
 
 /* ---- Level generation ---- */
 
+static void world_layout(int depth, int* sx, int* sy, int* sdir);
+
 struct Room {
   int x;
   int y;
@@ -166,6 +174,7 @@ struct Room {
 static struct Room rooms[MAX_ROOMS];
 static int room_count;
 
+/* Whether a candidate room (with a one-cell margin) touches an existing one. */
 static bool room_overlaps(int x, int y, int w, int h){
   for (int i = 0; i < room_count; ++i){
     struct Room* r = &rooms[i];
@@ -177,6 +186,7 @@ static bool room_overlaps(int x, int y, int w, int h){
   return false;
 }
 
+/* Open one cell, never touching the outer boundary walls. */
 static void carve(int cx, int cy){
   if (cx > 0 && cy > 0 && cx < MAP_W - 1 && cy < MAP_H - 1){
     g_map[cell_at(cx, cy)] = CELL_EMPTY;
@@ -205,6 +215,7 @@ static void connect_rooms(int a, int b){
   carve(x1, y1);
 }
 
+/* Whether (cx, cy) lies inside any room (as opposed to a corridor). */
 static bool is_room_cell(int cx, int cy){
   for (int i = 0; i < room_count; ++i){
     struct Room* r = &rooms[i];
@@ -215,6 +226,7 @@ static bool is_room_cell(int cx, int cy){
   return false;
 }
 
+/* Index of the room containing (cx, cy), or -1. */
 static int room_of(int cx, int cy){
   for (int i = 0; i < room_count; ++i){
     struct Room* r = &rooms[i];
@@ -225,6 +237,7 @@ static int room_of(int cx, int cy){
   return -1;
 }
 
+/* Turn cell (cx, cy) into a closed door; returns its index or -1 if full. */
 static int add_door(int cx, int cy, bool axis_x, bool locked){
   if (g_door_count >= MAX_DOORS) return -1;
   struct Door* d = &g_doors[g_door_count];
@@ -335,6 +348,7 @@ static bool random_room_cell(int r, int* ox, int* oy){
   return false;
 }
 
+/* Place an item in the first free slot (silently dropped if all are used). */
 static void add_item(int type, int cx, int cy){
   for (int i = 0; i < MAX_ITEMS; ++i){
     if (!g_items[i].active){
@@ -348,6 +362,7 @@ static void add_item(int type, int cx, int cy){
   }
 }
 
+/* Spawn a sleeping monster of `kind` at (cx, cy), tougher on deep levels. */
 static void add_monster(int kind, int cx, int cy){
   for (int i = 0; i < MAX_MONSTERS; ++i){
     struct Monster* m = &g_monsters[i];
@@ -379,6 +394,13 @@ static int theme_accent[6] = { TEX_BRICK_MOSS, TEX_BRICK, TEX_ROCK_GEM, TEX_RUNE
  * facing *sdir (0 east .. 3 north). */
 void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
   rng_seed(seed * 2654435761u + depth * 40503u + 7);
+  world_layout(depth, sx, sy, sdir);
+}
+
+/* Lay out one level from the current random stream. Retries with the stream
+ * where it left off if too few rooms fit (the generator below assumes a
+ * start room, an exit room, and at least one other). */
+static void world_layout(int depth, int* sx, int* sy, int* sdir){
   int theme = (depth - 1) % 6;
   int base = theme_base[theme] + 1;
   int accent = theme_accent[theme] + 1;
@@ -410,6 +432,10 @@ void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
     rooms[room_count].w = w;
     rooms[room_count].h = h;
     room_count += 1;
+  }
+  if (room_count < 3){
+    world_layout(depth, sx, sy, sdir);
+    return;
   }
   for (int i = 0; i < room_count; ++i){
     for (int y = rooms[i].y; y < rooms[i].y + rooms[i].h; ++y){
@@ -530,6 +556,19 @@ void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
 
   place_torches();
 
+  /* floor clutter: mostly bones, mushrooms deeper down */
+  prop_count = 0;
+  int clutter = 3 + rng_range(4);
+  for (int i = 0; i < clutter && prop_count < MAX_PROPS; ++i){
+    int x;
+    int y;
+    if (!random_room_cell(rng_range(room_count), &x, &y)) continue;
+    props[prop_count].cx = x;
+    props[prop_count].cy = y;
+    props[prop_count].kind = (depth >= 3 && rng_range(2)) ? 1 : 0;
+    prop_count += 1;
+  }
+
   /* key in a room reachable without the locked door, away from the start */
   bfs_from(*sx, *sy, flow, false);
   int key_room = -1;
@@ -611,7 +650,6 @@ void spawn_effect(int kind, int x, int y, int z){
   }
 }
 
-/* Add a point light for this frame (one level per half cell of radius). */
 /* Throw `count` sparks from (x, y, z) in random directions. */
 void spawn_burst(int x, int y, int z, int count, int color, int speed){
   for (int i = 0; i < count; ++i){
@@ -630,6 +668,7 @@ void spawn_burst(int x, int y, int z, int count, int color, int speed){
   }
 }
 
+/* Move sparks one tick: walls reflect them, the floor bounces them. */
 static void update_particles(void){
   for (int i = 0; i < MAX_PARTICLES; ++i){
     struct Particle* p = &g_particles[i];
@@ -659,6 +698,8 @@ static void update_particles(void){
   }
 }
 
+/* Add a point light for this frame (one level per half cell of radius);
+ * extra lights beyond MAX_LIGHTS are dropped. */
 static void add_light(int x, int y, int radius){
   if (g_light_count >= MAX_LIGHTS) return;
   struct Light* l = &g_lights[g_light_count++];
@@ -693,6 +734,8 @@ int approx_dist(int dx, int dy){
   return dx > dy ? dx + (dy >> 1) : dy + (dx >> 1);
 }
 
+/* Hurt a monster; on death award score, burst, and maybe drop loot (the
+ * Warden always drops the rune key). */
 static void damage_monster(struct Monster* m, int amount){
   m->hp -= amount;
   m->flash = 8;
@@ -721,6 +764,8 @@ static void damage_monster(struct Monster* m, int amount){
   }
 }
 
+/* Detonate a projectile where it stopped: burst, sparks, and for fireballs
+ * splash damage within about 1.25 cells plus a camera shake. */
 static void explode(struct Projectile* p){
   p->active = 0;
   int kind = p->kind;
@@ -745,6 +790,8 @@ static void explode(struct Projectile* p){
   }
 }
 
+/* Fly projectiles one tick in two half steps (so thin doors cannot be
+ * skipped), hitting walls, monsters, or the player at (px, py). */
 static void update_shots(int px, int py){
   for (int i = 0; i < MAX_SHOTS; ++i){
     struct Projectile* p = &g_shots[i];
@@ -811,6 +858,8 @@ static bool line_clear(int x0, int y0, int x1, int y1){
   return true;
 }
 
+/* Reserve cell (nx, ny) for monster `index` and start sliding into it,
+ * opening a door if one is there. */
 static void monster_start_move(struct Monster* m, int index, int nx, int ny){
   occupant[cell_at(m->cx, m->cy)] = 0;
   m->from_x = m->x;
@@ -823,6 +872,9 @@ static void monster_start_move(struct Monster* m, int index, int nx, int ny){
   door_open(nx, ny);
 }
 
+/* One AI decision for an idle monster: wake when the player is near on the
+ * flow field, bite when adjacent, shoot when in clear sight (ranged kinds),
+ * otherwise step downhill toward the player. */
 static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py){
   struct MonsterKind* k = &kinds[m->kind];
   int here = flow[cell_at(m->cx, m->cy)];
@@ -906,6 +958,7 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
   m->cooldown = k->think_ticks;
 }
 
+/* Animate moving monsters and let idle ones think when their cooldown ends. */
 static void update_monsters(int pcx, int pcy, int px, int py){
   for (int i = 0; i < MAX_MONSTERS; ++i){
     struct Monster* m = &g_monsters[i];
@@ -1022,6 +1075,18 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
 
 /* Queue billboards and lights for everything visible this frame. */
 void world_draw(int frame){
+  for (int i = 0; i < prop_count; ++i){
+    struct Prop* p = &props[i];
+    /* offset from the cell center so props do not hide items placed later */
+    int x = (p->cx << 16) + 0x5000;
+    int y = (p->cy << 16) + 0xB000;
+    struct Billboard* b = add_billboard(x, y, 0, p->kind ? 0x6800 : 0x6000,
+                                        p->kind ? SPR_MUSHROOMS : SPR_BONES);
+    if (p->kind){
+      if (b) b->light = 4;
+      add_light(x, y, 0x14000);
+    }
+  }
   for (int i = 0; i < torch_count; ++i){
     struct Torch* t = &torches[i];
     int flicker = (frame + t->phase) >> 2;

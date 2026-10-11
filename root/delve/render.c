@@ -25,6 +25,25 @@ static int delta_y[VIEW_W];
 /* Perpendicular wall distance per column (16.16), for sprite occlusion. */
 int g_zbuffer[VIEW_W];
 
+/* What the raycast pass found for each column, consumed by the wall pass. */
+static int col_tex[VIEW_W];      /* texture index, -1 when the ray hit nothing */
+static int col_tex_x[VIEW_W];
+static int col_level[VIEW_W];
+static int col_height[VIEW_W];   /* projected wall height in pixels */
+
+/* Per tile column: floor/ceiling row pairs k < this are hidden behind the
+ * walls of all eight of its screen columns (see draw_flats_asm). */
+static int flat_skip[VIEW_TILE_COLS];
+
+/* Texture step (16.16 texels per pixel) for wall heights below STEP_TABLE. */
+#define STEP_TABLE 1024
+static int step_for_height[STEP_TABLE];
+
+/* Wall height for distances in [1, 9) cells at 1/256-cell resolution. Closer
+ * walls (where the table would be coarse) and farther ones divide. */
+#define HEIGHT_TABLE 2048
+static unsigned short height_for_dist[HEIGHT_TABLE];
+
 /* Floor casting tables. Row k (0 = nearest the horizon) shows floor row
  * VIEW_HALF_H + k and ceiling row VIEW_HALF_H - 1 - k, both at distance
  * row_dist[k] = PROJ_K / (2k + 1) cells. The world offset of the row's
@@ -80,6 +99,7 @@ int fixmul(int a, int b){
  * delta below 2^24 (the per-ray reciprocal). */
 static int frac_mul(unsigned frac, unsigned delta){
   if (frac >= FIX_ONE) return delta;
+  if (frac == FIX_HALF) return delta >> 1;   /* camera at a cell center */
   return (umul16(frac, delta & 0xFFFF) >> 16) + umul16(frac, delta >> 16);
 }
 
@@ -119,6 +139,7 @@ static void build_ray_tables(int angle){
 /* Light levels added to everything (negative during fades). */
 static int light_offset;
 
+/* Shift every light level by `levels` (negative darkens; used for fades). */
 void set_light_offset(int levels){
   light_offset = levels;
 }
@@ -140,8 +161,16 @@ static void build_row_tables(void){
   }
 }
 
+/* One-time renderer setup: floor row tables and default flats. */
 void render_init(void){
   build_row_tables();
+  for (int h = 1; h < STEP_TABLE; ++h){
+    step_for_height[h] = udiv32(TEX_SIZE << 16, h);
+  }
+  step_for_height[0] = TEX_SIZE << 16;
+  for (int i = 0; i < HEIGHT_TABLE; ++i){
+    height_for_dist[i] = udiv32(PROJ_K << 16, FIX_ONE + (i << 8));
+  }
   floor_tex = flat_textures + FLAT_FLOOR_STONE * TEX_BYTES;
   ceil_tex = flat_textures + FLAT_CEILING_BEAMS * TEX_BYTES;
 }
@@ -157,6 +186,7 @@ static struct FlatRow flat_rows[VIEW_HALF_H];
 static struct FlatLight active_lights[MAX_ACTIVE_LIGHTS];
 static int active_light_count;
 
+/* Build active_lights for this frame from g_lights (see above). */
 static void select_lights(struct Camera* cam){
   int dir_x = icos(cam->angle);
   int dir_y = isin(cam->angle);
@@ -174,6 +204,7 @@ static void select_lights(struct Camera* cam){
   }
 }
 
+/* Set each floor row's starting texture coordinates and light, then cast. */
 static void draw_flats(struct Camera* cam){
   for (int k = 0; k < VIEW_HALF_H; ++k){
     struct FlatRow* row = &flat_rows[k];
@@ -183,7 +214,8 @@ static void draw_flats(struct Camera* cam){
     row->dv = row_dv[k];
     row->level = row_level[k] + light_offset;
   }
-  draw_flats_asm(flat_rows, g_view, floor_tex, ceil_tex, active_lights, active_light_count);
+  draw_flats_asm(flat_rows, g_view, floor_tex, ceil_tex, active_lights,
+                 active_light_count, flat_skip);
 }
 
 /* Extra light levels at world point (x, y) from this frame's point lights.
@@ -204,31 +236,151 @@ static int light_bonus(int x, int y, int face_side, int ray_d){
   return bonus;
 }
 
-/* Draw the wall slice of screen column x (floor and ceiling are already
- * cast). `tex` is the texture index, `level` the light level. */
-static void draw_column(int x, int tex, int dist, int tex_x, int level){
-  unsigned short* col = g_view + (x >> 3) * VIEW_COL_GROUP_SHORTS + (x & 7);
+/* Projected wall height in pixels for perpendicular distance `dist`. */
+static int wall_height(int dist){
   if (dist < MIN_WALL_DIST) dist = MIN_WALL_DIST;
-  int height = udiv32(PROJ_K << 16, dist);
+  unsigned i = (unsigned)(dist - FIX_ONE) >> 8;
+  if (dist >= FIX_ONE && i < HEIGHT_TABLE) return height_for_dist[i];
+  return udiv32(PROJ_K << 16, dist);
+}
+
+/* (a * b) >> 16 for a positive distance `a` below 32 cells and a ray
+ * component |b| below 2.0, with ~10 fractional bits: plenty for a texture
+ * coordinate or a light position, and one umul16 instead of a full fixmul. */
+static int dist_mul(int a, int b){
+  if (b < 0) return -(int)(umul16((unsigned)a >> 6, (unsigned)(-b) >> 2) >> 8);
+  return umul16((unsigned)a >> 6, (unsigned)b >> 2) >> 8;
+}
+
+/* Draw the wall slice of screen column x (floor and ceiling are already
+ * cast) from the raycast pass's column record. */
+static void draw_column(int x){
+  int tex = col_tex[x];
+  if (tex < 0) return;
+  int height = col_height[x];
+  unsigned short* col = g_view + (x >> 3) * VIEW_COL_GROUP_SHORTS + (x & 7);
   int top = VIEW_HALF_H - (height >> 1);
   int bottom = top + height;
   int y0 = top < 0 ? 0 : top;
   int y1 = bottom > VIEW_H ? VIEW_H : bottom;
-
-  if (y1 > y0){
-    int step = udiv32(TEX_SIZE << 16, height);
-    int pos = 0;
-    if (top < 0){
-      pos = umul16(-top, step);
-    }
-    if (level < 0) level = 0;
-    if (level > LIGHT_LEVELS - 1) level = LIGHT_LEVELS - 1;
-    unsigned char* texcol = wall_textures + tex * TEX_BYTES + tex_x * TEX_SIZE;
-    draw_wall(col + y0 * VIEW_ROW_SHORTS, y1 - y0, texcol, pos, step,
-              shade_tables + level * SHADE_TABLE_SHORTS);
+  if (y1 <= y0) return;
+  int step = height < STEP_TABLE ? step_for_height[height] : udiv32(TEX_SIZE << 16, height);
+  int pos = 0;
+  if (top < 0){
+    pos = umul16(-top, step);
   }
+  int level = col_level[x];
+  if (level < 0) level = 0;
+  if (level > LIGHT_LEVELS - 1) level = LIGHT_LEVELS - 1;
+  unsigned char* texcol = wall_textures + tex * TEX_BYTES + col_tex_x[x] * TEX_SIZE;
+  draw_wall(col + y0 * VIEW_ROW_SHORTS, y1 - y0, texcol, pos, step,
+            shade_tables + level * SHADE_TABLE_SHORTS);
 }
 
+/* Cast the ray for screen column x and fill in its column record and the
+ * z-buffer. Marks every cell the ray passes as seen (automap). */
+static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
+                        unsigned frac_x, unsigned frac_y){
+  int rx = ray_dx[x];
+  int ry = ray_dy[x];
+  int dx = delta_x[x];
+  int dy = delta_y[x];
+  int step_x;
+  int step_y;
+  int side_x;
+  int side_y;
+  if (rx < 0){
+    step_x = -1;
+    side_x = frac_mul(frac_x, dx);
+  } else {
+    step_x = 1;
+    side_x = frac_mul(FIX_ONE - frac_x, dx);
+  }
+  if (ry < 0){
+    step_y = -MAP_W;
+    side_y = frac_mul(frac_y, dy);
+  } else {
+    step_y = MAP_W;
+    side_y = frac_mul(FIX_ONE - frac_y, dy);
+  }
+  int cell_index = map_y0 * MAP_W + map_x0;
+  int side = 0;
+  int dist = 0;
+  int wall_x = 0;
+  int tex = -1;
+  for (int i = 0; i < MAX_RAY_STEPS; ++i){
+    if (side_x < side_y){
+      side_x += dx;
+      cell_index += step_x;
+      side = 0;
+    } else {
+      side_y += dy;
+      cell_index += step_y;
+      side = 1;
+    }
+    cell_index &= MAP_CELLS - 1;
+    int cell = g_map[cell_index];
+    g_seen[cell_index] = 1;
+    if (cell == CELL_EMPTY) continue;
+    if (cell < CELL_DOOR_BASE){
+      tex = cell - 1;
+      if (side == 0){
+        dist = side_x - dx;
+        wall_x = cam->y + dist_mul(dist, ry);
+      } else {
+        dist = side_y - dy;
+        wall_x = cam->x + dist_mul(dist, rx);
+      }
+      break;
+    }
+    /* Door: a thin panel on the cell's center plane. The ray crosses that
+     * plane half a cell before its next grid line on the door's axis. */
+    struct Door* door = &g_doors[cell - CELL_DOOR_BASE];
+    int t_enter = side == 0 ? side_x - dx : side_y - dy;
+    int t_mid;
+    int along;
+    if (door->axis_x){
+      t_mid = side_x - (dx >> 1);
+      if (t_mid < t_enter || t_mid > side_y) continue;
+      along = cam->y + dist_mul(t_mid, ry);
+    } else {
+      t_mid = side_y - (dy >> 1);
+      if (t_mid < t_enter || t_mid > side_x) continue;
+      along = cam->x + dist_mul(t_mid, rx);
+    }
+    if ((along & 0xFFFF) < door->open) continue;   /* through the gap */
+    dist = t_mid;
+    wall_x = along - door->open;
+    side = door->axis_x ? 0 : 1;
+    tex = door->locked ? TEX_DOOR_LOCKED : TEX_DOOR;
+    break;
+  }
+  col_tex[x] = tex;
+  if (tex < 0){
+    g_zbuffer[x] = 0x7FFFFFFF;
+    col_height[x] = 0;
+    return;
+  }
+  int tex_x = (wall_x >> 10) & (TEX_SIZE - 1);
+  if (side == 0 && rx > 0) tex_x = TEX_SIZE - 1 - tex_x;
+  if (side == 1 && ry < 0) tex_x = TEX_SIZE - 1 - tex_x;
+  g_zbuffer[x] = dist;
+  col_tex_x[x] = tex_x;
+  col_height[x] = wall_height(dist);
+  int level = light_at(dist) - side;
+  if (active_light_count > 0){
+    if (side == 0){
+      level += light_bonus(cam->x + dist_mul(dist, rx), wall_x, 0, rx);
+    } else {
+      level += light_bonus(wall_x, cam->y + dist_mul(dist, ry), 1, ry);
+    }
+  }
+  col_level[x] = level;
+}
+
+/* Render the scene seen by `cam` into g_view in three passes: cast every
+ * column's ray (z-buffer, automap), cast the floor and ceiling except runs
+ * the walls will cover, then draw walls, billboards, and particles. */
 void render_view(struct Camera* cam){
   if (cam->angle != g_table_angle){
     build_ray_tables(cam->angle);
@@ -236,7 +388,6 @@ void render_view(struct Camera* cam){
   floor_tex = flat_textures + g_floor_flat * TEX_BYTES;
   ceil_tex = flat_textures + g_ceiling_flat * TEX_BYTES;
   select_lights(cam);
-  draw_flats(cam);
   int map_x0 = cam->x >> 16;
   int map_y0 = cam->y >> 16;
   unsigned frac_x = cam->x & 0xFFFF;
@@ -244,107 +395,20 @@ void render_view(struct Camera* cam){
   g_seen[(map_y0 * MAP_W + map_x0) & (MAP_CELLS - 1)] = 1;
 
   for (int x = 0; x < VIEW_W; ++x){
-    int rx = ray_dx[x];
-    int ry = ray_dy[x];
-    int dx = delta_x[x];
-    int dy = delta_y[x];
-    int step_x;
-    int step_y;
-    int side_x;
-    int side_y;
-    if (rx < 0){
-      step_x = -1;
-      side_x = frac_mul(frac_x, dx);
-    } else {
-      step_x = 1;
-      side_x = frac_mul(FIX_ONE - frac_x, dx);
+    cast_column(cam, x, map_x0, map_y0, frac_x, frac_y);
+  }
+  /* A floor/ceiling row pair k is hidden in a column when k < height / 2. */
+  for (int g = 0; g < VIEW_TILE_COLS; ++g){
+    int skip = VIEW_HALF_H;
+    for (int x = g * 8; x < g * 8 + 8; ++x){
+      int half = col_height[x] >> 1;
+      if (half < skip) skip = half;
     }
-    if (ry < 0){
-      step_y = -MAP_W;
-      side_y = frac_mul(frac_y, dy);
-    } else {
-      step_y = MAP_W;
-      side_y = frac_mul(FIX_ONE - frac_y, dy);
-    }
-    int cell_index = map_y0 * MAP_W + map_x0;
-    int side = 0;
-    int cell = 0;
-    int dist = 0;
-    int wall_x = 0;
-    int tex = 0;
-    bool hit = false;
-    for (int i = 0; i < MAX_RAY_STEPS; ++i){
-      if (side_x < side_y){
-        side_x += dx;
-        cell_index += step_x;
-        side = 0;
-      } else {
-        side_y += dy;
-        cell_index += step_y;
-        side = 1;
-      }
-      cell_index &= MAP_CELLS - 1;
-      cell = g_map[cell_index];
-      g_seen[cell_index] = 1;
-      if (cell == CELL_EMPTY) continue;
-      if (cell < CELL_DOOR_BASE){
-        tex = cell - 1;
-        if (side == 0){
-          dist = side_x - dx;
-          wall_x = cam->y + fixmul(dist, ry);
-        } else {
-          dist = side_y - dy;
-          wall_x = cam->x + fixmul(dist, rx);
-        }
-        hit = true;
-        break;
-      }
-      /* Door: a thin panel on the cell's center plane. The ray crosses that
-       * plane half a cell before its next grid line on the door's axis. */
-      struct Door* door = &g_doors[cell - CELL_DOOR_BASE];
-      int t_enter = side == 0 ? side_x - dx : side_y - dy;
-      int t_mid;
-      int along;
-      if (door->axis_x){
-        t_mid = side_x - (dx >> 1);
-        if (t_mid < t_enter || t_mid > side_y) continue;
-        along = cam->y + fixmul(t_mid, ry);
-      } else {
-        t_mid = side_y - (dy >> 1);
-        if (t_mid < t_enter || t_mid > side_x) continue;
-        along = cam->x + fixmul(t_mid, rx);
-      }
-      if ((along & 0xFFFF) < door->open) continue;   /* through the gap */
-      dist = t_mid;
-      wall_x = along - door->open;
-      side = door->axis_x ? 0 : 1;
-      tex = door->locked ? TEX_DOOR_LOCKED : TEX_DOOR;
-      hit = true;
-      break;
-    }
-    if (!hit){
-      g_zbuffer[x] = 0x7FFFFFFF;
-      continue;
-    }
-    int tex_x = (wall_x >> 10) & (TEX_SIZE - 1);
-    if (side == 0 && rx > 0) tex_x = TEX_SIZE - 1 - tex_x;
-    if (side == 1 && ry < 0) tex_x = TEX_SIZE - 1 - tex_x;
-    g_zbuffer[x] = dist;
-    int level = light_at(dist) - side;
-    if (active_light_count > 0){
-      int hx;
-      int hy;
-      if (side == 0){
-        hx = cam->x + fixmul(dist, rx);
-        hy = wall_x;
-        level += light_bonus(hx, hy, 0, rx);
-      } else {
-        hx = wall_x;
-        hy = cam->y + fixmul(dist, ry);
-        level += light_bonus(hx, hy, 1, ry);
-      }
-    }
-    draw_column(x, tex, dist, tex_x, level);
+    flat_skip[g] = skip;
+  }
+  draw_flats(cam);
+  for (int x = 0; x < VIEW_W; ++x){
+    draw_column(x);
   }
   draw_billboards(cam);
 }

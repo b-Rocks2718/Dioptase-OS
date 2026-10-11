@@ -60,20 +60,25 @@ static int child = -1;
 static bool muted;
 static unsigned last_heartbeat;
 
+/* Write one command byte to the synthesizer; a no-op once audio is down.
+ * A full pipe blocks briefly, which only happens if the child stalls. */
 static void send_byte(int value){
   if (cmd_fd < 0) return;
   unsigned char b = value;
   write(cmd_fd, &b, 1);
 }
 
+/* Queue sound effect `id` (SFX_*), unless effects are muted for the demo. */
 void sfx(int id){
   if (!muted) send_byte(id);
 }
 
+/* Silence sound effects (the attract-mode demo plays with music only). */
 void audio_mute_sfx(bool on){
   muted = on;
 }
 
+/* Switch the background music to `song` (MUSIC_*). */
 void audio_music(int song){
   send_byte(CMD_MUSIC + song);
 }
@@ -87,6 +92,7 @@ void audio_heartbeat(void){
   }
 }
 
+/* Shut the synthesizer down and reap it, so the device is free on exit. */
 void audio_stop(void){
   if (cmd_fd < 0) return;
   send_byte(CMD_QUIT);
@@ -214,6 +220,8 @@ static int row_left;
 static unsigned char* song_rows_data;
 static struct Instrument* chan_inst[MUSIC_VOICES];
 
+/* Fill wavetab: every wave shape pre-scaled for each of the 16 volume
+ * levels, so mixing needs no multiply per sample. */
 static void build_wavetables(void){
   for (int w = 0; w < WAVE_TABLES; ++w){
     for (int v = 0; v < VOLUMES; ++v){
@@ -238,6 +246,7 @@ static unsigned hz_inc(int hz){
   return (unsigned)hz * 171799u;
 }
 
+/* Start a music note on voice `v` with instrument `inst` (MIDI note number). */
 static void voice_note(struct Voice* v, struct Instrument* inst, int note){
   v->on = 1;
   v->wave = inst->wave;
@@ -255,6 +264,7 @@ static void voice_note(struct Voice* v, struct Instrument* inst, int note){
   }
 }
 
+/* Let a music note fade out (note-off). */
 static void voice_release(struct Voice* v){
   v->vol_floor = 0;
   v->vol_step = -0x8000;
@@ -280,6 +290,8 @@ static void voice_segment(struct Voice* v, int index){
 
 static int next_sfx_voice;
 
+/* Begin effect `id` on a free effect voice, stealing the oldest if all
+ * four are busy. */
 static void start_sfx(int id){
   if (id <= 0 || id >= SFX_IDS) return;
   int seg = sfx_start[id];
@@ -299,6 +311,7 @@ static void start_sfx(int id){
   voice_segment(&voices[pick], seg);
 }
 
+/* Reset the sequencer to the start of song `id` (or silence for MUSIC_NONE). */
 static void start_song(int id){
   song = id;
   for (int i = 0; i < MUSIC_VOICES; ++i){
@@ -476,6 +489,11 @@ static void synth_main(int fd){
   }
 }
 
+/* Fork the synthesizer process and connect its command pipe. Must run
+ * before anything else forks or registers handlers: the child inherits the
+ * parent's handler table, so SIGNAL_TERMINATE is registered afterwards and
+ * only in the game process. Audio failures leave the game silent but
+ * playable. */
 void audio_start(void){
   int fds[2];
   if (pipe(fds) < 0) return;

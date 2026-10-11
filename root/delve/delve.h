@@ -138,7 +138,9 @@ struct Door {
 #define SPR_PUFF_PINK 43   /* 4 frames */
 #define SPR_TORCH 47       /* 4 frames */
 #define SPR_WARDEN 51      /* 3 frames: 0-1 idle, 2 charging */
-#define SPR_COUNT 54
+#define SPR_BONES 54
+#define SPR_MUSHROOMS 55
+#define SPR_COUNT 56
 
 /* One sprite to draw this frame. Positions are world 16.16; `z` is the
  * height of the sprite's bottom edge above the floor and `size` its world
@@ -243,6 +245,14 @@ struct Torch {
 };
 #define MAX_TORCHES 16
 
+/* Floor clutter: bones and glowing mushrooms (decoration only). */
+struct Prop {
+  int cx;
+  int cy;
+  int kind;        /* 0 bones, 1 mushrooms */
+};
+#define MAX_PROPS 10
+
 struct Effect {
   int active;
   int kind;
@@ -342,7 +352,7 @@ void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
 void tint_view(unsigned short* view, int and_mask, int or_mask);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
                     unsigned char* floor_tex, unsigned char* ceil_tex,
-                    struct FlatLight* lights, int light_count);
+                    struct FlatLight* lights, int light_count, int* skip);
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
@@ -353,8 +363,8 @@ extern unsigned char flat_textures[16384];
 #define FLAT_FLOOR_MOSS 2
 #define FLAT_CEILING_ROCK 3
 extern int sin_table[4096];
-extern unsigned char sprite_texels[55296];
-extern unsigned char sprite_spans[3456];
+extern unsigned char sprite_texels[57344];
+extern unsigned char sprite_spans[3584];
 extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
 extern int song_table[12];                    /* per song: row samples, rows, loop, offset */
 extern unsigned char song_data[1152];         /* 4 bytes (lead, arp, bass, drums) per row */
@@ -396,6 +406,7 @@ int draw_text(int surface, int x, int y, char* s, unsigned short color);
 int draw_text_shadow(int surface, int x, int y, char* s, unsigned short color);
 int big_text_width(char* s);
 int draw_big_text(int surface, int x, int y, char* s, unsigned short color, int scale);
+void draw_logo(int x, int y, char* s, int scale, int t);
 char* format_int(char* buf, int value);
 void fill_rect(int surface, int x, int y, int w, int h, unsigned short color);
 void hud_touch(void);

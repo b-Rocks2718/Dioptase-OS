@@ -180,32 +180,38 @@ udiv32_next:
   mov  r1, r3
   ret
 
-# Cast the floor and ceiling over the whole view (perspective-correct floor
-# casting: along a screen row the texture coordinates advance linearly), lit
-# by the frame's point lights.
+# Cast the floor and ceiling over the whole view (row-based floor casting:
+# along a screen row the texture coordinates advance linearly), lit by the
+# frame's point lights.
 #
 # Pixels are visited one 8-pixel-wide tile column at a time (all 48 row pairs
 # of one 1536-byte group before the next) so the back-buffer working set is a
 # single page; walking whole screen rows instead touches eight pages per row
 # and thrashes the 16-entry TLB.
 #
-# Lighting: each 8-pixel run of a row takes one light level, the row's
-# distance level plus, for every light, max(0, (radius - d) >> 15) where d is
-# the octagonal distance max + min / 2 from the run's center (one level per
-# half cell, matching light_bonus() in render.c).
+# Row pair k (floor row 48 + k, ceiling row 47 - k) of tile column g is
+# skipped when k < skip[g]: the walls drawn afterwards cover it in all eight
+# columns. Skipped pairs still advance u and v so later columns stay right.
 #
-# Inputs:  r1 = 48 FlatRow records (delve.h), one per floor row k, holding the
+# Lighting: each 8-pixel run takes one light level, the row's distance level
+# plus, for every light, max(0, (radius - d) >> 15) where d is the octagonal
+# distance max + min / 2 from the run's center (one level per half cell,
+# matching light_bonus() in render.c).
+#
+# Inputs:  r1 = 48 FlatRow records (delve.h), one per row pair k, holding the
 #               row's current (u, v), per-pixel (du, dv), and base light
 #               level. u and v are advanced in place across the tile columns.
 #          r2 = back buffer (view pixel (0, 0)).
 #          r3 = floor texture, r4 = ceiling texture (64x64, row-major).
 #          r5 = FlatLight records (x, y, radius words), r6 = their count.
+#          r7 = 20 skip thresholds, one word per tile column.
 # Outputs: none. Clobbers r1-r19; preserves r20-r27 (saved on the stack).
 #
 # Register map: r1 rows, r2 group base, r3/r4 textures, r5 lights, r6 light
-# count, r7 row counter, r8 row cursor, r9-r12 u v du dv, r13/r14 floor and
+# count, r7 skip cursor, r8 row cursor, r9-r12 u v du dv, r13/r14 floor and
 # ceiling shade tables, r15/r16 floor and ceiling cursors, r17-r19 and
-# r20-r23 scratch, r24 texel mask, r25 group counter, r26 shade_tables.
+# r20-r23 scratch, r24 texel mask, r25 group counter, r26 shade_tables,
+# r27 row pair index k.
   .global draw_flats_asm
 draw_flats_asm:
   push r20
@@ -215,17 +221,36 @@ draw_flats_asm:
   push r24
   push r25
   push r26
+  push r27
   movi r24, 0xFC0              # mask for (v >> 4): texel row * 64
   movi r25, 20                 # tile columns
   adpc r26, shade_tables
 flats_group:
   mov  r8, r1                  # FlatRow cursor
-  movi r7, 48                  # row pairs
+  mov  r27, r0                 # k = 0
   movi r15, 768                # floor row 48 at byte offset 48 * 16
   add  r15, r2, r15
   movi r16, 752                # ceiling row 47 at byte offset 47 * 16
   add  r16, r2, r16
 flats_row:
+  lwa  r17, [r7]
+  cmp  r27, r17
+  bge  flats_visible
+  # hidden behind walls: just advance this row's u and v by 8 pixels
+  lwa  r9, [r8, 0]
+  lwa  r11, [r8, 8]
+  lsl  r11, r11, 3
+  add  r9, r9, r11
+  swa  r9, [r8, 0]
+  lwa  r10, [r8, 4]
+  lwa  r12, [r8, 12]
+  lsl  r12, r12, 3
+  add  r10, r10, r12
+  swa  r10, [r8, 4]
+  add  r15, r15, 16
+  add  r16, r16, -16
+  jmp  flats_row_done
+flats_visible:
   lwa  r9, [r8, 0]             # u
   lwa  r10, [r8, 4]            # v
   lwa  r11, [r8, 8]            # du
@@ -307,16 +332,21 @@ flats_pixel:
   bnz  flats_pixel
   swa  r9, [r8, 0]
   swa  r10, [r8, 4]
-  add  r8, r8, 24
   # The floor cursor already sits at the next row down; the ceiling cursor
   # moved 16 bytes right and must go up one row (-16) instead.
   add  r16, r16, -32
-  add  r7, r7, -1
-  bnz  flats_row
+flats_row_done:
+  add  r8, r8, 24
+  add  r27, r27, 1
+  movi r17, 48
+  cmp  r27, r17
+  bl   flats_row
   movi r17, 1536
   add  r2, r2, r17
+  add  r7, r7, 4
   add  r25, r25, -1
   bnz  flats_group
+  pop  r27
   pop  r26
   pop  r25
   pop  r24

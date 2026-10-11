@@ -28,7 +28,7 @@ C_ASMS := $(patsubst %.c,$(BUILD_DIR)/%.s,$(C_SRCS))
 LOCAL_ASM_SRCS := $(filter-out $(LEGACY_C_ASMS) $(LEGACY_CRT_C_ASMS),$(wildcard *.s))
 LINK_ASM_SRCS := $(CRT_ASM_SRCS_ORDERED) $(CRT_C_ASMS) $(LOCAL_ASM_SRCS) $(C_ASMS)
 
-.PHONY: all clean $(PROGRAM)
+.PHONY: all clean assets $(PROGRAM)
 
 all: $(PROGRAM)
 
@@ -45,6 +45,11 @@ $(BUILD_DIR)/%.s: %.c delve.h Makefile | $(BUILD_DIR)
 
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile | $(BUILD_DIR)
 	$(CC) $(OS_BCC_DEFINES) -s -o $@ $<
+
+# Regenerate the art, fonts, and music in assets.s (needs python3 and numpy).
+# The generated file is checked in, so ordinary builds do not need Python.
+assets:
+	python3 tools/gen_assets.py assets.s
 
 $(BUILD_DIR):
 	mkdir -p $@

@@ -30,6 +30,8 @@ static bool walkable(int c, bool has_key){
   return !g_doors[v - CELL_DOOR_BASE].locked || has_key;
 }
 
+/* Whether item `it` is a goal in priority pass `pass` (0 urgent potion,
+ * 1 key, 2 crystals, 3 the exit once the key is held, 4 any exit). */
 static bool item_wanted(struct Item* it, int pass, bool has_key){
   switch (pass){
     case 0: return it->type == ITEM_POTION_HP && g_stats.hp < 50;
