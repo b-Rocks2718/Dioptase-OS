@@ -16,6 +16,7 @@
 #include "../crt/fcntl.h"
 #include "../crt/print.h"
 #include "../crt/string.h"
+#include "../crt/vga.h"
 
 #define RECORD_PATH "/starfall/record.txt"
 #define TERMINAL_HANDOFF_FRAMES 8
@@ -32,6 +33,32 @@ static bool save_best(unsigned best);
 /* Exercise the compiled guest rules when no graphical host is available. */
 static int run_guest_check(void) {
   game_init(&game, 0xA5A5A5A5u, 0);
+  if (!graphics_init()) {
+    puts("***FAIL starfall guest tile device mapping\n");
+    return 1;
+  }
+  /* A changed arena tile beneath the title must not replace its menu glyph. */
+  game.cells[8 * FIELD_W + 10] = CELL_SPACE;
+  graphics_draw(&game, false);
+  volatile short* tile_fb = get_tile_fb();
+  if ((tile_fb[18 * TILE_ROW_WIDTH + 12] & 255) != '*') {
+    puts("***FAIL starfall guest title menu initial glyph at (12,18)\n");
+    return 1;
+  }
+  char* credit = "by gpt-6-sol";
+  for (int i = 0; credit[i] != '\0'; ++i) {
+    if ((tile_fb[40 * TILE_ROW_WIDTH + 34 + i] & 255) != credit[i]) {
+      puts("***FAIL starfall guest start menu credit at row 40\n");
+      return 1;
+    }
+  }
+  game.cells[8 * FIELD_W + 10] = CELL_ROCK;
+  game.frame++;
+  graphics_draw(&game, false);
+  if ((tile_fb[18 * TILE_ROW_WIDTH + 12] & 255) != '*') {
+    puts("***FAIL starfall guest arena repaint obscured title glyph at (12,18)\n");
+    return 1;
+  }
   struct GameInput input;
   input.move_x = 0;
   input.move_y = 0;
@@ -66,11 +93,19 @@ static int run_guest_check(void) {
     puts("***FAIL starfall guest wave progression\n");
     return 1;
   }
-  if (!graphics_init()) {
-    puts("***FAIL starfall guest tile device mapping\n");
+  game.cells[14 * FIELD_W + 9] = CELL_SPACE;
+  graphics_draw(&game, false);
+  if ((tile_fb[24 * TILE_ROW_WIDTH + 11] & 255) != '1') {
+    puts("***FAIL starfall guest salvage menu initial option at (11,24)\n");
     return 1;
   }
+  game.cells[14 * FIELD_W + 9] = CELL_ROCK;
+  game.frame++;
   graphics_draw(&game, false);
+  if ((tile_fb[24 * TILE_ROW_WIDTH + 11] & 255) != '1') {
+    puts("***FAIL starfall guest arena repaint obscured salvage option at (11,24)\n");
+    return 1;
+  }
   input.choose = 1;
   game_tick(&game, input);
   if (game.phase != PHASE_PLAY || game.wave != 2) {
@@ -78,6 +113,25 @@ static int run_guest_check(void) {
     return 1;
   }
   graphics_draw(&game, false);
+  game.cells[14 * FIELD_W + 21] = CELL_SPACE;
+  graphics_draw(&game, true);
+  if ((tile_fb[24 * TILE_ROW_WIDTH + 23] & 255) != 'P') {
+    puts("***FAIL starfall guest pause menu initial glyph at (23,24)\n");
+    return 1;
+  }
+  game.cells[14 * FIELD_W + 21] = CELL_ROCK;
+  game.frame++;
+  graphics_draw(&game, true);
+  if ((tile_fb[24 * TILE_ROW_WIDTH + 23] & 255) != 'P') {
+    puts("***FAIL starfall guest arena repaint obscured pause glyph at (23,24)\n");
+    return 1;
+  }
+  graphics_draw(&game, false);
+  if ((tile_fb[24 * TILE_ROW_WIDTH + 23] & 255) !=
+      (tile_fb[10 * TILE_ROW_WIDTH + 2] & 255)) {
+    puts("***FAIL starfall guest resumed arena did not restore rock at (23,24)\n");
+    return 1;
+  }
   sound_init();
   sound_tick(&game);
   sound_shutdown();

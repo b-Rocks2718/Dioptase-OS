@@ -20,6 +20,7 @@ static unsigned noise_state = 0xC001D00Du;
 static int effect_length;
 static int effect_tone;
 static unsigned audio_sample_count;
+static unsigned percussion_phase;
 
 /* The phase steps correspond to a minor-key melody at the documented rate. */
 static unsigned melody_steps[16] = {
@@ -68,10 +69,12 @@ static void synthesize_block(struct Game* game) {
       sample += (melody_phase & 0x8000u) ? 1450 : -1450;
     }
     sample += (bass_phase & 0x8000u) ? 1500 : -1500;
-    if ((beat % 4 == 0 || beat % 4 == 2) &&
-        audio_sample_count % 2500 < 430) {
+    if ((beat & 1) == 0 && percussion_phase < 430) {
       if ((audio_sample_count & 3u) == 0) {
-        noise_state = noise_state * 1664525u + 1013904223u;
+        /* Xorshift keeps the percussion noisy without software multiply. */
+        noise_state ^= noise_state << 13;
+        noise_state ^= noise_state >> 17;
+        noise_state ^= noise_state << 5;
       }
       sample += (noise_state & 0x80000000u) ? 750 : -750;
     }
@@ -85,6 +88,10 @@ static void synthesize_block(struct Game* game) {
     pcm[sample_index * 2] = (unsigned char)(encoded & 255u);
     pcm[sample_index * 2 + 1] = (unsigned char)(encoded >> 8);
     audio_sample_count++;
+    /* Match unsigned sample-count wrap as well as the 2500-sample beat. */
+    if (audio_sample_count == 0 || ++percussion_phase == 2500) {
+      percussion_phase = 0;
+    }
   }
   pcm_offset = 0;
   pcm_pending = AUDIO_BLOCK_BYTES;
@@ -100,6 +107,7 @@ void sound_init(void) {
   effect_phase = 0;
   effect_length = 0;
   audio_sample_count = 0;
+  percussion_phase = 0;
 }
 
 /* Refill only a modest ring prefix so sound follows gameplay state promptly. */

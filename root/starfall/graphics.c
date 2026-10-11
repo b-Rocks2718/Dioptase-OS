@@ -58,6 +58,34 @@ static short displayed[FIELD_CELLS];
 static int previous_phase = -1;
 static int previous_paused = -1;
 
+/* A menu occupies one inclusive screen region whose arena cells stay hidden. */
+struct OverlayBox {
+  int x;
+  int y;
+  int width;
+  int height;
+};
+
+static struct OverlayBox paused_box = {11, 20, 36, 17};
+static struct OverlayBox title_box = {7, 15, 43, 27};
+static struct OverlayBox upgrade_box = {6, 16, 45, 26};
+static struct OverlayBox dead_box = {8, 18, 41, 20};
+static struct OverlayBox victory_box = {7, 16, 43, 24};
+
+/* Copy changed 16-bit tile entries within one visible row span. */
+extern void starfall_blit_span(volatile short* target, short* new_tiles,
+                               short* old_tiles, int count);
+
+/* Identify the only rectangle allowed to cover arena art in this phase. */
+static struct OverlayBox* active_overlay(struct Game* game, bool paused) {
+  if (paused && game->phase == PHASE_PLAY) return &paused_box;
+  if (game->phase == PHASE_TITLE) return &title_box;
+  if (game->phase == PHASE_UPGRADE) return &upgrade_box;
+  if (game->phase == PHASE_DEAD) return &dead_box;
+  if (game->phase == PHASE_VICTORY) return &victory_box;
+  return (struct OverlayBox*)0;
+}
+
 /* The small signed offsets used for the pulse ring have bounded magnitude. */
 static int magnitude(int value) {
   return value < 0 ? -value : value;
@@ -66,7 +94,8 @@ static int magnitude(int value) {
 /* Paint an on-screen character without writing beyond the 80x60 tile array. */
 static void put_char(int x, int y, int character, int color) {
   if (x >= 0 && y >= 0 && x < TILE_ROW_WIDTH && y < TILE_COL_HEIGHT) {
-    framebuffer[y * TILE_ROW_WIDTH + x] =
+    /* The documented 80-column stride is 64 + 16, both native shifts. */
+    framebuffer[(y << 6) + (y << 4) + x] =
       (short)((color << 8) | (character & 255));
   }
 }
@@ -93,10 +122,19 @@ static void put_number(int x, int y, unsigned value, int color) {
 
 /* Replace a rectangular text region, including old numbers of different widths. */
 static void clear_rect(int x, int y, int width, int height) {
-  for (int row = 0; row < height; ++row) {
-    for (int col = 0; col < width; ++col) {
-      put_char(x + col, y + row, ' ', COLOR_WHITE);
+  int left = x < 0 ? 0 : x;
+  int top = y < 0 ? 0 : y;
+  int right = x + width > TILE_ROW_WIDTH ? TILE_ROW_WIDTH : x + width;
+  int bottom = y + height > TILE_COL_HEIGHT ? TILE_COL_HEIGHT : y + height;
+  if (left >= right || top >= bottom) return;
+  volatile short* line = framebuffer + (top << 6) + (top << 4) + left;
+  short blank = (short)((COLOR_WHITE << 8) | ' ');
+  for (int row = top; row < bottom; ++row) {
+    volatile short* cell = line;
+    for (int col = left; col < right; ++col) {
+      *cell++ = blank;
     }
+    line += TILE_ROW_WIDTH;
   }
 }
 
@@ -362,14 +400,15 @@ static void draw_broadcast(struct Game* game, bool paused) {
 }
 
 /* Overlay one menu on the quiet arena between active waves or after a run. */
-static void draw_overlay(struct Game* game, bool paused) {
+static void draw_overlay(struct Game* game, bool paused,
+                         struct OverlayBox* box) {
   if (paused && game->phase == PHASE_PLAY) {
-    draw_box(11, 20, 36, 17, COLOR_CYAN);
+    draw_box(box->x, box->y, box->width, box->height, COLOR_CYAN);
     put_text(23, 24, "PAUSED", COLOR_AMBER);
     put_text(16, 29, "P resume    Q quit", COLOR_WHITE);
     put_text(16, 33, "Breathe. The stars can wait.", COLOR_DIM);
   } else if (game->phase == PHASE_TITLE) {
-    draw_box(7, 15, 43, 27, COLOR_CYAN);
+    draw_box(box->x, box->y, box->width, box->height, COLOR_CYAN);
     put_text(12, 18, "*** INCOMING DISTRESS CALL ***", COLOR_AMBER);
     put_text(12, 22, "The Breaker fleet found the last", COLOR_WHITE);
     put_text(12, 24, "light in this sector. Hold it.", COLOR_WHITE);
@@ -378,8 +417,9 @@ static void draw_overlay(struct Game* game, bool paused) {
     put_text(12, 32, "1/2/3 select salvage upgrades", COLOR_AMBER);
     put_text(12, 36, "PRESS ENTER TO LAUNCH", COLOR_WHITE);
     put_text(12, 39, "P pause   Q return to shell", COLOR_DIM);
+    put_text(34, 40, "by gpt-6-sol", COLOR_CYAN);
   } else if (game->phase == PHASE_UPGRADE) {
-    draw_box(6, 16, 45, 26, COLOR_CYAN);
+    draw_box(box->x, box->y, box->width, box->height, COLOR_CYAN);
     put_text(11, 19, "SECTOR CLEAR  -  CHOOSE SALVAGE", COLOR_AMBER);
     for (int option = 0; option < 3; ++option) {
       int row = 24 + option * 5;
@@ -391,12 +431,12 @@ static void draw_overlay(struct Game* game, bool paused) {
     }
     put_text(11, 39, "Press 1, 2 or 3 to continue", COLOR_CYAN);
   } else if (game->phase == PHASE_DEAD) {
-    draw_box(8, 18, 41, 20, COLOR_PINK);
+    draw_box(box->x, box->y, box->width, box->height, COLOR_PINK);
     put_text(15, 22, "SIGNAL LOST", COLOR_PINK);
     put_text(14, 27, "The stars remember your stand.", COLOR_WHITE);
     put_text(14, 31, "ENTER retry    Q quit", COLOR_CYAN);
   } else if (game->phase == PHASE_VICTORY) {
-    draw_box(7, 16, 43, 24, COLOR_CYAN);
+    draw_box(box->x, box->y, box->width, box->height, COLOR_CYAN);
     put_text(13, 20, "THE CORE IS SILENT", COLOR_AMBER);
     put_text(12, 25, "One last signal crosses the dark.", COLOR_WHITE);
     put_text(12, 29, "The sector is yours, pilot.", COLOR_CYAN);
@@ -406,14 +446,15 @@ static void draw_overlay(struct Game* game, bool paused) {
 
 /* Choose the final picture for an arena cell, in increasing depth order. */
 static void compose_arena(struct Game* game) {
+  /* Walk the nine-cell twinkle cycle without a runtime modulo per star. */
+  int twinkle = (int)((game->frame >> 4) % 9);
   for (int index = 0; index < FIELD_CELLS; ++index) {
     int art = game->cells[index] == CELL_ROCK ? ART_ROCK :
-              game->stars[index] == 1 &&
-              ((game->frame / 16 + (unsigned)index) % 9 == 0)
-                ? ART_STAR_BRIGHT :
+              game->stars[index] == 1 && twinkle == 0 ? ART_STAR_BRIGHT :
               game->stars[index] == 1 ? ART_STAR :
               game->stars[index] == 2 ? ART_STAR_BRIGHT : ART_VOID;
     wanted[index] = (short)art;
+    if (++twinkle == 9) twinkle = 0;
   }
   for (int i = 0; i < MAX_DROPS; ++i) {
     if (game->drops[i].active) {
@@ -536,7 +577,7 @@ bool graphics_init(void) {
   return true;
 }
 
-/* Update changed cells; phase transitions repaint cells hidden by menus. */
+/* Update visible arena spans; phase changes repaint cells previously behind menus. */
 void graphics_draw(struct Game* game, bool paused) {
   int phase_changed = game->phase != previous_phase ||
                       (int)paused != previous_paused;
@@ -546,18 +587,43 @@ void graphics_draw(struct Game* game, bool paused) {
     previous_paused = paused;
   }
   compose_arena(game);
-  for (int index = 0; index < FIELD_CELLS; ++index) {
-    if (wanted[index] != displayed[index]) {
-      int x = index % FIELD_W;
-      int y = index / FIELD_W;
-      put_char(FIELD_LEFT + x, FIELD_TOP + y, wanted[index] & 255, 0);
-      displayed[index] = wanted[index];
+  struct OverlayBox* box = active_overlay(game, paused);
+  /* Sprites composite above tiles, so hide them before painting menu text. */
+  if (box != (struct OverlayBox*)0) position_sprites(game, paused);
+  int hide_left = FIELD_W;
+  int hide_end = FIELD_W;
+  if (box != (struct OverlayBox*)0) {
+    hide_left = box->x - FIELD_LEFT;
+    hide_end = box->x + box->width - FIELD_LEFT;
+    if (hide_left < 0) hide_left = 0;
+    if (hide_left > FIELD_W) hide_left = FIELD_W;
+    if (hide_end < 0) hide_end = 0;
+    if (hide_end > FIELD_W) hide_end = FIELD_W;
+  }
+  volatile short* row_target =
+    framebuffer + FIELD_TOP * TILE_ROW_WIDTH + FIELD_LEFT;
+  short* row_wanted = wanted;
+  short* row_displayed = displayed;
+  for (int row = 0; row < FIELD_H; ++row) {
+    int screen_y = FIELD_TOP + row;
+    if (box != (struct OverlayBox*)0 && screen_y >= box->y &&
+        screen_y < box->y + box->height) {
+      starfall_blit_span(row_target, row_wanted, row_displayed, hide_left);
+      starfall_blit_span(row_target + hide_end, row_wanted + hide_end,
+                         row_displayed + hide_end, FIELD_W - hide_end);
+    } else {
+      starfall_blit_span(row_target, row_wanted, row_displayed, FIELD_W);
     }
+    row_target += TILE_ROW_WIDTH;
+    row_wanted += FIELD_W;
+    row_displayed += FIELD_W;
   }
   if (phase_changed || game->frame % 10 == 0) {
     draw_status(game);
     draw_broadcast(game, paused);
   }
-  if (phase_changed) draw_overlay(game, paused);
-  position_sprites(game, paused);
+  if (phase_changed && box != (struct OverlayBox*)0) {
+    draw_overlay(game, paused, box);
+  }
+  if (box == (struct OverlayBox*)0) position_sprites(game, paused);
 }

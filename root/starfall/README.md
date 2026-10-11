@@ -50,7 +50,9 @@ make starfall_guest.summary-test TEST_RUNS=1
 
 The guest check executes the shipping `starfall` binary with `--selftest` and
 also exercises the user tile mappings and renderer without needing a VGA host
-window. It does not replace a visual playthrough for tuning difficulty and art.
+window. It checks that title, salvage, and pause text survives arena changes
+and that closing pause restores the covered art. It does not replace a visual
+playthrough for tuning difficulty and art.
 
 ## Device and input contracts
 
@@ -60,8 +62,19 @@ the tile framebuffer and tile bitmaps described in the top-level
 frame count** sections. The guest OS's `docs/syscalls.md` **Console, Keyboard,
 and VGA Helpers** and **Audio** sections define the syscalls. The top-level
 `docs/abi.md` **Registers**, **Trap ABI**, and **Types** sections define the
-compiler-facing call and data layout. The game does not use assembly or invent
-instruction behavior.
+compiler-facing call and data layout. `blit.s` is a user-mode leaf routine
+that copies changed 16-bit tile entries outside the menu box. It follows the
+documented **Registers** convention: its four arguments and scratch registers
+are caller-saved; it leaves callee-saved registers, the stack, and the return
+address untouched. It uses the top-level `docs/ISA.md` **Memory**, **ALU flags
+and edge cases**, and **Immediate Branches** sections and the assembler's
+`docs/syntax.md` **Memory Instructions** and **Macros** sections. The game
+does not change privilege or interrupt state.
+
+Menu rectangles reserve their tile cells until the menu closes, and the
+renderer scans the rest of the arena in row spans. The sound loop uses a
+rolling percussion counter and xorshift noise to avoid arithmetic runtime
+calls for each PCM sample.
 
 The terminal forwards key presses through foreground STDIN, discarding key
 release events; a short movement latch accommodates ordinary key repeat. For
