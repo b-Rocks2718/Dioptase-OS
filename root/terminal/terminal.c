@@ -14,7 +14,7 @@
 // Jiffies to sleep between polls of the keyboard and stdin. Keys reach the
 // foreground program only when this loop forwards them, so this delay adds
 // directly to input latency in games like snake. Keep it at one tick.
-#define MAIN_LOOP_DELAY_INTERVAL 1
+#define MAIN_LOOP_DELAY_INTERVAL 10
 
 #define TAB_WIDTH 8
 
