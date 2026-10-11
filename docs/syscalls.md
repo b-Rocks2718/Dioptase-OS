@@ -127,6 +127,7 @@ All other failures report `0` until their handlers are converted.
 | `53` | `sigreturn(rc)` | `rc` | From a signal handler, completes that handler and resumes the suspended user context. A valid call does not return to the wrapper. Outside a handler it returns `-1`. |
 | `54` | `mask_signal(signal)` | `signal` | Masks a signal in `0..15`, retaining any pending instance. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
 | `55` | `unmask_signal(signal)` | `signal` | Unmasks a signal in `0..15`. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
+| `64` | `pin_core(core)` | `core` | Pins the current thread to core `core` and moves it there before returning, or with `core == -1` lets it run on any core again. Returns the core the thread runs on when the call returns, or `-1` if `core` is neither `-1` nor a core of this machine (`0` to the core count minus one). |
 
 `request_priority()` currently honors all valid requests without any permission
 checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
@@ -134,6 +135,13 @@ checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
 does not reset the caller's current MLFQ level or remaining quantum; those
 dynamic scheduler fields continue to follow the scheduler rules documented in
 `scheduling.md`.
+
+`pin_core()` sets the same core affinity that kernel threads get from
+`core_pin()`: the thread is then scheduled only on that core, through
+preemption, blocking, wakeups, and queue rebalancing. A child created by
+`fork()` inherits its parent's affinity. Like priorities, pins are honored
+without any permission check. Programs that run several busy processes at
+once (DELVE's render workers) use it to keep them on separate cores.
 
 `signal_child()` replaces the former `kill()` wrapper, and
 `signal_foreground(signal)` replaces `kill_foreground()`. The foreground form

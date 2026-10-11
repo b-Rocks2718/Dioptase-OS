@@ -148,6 +148,12 @@ int signal_child(int child, int signal);
 
 int request_priority(int priority);
 
+// Pin the calling thread to `core`, moving it there before returning, or
+// with -1 let it run on any core again. Returns the core the thread runs on
+// when the call returns, or -1 if `core` is not a core of this machine. A
+// forked child inherits the pin.
+int pin_core(int core);
+
 int set_foreground_child(int child);
 
 int signal_foreground(int signal);

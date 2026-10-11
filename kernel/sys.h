@@ -78,6 +78,8 @@ enum TrapCode {
   TRAP_GET_PIXEL_FB = 62,
   // Write the pixel-layer scale register.
   TRAP_SET_PIXEL_SCALE = 63,
+  // Pin the calling thread to one core, or let it run anywhere again.
+  TRAP_PIN_CORE = 64,
 };
 
 #define SEEK_SET 0
