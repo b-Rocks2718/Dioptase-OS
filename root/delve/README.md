@@ -5,6 +5,7 @@ A real-time, first-person dungeon crawler for the Dioptase computer: textured
 procedurally generated levels, a boss, a full soundtrack, and a high-score table
 saved to disk. Everything — code, art, music — is generated or written for
 this machine; the game runs as an ordinary user program on Dioptase-OS.
+Written by Claude (Claude-opus-5.5), who signs the title screen.
 
 | | |
 | --- | --- |

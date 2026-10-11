@@ -1111,12 +1111,13 @@ static void draw_automap(void){
 }
 
 /* Title screen over the dimmed attract demo: the logo with its sweeping
- * glint, the menu, and the best three scores. */
+ * glint, the author's byline, the menu, and the best three scores. */
 static void title_text(void){
   banner_set(0, "DELVE", 4, true, 0);
   banner_glint(0, state_t % (banner_width(0) + 90) - 30);
   banner_place(0, 2);
   tile_text_centered(8, "INTO THE DIOPTASE DEEP", rgb332(0x0ACE));
+  tile_text_centered(9, "by Claude-opus-5.5", rgb332(0x0BCF));
   tile_text_centered(11, "ENTER - DESCEND", rgb332((state_t & 32) ? 0x0FFF : 0x0BBB));
   tile_text_centered(13, "H - HOW TO PLAY  S - SETTINGS  X - QUIT", rgb332(0x0999));
   tile_text_centered(16, "- DEEPEST DELVERS -", rgb332(0x02CF));
