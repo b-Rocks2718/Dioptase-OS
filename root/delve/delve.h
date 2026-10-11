@@ -28,53 +28,87 @@
 #define ANGLE_MASK 4095
 #define ANGLE_QUARTER 1024
 
-/* ---- View layout ----
- * The 3D view is 160x96 logical pixels shown at 4x (640x384 screen pixels)
- * by tiles 0..239 of the tile layer at tile scale 2 (docs/mem_map.md). Tiles
- * are assigned column-major (tile index = tx * 12 + ty), so a pixel's byte
- * offset in both the back buffer and the tilemap is
- *   (x >> 3) * 1536 + (x & 7) * 2 + y * 16.
- * The 160x24 status bar below it is five 32x32 hardware sprites at scale 2.
+/* ---- Screen layout ----
+ * The pixel framebuffer (320x240, shown at 2x; docs/mem_map.md) holds the 3D
+ * view in rows 0..191 and the status bar in rows 192..231. User programs can
+ * map only its first PIXEL_FB_USER_PIXELS pixels (root/crt/sys.h), so the
+ * tile layer covers rows 232..239 with an opaque border. The tile layer at
+ * scale 1 (16x16 screen pixels per tile, 40x30 visible) carries text
+ * overlays, transparent everywhere else; the crosshair is a hardware sprite.
+ *
+ * The 3D view is rendered into a back buffer split at the horizon into two
+ * halves of 96 rows. A half is 40 chunks of 8x96 pixels (one per 8-pixel
+ * column group) and each chunk is row-major with 16-byte rows, so pixel
+ * (x, y) is the short at
+ *   (y >= 96) * HALF_SHORTS + (x >> 3) * CHUNK_SHORTS + (y % 96) * 8 + (x & 7).
+ * The layout is chosen for the 16-entry TLB (a miss costs ~1,150
+ * instructions): a column walk (walls, sprites) steps 8 shorts and touches
+ * one chunk per half, so two pages; floor casting fills one column group at
+ * a time, floor rows in the bottom chunk and ceiling rows in the top; and
+ * blit_strip() copies 16-byte chunk rows to the framebuffer 32 rows at a
+ * time, about ten pages per strip. (Bands of 32 rows made a tall wall column
+ * touch six pages, which overflowed the TLB on every column.)
+ * view_row_off / view_col_off (hud.c) hold the two parts of the offset.
  */
-#define VIEW_W 160
-#define VIEW_H 96
-#define VIEW_HALF_H 48
-#define VIEW_TILE_COLS 20
-#define VIEW_TILE_ROWS 12
-#define VIEW_TILES 240
-#define VIEW_SHORTS 15360
-#define VIEW_COL_GROUP_SHORTS 768   /* shorts per 8-pixel-wide tile column */
-#define VIEW_ROW_SHORTS 8           /* shorts between vertically adjacent pixels */
+#define VIEW_W 320
+#define VIEW_H 192
+#define VIEW_HALF_H 96
+#define VIEW_GROUPS 40              /* 8-pixel column groups */
+#define HALF_SHORTS 30720
+#define CHUNK_SHORTS 768
+#define VIEW_WORDS 30720            /* the whole back buffer, 120 KB */
+
+/* Rows a column walk starting at row y can take before it crosses into the
+ * bottom half (the column loops in gfx.s jump there after that many rows). */
+#define HALF_LEFT(y) ((y) < VIEW_HALF_H ? VIEW_HALF_H - (y) : VIEW_H - (y))
 
 /* Projection: wall height in pixels at perpendicular distance d is
  * PROJ_K / d. PROJ_K = (VIEW_W / 2) / PLANE_LEN with PLANE_LEN = 0.7, a
  * horizontal field of view of about 70 degrees. */
 #define PLANE_LEN 45875             /* 0.7 in 16.16 */
-#define PROJ_K 114
+#define PROJ_K 229
 
-/* ---- Tile layer resources ---- */
-#define TILE_SCALE_4X 2
-#define BLANK_TILE 255
-#define TILE_FB_COLS 80
-#define TILE_FB_ROWS 60
+#define SCREEN_W 640                /* screen pixels; the pixel layer is 2x */
+#define FB_W 320                    /* pixel framebuffer row length */
+
+/* ---- Tile layer (text overlays) ----
+ * Tiles: TILE_CLEAR is transparent, TILE_BLACK opaque black, TILE_SOLID
+ * solid in the entry's color, TILE_BAR + n (n = 1..7) solid in its left n
+ * pixels (bar ends), and TILE_GLYPH + c the font glyph for ASCII c (32..127)
+ * in the entry's color with a black drop shadow. An entry is tile | color << 8
+ * (color is RGB332, docs/mem_map.md). */
+#define TILE_SCALE_TEXT 1
+#define TEXT_COLS 40                /* visible tile columns at scale 1 */
+#define TEXT_ROWS 30
+#define TILE_FB_COLS 80             /* tile framebuffer row length */
 #define TILEMAP_SHORTS_PER_TILE 64
+#define TILE_CLEAR 0
+#define TILE_BLACK 1
+#define TILE_SOLID 2
+#define TILE_BORDER 3
+#define TILE_BAR 8
+#define TILE_GLYPH 0                /* glyph tiles sit at their ASCII codes */
+#define TEXT_BORDER_ROW 29          /* covers pixel rows 232..239 */
 
 /* ---- Hardware sprites ----
- * Sprite coordinates are multiplied by the sprite's scale on screen, so a
- * scale-2 sprite at (x, y) appears at screen (4x, 4y). */
+ * Sprite coordinates are multiplied by the sprite's scale on screen. */
 #define SPRITE_SHORTS 1024
-#define HUD_SPRITE_FIRST 11         /* sprites 11..15: status bar strip */
-#define HUD_SPRITE_COUNT 5
-#define HUD_Y 96                    /* logical row of the status bar */
-#define HUD_H 24
-#define HUD_W 160
-#define HUD_PIXELS 3840          /* HUD_W * HUD_H (array bounds must be literals) */
+#define SPRITE_HIDDEN 1000          /* off-screen coordinate (vga.h) */
+#define TRANSPARENT_PIXEL 0xF000
+
+/* ---- Status bar ---- */
+#define HUD_Y 192                   /* framebuffer row of the status bar */
+#define HUD_W 320
+#define HUD_H 40
+#define HUD_PIXELS 12800            /* HUD_W * HUD_H (array bounds must be literals) */
 
 /* Drawing surfaces for the 2D helpers in hud.c. */
 #define SURF_VIEW 0
 #define SURF_HUD 1
-#define SPRITE_HIDDEN 1000          /* off-screen coordinate (vga.h) */
-#define TRANSPARENT_PIXEL 0xF000
+
+/* ---- The staff (drawn into the view; assets.s) ---- */
+#define STAFF_W 64
+#define STAFF_H 128
 
 /* ---- Lighting ---- */
 #define LIGHT_LEVELS 16
@@ -351,22 +385,22 @@ struct FlatLight {
 };
 
 /* ---- gfx.s ---- */
-void blit_view(volatile short* dst, unsigned short* src);
+void blit_strip(volatile short* fb, unsigned short* view, int g0, int g1);
 void copy_words(void* dst, void* src, unsigned words);
 void draw_wall(unsigned short* dst, int count, unsigned char* texcol,
-               int texpos, int texstep, unsigned short* shade);
-void fill_rows(unsigned short* dst, int count, unsigned short* colors, int advance);
+               int texpos, int texstep, unsigned short* shade, int half_left);
 unsigned umul16(unsigned a, unsigned b);
 unsigned udiv32(unsigned n, unsigned d);
 void draw_sprite_col(unsigned short* dst, int count, unsigned char* texcol,
-                     int texpos, int texstep, unsigned short* shade);
-void dim_view(unsigned short* view);
+                     int texpos, int texstep, unsigned short* shade, int half_left);
+void draw_image_col(unsigned short* dst, int count, unsigned short* src, int half_left);
 void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
-void tint_view(unsigned short* view, int and_mask, int or_mask);
+void shade_strip(unsigned short* view, int g0, int g1, int and_mask, int or_mask,
+                 int shift);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
                     unsigned char* floor_tex, unsigned char* ceil_tex,
                     struct FlatLight* lights, int light_count, int* skip,
-                    int columns);
+                    int groups);
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
@@ -382,10 +416,11 @@ extern unsigned char sprite_spans[3584];
 extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
 extern int song_table[16];                    /* per song: row samples, rows, loop, offset */
 extern unsigned char song_data[1408];         /* 4 bytes (lead, arp, bass, drums) per row */
-extern unsigned short overlay_staff[2048];   /* two 32x32 sprites, 12-bit */
+/* The staff resting and casting: column-major 12-bit pixels (0 = clear), then
+ * each column's opaque [top, bottom) rows, per image. */
+extern unsigned short staff_images[16384];
+extern unsigned char staff_spans[256];
 extern unsigned short overlay_cursor[1024];
-extern unsigned short overlay_staff_glow[1024]; /* top staff sprite while casting */
-extern unsigned char font_small[320];
 extern unsigned char font_big[768];
 extern unsigned char font_big_spans[192];
 
@@ -393,23 +428,36 @@ extern unsigned char font_big_spans[192];
 extern volatile short* g_tilemap;
 extern volatile short* g_tile_fb;
 extern volatile short* g_spritemap;
+extern volatile short* g_pixel_fb;
 /* The back buffer for the 3D view. It points at g_view_words, or at the
  * shared mapping when parallel rendering is running (parallel.c). Buffers
  * copied with word loads/stores are declared as word arrays because bcc only
  * 2-aligns short arrays. */
-extern unsigned g_view_words[7680];
+extern unsigned g_view_words[30720];
 extern unsigned short* g_view;
 extern unsigned g_frame;            /* VGA frames since start (60 Hz) */
+
+/* What the view renderer draws on top of the 3D scene in every strip: the
+ * staff (when shown) and a recolor pass (damage flash, death tint, dimmed
+ * backdrops). Published to the render workers with the camera. */
+struct ViewExtras {
+  int staff_x;       /* the staff image's top-left in view pixels */
+  int staff_y;
+  int staff_image;   /* 0 resting, 1 casting, -1 hidden */
+  int shade_and;     /* shade_strip() arguments; shade_shift < 0 = no pass */
+  int shade_or;
+  int shade_shift;
+};
 
 /* ---- render.c ---- */
 int isin(int angle);
 int icos(int angle);
 int fixmul(int a, int b);
 void render_init(void);
-void render_view(struct Camera* cam);
+void render_view(struct Camera* cam, struct ViewExtras* extras);
 void set_light_offset(int levels);
 int get_light_offset(void);
-void render_view_strip(struct Camera* cam, int g0, int g1);
+void render_view_strip(struct Camera* cam, struct ViewExtras* extras, int g0, int g1);
 extern struct Billboard g_bills[MAX_BILLBOARDS];
 extern int g_bill_count;
 extern int g_debug_bills;
@@ -417,18 +465,28 @@ extern int g_debug_visible;
 struct Billboard* add_billboard(int x, int y, int z, int size, int frame);
 
 /* ---- hud.c ---- */
-extern unsigned g_hud_words[1920];
+extern unsigned g_hud_words[6400];
 #define g_hud ((unsigned short*)g_hud_words)
-int text_width(char* s);
-int draw_text(int surface, int x, int y, char* s, unsigned short color);
-int draw_text_shadow(int surface, int x, int y, char* s, unsigned short color);
+extern int view_row_off[192];       /* VIEW_H entries, see "Screen layout" */
+extern int view_col_off[320];       /* VIEW_W entries */
+void hud_init(void);
 int big_text_width(char* s);
-int draw_big_text(int surface, int x, int y, char* s, unsigned short color, int scale);
-void draw_logo(int x, int y, char* s, int scale, int t);
 char* format_int(char* buf, int value);
 void fill_rect(int surface, int x, int y, int w, int h, unsigned short color);
 void hud_touch(void);
 void hud_upload(void);
+void tiles_init(void);
+void text_begin(void);
+void tile_text(int col, int row, char* s, int color);
+void tile_text_centered(int row, char* s, int color);
+void tile_text_right(int end, int row, char* s, int color);
+void tile_bar(int col, int row, int width_px, int filled_px, int color);
+void text_end(void);
+void banner_set(int slot, char* text, int scale, bool logo, unsigned short color);
+void banner_clear(int slot);
+void banner_glint(int slot, int glint);
+int banner_width(int slot);
+void banner_place(int slot, int row);
 
 /* ---- world.c ---- */
 extern unsigned char g_map[MAP_CELLS];
@@ -466,7 +524,7 @@ bool world_boss(int* hp, int* max_hp);
 
 /* ---- parallel.c ---- */
 void parallel_start(void);
-void parallel_render(struct Camera* cam);
+void parallel_render(struct Camera* cam, struct ViewExtras* extras, bool game_overlays);
 void parallel_stop(void);
 int parallel_workers(void);
 void parallel_toggle(void);

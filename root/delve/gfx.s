@@ -2,45 +2,88 @@
 #
 # These are the per-pixel and per-column routines that dominate a frame. They
 # are plain leaf functions under the Dioptase ABI (docs/abi.md): arguments in
-# r1-r8, result in r1, and they only touch caller-saved r1-r19, so they need
-# no stack frame. None of them trap or touch privileged state.
+# r1-r8, result in r1, and they only touch caller-saved r1-r19 unless noted
+# (draw_flats_asm saves the callee-saved registers it uses on the stack).
+# None of them trap or touch privileged state.
 #
-# Back-buffer layout (see delve.h, "View layout"): the 160x96 view is stored
-# exactly like the 240 tiles that display it, tile (tx, ty) at tile index
-# tx * 12 + ty. Pixel (x, y) therefore lives at byte offset
-#   (x >> 3) * 1536 + (x & 7) * 2 + y * 16
-# so walking down a screen column is a constant 16-byte stride, and the
-# finished frame reaches tile memory with one straight copy.
+# Back-buffer layout (see delve.h, "Screen layout"): the 320x192 view is kept
+# in two halves of 96 rows, split at the horizon. A half is 40 chunks of 8x96
+# pixels (one per 8-pixel column group), and each chunk is row-major with
+# 16-byte rows, so pixel (x, y) lives at byte offset
+#   (y >= 96) * 61440 + (x >> 3) * 1536 + (y % 96) * 16 + (x & 7) * 2.
+# Walking down a column is a 16-byte stride that jumps HALF_SKIP bytes when
+# it crosses the horizon, so a column touches one chunk (about one page) per
+# half; a chunk row is one 16-byte copy to the framebuffer.
+#
+# HALF_SKIP = 61440 - 1536 = 59904: the extra step from a chunk's last row to
+# the same column group's first row in the bottom half.
 
   .text
   .align 4
 
-# Copy the finished 160x96 view (30720 bytes) into the tilemap.
-# Inputs:  r1 = destination (mapped tilemap), r2 = source back buffer.
-#          Both word aligned.
-# Outputs: none. Clobbers r1-r12.
-  .global blit_view
-blit_view:
-  movi r3, 960                # 30720 bytes / 32 bytes per iteration
-blit_view_loop:
-  lwa  r4, [r2], 4
-  lwa  r5, [r2], 4
-  lwa  r6, [r2], 4
-  lwa  r7, [r2], 4
-  lwa  r8, [r2], 4
-  lwa  r9, [r2], 4
-  lwa  r10, [r2], 4
-  lwa  r11, [r2], 4
-  swa  r4, [r1], 4
-  swa  r5, [r1], 4
-  swa  r6, [r1], 4
-  swa  r7, [r1], 4
-  swa  r8, [r1], 4
-  swa  r9, [r1], 4
-  swa  r10, [r1], 4
-  swa  r11, [r1], 4
+# Copy column groups [g0, g1) of the finished view from the back buffer to
+# the pixel framebuffer (row-major, 640-byte rows; docs/mem_map.md), 32 rows
+# at a time, so the working set is the strip's slice of one half (a page per
+# few groups) and five framebuffer pages.
+# Inputs:  r1 = framebuffer pixel (0, 0) (the mapping from get_pixel_fb),
+#          r2 = back buffer, r3 = g0, r4 = g1 (0 <= g0 < g1 <= 40).
+#          Both buffers word aligned.
+# Outputs: none. Clobbers r1-r16.
+  .global blit_strip
+blit_strip:
+  sub  r4, r4, r3              # column groups in the strip
+  lsl  r6, r3, 4               # g0 * 16: the strip's first framebuffer byte in a row
+  add  r1, r1, r6
+  movi r5, 1536
+  mov  r6, r0
+blit_strip_g0:                 # r6 = g0 * 1536 (no multiply instruction)
+  cmp  r3, r0
+  bz   blit_strip_g0_done
+  add  r6, r6, r5
   add  r3, r3, -1
-  bnz  blit_view_loop
+  jmp  blit_strip_g0
+blit_strip_g0_done:
+  add  r2, r2, r6              # the strip's first chunk in the top half
+  movi r12, 624                # framebuffer row stride minus the 16 bytes stored
+  movi r14, 20464              # 32 rows down minus one chunk right: 32 * 640 - 16
+  movi r15, 1024               # from a chunk slice's end to the next chunk's slice
+  movi r13, 6                  # 32-row bands left
+  movi r16, 3                  # bands left in this half
+blit_strip_band:
+  mov  r5, r4                  # chunks left in this band
+  mov  r6, r1                  # framebuffer: band's top row, strip's first chunk
+  mov  r7, r2                  # back buffer: this band's slice of the first chunk
+blit_strip_chunk:
+  movi r8, 32                  # rows left in the slice
+blit_strip_row:
+  lwa  r9, [r7], 4
+  lwa  r10, [r7], 4
+  lwa  r11, [r7], 4
+  lwa  r3, [r7], 4
+  swa  r9, [r6], 4
+  swa  r10, [r6], 4
+  swa  r11, [r6], 4
+  swa  r3, [r6], 4
+  add  r6, r6, r12
+  add  r8, r8, -1
+  bnz  blit_strip_row
+  sub  r6, r6, r14             # the next chunk's top row in this band
+  add  r7, r7, r15             # the same slice of the next chunk
+  add  r5, r5, -1
+  bnz  blit_strip_chunk
+  # next band: 32 framebuffer rows on; in the back buffer the next 32-row
+  # slice of each chunk, or after three bands the bottom half's first slice
+  movi r5, 20480
+  add  r1, r1, r5
+  add  r2, r2, 512
+  add  r16, r16, -1
+  bnz  blit_strip_same_half
+  movi r5, 59904               # HALF_SKIP: rows 96.. of the same chunks
+  add  r2, r2, r5
+  movi r16, 3
+blit_strip_same_half:
+  add  r13, r13, -1
+  bnz  blit_strip_band
   ret
 
 # Copy `words` 32-bit words (generic memcpy for word-aligned buffers).
@@ -58,35 +101,32 @@ copy_words:
 # Inputs:  r1 = first destination pixel (back buffer), r2 = pixel count (> 0),
 #          r3 = texture column (64 palette-index bytes),
 #          r4 = texture position (16.16 texels, < 64.0 for every pixel drawn),
-#          r5 = texture step per pixel (16.16), r6 = shade table (256 halfwords).
-# Outputs: none. Clobbers r1, r2, r4, r7, r8.
+#          r5 = texture step per pixel (16.16), r6 = shade table (256 halfwords),
+#          r7 = rows before the column crosses into the bottom half
+#               (HALF_LEFT(y) in delve.h).
+# Outputs: none. Clobbers r1, r2, r4, r7-r9.
   .global draw_wall
 draw_wall:
-  lsr  r7, r4, 16
-  add  r7, r3, r7
-  lba  r7, [r7]
-  lsl  r7, r7, 1
-  add  r7, r6, r7
-  lda  r8, [r7]
+  movi r9, 59904               # HALF_SKIP
+draw_wall_loop:
+  lsr  r8, r4, 16
+  add  r8, r3, r8
+  lba  r8, [r8]
+  lsl  r8, r8, 1
+  add  r8, r6, r8
+  lda  r8, [r8]
   sda  r8, [r1], 16
   add  r4, r4, r5
+  add  r7, r7, -1
+  bz   draw_wall_half
+draw_wall_next:
   add  r2, r2, -1
-  bnz  draw_wall
+  bnz  draw_wall_loop
   ret
-
-# Fill part of a view column with per-row colors (flat floor/ceiling shading).
-# Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
-#          r3 = pointer to the first row's 16-bit color; the table advances
-#          by r4 bytes per pixel (2 walks down, -2 walks up).
-# Outputs: none. Clobbers r1-r3, r5.
-  .global fill_rows
-fill_rows:
-  lda  r5, [r3]
-  add  r3, r3, r4
-  sda  r5, [r1], 16
-  add  r2, r2, -1
-  bnz  fill_rows
-  ret
+draw_wall_half:
+  add  r1, r1, r9              # into the same column group of the bottom half
+  movi r7, 96
+  jmp  draw_wall_next
 
 # Unsigned 16 x 16 -> 32 bit multiply by quarter squares:
 #   a * b = Q(a + b) - Q(a - b), Q(n) = floor(n * n / 4)
@@ -180,33 +220,37 @@ udiv32_next:
   mov  r1, r3
   ret
 
-# Cast the floor and ceiling over the whole view (row-based floor casting:
-# along a screen row the texture coordinates advance linearly), lit by the
-# frame's point lights.
+# Cast the floor and ceiling over a strip of the view (row-based floor
+# casting: along a screen row the texture coordinates advance linearly), lit
+# by the frame's point lights.
 #
-# Pixels are visited one 8-pixel-wide tile column at a time (all 48 row pairs
-# of one 1536-byte group before the next) so the back-buffer working set is a
-# single page; walking whole screen rows instead touches eight pages per row
-# and thrashes the 16-entry TLB.
+# Pixels are visited one 8-pixel column group at a time (all 96 row pairs of
+# one group before the next), so the back-buffer working set is one chunk in
+# each half; walking whole screen rows instead would touch 40 chunks per row
+# and thrash the 16-entry TLB.
 #
-# Row pair k (floor row 48 + k, ceiling row 47 - k) of tile column g is
-# skipped when k < skip[g]: the walls drawn afterwards cover it in all eight
-# columns. Skipped pairs still advance u and v so later columns stay right.
+# Row pair k is floor row 96 + k (row k of the group's bottom chunk) and
+# ceiling row 95 - k (row 95 - k of its top chunk), so neither cursor ever
+# leaves its chunk.
+#
+# Row pair k of group g is skipped when k < skip[g]: the walls drawn
+# afterwards cover it in all eight columns. Skipped pairs still advance u and
+# v so later groups stay right.
 #
 # Lighting: each 8-pixel run takes one light level, the row's distance level
 # plus, for every light, max(0, (radius - d) >> 15) where d is the octagonal
 # distance max + min / 2 from the run's center (one level per half cell,
 # matching light_bonus() in render.c).
 #
-# Inputs:  r1 = 48 FlatRow records (delve.h), one per row pair k, holding the
+# Inputs:  r1 = 96 FlatRow records (delve.h), one per row pair k, holding the
 #               row's current (u, v), per-pixel (du, dv), and base light
-#               level. u and v are advanced in place across the tile columns.
-#          r2 = back buffer (view pixel (0, 0)).
+#               level. u and v are advanced in place across the groups.
+#          r2 = the strip's first column group in the top half
+#               (back buffer + g0 * 1536).
 #          r3 = floor texture, r4 = ceiling texture (64x64, row-major).
 #          r5 = FlatLight records (x, y, radius words), r6 = their count.
-#          r7 = skip thresholds, one word per tile column drawn.
-#          r8 = number of tile columns to draw (the view's strip width / 8;
-#               r2 points at the strip's first tile column).
+#          r7 = skip thresholds, one word per column group drawn.
+#          r8 = number of column groups to draw (> 0).
 # Outputs: none. Clobbers r1-r19; preserves r20-r27 (saved on the stack).
 #
 # Register map: r1 rows, r2 group base, r3/r4 textures, r5 lights, r6 light
@@ -225,14 +269,14 @@ draw_flats_asm:
   push r26
   push r27
   movi r24, 0xFC0              # mask for (v >> 4): texel row * 64
-  mov  r25, r8                 # tile columns to draw
+  mov  r25, r8                 # column groups to draw
   adpc r26, shade_tables
 flats_group:
   mov  r8, r1                  # FlatRow cursor
   mov  r27, r0                 # k = 0
-  movi r15, 768                # floor row 48 at byte offset 48 * 16
+  movi r15, 61440              # floor row 96: bottom half, row 0
   add  r15, r2, r15
-  movi r16, 752                # ceiling row 47 at byte offset 47 * 16
+  movi r16, 1520               # ceiling row 95: top half, row 95 (95 * 16)
   add  r16, r2, r16
 flats_row:
   lwa  r17, [r7]
@@ -340,11 +384,10 @@ flats_pixel:
 flats_row_done:
   add  r8, r8, 24
   add  r27, r27, 1
-  movi r17, 48
+  movi r17, 96
   cmp  r27, r17
   bl   flats_row
-  movi r17, 1536
-  add  r2, r2, r17
+  add  r2, r2, 1536            # next column group
   add  r7, r7, 4
   add  r25, r25, -1
   bnz  flats_group
@@ -361,59 +404,107 @@ flats_row_done:
 # Draw one column of a billboard sprite; palette index 0 is transparent.
 # Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
 #          r3 = sprite texel column (32 bytes), r4 = texel position (16.16),
-#          r5 = step per pixel (16.16), r6 = shade table.
-# Outputs: none. Clobbers r1, r2, r4, r7, r8.
+#          r5 = step per pixel (16.16), r6 = shade table,
+#          r7 = rows before the column crosses into the bottom half.
+# Outputs: none. Clobbers r1, r2, r4, r7-r9.
   .global draw_sprite_col
 draw_sprite_col:
-  lsr  r7, r4, 16
-  add  r7, r3, r7
-  lba  r7, [r7]
-  cmp  r7, r0
+  movi r9, 59904               # HALF_SKIP
+draw_sprite_col_loop:
+  lsr  r8, r4, 16
+  add  r8, r3, r8
+  lba  r8, [r8]
+  cmp  r8, r0
   bz   draw_sprite_col_skip
-  lsl  r7, r7, 1
-  add  r7, r6, r7
-  lda  r8, [r7]
+  lsl  r8, r8, 1
+  add  r8, r6, r8
+  lda  r8, [r8]
   sda  r8, [r1]
 draw_sprite_col_skip:
   add  r1, r1, 16
   add  r4, r4, r5
+  add  r7, r7, -1
+  bz   draw_sprite_col_half
+draw_sprite_col_next:
   add  r2, r2, -1
-  bnz  draw_sprite_col
+  bnz  draw_sprite_col_loop
   ret
+draw_sprite_col_half:
+  add  r1, r1, r9
+  movi r7, 96
+  jmp  draw_sprite_col_next
 
-# Halve every channel of the view (darkened backdrop for menus and the map).
-# Inputs:  r1 = back buffer (word aligned). Outputs: none. Clobbers r1-r5.
-  .global dim_view
-dim_view:
-  movi r2, 7680                # words in the 160x96 view
-  movi r4, 0x07770777          # per-halfword channel mask after the shift
-dim_view_loop:
-  lwa  r3, [r1]
-  lsr  r3, r3, 1
-  and  r3, r3, r4
-  swa  r3, [r1], 4
+# Draw one column of a 12-bit overlay image (the staff); pixel 0 is clear.
+# Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
+#          r3 = first source pixel (column-major image, so the next row's
+#               pixel is the next halfword), r4 = rows before the column
+#               crosses into the bottom half.
+# Outputs: none. Clobbers r1-r4, r8, r9.
+  .global draw_image_col
+draw_image_col:
+  movi r9, 59904               # HALF_SKIP
+draw_image_col_loop:
+  lda  r8, [r3], 2
+  cmp  r8, r0
+  bz   draw_image_col_skip
+  sda  r8, [r1]
+draw_image_col_skip:
+  add  r1, r1, 16
+  add  r4, r4, -1
+  bz   draw_image_col_half
+draw_image_col_next:
   add  r2, r2, -1
-  bnz  dim_view_loop
+  bnz  draw_image_col_loop
   ret
+draw_image_col_half:
+  add  r1, r1, r9
+  movi r4, 96
+  jmp  draw_image_col_next
 
-# Recolor every view pixel as (pixel & and_mask) | or_mask (damage flash).
-# Inputs:  r1 = back buffer (word aligned), r2 = and mask, r3 = or mask
-#          (12-bit 0x0BGR values, applied to both halves of each word).
-# Outputs: none. Clobbers r1-r6.
-  .global tint_view
-tint_view:
-  lsl  r4, r2, 16
-  or   r2, r2, r4
-  lsl  r4, r3, 16
-  or   r3, r3, r4
-  movi r5, 7680
-tint_view_loop:
-  lwa  r6, [r1]
-  and  r6, r6, r2
-  or   r6, r6, r3
-  swa  r6, [r1], 4
-  add  r5, r5, -1
-  bnz  tint_view_loop
+# Recolor column groups [g0, g1) of the view: every pixel p becomes
+# ((p >> shift) & and_mask) | or_mask. Shift 1 with mask 0x777 halves every
+# channel (a darkened backdrop); shift 0 tints (the damage flash).
+# Inputs:  r1 = back buffer, r2 = g0, r3 = g1 (g0 < g1), r4 = and mask,
+#          r5 = or mask (12-bit 0x0BGR values, applied to both pixels of each
+#          word), r6 = shift (0 to 15).
+# Outputs: none. Clobbers r1-r11.
+  .global shade_strip
+shade_strip:
+  lsl  r7, r4, 16
+  or   r4, r4, r7
+  lsl  r7, r5, 16
+  or   r5, r5, r7
+  sub  r3, r3, r2              # column groups in the strip
+  mov  r9, r0
+  mov  r10, r0
+shade_strip_scale:             # r9 = g0 * 1536 bytes, r10 = groups * 384 words
+  cmp  r2, r0
+  bz   shade_strip_scaled
+  movi r7, 1536
+  add  r9, r9, r7
+  add  r2, r2, -1
+  jmp  shade_strip_scale
+shade_strip_scaled:
+  lsl  r10, r3, 8              # groups * 256
+  lsl  r3, r3, 7               # groups * 128
+  add  r3, r3, r10             # words per half: 384 per chunk
+  add  r1, r1, r9              # the strip's first chunk in the top half
+  movi r7, 2                   # halves left
+  movi r11, 61440
+shade_strip_half:
+  mov  r8, r1
+  mov  r9, r3
+shade_strip_loop:
+  lwa  r10, [r8]
+  lsr  r10, r10, r6
+  and  r10, r10, r4
+  or   r10, r10, r5
+  swa  r10, [r8], 4
+  add  r9, r9, -1
+  bnz  shade_strip_loop
+  add  r1, r1, r11
+  add  r7, r7, -1
+  bnz  shade_strip_half
   ret
 
 # Add one wavetable voice into the audio mix accumulator.

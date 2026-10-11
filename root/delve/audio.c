@@ -36,6 +36,13 @@
 #define CTRL_SAMPLES 125          /* samples per control tick: 200 Hz at 25 kHz */
 #define CHUNK_SAMPLES 250         /* two control ticks per audio_write */
 #define TARGET_BUFFERED 4500      /* bytes kept queued: 90 ms */
+/* Jiffies the synthesizer sleeps between top-ups. Every wake-up costs a few
+ * syscalls (about 10,000 instructions each on Dioptase-OS) plus refilling the
+ * TLB the context switch emptied, so waking every jiffy cost a third of a
+ * core. Six jiffies is a few milliseconds at emulator speeds and well under
+ * the 90 ms kept queued even if the emulator runs several times slower. */
+#define SYNTH_SLEEP_JIFFIES 6
+#define HEARTBEAT_CHECK_LOOPS 16  /* synth loops between heartbeat clock reads */
 
 #define WAVE_SQUARE 0
 #define WAVE_PULSE 1
@@ -448,7 +455,9 @@ static void synth_main(int fd){
   unsigned last_alive = get_vga_frame_counter();
   int pending = 0;            /* bytes of out_buf not yet accepted */
   unsigned char cmds[32];
+  int loops = 0;
   while (true){
+    loops += 1;
     int avail = fd_bytes_available(fd);
     if (avail > 0){
       int n = read(fd, cmds, avail > 32 ? 32 : avail);
@@ -462,8 +471,10 @@ static void synth_main(int fd){
         if (c >= CMD_MUSIC) start_song(c - CMD_MUSIC);
         else start_sfx(c);
       }
+      loops = 0;
       last_alive = get_vga_frame_counter();
-    } else if (get_vga_frame_counter() - last_alive > HEARTBEAT_TIMEOUT){
+    } else if ((loops & (HEARTBEAT_CHECK_LOOPS - 1)) == 0 &&
+               get_vga_frame_counter() - last_alive > HEARTBEAT_TIMEOUT){
       audio_close();
       exit(0);
     }
@@ -490,7 +501,7 @@ static void synth_main(int fd){
       pending -= accepted;
       buffered += accepted;
     }
-    sleep(1);
+    sleep(SYNTH_SLEEP_JIFFIES);
   }
 }
 

@@ -74,15 +74,26 @@ off again after any program exits.
 
 ## How it works
 
-**A framebuffer made of tiles.** User programs can map the tile layer and the
-sprites but not the pixel framebuffer. DELVE switches the tile layer to 4x
-scale, where a 20x12 grid of cells covers the top 640x384 screen pixels, and
-points those 240 cells at 240 *distinct* tiles. Rewriting the tiles' pixel data
-then acts as a 160x96, 12-bit color framebuffer. The tiles are assigned
-column-major (cell (tx, ty) shows tile tx * 12 + ty), so a screen column is a
-constant 16-byte stride through tile memory and a finished frame is one
-straight 30 KiB copy from the back buffer. The status bar below is five 32x32
-hardware sprites at scale 2; the staff and crosshair are more sprites.
+**Three display layers.** The 3D view is 320x192 pixels in the top of the
+pixel framebuffer (shown at 2x, so it fills 640x384 screen pixels), which
+DELVE maps with `get_pixel_fb()`. The status bar is drawn into the pixel rows
+below it, and only redrawn when something on it changes. Text — messages,
+menus, the numbers on the status bar — lives in the tile layer above the
+pixels, as tiles made from the OS's own 8x8 font with a drop shadow, so it
+costs nothing per frame and never flickers. Big headings and the title logo
+are tiles too: each is rendered once into a block of spare tiles (the logo's
+glint repaints just the columns it crosses). The crosshair is a hardware
+sprite, and the staff is drawn into the view itself so it is clipped and
+tinted with the scene.
+
+**A TLB-shaped back buffer.** The view is rendered into a back buffer split at
+the horizon into two halves, each made of 40 chunks of 8x96 pixels stored
+row by row. A wall or sprite column touches one chunk per half, floor casting
+fills one 8-pixel column group at a time, and the copy to the framebuffer
+moves 16-byte chunk rows. That matters because the TLB has 16 entries and a
+miss costs over a thousand instructions: the first layout tried, with
+32-row bands, made every tall wall column touch six pages and ran at a third
+of the speed.
 
 **Raycasting.** One DDA ray per screen column finds walls and Wolfenstein-style
 sliding doors (thin panels on a cell's center plane). Ray directions step
@@ -98,21 +109,20 @@ light walls per column and floors per 8-pixel run.
 **No multiply instruction.** The ISA has no hardware multiply, so the hot paths
 use a quarter-square table multiplier (`umul16`), a shift/subtract divider,
 and incremental arithmetic; the per-pixel loops are hand-written assembly in
-`gfx.s`. The floor caster walks the screen one 8-pixel tile column at a time
-because walking whole rows touches eight pages per row and thrashes the
-16-entry TLB.
+`gfx.s`. Texture data is page-aligned so each 4 KiB texture costs one TLB
+entry.
 
-**Three cores.** The view is split into three tile-aligned strips. Two
+**Three cores.** The view is split into three strips of column groups. Two
 forked worker processes render two of them while the game process renders the
 third, all into a back buffer that lives in a shared file mapping (Dioptase-OS
 has no anonymous shared memory, but `MMAP_SHARED` file mappings alias the same
 page-cache pages across `fork`; the file is unlinked right after mapping, and
-the kernel writes nothing back until the last mapping goes away). Workers wait
-by spinning on a frame counter in that shared page — blocking pipe reads were
-tried first and lost to wake-up latency. With the default four emulated cores
-this renders about 25-30% faster; the first game also measures both modes and
-falls back to a single process if parallel turns out slower (for example with
-fewer cores).
+the kernel writes nothing back until the last mapping goes away). Each process
+then copies its own strip to the framebuffer, whose mapping the workers
+inherit. Workers wait by spinning on a frame counter in that shared page —
+blocking pipe reads were tried first and lost to wake-up latency. The first
+game also measures both modes and falls back to a single process if parallel
+turns out slower (for example with fewer cores).
 
 **Sound.** `audio_start()` forks a synthesizer process that owns the PCM
 device: eight voices (wavetables and an LFSR noise channel), a four-channel
@@ -131,11 +141,11 @@ unexplored space, and turns to fire at monsters in line with it.
 
 | File | Contents |
 | --- | --- |
-| `delve.h` | shared constants, types, and the view/tile layout |
+| `delve.h` | shared constants, types, and the screen and back-buffer layout |
 | `main.c` | display setup, main loop, input, player, game states, high scores |
 | `render.c` | raycaster, floor casting, lighting, billboards, particles |
 | `world.c` | level generator, doors, monsters and AI, items, projectiles |
-| `hud.c` | fonts, text, status bar upload |
+| `hud.c` | status bar, tile-layer text and banners, back-buffer addressing |
 | `audio.c` | synthesizer process and its command protocol |
 | `autopilot.c` | the computer player for the attract mode |
 | `parallel.c` | worker processes that render strips of the view |

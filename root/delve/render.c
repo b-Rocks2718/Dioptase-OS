@@ -1,7 +1,7 @@
 #include "delve.h"
 
 /*
- * Raycasting renderer for the 160x96 first-person view.
+ * Raycasting renderer for the 320x192 first-person view.
  *
  * Walls use a grid DDA per screen column (Lode Vandevenne's formulation:
  * ray direction = camera direction + camera plane * screen x, so the
@@ -12,32 +12,48 @@
  * reciprocals come from tables, and ray directions step incrementally across
  * the view, so a new camera angle (the player turns freely) costs little.
  *
- * Rendering can be confined to a strip of tile columns so several processes
- * can share a frame (parallel.c); all per-strip state is process-local.
+ * Rendering can be confined to a strip of 8-pixel column groups so several
+ * processes can share a frame (parallel.c); all per-strip state is
+ * process-local. The back buffer's band-tiled layout is described in delve.h
+ * ("Screen layout").
  */
 
 static void draw_billboards(struct Camera* cam);
 static int light_bonus(int x, int y, int face_side, int ray_d);
 
-/* Per-angle ray tables, rebuilt whenever the camera angle changes. */
+/* Everything the renderer keeps per screen column, in one record: walking
+ * the columns of a strip then touches one or two pages of records instead of
+ * a page in each of nine parallel arrays, which overflowed the 16-entry TLB
+ * on every column. The record is 32 bytes so indexing is a shift (bcc calls
+ * its software multiply for other sizes). */
+struct Column {
+  int ray_dx;      /* ray direction; rebuilt when the camera angle changes */
+  int ray_dy;
+  int delta_x;     /* |1 / ray_dx| in 16.16, capped */
+  int delta_y;
+  int depth;       /* perpendicular wall distance (16.16): the z-buffer */
+  short tex;       /* texture index, -1 when the ray hit nothing */
+  short tex_x;     /* texel column */
+  short height;    /* projected wall height in pixels */
+  short level;     /* light level */
+  int unused;      /* pads the record to 32 bytes */
+};
+static struct Column columns[320];       /* VIEW_W */
 static int table_angle = -1;
-static int ray_dx[VIEW_W];
-static int ray_dy[VIEW_W];
-static int delta_x[VIEW_W];   /* |1 / ray_dx| in 16.16, capped */
-static int delta_y[VIEW_W];
 
-/* Perpendicular wall distance per column (16.16), for sprite occlusion. */
-int g_zbuffer[VIEW_W];
+/* Address of view pixel (x, y), computed rather than looked up in hud.c's
+ * offset tables (two more pages per column): see delve.h, "Screen layout".
+ * (x >> 3) * CHUNK_SHORTS is spelled with shifts (768 = 512 + 256). */
+static unsigned short* view_at(int x, int y){
+  int g = x >> 3;
+  unsigned short* p = g_view + (g << 9) + (g << 8) + (x & 7);
+  if (y >= VIEW_HALF_H) return p + HALF_SHORTS + ((y - VIEW_HALF_H) << 3);
+  return p + (y << 3);
+}
 
-/* What the raycast pass found for each column, consumed by the wall pass. */
-static int col_tex[VIEW_W];      /* texture index, -1 when the ray hit nothing */
-static int col_tex_x[VIEW_W];
-static int col_level[VIEW_W];
-static int col_height[VIEW_W];   /* projected wall height in pixels */
-
-/* Per tile column: floor/ceiling row pairs k < this are hidden behind the
+/* Per column group: floor/ceiling row pairs k < this are hidden behind the
  * walls of all eight of its screen columns (see draw_flats_asm). */
-static int flat_skip[VIEW_TILE_COLS];
+static int flat_skip[40];           /* VIEW_GROUPS */
 
 /* Texture step (16.16 texels per pixel) for wall heights below STEP_TABLE. */
 #define STEP_TABLE 1024
@@ -52,13 +68,13 @@ static unsigned short height_for_dist[HEIGHT_TABLE];
  * VIEW_HALF_H + k and ceiling row VIEW_HALF_H - 1 - k, both at distance
  * row_dist[k] = PROJ_K / (2k + 1) cells. The world offset of the row's
  * leftmost pixel and the per-pixel step depend only on the camera angle, so
- * they are cached alongside the ray tables. */
-static int row_dist[VIEW_HALF_H];
-static int row_level[VIEW_HALF_H];
-static int row_u0[VIEW_HALF_H];
-static int row_v0[VIEW_HALF_H];
-static int row_du[VIEW_HALF_H];
-static int row_dv[VIEW_HALF_H];
+ * they are cached alongside the ray tables. (Bounds: VIEW_HALF_H.) */
+static int row_dist[96];
+static int row_level[96];
+static int row_u0[96];
+static int row_v0[96];
+static int row_du[96];
+static int row_dv[96];
 
 /* Floor and ceiling textures for the current level. */
 static unsigned char* floor_tex;
@@ -135,15 +151,16 @@ static void build_ray_tables(int angle){
   int wide_step_y = (plane_y << 9) / VIEW_W;
   int wide_x = ((dir_x - plane_x) << 8) + (wide_step_x >> 1);
   int wide_y = ((dir_y - plane_y) << 8) + (wide_step_y >> 1);
-  for (int x = 0; x < VIEW_W; ++x){
+  struct Column* col = columns;
+  for (int x = 0; x < VIEW_W; ++x, ++col){
     int rx = wide_x >> 8;
     int ry = wide_y >> 8;
-    ray_dx[x] = rx;
-    ray_dy[x] = ry;
+    col->ray_dx = rx;
+    col->ray_dy = ry;
     unsigned ax = rx < 0 ? -rx : rx;
     unsigned ay = ry < 0 ? -ry : ry;
-    delta_x[x] = recip_table[ax >> RECIP_SHIFT];
-    delta_y[x] = recip_table[ay >> RECIP_SHIFT];
+    col->delta_x = recip_table[ax >> RECIP_SHIFT];
+    col->delta_y = recip_table[ay >> RECIP_SHIFT];
     wide_x += wide_step_x;
     wide_y += wide_step_y;
   }
@@ -152,8 +169,8 @@ static void build_ray_tables(int angle){
   int step_y = wide_step_y >> 8;
   for (int k = 0; k < VIEW_HALF_H; ++k){
     int d = row_dist[k];
-    row_u0[k] = fixmul(d, ray_dx[0]);
-    row_v0[k] = fixmul(d, ray_dy[0]);
+    row_u0[k] = fixmul(d, columns[0].ray_dx);
+    row_v0[k] = fixmul(d, columns[0].ray_dy);
     row_du[k] = fixmul(d, step_x);
     row_dv[k] = fixmul(d, step_y);
   }
@@ -214,7 +231,7 @@ void render_init(void){
 }
 
 /* Per-row floor casting state handed to draw_flats_asm(). */
-static struct FlatRow flat_rows[VIEW_HALF_H];
+static struct FlatRow flat_rows[96];
 
 /* This frame's lights that can reach anything visible: within reach of the
  * lit area (the torch fog makes surfaces past ~6 cells black anyway) and not
@@ -255,7 +272,7 @@ static void draw_flats(struct Camera* cam){
     row->dv = row_dv[k];
     row->level = row_level[k] + light_offset;
   }
-  draw_flats_asm(flat_rows, g_view + g0 * VIEW_COL_GROUP_SHORTS, floor_tex, ceil_tex,
+  draw_flats_asm(flat_rows, g_view + g0 * CHUNK_SHORTS, floor_tex, ceil_tex,
                  active_lights, active_light_count, flat_skip + g0, g1 - g0);
 }
 
@@ -297,10 +314,10 @@ static int dist_mul(int a, int b){
 /* Draw the wall slice of screen column x (floor and ceiling are already
  * cast) from the raycast pass's column record. */
 static void draw_column(int x){
-  int tex = col_tex[x];
+  struct Column* col = &columns[x];
+  int tex = col->tex;
   if (tex < 0) return;
-  int height = col_height[x];
-  unsigned short* col = g_view + (x >> 3) * VIEW_COL_GROUP_SHORTS + (x & 7);
+  int height = col->height;
   int top = VIEW_HALF_H - (height >> 1);
   int bottom = top + height;
   int y0 = top < 0 ? 0 : top;
@@ -311,22 +328,23 @@ static void draw_column(int x){
   if (top < 0){
     pos = umul16(-top, step);
   }
-  int level = col_level[x];
+  int level = col->level;
   if (level < 0) level = 0;
   if (level > LIGHT_LEVELS - 1) level = LIGHT_LEVELS - 1;
-  unsigned char* texcol = wall_textures + tex * TEX_BYTES + col_tex_x[x] * TEX_SIZE;
-  draw_wall(col + y0 * VIEW_ROW_SHORTS, y1 - y0, texcol, pos, step,
-            shade_tables + level * SHADE_TABLE_SHORTS);
+  unsigned char* texcol = wall_textures + tex * TEX_BYTES + col->tex_x * TEX_SIZE;
+  draw_wall(view_at(x, y0), y1 - y0, texcol, pos, step,
+            shade_tables + level * SHADE_TABLE_SHORTS, HALF_LEFT(y0));
 }
 
 /* Cast the ray for screen column x and fill in its column record and the
  * z-buffer. Marks every cell the ray passes as seen (automap). */
 static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
                         unsigned frac_x, unsigned frac_y){
-  int rx = ray_dx[x];
-  int ry = ray_dy[x];
-  int dx = delta_x[x];
-  int dy = delta_y[x];
+  struct Column* col = &columns[x];
+  int rx = col->ray_dx;
+  int ry = col->ray_dy;
+  int dx = col->delta_x;
+  int dy = col->delta_y;
   int step_x;
   int step_y;
   int side_x;
@@ -397,18 +415,18 @@ static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
     tex = door->locked ? TEX_DOOR_LOCKED : TEX_DOOR;
     break;
   }
-  col_tex[x] = tex;
+  col->tex = tex;
   if (tex < 0){
-    g_zbuffer[x] = 0x7FFFFFFF;
-    col_height[x] = 0;
+    col->depth = 0x7FFFFFFF;
+    col->height = 0;
     return;
   }
   int tex_x = (wall_x >> 10) & (TEX_SIZE - 1);
   if (side == 0 && rx > 0) tex_x = TEX_SIZE - 1 - tex_x;
   if (side == 1 && ry < 0) tex_x = TEX_SIZE - 1 - tex_x;
-  g_zbuffer[x] = dist;
-  col_tex_x[x] = tex_x;
-  col_height[x] = wall_height(dist);
+  col->depth = dist;
+  col->tex_x = tex_x;
+  col->height = wall_height(dist);
   int level = light_at(dist) - side;
   if (active_light_count > 0){
     if (side == 0){
@@ -417,19 +435,44 @@ static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
       level += light_bonus(wall_x, cam->y + dist_mul(dist, ry), 1, ry);
     }
   }
-  col_level[x] = level;
+  col->level = level;
 }
 
 /* Render the whole view (single-process rendering). */
-void render_view(struct Camera* cam){
-  render_view_strip(cam, 0, VIEW_TILE_COLS);
+void render_view(struct Camera* cam, struct ViewExtras* extras){
+  render_view_strip(cam, extras, 0, VIEW_GROUPS);
 }
 
-/* Render tile columns [g0, g1) of the scene seen by `cam` into g_view in
- * three passes: cast every column's ray (z-buffer, automap), cast the floor
- * and ceiling except runs the walls will cover, then draw walls, billboards,
- * and particles, all clipped to the strip. */
-void render_view_strip(struct Camera* cam, int g0, int g1){
+/* Draw the staff image over this strip of the view, clipped to the view;
+ * only each image column's opaque span is visited. */
+static void draw_staff(struct ViewExtras* e){
+  if (e->staff_image < 0) return;
+  unsigned short* image = staff_images + e->staff_image * (STAFF_W * STAFF_H);
+  unsigned char* spans = staff_spans + e->staff_image * (STAFF_W * 2);
+  int x0 = e->staff_x < strip_x0 ? strip_x0 : e->staff_x;
+  int x1 = e->staff_x + STAFF_W > strip_x1 ? strip_x1 : e->staff_x + STAFF_W;
+  for (int x = x0; x < x1; ++x){
+    int c = x - e->staff_x;
+    int first = spans[c * 2];
+    int top = e->staff_y + first;
+    int bottom = e->staff_y + spans[c * 2 + 1];
+    if (top < 0){
+      first -= top;
+      top = 0;
+    }
+    if (bottom > VIEW_H) bottom = VIEW_H;
+    if (bottom <= top) continue;
+    draw_image_col(view_at(x, top), bottom - top, image + c * STAFF_H + first,
+                   HALF_LEFT(top));
+  }
+}
+
+/* Render column groups [g0, g1) of the scene seen by `cam` into g_view:
+ * cast every column's ray (z-buffer, automap), cast the floor and ceiling
+ * except runs the walls will cover, draw walls, billboards, and particles,
+ * then the staff and the recolor pass from `extras`, all clipped to the
+ * strip. */
+void render_view_strip(struct Camera* cam, struct ViewExtras* extras, int g0, int g1){
   strip_x0 = g0 * 8;
   strip_x1 = g1 * 8;
   if (cam->angle != table_angle){
@@ -451,7 +494,7 @@ void render_view_strip(struct Camera* cam, int g0, int g1){
   for (int g = g0; g < g1; ++g){
     int skip = VIEW_HALF_H;
     for (int x = g * 8; x < g * 8 + 8; ++x){
-      int half = col_height[x] >> 1;
+      int half = columns[x].height >> 1;
       if (half < skip) skip = half;
     }
     flat_skip[g] = skip;
@@ -461,6 +504,10 @@ void render_view_strip(struct Camera* cam, int g0, int g1){
     draw_column(x);
   }
   draw_billboards(cam);
+  draw_staff(extras);
+  if (extras->shade_shift >= 0){
+    shade_strip(g_view, g0, g1, extras->shade_and, extras->shade_or, extras->shade_shift);
+  }
 }
 
 /* ---- Billboards ---- */
@@ -526,7 +573,7 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
   unsigned char* spans = sprite_spans + b->frame * (SPR_SIZE * 2);
 
   for (int x = x0; x < x1; ++x, u += step){
-    if (depth >= g_zbuffer[x]) continue;
+    if (depth >= columns[x].depth) continue;
     int tc = u >> 16;
     if (tc >= SPR_SIZE) break;
     int span_top = spans[tc * 2];
@@ -542,8 +589,8 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
     }
     if (y1 > VIEW_H) y1 = VIEW_H;
     if (y1 <= y0) continue;
-    unsigned short* dst = g_view + (x >> 3) * VIEW_COL_GROUP_SHORTS + (x & 7) + y0 * VIEW_ROW_SHORTS;
-    draw_sprite_col(dst, y1 - y0, texels + tc * SPR_SIZE, v, step, shade);
+    draw_sprite_col(view_at(x, y0), y1 - y0, texels + tc * SPR_SIZE, v, step, shade,
+                    HALF_LEFT(y0));
   }
 }
 
@@ -561,17 +608,15 @@ static void draw_particles(struct Camera* cam, int dir_x, int dir_y){
     int sx = VIEW_W / 2 + fixmul(lateral, inv);
     int sy = VIEW_HALF_H + fixmul(FIX_HALF - p->z, inv);
     if (sx < strip_x0 || sx >= strip_x1 || sy < 0 || sy >= VIEW_H) continue;
-    if (depth >= g_zbuffer[sx]) continue;
+    if (depth >= columns[sx].depth) continue;
     int color = p->color;
     if (p->life < 8) color = (color >> 1) & 0x0777;
-    unsigned short* px = g_view + (sx >> 3) * VIEW_COL_GROUP_SHORTS + (sx & 7) + sy * VIEW_ROW_SHORTS;
-    *px = color;
-    if (depth < 0x18000 && sx + 1 < strip_x1 && sy + 1 < VIEW_H){
-      /* close sparks are 2x2; (sx + 1) may cross into the next tile column */
-      unsigned short* right = g_view + ((sx + 1) >> 3) * VIEW_COL_GROUP_SHORTS + ((sx + 1) & 7) + sy * VIEW_ROW_SHORTS;
-      right[0] = color;
-      px[VIEW_ROW_SHORTS] = color;
-      right[VIEW_ROW_SHORTS] = color;
+    *view_at(sx, sy) = color;
+    if (depth < 0x28000 && sx + 1 < strip_x1 && sy + 1 < VIEW_H){
+      /* closer sparks are 2x2 (the neighbors may sit in another chunk) */
+      *view_at(sx + 1, sy) = color;
+      *view_at(sx, sy + 1) = color;
+      *view_at(sx + 1, sy + 1) = color;
     }
   }
 }

@@ -3,7 +3,8 @@
 
 Everything is procedural: a 256-color palette made of 16 ramps x 16 shades,
 the per-light-level color tables the renderer uses for shading, wall/floor
-textures, billboard sprites, the HUD font, and the hardware-sprite overlays.
+textures, billboard sprites, the player's staff, the crosshair sprite, the
+music, and the 8x8 font (decoded from the OS's own text tiles).
 
 Texture and sprite pixels are palette indices (ramp * 16 + shade). Index 0 is
 black in walls and "transparent" in billboards. The renderer converts indices
@@ -329,85 +330,6 @@ def rune_wall(rng=RNG, ramp=PURPLE):
 # ---------------------------------------------------------------------------
 # Fonts
 # ---------------------------------------------------------------------------
-# 3x5 HUD font for ASCII 32..95. Each glyph is five rows of three pixels.
-SMALL_FONT = {
-    ' ': ["...", "...", "...", "...", "..."],
-    '!': [".#.", ".#.", ".#.", "...", ".#."],
-    '"': ["#.#", "#.#", "...", "...", "..."],
-    '#': ["#.#", "###", "#.#", "###", "#.#"],
-    '$': [".##", "##.", ".#.", ".##", "##."],
-    '%': ["#.#", "..#", ".#.", "#..", "#.#"],
-    '&': [".#.", "#.#", ".#.", "#.#", ".##"],
-    "'": [".#.", ".#.", "...", "...", "..."],
-    '(': ["..#", ".#.", ".#.", ".#.", "..#"],
-    ')': ["#..", ".#.", ".#.", ".#.", "#.."],
-    '*': ["...", "#.#", ".#.", "#.#", "..."],
-    '+': ["...", ".#.", "###", ".#.", "..."],
-    ',': ["...", "...", "...", ".#.", "#.."],
-    '-': ["...", "...", "###", "...", "..."],
-    '.': ["...", "...", "...", "...", ".#."],
-    '/': ["..#", "..#", ".#.", "#..", "#.."],
-    '0': ["###", "#.#", "#.#", "#.#", "###"],
-    '1': [".#.", "##.", ".#.", ".#.", "###"],
-    '2': ["##.", "..#", ".#.", "#..", "###"],
-    '3': ["##.", "..#", ".#.", "..#", "##."],
-    '4': ["#.#", "#.#", "###", "..#", "..#"],
-    '5': ["###", "#..", "##.", "..#", "##."],
-    '6': [".##", "#..", "###", "#.#", "###"],
-    '7': ["###", "..#", ".#.", ".#.", ".#."],
-    '8': ["###", "#.#", "###", "#.#", "###"],
-    '9': ["###", "#.#", "###", "..#", "##."],
-    ':': ["...", ".#.", "...", ".#.", "..."],
-    ';': ["...", ".#.", "...", ".#.", "#.."],
-    '<': ["..#", ".#.", "#..", ".#.", "..#"],
-    '=': ["...", "###", "...", "###", "..."],
-    '>': ["#..", ".#.", "..#", ".#.", "#.."],
-    '?': ["##.", "..#", ".#.", "...", ".#."],
-    '@': [".#.", "#.#", "###", "#..", ".##"],
-    'A': [".#.", "#.#", "###", "#.#", "#.#"],
-    'B': ["##.", "#.#", "##.", "#.#", "##."],
-    'C': [".##", "#..", "#..", "#..", ".##"],
-    'D': ["##.", "#.#", "#.#", "#.#", "##."],
-    'E': ["###", "#..", "##.", "#..", "###"],
-    'F': ["###", "#..", "##.", "#..", "#.."],
-    'G': [".##", "#..", "#.#", "#.#", ".##"],
-    'H': ["#.#", "#.#", "###", "#.#", "#.#"],
-    'I': ["###", ".#.", ".#.", ".#.", "###"],
-    'J': ["..#", "..#", "..#", "#.#", ".#."],
-    'K': ["#.#", "#.#", "##.", "#.#", "#.#"],
-    'L': ["#..", "#..", "#..", "#..", "###"],
-    'M': ["#.#", "###", "###", "#.#", "#.#"],
-    'N': ["##.", "#.#", "#.#", "#.#", "#.#"],
-    'O': [".#.", "#.#", "#.#", "#.#", ".#."],
-    'P': ["##.", "#.#", "##.", "#..", "#.."],
-    'Q': [".#.", "#.#", "#.#", "##.", ".##"],
-    'R': ["##.", "#.#", "##.", "#.#", "#.#"],
-    'S': [".##", "#..", ".#.", "..#", "##."],
-    'T': ["###", ".#.", ".#.", ".#.", ".#."],
-    'U': ["#.#", "#.#", "#.#", "#.#", "###"],
-    'V': ["#.#", "#.#", "#.#", "#.#", ".#."],
-    'W': ["#.#", "#.#", "###", "###", "#.#"],
-    'X': ["#.#", "#.#", ".#.", "#.#", "#.#"],
-    'Y': ["#.#", "#.#", ".#.", ".#.", ".#."],
-    'Z': ["###", "..#", ".#.", "#..", "###"],
-    '[': [".##", ".#.", ".#.", ".#.", ".##"],
-    '\\': ["#..", "#..", ".#.", "..#", "..#"],
-    ']': ["##.", ".#.", ".#.", ".#.", "##."],
-    '^': [".#.", "#.#", "...", "...", "..."],
-    '_': ["...", "...", "...", "...", "###"],
-}
-
-
-def small_font_bytes():
-    """Five row masks per glyph for ASCII 32..95; bit 2 is the left column."""
-    data = []
-    for code in range(32, 96):
-        rows = SMALL_FONT.get(chr(code), SMALL_FONT['?'])
-        for r in rows:
-            data.append(sum(1 << (2 - i) for i, ch in enumerate(r) if ch == '#'))
-    return data
-
-
 def big_font_bytes(text_tiles_path):
     """Decode the OS's own 8x8 text font (common/text_tiles.s) into eight
     row masks per glyph for ASCII 32..127 (bit 7 = left column), followed by
@@ -780,54 +702,111 @@ def sprite_puff(phase, ramp):
     return c.px
 
 
+STAFF_SCALE = 2  # the staff is designed on a 32x64 grid and drawn at 2x detail
+STAFF_W = 32 * STAFF_SCALE
+STAFF_H = 64 * STAFF_SCALE
+
+
 def overlay_staff():
-    """The player's crystal-tipped staff: 32x64 palette indices, held from the
-    lower right and leaning into the view."""
-    img = np.zeros((64, 32), dtype=np.int64)
+    """The player's crystal-tipped staff, held from the lower right and leaning
+    into the view: STAFF_W x STAFF_H palette indices (0 = transparent). Shapes
+    are laid out in 32x64 design units and rasterized STAFF_SCALE times finer,
+    so edges and shading gain detail rather than just growing."""
+    S = STAFF_SCALE
+    img = np.zeros((STAFF_H, STAFF_W), dtype=np.int64)
 
     def put(x, y, ramp, shade):
-        x, y = int(round(x)), int(round(y))
-        if 0 <= x < 32 and 0 <= y < 64:
+        x, y = int(np.floor(x)), int(np.floor(y))
+        if 0 <= x < STAFF_W and 0 <= y < STAFF_H:
             img[y, x] = idx(ramp, max(1, min(15, shade)))
 
-    # shaft from the bottom right up toward the upper left
-    for t in np.linspace(0, 1, 160):
+    def design(x, y):
+        """Design-unit coordinates of the center of fine pixel (x, y)."""
+        return (x + 0.5) / S, (y + 0.5) / S
+
+    # shaft from the bottom right up toward the upper left: a band 5 units
+    # wide around a gently wavering center line, with grain along its length
+    for t in np.linspace(0, 1, 320 * S):
         cx = 27 - t * 13 + np.sin(t * 9) * 0.8
-        cy = 63 - t * 50
-        for w in range(-2, 3):
-            shade = 7 - w * 1.5 + np.sin(t * 40) * 0.6
-            put(cx + w, cy, WOOD, shade)
-    # crystal head
-    for y in range(0, 16):
-        for x in range(6, 22):
-            dx = x + 0.5 - 14
-            dy = y + 0.5 - 8
-            if abs(dx) * 1.6 + abs(dy) <= 8.5:
-                facet = 13 if dx < -1 else (8 if dx > 1.5 else 11)
-                if abs(dx) * 1.6 + abs(dy) > 7.5:
-                    facet = 4
-                put(x, y, GEM, facet - (y > 10) * 2)
-    put(12, 4, GRAY, 15)
-    put(12, 5, GRAY, 15)
-    put(11, 5, GEM, 15)
+        cy = 63.5 - t * 50
+        for w in np.arange(-2.5, 2.5, 1.0 / S):
+            shade = 7 - w * 1.5 + np.sin(t * 40) * 0.6 + np.sin(t * 173 + w * 3) * 0.35
+            put((cx + w) * S, cy * S, WOOD, shade)
+    # crystal head: a faceted diamond lit from the upper left
+    for y in range(0, 17 * S):
+        for x in range(6 * S, 22 * S):
+            u, v = design(x, y)
+            dx = u - 14
+            dy = v - 8
+            r = abs(dx) * 1.6 + abs(dy)
+            if r > 8.5:
+                continue
+            facet = 13 if dx < -1 else (8 if dx > 1.5 else 11)
+            if r > 7.7:
+                facet = 4
+            elif r > 7.2:
+                facet -= 2
+            # a soft highlight streak across the left facet
+            if -5.5 < dx < -2.5 and -4 < dy + dx * 0.4 < -1.5:
+                facet = 15
+            put(x, y, GEM, facet - (v > 10) * 2)
     # claw prongs holding the crystal
-    for (x, y) in ((9, 14), (10, 15), (18, 14), (17, 15), (13, 16), (14, 16), (15, 16)):
-        put(x, y, GOLD, 9)
-    # hand gripping the shaft
-    for y in range(36, 50):
-        for x in range(15, 30):
-            dx = x + 0.5 - 22
-            dy = y + 0.5 - 43
-            if (dx / 7.0) ** 2 + (dy / 6.5) ** 2 <= 1.0:
-                shade = 10 - dy * 0.35 - dx * 0.15
-                if abs(dy) < 6 and (int(y) - 37) % 4 == 3 and dx < 3:
-                    shade = 5   # finger creases
+    for (u, v) in ((9, 14), (10, 15), (18, 14), (17, 15), (13, 16), (14, 16), (15, 16)):
+        for oy in range(S):
+            for ox in range(S):
+                put(u * S + ox, v * S + oy, GOLD, 9 + (ox == 0 and oy == 0) * 3 - (oy == S - 1) * 3)
+    # the fist: four curled fingers stacked down the shaft, the thumb wrapped
+    # over the top, and the back of the hand behind them (lit from the left)
+    for y in range(33 * S, 52 * S):
+        for x in range(14 * S, 31 * S):
+            u, v = design(x, y)
+            shade = None
+            for i in range(4):
+                fy = 38.0 + i * 3.25
+                fx0 = 16.6 + i * 0.35
+                dyf = v - fy
+                if not (fx0 <= u <= 26.5 and abs(dyf) <= 1.6):
+                    continue
+                if u - fx0 < 1.3 and (u - fx0 - 1.3) ** 2 + dyf ** 2 > 1.9:
+                    continue  # rounded fingertip
+                shade = 10.5 - dyf * 1.1 - (u - fx0) * 0.13
+                if abs(dyf) > 1.25:
+                    shade -= 3  # crease between fingers
+            if shade is None:
+                tdx, tdy = u - 20.2, v - 35.4
+                if (tdx / 4.4) ** 2 + (tdy / 1.8) ** 2 <= 1.0:
+                    shade = 11.5 - tdy * 1.1 - tdx * 0.12
+            if shade is None:
+                bdx, bdy = u - 26.2, v - 43.0
+                if (bdx / 4.2) ** 2 + (bdy / 8.5) ** 2 <= 1.0:
+                    shade = 8.5 - bdx * 0.35 - bdy * 0.1
+            if shade is not None:
                 put(x, y, BONE, shade)
-    for x in range(14, 30):
-        for y in range(50, 64):
-            if x - 14 > (y - 50) * 0.3:
-                put(x, y, BLUE, 4 + (x - 14) * 0.15)   # sleeve
+    # sleeve
+    for y in range(50 * S, 64 * S):
+        for x in range(14 * S, 30 * S):
+            u, v = design(x, y)
+            if u - 14 > (v - 50) * 0.3:
+                fold = np.sin(u * 1.3 + v * 0.4) * 0.8
+                put(x, y, BLUE, 4 + (u - 14) * 0.15 + fold)
     return img
+
+
+def staff_glow(img):
+    """The staff while casting: the crystal blazes and sparks ring it."""
+    S = STAFF_SCALE
+    glow = img.copy()
+    for y in range(32 * S):
+        for x in range(STAFF_W):
+            v = int(glow[y, x])
+            if v and v // 16 == GEM:
+                glow[y, x] = idx(GEM, min(15, v % 16 + 3))
+    for (u, v) in ((6, 3), (22, 2), (4, 10), (24, 11), (14, 0), (8, 16), (20, 17)):
+        for (ox, oy) in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)):
+            x, y = u * S + ox, v * S + oy
+            if 0 <= x < STAFF_W and 0 <= y < STAFF_H:
+                glow[y, x] = idx(GRAY, 15 if (ox, oy) == (0, 0) else 11)
+    return glow
 
 
 def overlay_cursor():
@@ -1236,6 +1215,18 @@ def preview(dirname, shade_tables):
         rgb = np.repeat(np.repeat(rgb, scale, 0), scale, 1)
         sheet[r * cell:r * cell + SPR * scale, c * cell:c * cell + SPR * scale] = rgb
     write_png(os.path.join(dirname, "sprites.png"), sheet)
+    # the staff, resting and casting, 3x scale on the checker background
+    scale = 3
+    staff = overlay_staff()
+    sheet = np.zeros((STAFF_H * scale, 2 * STAFF_W * scale + 8, 3), dtype=np.uint8)
+    for k, img in enumerate((staff, staff_glow(staff))):
+        rgb = rgb_of[img].astype(np.uint8)
+        check = ((np.arange(STAFF_H)[:, None] // 8 + np.arange(STAFF_W)[None, :] // 8) % 2) * 20 + 30
+        rgb = np.where((img == 0)[:, :, None], check[:, :, None].astype(np.uint8), rgb)
+        rgb = np.repeat(np.repeat(rgb, scale, 0), scale, 1)
+        x0 = k * (STAFF_W * scale + 8)
+        sheet[:, x0:x0 + STAFF_W * scale] = rgb
+    write_png(os.path.join(dirname, "staff.png"), sheet)
 
 
 def main():
@@ -1270,21 +1261,24 @@ def main():
     q = [(n * n) // 4 for n in range(-510, 511)]
     emit_halfs(out, "qsq_table", q[:510])
     emit_halfs(out, "qsq_center", q[510:])
-    out.append("  .align 4")
+    # The texel arrays start on page boundaries so every 4 KB texture sits in
+    # a single page: the renderer's inner loops touch one TLB entry per
+    # texture instead of two (the TLB holds only 16).
+    out.append("  .align 4096")
     # Walls are sampled down columns, so store each texture column-major.
     out.append("  .global wall_textures")
     out.append("wall_textures:")
     for name, img in TEXTURES:
         out.append(f"  # {name}")
         emit_bytes(out, None, img.T.reshape(-1))
-    out.append("  .align 4")
+    out.append("  .align 4096")
     # Floors and ceilings are sampled at arbitrary (u, v), stored row-major.
     out.append("  .global flat_textures")
     out.append("flat_textures:")
     for name, img in FLATS:
         out.append(f"  # {name}")
         emit_bytes(out, None, img.reshape(-1))
-    out.append("  .align 4")
+    out.append("  .align 4096")
     # Billboards: column-major texels plus each column's opaque [top, bottom)
     # span so the renderer can skip transparent rows and empty columns.
     out.append("  .global sprite_texels")
@@ -1299,20 +1293,32 @@ def main():
     emit_bytes(out, "sprite_spans", spans)
     out.append("  .align 4")
     full = shade_tables[LIGHT_FULL]
+    # The staff, drawn into the view by draw_image_col (gfx.s): two images
+    # (resting, casting), each column-major 12-bit pixels with 0 meaning
+    # transparent, then each column's opaque [top, bottom) rows. Casting
+    # lights the crystal at the overbright level.
     staff = overlay_staff()
-    emit_halfs(out, "overlay_staff", to_sprite_pixels(staff[:32], full) + to_sprite_pixels(staff[32:], full))
-    # casting: the crystal blazes (overbright light level) and sparks ring it
-    glow = staff[:32].copy()
-    glow_table = shade_tables[LIGHT_LEVELS - 1]
-    pix = to_sprite_pixels(glow, full)
-    for y in range(32):
-        for x in range(32):
-            v = int(glow[y, x])
-            if v and v // 16 == GEM:
-                pix[y * 32 + x] = int(glow_table[idx(GEM, min(15, v % 16 + 3))])
-    for (x, y) in ((6, 3), (22, 2), (4, 10), (24, 11), (14, 0), (8, 16), (20, 17)):
-        pix[y * 32 + x] = int(full[idx(GRAY, 15)])
-    emit_halfs(out, "overlay_staff_glow", pix)
+    glow_full = shade_tables[LIGHT_LEVELS - 1]
+    images = []
+    spans = []
+    for img, table in ((staff, full), (staff_glow(staff), None)):
+        pix = np.zeros(img.shape, dtype=np.int64)
+        for y in range(STAFF_H):
+            for x in range(STAFF_W):
+                v = int(img[y, x])
+                if v == 0:
+                    continue
+                t = full
+                if table is None and (v // 16 == GEM or v == idx(GRAY, 15)) and y < 32 * STAFF_SCALE:
+                    t = glow_full
+                pix[y, x] = max(1, int(t[v]))   # opaque black must not read as clear
+        images.extend(pix.T.reshape(-1))
+        for x in range(STAFF_W):
+            col = np.nonzero(img[:, x])[0]
+            spans.extend([int(col[0]), int(col[-1]) + 1] if len(col) else [0, 0])
+    emit_halfs(out, "staff_images", images)
+    emit_bytes(out, "staff_spans", spans)
+    out.append("  .align 4")
     emit_halfs(out, "overlay_cursor", to_sprite_pixels(overlay_cursor(), full))
     out.append("  .align 4")
     # Phase increment per sample for each MIDI note at 25 kHz (2^32 / rate).
@@ -1336,7 +1342,6 @@ def main():
             data += [tracks[c][r] for c in range(4)]
     emit_bytes(out, "song_data", data)
     out.append("  .align 4")
-    emit_bytes(out, "font_small", small_font_bytes())
     here = os.path.dirname(os.path.abspath(__file__))
     rows, spans = big_font_bytes(os.path.join(here, "..", "..", "..", "common", "text_tiles.s"))
     emit_bytes(out, "font_big", rows)

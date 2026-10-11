@@ -34,7 +34,8 @@
 volatile short* g_tilemap;
 volatile short* g_tile_fb;
 volatile short* g_spritemap;
-unsigned g_view_words[7680];
+volatile short* g_pixel_fb;
+unsigned g_view_words[30720];
 unsigned short* g_view;
 unsigned g_frame;
 
@@ -56,13 +57,12 @@ unsigned g_frame;
 #define FIRE_SPEED 0x3200
 #define MANA_REGEN_TICKS 5
 
-/* Hardware sprites besides the status bar (11..15). Higher sprites draw on
- * top, so the status bar covers the bottom of the staff. */
-#define STAFF_SPRITE_TOP 7      /* staff: sprites 7 and 8, stacked, scale 2 */
-#define STAFF_SPRITE_BOTTOM 8
-#define CURSOR_SPRITE 10        /* crosshair, scale 1 */
-#define STAFF_X 116             /* staff position in scale-2 sprite units */
-#define STAFF_Y 50
+/* The crosshair is the only hardware sprite (scale 1: 2x2 screen pixels per
+ * sprite pixel). The staff is drawn into the view (render.c), resting with
+ * its top-left at (STAFF_X, STAFF_Y) and its sleeve running off the bottom. */
+#define CURSOR_SPRITE 0
+#define STAFF_X 232
+#define STAFF_Y 100
 
 /* Mouse cursor bounds: the 3D view in screen pixels. */
 #define CURSOR_MAX_X 639
@@ -139,13 +139,6 @@ static void hud_redraw(void);
 /* World coordinate (16.16) of the center of cell index c along one axis. */
 static int cell_center(int c){
   return (c << 16) + FIX_HALF;
-}
-
-/* Smoothstep easing of t/len in 16.16 (zero slope at both ends). */
-static int ease(int t, int len){
-  int u = (t << 16) / len;
-  int u2 = fixmul(u, u);
-  return fixmul(u2, 3 * FIX_ONE - 2 * u);
 }
 
 /* Bounded string copy that always NUL-terminates `dst` (capacity `cap`). */
@@ -749,52 +742,25 @@ static void keyboard_end(void){
 
 /* ---- Display ---- */
 
-/* The crosshair (scale-0 sprite) and the staff (two scale-2 sprites) come
- * from assets.s as ready 12-bit colors. */
-static void upload_sprite(int sprite, unsigned short* pixels){
-  copy_words((void*)(g_spritemap + sprite * SPRITE_SHORTS), pixels, SPRITE_SHORTS / 2);
+/* RGB332 tile color byte for a 12-bit 0x0BGR color (the tile layer expands
+ * the byte back to 12 bits; docs/mem_map.md). */
+static int rgb332(int c){
+  int r = (c & 15) >> 1;
+  int g = ((c >> 4) & 15) >> 1;
+  int b = ((c >> 8) & 15) >> 2;
+  return (r << 5) | (g << 2) | b;
 }
 
-/* Whether the staff sprite currently holds the blazing (casting) image. */
-static bool staff_glowing;
-
-/* Position the hardware-sprite overlays (staff and crosshair) for this frame:
- * the staff bobs with each step and thrusts when casting. */
-static void place_overlays(void){
-  bool glow = player.cast_t > 4 && state == STATE_PLAY;
-  if (glow != staff_glowing){
-    upload_sprite(STAFF_SPRITE_TOP, glow ? overlay_staff_glow : overlay_staff);
-    staff_glowing = glow;
+/* Take over the display: map the tile, sprite, and pixel memory, set the tile
+ * layer up for text overlays (scale 1), and load the crosshair sprite. The
+ * pixel framebuffer mapping is checked before the terminal is cleared, so a
+ * kernel without get_pixel_fb() gets a readable error instead of a hang. */
+static bool display_init(void){
+  g_pixel_fb = get_pixel_fb();
+  if ((int)g_pixel_fb == -1){
+    puts("delve: cannot map the pixel framebuffer (get_pixel_fb, trap 62, failed)\n");
+    return false;
   }
-  bool playing = state == STATE_PLAY || state == STATE_PAUSE;
-  if (state == STATE_DEAD && state_t < 120){
-    /* the staff slips from the fallen hero's hand */
-    int y = STAFF_Y + state_t / 2 + (state_t * state_t) / 160;
-    set_sprite_coords(STAFF_SPRITE_TOP, STAFF_X + state_t / 8, y);
-    set_sprite_coords(STAFF_SPRITE_BOTTOM, STAFF_X + state_t / 8, y + 32);
-    set_sprite_coords(CURSOR_SPRITE, SPRITE_HIDDEN, SPRITE_HIDDEN);
-    return;
-  }
-  if (playing && !show_map){
-    int bob = isin(player.walk_phase) >> 14;
-    if (bob < 0) bob = -bob;
-    int thrust = player.cast_t > 6 ? 12 - player.cast_t : player.cast_t;
-    int y = STAFF_Y + bob - thrust;
-    set_sprite_coords(STAFF_SPRITE_TOP, STAFF_X, y);
-    set_sprite_coords(STAFF_SPRITE_BOTTOM, STAFF_X, y + 32);
-    /* scale-1 sprite: coordinates are in 2-pixel units */
-    set_sprite_coords(CURSOR_SPRITE, (cursor_x >> 1) - 16, (cursor_y >> 1) - 16);
-  } else {
-    set_sprite_coords(STAFF_SPRITE_TOP, SPRITE_HIDDEN, SPRITE_HIDDEN);
-    set_sprite_coords(STAFF_SPRITE_BOTTOM, SPRITE_HIDDEN, SPRITE_HIDDEN);
-    set_sprite_coords(CURSOR_SPRITE, SPRITE_HIDDEN, SPRITE_HIDDEN);
-  }
-}
-
-/* Take over the display: map the tile and sprite memory, switch the tile
- * layer to 4x, point the 20x12 view cells at tiles 0..239 column-major,
- * blank the rest, and set up the status-bar, staff, and crosshair sprites. */
-static void display_init(void){
   /* Clear the terminal and hide its cursor, then give the terminal time to
    * act on that before we start writing the tile framebuffer. */
   puts("\x1b[2J\x1b[?25l");
@@ -804,105 +770,210 @@ static void display_init(void){
   g_tile_fb = get_tile_fb();
   g_spritemap = get_spritemap();
 
-  set_tile_scale(TILE_SCALE_4X);
+  set_tile_scale(TILE_SCALE_TEXT);
   set_hscroll(0);
   set_vscroll(0);
-
-  for (int i = 0; i < TILEMAP_SHORTS_PER_TILE; ++i){
-    g_tilemap[BLANK_TILE * TILEMAP_SHORTS_PER_TILE + i] = 0;
-  }
-  for (int ty = 0; ty < TILE_FB_ROWS; ++ty){
-    for (int tx = 0; tx < TILE_FB_COLS; ++tx){
-      int tile = BLANK_TILE;
-      if (tx < VIEW_TILE_COLS && ty < VIEW_TILE_ROWS){
-        tile = tx * VIEW_TILE_ROWS + ty;
-      }
-      g_tile_fb[ty * TILE_FB_COLS + tx] = tile;
-    }
-  }
+  tiles_init();
   for (int s = 0; s < 16; ++s){
     set_sprite_coords(s, SPRITE_HIDDEN, SPRITE_HIDDEN);
   }
-  for (int s = 0; s < HUD_SPRITE_COUNT; ++s){
-    int sprite = HUD_SPRITE_FIRST + s;
-    set_sprite_scale(sprite, TILE_SCALE_4X);
-    set_sprite_coords(sprite, s * 32, HUD_Y);
-  }
-  upload_sprite(STAFF_SPRITE_TOP, overlay_staff);
-  upload_sprite(STAFF_SPRITE_BOTTOM, overlay_staff + SPRITE_SHORTS);
-  upload_sprite(CURSOR_SPRITE, overlay_cursor);
-  set_sprite_scale(STAFF_SPRITE_TOP, TILE_SCALE_4X);
-  set_sprite_scale(STAFF_SPRITE_BOTTOM, TILE_SCALE_4X);
+  copy_words((void*)(g_spritemap + CURSOR_SPRITE * SPRITE_SHORTS), overlay_cursor, SPRITE_SHORTS / 2);
   set_sprite_scale(CURSOR_SPRITE, 1);
+  return true;
 }
 
-/* ---- Status bar ---- */
-
-static void draw_bar(int x, int y, int w, int value, int max, unsigned short fg, unsigned short bg){
-  fill_rect(SURF_HUD, x - 1, y - 1, w + 2, 6, 0x0000);
-  fill_rect(SURF_HUD, x, y, w, 4, bg);
-  int filled = value * w / max;
-  fill_rect(SURF_HUD, x, y, filled, 4, fg);
-  if (filled > 0) fill_rect(SURF_HUD, x, y, filled, 1, fg | 0x0444);
+/* Whether the automap covers the view this frame. */
+static bool map_open(void){
+  return show_map && (state == STATE_PLAY || state == STATE_PAUSE);
 }
 
-/* Redraw the whole status bar from the current stats and upload it. */
-static void hud_redraw(void){
-  char buf[16];
+/* What the renderer draws over the scene this frame: the staff (bobbing as
+ * the hero walks, thrusting and blazing while casting, slipping away on
+ * death) and a recolor pass (dimmed menus, the damage flash, the death tint). */
+static void view_extras(struct ViewExtras* e){
+  e->staff_image = -1;
+  e->staff_x = STAFF_X;
+  e->staff_y = STAFF_Y;
+  if (state == STATE_DEAD && state_t < 120){
+    e->staff_image = 0;
+    e->staff_x = STAFF_X + state_t / 4;
+    e->staff_y = STAFF_Y + state_t + (state_t * state_t) / 80;
+  } else if ((state == STATE_PLAY || state == STATE_PAUSE) && !map_open()){
+    int bob = isin(player.walk_phase) >> 13;
+    if (bob < 0) bob = -bob;
+    int thrust = player.cast_t > 6 ? 12 - player.cast_t : player.cast_t;
+    e->staff_image = player.cast_t > 4 && state == STATE_PLAY ? 1 : 0;
+    e->staff_y = STAFF_Y + bob - thrust * 2;
+  }
+  e->shade_shift = -1;
+  e->shade_and = 0x0777;
+  e->shade_or = 0;
+  if (state == STATE_HELP || map_open()){
+    e->shade_shift = 2;
+    e->shade_and = 0x0333;
+  } else if (state == STATE_TITLE || state == STATE_NAME || state == STATE_PAUSE){
+    e->shade_shift = 1;
+  } else if (state == STATE_DEAD){
+    e->shade_shift = 0;
+    e->shade_and = 0x0FF0;
+    e->shade_or = 0x0006;
+  } else if (state == STATE_PLAY && g_stats.hurt > 0){
+    e->shade_shift = 0;
+    e->shade_and = 0x0FF0;
+    e->shade_or = 0x0008 + (g_stats.hurt >> 1);
+  }
+}
+
+/* Show the crosshair at the mouse while playing (it is a scale-1 sprite, so
+ * its coordinates are in 2-pixel units). */
+static void place_cursor(void){
+  if (state == STATE_PLAY && !map_open()){
+    set_sprite_coords(CURSOR_SPRITE, (cursor_x >> 1) - 16, (cursor_y >> 1) - 16);
+  } else {
+    set_sprite_coords(CURSOR_SPRITE, SPRITE_HIDDEN, SPRITE_HIDDEN);
+  }
+}
+
+/* ---- Status bar ----
+ * Pixels (background, bars, icons, minimap) live in g_hud and are redrawn
+ * only when they change; the numbers and labels are tile text placed every
+ * frame (hud_text) on tile rows 25 and 27, which lie over status-bar rows
+ * 8..15 and 24..31. */
+
+#define BAR_X 24                   /* health and mana bars: 88 x 6 pixels */
+#define BAR_W 88
+#define HP_BAR_Y 9
+#define MP_BAR_Y 25
+#define MINI_X 248                 /* minimap: MINI_COLS x MINI_ROWS cells */
+#define MINI_Y 4
+#define MINI_COLS 24
+#define MINI_ROWS 11
+#define MINI_CELL 3
+
+/* The status bar's plain background, drawn once (HUD_PIXELS shorts). */
+static unsigned hud_bg[6400];
+static bool hud_bg_ready;
+
+/* Draw the background panel into hud_bg: dark stone with a gold and teal
+ * rule along the top and dividers between the three sections. */
+static void hud_background(void){
   fill_rect(SURF_HUD, 0, 0, HUD_W, HUD_H, 0x0211);
   fill_rect(SURF_HUD, 0, 0, HUD_W, 1, 0x027C);
   fill_rect(SURF_HUD, 0, 1, HUD_W, 1, 0x0136);
+  fill_rect(SURF_HUD, 138, 5, 1, 31, 0x0136);
+  fill_rect(SURF_HUD, 243, 5, 1, 31, 0x0136);
+  copy_words(hud_bg, g_hud, HUD_PIXELS / 2);
+  hud_bg_ready = true;
+}
+
+/* One stat bar with a black frame and a lighter top edge. */
+static void draw_bar(int y, int value, int max, unsigned short fg, unsigned short bg){
+  fill_rect(SURF_HUD, BAR_X - 1, y - 1, BAR_W + 2, 8, 0x0000);
+  fill_rect(SURF_HUD, BAR_X, y, BAR_W, 6, bg);
+  if (value < 0) value = 0;
+  int filled = value * BAR_W / max;
+  fill_rect(SURF_HUD, BAR_X, y, filled, 6, fg);
+  if (filled > 0) fill_rect(SURF_HUD, BAR_X, y, filled, 1, fg | 0x0444);
+}
+
+/* Minimap: explored cells around the hero, north up, items as dots, the hero
+ * as a white dot with a heading tick. */
+static void draw_minimap(void){
+  fill_rect(SURF_HUD, MINI_X - 1, MINI_Y - 1, MINI_COLS * MINI_CELL + 2, MINI_ROWS * MINI_CELL + 2, 0x0000);
+  int cx0 = player.cx - MINI_COLS / 2;
+  int cy0 = player.cy - MINI_ROWS / 2;
+  for (int r = 0; r < MINI_ROWS; ++r){
+    int cy = cy0 + r;
+    if (cy < 0 || cy >= MAP_H) continue;
+    for (int k = 0; k < MINI_COLS; ++k){
+      int cx = cx0 + k;
+      if (cx < 0 || cx >= MAP_W) continue;
+      int c = cy * MAP_W + cx;
+      if (!g_seen[c]) continue;
+      int v = g_map[c];
+      unsigned short color = 0x0567;
+      if (v == CELL_EMPTY) color = 0x0333;
+      else if (v >= CELL_DOOR_BASE) color = g_doors[v - CELL_DOOR_BASE].locked ? 0x00CF : 0x027B;
+      fill_rect(SURF_HUD, MINI_X + k * MINI_CELL, MINI_Y + r * MINI_CELL, MINI_CELL, MINI_CELL, color);
+    }
+  }
+  for (int i = 0; i < MAX_ITEMS; ++i){
+    struct Item* it = &g_items[i];
+    int k = it->cx - cx0;
+    int r = it->cy - cy0;
+    if (!it->active || k < 0 || r < 0 || k >= MINI_COLS || r >= MINI_ROWS) continue;
+    if (!g_seen[it->cy * MAP_W + it->cx]) continue;
+    unsigned short color = 0x066F;
+    if (it->type == ITEM_CRYSTAL) color = 0x09F4;
+    else if (it->type == ITEM_KEY) color = 0x02EF;
+    else if (it->type == ITEM_PORTAL || it->type == ITEM_HEART) color = 0x0FF8;
+    fill_rect(SURF_HUD, MINI_X + k * MINI_CELL + 1, MINI_Y + r * MINI_CELL + 1, 1, 1, color);
+  }
+  /* the hero at its true position within the cell grid */
+  int px = MINI_X + (((player.x - (cx0 << 16)) >> 8) * MINI_CELL >> 8);
+  int py = MINI_Y + (((player.y - (cy0 << 16)) >> 8) * MINI_CELL >> 8);
+  fill_rect(SURF_HUD, px - 1, py - 1, 2, 2, 0x0FFF);
+  fill_rect(SURF_HUD, px + (icos(player.angle) * 3 >> 16) - 1,
+            py + (isin(player.angle) * 3 >> 16) - 1, 1, 1, 0x02CF);
+}
+
+/* Redraw the status bar's pixels from the current stats (the upload happens
+ * once per frame in hud_upload). */
+static void hud_redraw(void){
+  if (!hud_bg_ready) hud_background();
+  copy_words(g_hud, hud_bg, HUD_PIXELS / 2);
+  hud_touch();
+  if (state == STATE_TITLE || state == STATE_HELP || state == STATE_NAME) return;
+  draw_bar(HP_BAR_Y, g_stats.hp, g_stats.max_hp, 0x022E, 0x0215);
+  draw_bar(MP_BAR_Y, g_stats.mp, MAX_MP, 0x0E73, 0x0522);
+  /* a little gem beside the crystal count */
+  fill_rect(SURF_HUD, 143, 9, 5, 1, 0x0BFA);
+  fill_rect(SURF_HUD, 142, 10, 7, 3, 0x07D3);
+  fill_rect(SURF_HUD, 143, 13, 5, 1, 0x0480);
+  fill_rect(SURF_HUD, 144, 14, 3, 1, 0x0480);
+  fill_rect(SURF_HUD, 145, 15, 1, 1, 0x0480);
+  if (g_stats.keys > 0){
+    /* the rune key: a ring and a toothed shaft */
+    fill_rect(SURF_HUD, 142, 26, 4, 4, 0x02CF);
+    fill_rect(SURF_HUD, 143, 27, 2, 2, 0x0211);
+    fill_rect(SURF_HUD, 146, 27, 5, 2, 0x02CF);
+    fill_rect(SURF_HUD, 149, 29, 1, 2, 0x02CF);
+  }
+  draw_minimap();
+}
+
+/* The status bar's numbers and labels for this frame (tile text). */
+static void hud_text(void){
   if (state == STATE_TITLE || state == STATE_HELP || state == STATE_NAME){
-    draw_text(SURF_HUD, 4, 6, "A DIOPTASE ADVENTURE", 0x0ACE);
-    draw_text(SURF_HUD, 4, 14, "CPU, OS, COMPILER: ALL HOMEMADE", 0x0688);
-    hud_upload();
+    tile_text(1, 25, "A DIOPTASE ADVENTURE", rgb332(0x0ACE));
+    tile_text(1, 27, "CPU, OS, COMPILER: ALL HOMEMADE", rgb332(0x0688));
     return;
   }
-  draw_text(SURF_HUD, 3, 5, "HP", 0x066F);
-  draw_bar(13, 5, 44, g_stats.hp, g_stats.max_hp, 0x022E, 0x0215);
-  draw_text(SURF_HUD, 3, 14, "MP", 0x0F96);
-  draw_bar(13, 14, 44, g_stats.mp, MAX_MP, 0x0E73, 0x0522);
-  /* crystal count with a little gem */
-  fill_rect(SURF_HUD, 66, 6, 3, 1, 0x0BFA);
-  fill_rect(SURF_HUD, 65, 7, 5, 2, 0x07D3);
-  fill_rect(SURF_HUD, 66, 9, 3, 1, 0x0480);
-  fill_rect(SURF_HUD, 67, 10, 1, 1, 0x0480);
-  draw_text(SURF_HUD, 72, 6, format_int(buf, g_stats.crystals), 0x0BFA);
-  if (g_stats.keys > 0){
-    fill_rect(SURF_HUD, 65, 15, 3, 3, 0x02CF);
-    fill_rect(SURF_HUD, 68, 16, 5, 1, 0x02CF);
-    fill_rect(SURF_HUD, 71, 17, 1, 1, 0x02CF);
-    draw_text(SURF_HUD, 75, 15, "KEY", 0x02CF);
-  }
-  draw_text(SURF_HUD, 102, 6, "DEPTH", 0x0899);
-  draw_text(SURF_HUD, 126, 6, format_int(buf, g_stats.depth), 0x0FFF);
-  /* compass: the direction the hero faces */
-  static char* compass[4] = {"E", "S", "W", "N"};
-  fill_rect(SURF_HUD, 145, 4, 11, 9, 0x0000);
-  fill_rect(SURF_HUD, 146, 5, 9, 7, 0x0322);
-  draw_text(SURF_HUD, 149, 6, compass[facing()], 0x02CF);
-  draw_text(SURF_HUD, 102, 15, format_int(buf, g_stats.score), 0x04DF);
-  hud_upload();
+  char buf[12];
+  tile_text(1, 25, "HP", rgb332(0x066F));
+  tile_text_right(17, 25, format_int(buf, g_stats.hp < 0 ? 0 : g_stats.hp), rgb332(0x0CCF));
+  tile_text(1, 27, "MP", rgb332(0x0F96));
+  tile_text_right(17, 27, format_int(buf, g_stats.mp), rgb332(0x0FCB));
+  tile_text(19, 25, format_int(buf, g_stats.crystals), rgb332(0x0BFA));
+  if (g_stats.keys > 0) tile_text(19, 27, "KEY", rgb332(0x02CF));
+  tile_text(23, 25, "DEPTH", rgb332(0x0899));
+  tile_text(29, 25, format_int(buf, g_stats.depth), rgb332(0x0FFF));
+  tile_text_right(30, 27, format_int(buf, g_stats.score), rgb332(0x04DF));
 }
 
-/* ---- Overlays drawn into the view ---- */
+/* ---- Screens ---- */
 
-static void draw_centered(int y, char* s, unsigned short color){
-  draw_text_shadow(SURF_VIEW, (VIEW_W - text_width(s)) / 2, y, s, color);
-}
-
-/* Draw scaled 8x8-font text centered in the view, with a drop shadow. */
-static void draw_big_centered(int y, char* s, unsigned short color, int scale){
-  int x = (VIEW_W - big_text_width(s) * scale) / 2;
-  draw_big_text(SURF_VIEW, x + 1, y + 1, s, 0x0000, scale);
-  draw_big_text(SURF_VIEW, x, y, s, color, scale);
-}
-
-/* Overlay the explored map: 3x3 pixels per cell, doors in orange (sealed in
- * gold), items as colored dots, the player as a white dot plus heading. */
+/* Overlay the explored map on the (dimmed) view: 5x5 pixels per cell, doors
+ * in orange (sealed in gold), items as dots, the hero as a white dot with a
+ * heading tick. Drawn into the back buffer by the game process. */
 static void draw_automap(void){
-  dim_view(g_view);
-  int ox = (VIEW_W - MAP_W * 3) / 2;
+  int ox = (VIEW_W - MAP_W * 5) / 2;
+  int oy = (VIEW_H - MAP_H * 5) / 2;
+  /* a thin frame around the map area */
+  fill_rect(SURF_VIEW, ox - 2, oy - 2, MAP_W * 5 + 4, 1, 0x0136);
+  fill_rect(SURF_VIEW, ox - 2, oy + MAP_H * 5 + 1, MAP_W * 5 + 4, 1, 0x0136);
+  fill_rect(SURF_VIEW, ox - 2, oy - 2, 1, MAP_H * 5 + 4, 0x0136);
+  fill_rect(SURF_VIEW, ox + MAP_W * 5 + 1, oy - 2, 1, MAP_H * 5 + 4, 0x0136);
   for (int cy = 0; cy < MAP_H; ++cy){
     for (int cx = 0; cx < MAP_W; ++cx){
       int c = cy * MAP_W + cx;
@@ -912,7 +983,7 @@ static void draw_automap(void){
       if (v == CELL_EMPTY) color = 0x0333;
       else if (v >= CELL_DOOR_BASE) color = g_doors[v - CELL_DOOR_BASE].locked ? 0x00CF : 0x027B;
       else color = 0x0567;
-      fill_rect(SURF_VIEW, ox + cx * 3, cy * 3, 3, 3, color);
+      fill_rect(SURF_VIEW, ox + cx * 5, oy + cy * 5, 5, 5, color);
     }
   }
   for (int i = 0; i < MAX_ITEMS; ++i){
@@ -922,117 +993,149 @@ static void draw_automap(void){
     if (it->type == ITEM_CRYSTAL) color = 0x09F4;
     else if (it->type == ITEM_KEY) color = 0x02EF;
     else if (it->type == ITEM_PORTAL || it->type == ITEM_HEART) color = 0x0FF8;
-    fill_rect(SURF_VIEW, ox + it->cx * 3 + 1, it->cy * 3 + 1, 1, 1, color);
+    fill_rect(SURF_VIEW, ox + it->cx * 5 + 1, oy + it->cy * 5 + 1, 3, 3, color);
   }
-  /* the player: a white dot at its true position, and a dot ahead of it */
-  int px = ox + fixmul(player.x, 3 * FIX_ONE) / FIX_ONE;
-  int py = fixmul(player.y, 3 * FIX_ONE) / FIX_ONE;
-  fill_rect(SURF_VIEW, px, py, 1, 1, 0x0FFF);
-  fill_rect(SURF_VIEW, px + (icos(player.angle) * 2 + FIX_HALF) / FIX_ONE,
-            py + (isin(player.angle) * 2 + FIX_HALF) / FIX_ONE, 1, 1, 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 2, 90, "MAP", 0x0ACE);
+  int px = ox + ((player.x >> 8) * 5 >> 8);
+  int py = oy + ((player.y >> 8) * 5 >> 8);
+  fill_rect(SURF_VIEW, px - 1, py - 1, 3, 3, 0x0FFF);
+  fill_rect(SURF_VIEW, px + (icos(player.angle) * 4 >> 16) - 1,
+            py + (isin(player.angle) * 4 >> 16) - 1, 2, 2, 0x02CF);
 }
 
-/* Title screen text over the darkened attract demo. */
-static void draw_title(void){
-  dim_view(g_view);
-  draw_logo((VIEW_W - big_text_width("DELVE") * 3) / 2, 6, "DELVE", 3, state_t);
-  draw_centered(36, "INTO THE DIOPTASE DEEP", 0x0ACE);
-  draw_centered(50, "ENTER - DESCEND", (state_t & 32) ? 0x0FFF : 0x0BBB);
-  draw_centered(57, "H - HOW TO PLAY    X - QUIT", 0x0999);
-  draw_centered(67, "- DEEPEST DELVERS -", 0x02CF);
+/* Title screen over the dimmed attract demo: the logo with its sweeping
+ * glint, the menu, and the best three scores. */
+static void title_text(void){
+  banner_set(0, "DELVE", 4, true, 0);
+  banner_glint(0, state_t % (banner_width(0) + 90) - 30);
+  banner_place(0, 2);
+  tile_text_centered(8, "INTO THE DIOPTASE DEEP", rgb332(0x0ACE));
+  tile_text_centered(11, "ENTER - DESCEND", rgb332((state_t & 32) ? 0x0FFF : 0x0BBB));
+  tile_text_centered(13, "H - HOW TO PLAY    X - QUIT", rgb332(0x0999));
+  tile_text_centered(16, "- DEEPEST DELVERS -", rgb332(0x02CF));
   char buf[12];
   for (int i = 0; i < 3; ++i){
-    int y = 74 + i * 7;
-    draw_text_shadow(SURF_VIEW, 46, y, score_names[i], 0x0FFF);
-    format_int(buf, score_values[i]);
-    draw_text_shadow(SURF_VIEW, 100 - text_width(buf), y, buf, 0x04DF);
-    draw_text_shadow(SURF_VIEW, 106, y, "D", 0x0899);
-    draw_text_shadow(SURF_VIEW, 110, y, format_int(buf, score_depths[i]), 0x0899);
+    int row = 18 + i;
+    tile_text(13, row, score_names[i], rgb332(0x0FFF));
+    tile_text_right(24, row, format_int(buf, score_values[i]), rgb332(0x04DF));
+    tile_text(25, row, "D", rgb332(0x0899));
+    tile_text(26, row, format_int(buf, score_depths[i]), rgb332(0x0899));
   }
 }
 
-/* Controls and goals, over a doubly darkened demo. */
-static void draw_help(void){
-  dim_view(g_view);
-  dim_view(g_view);
-  draw_centered(2, "HOW TO PLAY", 0x02CF);
-  draw_text_shadow(SURF_VIEW, 8, 10, "W S      WALK FORWARD / BACK", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 16, "A D      SIDESTEP LEFT / RIGHT", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 22, "Q E      TURN (OR ARROW KEYS)", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 28, "SHIFT    RUN", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 35, "MOUSE    AIM", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 41, "LEFT     SPARK BOLT  (SPACE)", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 47, "RIGHT    FIREBALL    (F)", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 54, "M MAP  P PAUSE  (NOT ESC: IT", 0x0999);
-  draw_text_shadow(SURF_VIEW, 8, 60, "               CLOSES THE EMULATOR)", 0x0777);
-  draw_text_shadow(SURF_VIEW, 8, 67, "FIREBALLS SHATTER CRACKED WALLS.", 0x03AF);
-  draw_centered(74, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
-  draw_centered(80, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
-  draw_centered(88, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
+/* Controls and goals over the darkened demo. */
+static void help_text(void){
+  int white = rgb332(0x0FFF);
+  int blue = rgb332(0x0ACE);
+  tile_text_centered(1, "HOW TO PLAY", rgb332(0x02CF));
+  tile_text(3, 3, "W S       WALK FORWARD / BACK", white);
+  tile_text(3, 4, "A D       SIDESTEP LEFT / RIGHT", white);
+  tile_text(3, 5, "Q E       TURN (OR ARROW KEYS)", white);
+  tile_text(3, 6, "SHIFT     RUN", white);
+  tile_text(3, 8, "MOUSE     AIM THE CROSSHAIR", blue);
+  tile_text(3, 9, "LEFT      SPARK BOLT   (SPACE)", blue);
+  tile_text(3, 10, "RIGHT     FIREBALL     (F)", blue);
+  tile_text(3, 12, "M MAP    P PAUSE    ` FRAME RATE", rgb332(0x0999));
+  tile_text(3, 13, "(ESC CLOSES THE EMULATOR)", rgb332(0x0777));
+  tile_text_centered(15, "FIREBALLS SHATTER CRACKED WALLS.", rgb332(0x03AF));
+  tile_text_centered(17, "GATHER CRYSTALS. FIND THE RUNE KEY.", rgb332(0x09F4));
+  tile_text_centered(18, "BREAK THE SEAL, ENTER THE PORTAL.", rgb332(0x09F4));
+  tile_text_centered(20, "AT DEPTH 8 THE HEART AWAITS.", rgb332(0x0FF8));
 }
 
-/* In-game overlays: automap, boss health bar, messages, and the pause panel. */
-static void draw_play_overlays(void){
-  if (show_map){
-    draw_automap();
+/* In-game text: the message line, the boss's health, the automap label, and
+ * the pause panel. */
+static void play_text(void){
+  if (message_t > 0){
+    tile_text_centered(2, message, rgb332(message_t > 30 || (message_t & 4) ? 0x0FFF : 0x0999));
   }
   int boss_hp;
   int boss_max;
-  if (!show_map && world_boss(&boss_hp, &boss_max)){
-    draw_centered(82, "THE WARDEN", 0x08F6);
-    fill_rect(SURF_VIEW, 39, 89, 82, 5, 0x0000);
-    fill_rect(SURF_VIEW, 40, 90, 80, 3, 0x0222);
-    fill_rect(SURF_VIEW, 40, 90, boss_hp * 80 / boss_max, 3, 0x05E8);
+  if (!map_open() && world_boss(&boss_hp, &boss_max)){
+    tile_text_centered(20, "THE WARDEN", rgb332(0x08F6));
+    tile_bar(10, 21, 160, boss_hp * 160 / boss_max, rgb332(0x05E8));
   }
-  if (message_t > 0){
-    draw_centered(3, message, message_t > 30 || (message_t & 4) ? 0x0FFF : 0x0999);
-  }
+  if (map_open()) tile_text(1, 22, "MAP", rgb332(0x0ACE));
   if (state == STATE_PAUSE){
-    dim_view(g_view);
-    draw_big_centered(30, "PAUSED", 0x0FFF, 2);
-    draw_centered(56, "ANY KEY - RESUME    X - GIVE UP", 0x0ACE);
+    banner_set(0, "PAUSED", 3, false, 0x0FFF);
+    banner_place(0, 7);
+    tile_text_centered(13, "ANY KEY - RESUME    X - GIVE UP", rgb332(0x0ACE));
   }
 }
 
 /* Victory or death summary with the run's statistics. */
-static void draw_end_screen(bool won){
-  char buf[12];
+static void end_text(bool won){
   if (won){
-    draw_big_centered(8, "VICTORY", 0x04FF, 2);
-    draw_centered(30, "THE HEART OF DIOPTASE IS YOURS", 0x09F4);
+    banner_set(0, "VICTORY", 3, false, 0x04FF);
+    banner_place(0, 2);
+    tile_text_centered(7, "THE HEART OF DIOPTASE IS YOURS", rgb332(0x09F4));
   } else {
-    draw_big_centered(12, "YOU FELL", 0x044F, 2);
-    draw_centered(34, "THE DEEP CLAIMS ANOTHER", 0x0999);
+    banner_set(0, "YOU FELL", 3, false, 0x044F);
+    banner_place(0, 2);
+    tile_text_centered(7, "THE DEEP CLAIMS ANOTHER", rgb332(0x0999));
   }
-  draw_text_shadow(SURF_VIEW, 44, 46, "SCORE", 0x0899);
-  draw_text_shadow(SURF_VIEW, 84, 46, format_int(buf, g_stats.score), 0x04DF);
-  draw_text_shadow(SURF_VIEW, 44, 53, "DEPTH", 0x0899);
-  draw_text_shadow(SURF_VIEW, 84, 53, format_int(buf, g_stats.depth), 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 44, 60, "CRYSTALS", 0x0899);
-  draw_text_shadow(SURF_VIEW, 84, 60, format_int(buf, g_stats.crystals), 0x09F4);
-  draw_text_shadow(SURF_VIEW, 44, 67, "SLAIN", 0x0899);
-  draw_text_shadow(SURF_VIEW, 84, 67, format_int(buf, g_stats.kills), 0x066F);
+  char buf[12];
+  int label = rgb332(0x0899);
+  tile_text(12, 10, "SCORE", label);
+  tile_text_right(28, 10, format_int(buf, g_stats.score), rgb332(0x04DF));
+  tile_text(12, 11, "DEPTH", label);
+  tile_text_right(28, 11, format_int(buf, g_stats.depth), rgb332(0x0FFF));
+  tile_text(12, 12, "CRYSTALS", label);
+  tile_text_right(28, 12, format_int(buf, g_stats.crystals), rgb332(0x09F4));
+  tile_text(12, 13, "SLAIN", label);
+  tile_text_right(28, 13, format_int(buf, g_stats.kills), rgb332(0x066F));
   if (won){
-    draw_centered(75, "PLAYED ON DIOPTASE: HOMEMADE CPU,", 0x0688);
-    draw_centered(81, "OS, COMPILER, AND ASSEMBLER", 0x0688);
+    tile_text_centered(16, "PLAYED ON DIOPTASE: HOMEMADE CPU,", rgb332(0x0688));
+    tile_text_centered(17, "OS, COMPILER, AND ASSEMBLER", rgb332(0x0688));
   }
   if (state_t > 60 && (state_t & 32)){
-    draw_centered(won ? 89 : 82, "PRESS ENTER", 0x0FFF);
+    tile_text_centered(20, "PRESS ENTER", rgb332(0x0FFF));
   }
 }
 
 /* High-score initials entry with a blinking cursor. */
-static void draw_name_entry(void){
-  dim_view(g_view);
-  draw_big_centered(12, "NEW RECORD", 0x02CF, 2);
-  draw_centered(38, "ENTER YOUR INITIALS", 0x0ACE);
+static void name_text(void){
+  banner_set(0, "NEW RECORD", 2, false, 0x02CF);
+  banner_place(0, 3);
+  tile_text_centered(7, "ENTER YOUR INITIALS", rgb332(0x0ACE));
   char shown[4];
   for (int i = 0; i < 3; ++i){
     shown[i] = i < entry_len ? entry_name[i] : ((i == entry_len && (state_t & 16)) ? '_' : '.');
   }
   shown[3] = 0;
-  draw_big_centered(50, shown, 0x0FFF, 3);
+  banner_set(1, shown, 4, false, 0x0FFF);
+  banner_place(1, 10);
+}
+
+/* All of this frame's tile overlays: the state's screen text, the status
+ * bar's numbers, and the frame-rate readout. */
+static void place_text(int fps){
+  text_begin();
+  switch (state){
+    case STATE_TITLE: title_text(); break;
+    case STATE_HELP: help_text(); break;
+    case STATE_PLAY:
+    case STATE_PAUSE: play_text(); break;
+    case STATE_DEAD: end_text(false); break;
+    case STATE_WON: end_text(true); break;
+    case STATE_NAME: name_text(); break;
+    default: break;
+  }
+  hud_text();
+  if (show_fps){
+    /* frame rate, billboards queued / visible, lights, render processes */
+    char line[40];
+    char num[12];
+    int n = 0;
+    int values[5] = {fps, g_debug_bills, g_debug_visible, g_light_count, parallel_workers() + 1};
+    for (int i = 0; i < 5; ++i){
+      format_int(num, values[i]);
+      for (int k = 0; num[k]; ++k) line[n++] = num[k];
+      line[n++] = ' ';
+    }
+    line[n - 1] = 0;
+    tile_text(0, 23, line, rgb332(0x00FF));
+  }
+  text_end();
 }
 
 /* ---- Main loop ---- */
@@ -1137,7 +1240,10 @@ static void tick(void){
   }
 }
 
-/* Render the 3D view plus the overlays for the current state into g_view. */
+/* Render the 3D view with this frame's extras and show it. The automap is
+ * the one overlay drawn into the back buffer, so with it open the game
+ * process draws it over the finished view and copies the frame out itself;
+ * otherwise each render process copies its own strip. */
 static void render_frame(void){
   struct Camera view = camera;
   if (g_stats.shake > 0 && state == STATE_PLAY){
@@ -1146,34 +1252,27 @@ static void render_frame(void){
   }
   set_light_offset(-fade);
   world_draw(g_frame, view.x, view.y);
-  parallel_render(&view);
-  if (state == STATE_PLAY && g_stats.hurt > 0){
-    tint_view(g_view, 0x0FF0, 0x0008 + (g_stats.hurt >> 1));
-  }
-  switch (state){
-    case STATE_TITLE: draw_title(); break;
-    case STATE_HELP: draw_help(); break;
-    case STATE_PLAY:
-    case STATE_PAUSE: draw_play_overlays(); break;
-    case STATE_DEAD:
-      tint_view(g_view, 0x0FF0, 0x0006);
-      draw_end_screen(false);
-      break;
-    case STATE_WON: draw_end_screen(true); break;
-    case STATE_NAME: draw_name_entry(); break;
-    default: break;
+  struct ViewExtras extras;
+  view_extras(&extras);
+  bool overlays = map_open();
+  parallel_render(&view, &extras, overlays);
+  if (overlays){
+    draw_automap();
+    blit_strip(g_pixel_fb, g_view, 0, VIEW_GROUPS);
   }
 }
 
 /* Set up display, renderer, sound, and scores, then run the frame loop:
- * catch up on elapsed 60 Hz ticks, render, blit, and update the overlays. */
+ * catch up on elapsed 60 Hz ticks, render and show the view, then update the
+ * tile overlays, crosshair, and status bar. */
 int main(void){
   /* the render workers run at high priority; so must we, or a worker that
    * lands on our core would preempt the strip we render ourselves */
   request_priority(DIOPTASE_PRIORITY_HIGH);
   g_view = (unsigned short*)g_view_words;
   world_init();
-  display_init();
+  hud_init();
+  if (!display_init()) return 1;
   keyboard_begin();
   render_init();
   audio_start();
@@ -1185,7 +1284,6 @@ int main(void){
   unsigned fps_mark = last;
   int fps_frames = 0;
   int fps = 0;
-  char fps_text[16];
   while (running){
     unsigned now = get_vga_frame_counter();
     unsigned ticks = now - last;
@@ -1202,16 +1300,8 @@ int main(void){
       fps_frames = 0;
       fps_mark = now;
     }
-    if (show_fps){
-      int x = draw_text_shadow(SURF_VIEW, 2, 89, format_int(fps_text, fps), 0x00FF);
-      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_bills), 0x0FF0);
-      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_visible), 0x0F0F);
-      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_light_count), 0x0FFF);
-      /* processes rendering the view (1 alone, 3 with both workers) */
-      draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, parallel_workers() + 1), 0x0F80);
-    }
-    blit_view(g_tilemap, g_view);
-    place_overlays();
+    place_text(fps);
+    place_cursor();
     hud_upload();
     audio_heartbeat();
     audio_mute_sfx(demo);
