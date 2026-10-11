@@ -99,7 +99,9 @@ of the speed.
 **Raycasting.** One DDA ray per screen column finds walls and Wolfenstein-style
 sliding doors (thin panels on a cell's center plane). Ray directions step
 incrementally across the view and their reciprocals come from a table, so a
-new camera angle every frame costs little. Floors
+new camera angle every frame costs little. Wall textures are 128x128 with
+64x64 and 32x32 mip levels, picked per column by wall height, so close walls
+stay sharp and distant ones do not shimmer. Floors
 and ceilings use row-based floor casting (texture coordinates step linearly
 along each screen row). Billboards (monsters,
 items, torches, spells) are depth-sorted and clipped against a per-column
@@ -110,8 +112,8 @@ light walls per column and floors per 8-pixel run.
 **No multiply instruction.** The ISA has no hardware multiply, so the hot paths
 use a quarter-square table multiplier (`umul16`), a shift/subtract divider,
 and incremental arithmetic; the per-pixel loops are hand-written assembly in
-`gfx.s`. Texture data is page-aligned so each 4 KiB texture costs one TLB
-entry.
+`gfx.s`. Texture data is page-aligned so a wall column never straddles two
+pages and each 4 KiB flat or sprite frame costs one TLB entry.
 
 **Three cores.** The view is split into three strips of column groups. Two
 forked worker processes render two of them while the game process renders the

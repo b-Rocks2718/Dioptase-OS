@@ -24,7 +24,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pngout import write_png  # noqa: E402
 
 RNG = np.random.default_rng(0xD10D)
-TEX = 64  # wall/floor texture size in texels
+TEX = 64  # floor/ceiling texture size in texels, and the walls' design grid
+WALL_SCALE = 2            # wall textures are rasterized this much finer than
+WALL = TEX * WALL_SCALE   # their design grid: WALL texels square at mip level 0
+WALL_MIPS = 3             # mip levels of WALL, WALL / 2, and WALL / 4 texels
 
 # ---------------------------------------------------------------------------
 # Palette: 16 ramps, each a dark->light gradient through three key colors.
@@ -150,70 +153,154 @@ def fbm(octaves=4, base=4, rng=RNG, size=TEX):
 
 
 # ---------------------------------------------------------------------------
-# Wall textures. Each returns a (TEX, TEX) array of palette indices in
-# row-major [y][x] order; emit() stores them column-major for the renderer.
+# Wall textures. Each returns a (WALL, WALL) array of palette indices in
+# row-major [y][x] order; main() stores them column-major for the renderer,
+# with smaller mip levels made by halve(). They are laid out on the TEX-texel
+# design grid and drawn WALL_SCALE times finer: the coarse structure (bricks,
+# planks, frames) follows the design grid, while noise, grain, cracks, glyphs,
+# crystals, and round shapes are evaluated per fine texel. Fine texel i's
+# center lies at design coordinate DESIGN[i] = (i + 0.5) / WALL_SCALE - 0.5,
+# which puts design texel k's center at k.
 # ---------------------------------------------------------------------------
+DESIGN = (np.arange(WALL) + 0.5) / WALL_SCALE - 0.5
+
+
+def child_rng(rng):
+    """A generator for detail that exists only at WALL resolution. Spawning
+    it leaves `rng`'s own stream alone, so the layout drawn from `rng`
+    afterwards (brick tones, cracks, crystals, glyphs) is the one the textures
+    were designed with at 64 texels."""
+    return rng.spawn(1)[0]
+
+
+def fine_grain(rng):
+    """Per-texel white noise in [0, 1) at WALL resolution. The 64-texel
+    designs drew TEX x TEX grain here; that draw is still made and dropped to
+    keep the rest of `rng`'s stream, and therefore the layout, unchanged."""
+    rng.random((TEX, TEX))
+    return child_rng(rng).random((WALL, WALL))
+
+
+def segment_distance(xs, ys, a, b):
+    """Distance from each point (xs, ys) to the segment from a to b."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length2 = dx * dx + dy * dy
+    t = 0.0
+    if length2 > 0:
+        t = np.clip(((xs - a[0]) * dx + (ys - a[1]) * dy) / length2, 0.0, 1.0)
+    return np.hypot(xs - (a[0] + t * dx), ys - (a[1] + t * dy))
+
+
+def draw_crack(shade, walk, dark=1.5):
+    """Draw a one-texel crack at WALL resolution through the centers of the
+    design texels `walk` [(x, y), ...]. The texel right of the groove is its
+    far wall, which faces the upper-left light, so it is brightened."""
+    s = WALL_SCALE
+    pts = [(int(x) * s + s // 2, int(y) * s + s // 2) for x, y in walk]
+    crack = set()
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:] or pts):
+        steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+        for t in range(steps + 1):
+            crack.add(((y0 + (y1 - y0) * t // steps) % WALL,
+                       (x0 + (x1 - x0) * t // steps) % WALL))
+    for y, x in crack:
+        shade[y, x] = dark
+    for y, x in crack:
+        if (y, (x + 1) % WALL) not in crack:
+            shade[y, (x + 1) % WALL] += 1.0
+
+
+def rivet(ramps, shade, cx, cy, radius=1.6, ramp=GRAY):
+    """Draw a round rivet head centered on WALL-texel coordinates (cx, cy),
+    lit from the upper left, with its shadow cast down and to the right."""
+    for y in range(int(cy - radius) - 1, int(cy + radius) + 3):
+        for x in range(int(cx - radius) - 1, int(cx + radius) + 3):
+            dx, dy = x - cx, y - cy
+            if dx * dx + dy * dy <= radius * radius:
+                ramps[y, x] = ramp
+                shade[y, x] = 9.5 - (dx + dy) / radius * 2.5
+            elif (dx - 1) ** 2 + (dy - 1) ** 2 <= radius * radius:
+                shade[y, x] = 2.5
+
+
 def bricks(ramp=STONE, rows=8, cols=4, mortar_shade=2.0, base=7.0, moss=0.0, rng=RNG):
-    h = TEX // rows
+    s = WALL_SCALE
+    h = TEX // rows   # brick size on the design grid
     w = TEX // cols
-    noise = fbm(4, 8, rng)
-    grain = rng.random((TEX, TEX))
-    shade = np.zeros((TEX, TEX))
-    ramps = np.full((TEX, TEX), ramp)
+    noise = fbm(4, 8, rng, WALL)
+    grain = fine_grain(rng)
+    shade = np.zeros((WALL, WALL))
+    ramps = np.full((WALL, WALL), ramp)
     for by in range(rows):
         offset = (w // 2) * (by % 2)
         for bx in range(cols + 1):
             tone = base + rng.normal(0, 1.1)
-            for y in range(by * h, by * h + h):
-                for xx in range(bx * w - offset, bx * w - offset + w):
-                    x = xx % TEX
-                    ly = y - by * h
-                    lx = xx - (bx * w - offset)
-                    if ly == h - 1 or lx == w - 1:
+            x0 = (bx * w - offset) * s   # brick corner in fine texels
+            y0 = by * h * s
+            for y in range(y0, y0 + h * s):
+                ly = y - y0
+                for xx in range(x0, x0 + w * s):
+                    x = xx % WALL
+                    lx = xx - x0
+                    if ly >= (h - 1) * s or lx >= (w - 1) * s:
                         shade[y, x] = mortar_shade + grain[y, x]
                         continue
-                    s = tone + (noise[y, x] - 0.5) * 4.0 + (grain[y, x] - 0.5) * 1.2
-                    if ly == 0 or lx == 0:
-                        s += 1.6  # bevel catches the light
-                    elif ly == h - 2 or lx == w - 2:
-                        s -= 1.4  # shadowed lower/right edge
-                    shade[y, x] = s
+                    v = tone + (noise[y, x] - 0.5) * 4.0 + (grain[y, x] - 0.5) * 1.2
+                    # Bevels, one design texel wide, fading inward: the top
+                    # and left edges catch the light, the others are shadowed.
+                    lit = min(ly, lx)
+                    dim = min((h - 1) * s - 1 - ly, (w - 1) * s - 1 - lx)
+                    if lit < s:
+                        v += 1.6 - 0.6 * lit / s
+                    elif dim < s:
+                        v -= 1.4 - 0.5 * dim / s
+                    shade[y, x] = v
     if moss > 0:
-        m = fbm(4, 4, rng)
-        ys = np.arange(TEX)[:, None] / TEX
-        mask = (m + ys * 0.55) > (1.25 - moss)
+        m = fbm(4, 4, rng, WALL)
+        ys = np.arange(WALL)[:, None] / WALL
+        # the grain term frays the moss edge at the fine scale
+        mask = (m + ys * 0.55 + (grain - 0.5) * 0.08) > (1.25 - moss)
         ramps = np.where(mask, MOSS, ramps)
         shade = np.where(mask, shade * 0.85 + 1.0, shade)
-    # a few cracks
+    # a few hairline cracks, each a random walk down the design grid
     for _ in range(3):
         x, y = rng.integers(0, TEX, 2)
+        walk = []
         for _ in range(rng.integers(6, 14)):
-            shade[y % TEX, x % TEX] = 1.5
+            walk.append((x, y))
             x += rng.integers(-1, 2)
             y += 1
+        draw_crack(shade, walk)
     return idx(ramps, np.clip(shade, 1, 14))
 
 
-def cave_rock(ramp=STONE, rng=RNG, crystals=0):
-    n = fbm(5, 4, rng)
-    ridges = 1.0 - np.abs(fbm(4, 8, rng) * 2 - 1)
+def cave_rock(ramp=STONE, rng=RNG, crystals=0, size=TEX):
+    """Mottled rock with dark ridges, `size` texels square: TEX for flats,
+    WALL for walls, which also get grit finer than the design grid. Crystals
+    need the WALL size."""
+    n = fbm(5, 4, rng, size)
+    ridges = 1.0 - np.abs(fbm(4, 8, rng, size) * 2 - 1)
     shade = 2.5 + n * 9.0 - (ridges > 0.86) * 3.0
-    ramps = np.full((TEX, TEX), ramp)
+    if size > TEX:
+        shade += (child_rng(rng).random((size, size)) - 0.5) * 1.2
+    ramps = np.full((size, size), ramp)
     out = idx(ramps, np.clip(shade, 1, 13))
     for _ in range(crystals):
         cx, cy = rng.integers(6, TEX - 6, 2)
-        size = rng.integers(3, 7)
-        draw_crystal(out, cx, cy, size, rng)
+        crystal_size = rng.integers(3, 7)
+        draw_crystal(out, cx, cy, crystal_size, rng)
     return out
 
 
 def draw_crystal(img, cx, cy, size, rng):
-    """Draw a faceted hexagonal dioptase crystal (lit from the upper left)."""
+    """Draw a faceted hexagonal dioptase crystal (lit from the upper left)
+    centered on design texel (cx, cy) of a WALL-texel image."""
     angle = rng.uniform(-0.6, 0.6)
     ca, sa = np.cos(angle), np.sin(angle)
-    for y in range(cy - size * 2, cy + size * 2 + 1):
-        for x in range(cx - size * 2, cx + size * 2 + 1):
-            dx, dy = x - cx, y - cy
+    s = WALL_SCALE
+    for fy in range((cy - size * 2) * s, (cy + size * 2 + 1) * s):
+        for fx in range((cx - size * 2) * s, (cx + size * 2 + 1) * s):
+            dx, dy = DESIGN[fx % WALL] - cx, DESIGN[fy % WALL] - cy
             u = dx * ca + dy * sa
             v = -dx * sa + dy * ca
             # elongated hexagon: |v| < size, |u| + |v|/2 < size*1.6
@@ -223,90 +310,124 @@ def draw_crystal(img, cx, cy, size, rng):
                     facet = 1
                 elif u > size * 0.6:
                     facet = 2
-                s = 9 + (-v / size) * 3 + (3 if facet == 1 else (-2 if facet == 2 else 0))
+                shade = 9 + (-v / size) * 3 + (3 if facet == 1 else (-2 if facet == 2 else 0))
+                if facet == 0 and u < 0 and abs(v + size * 0.45) < 0.35:
+                    shade = 14   # glint along the upper part of the front facet
                 if abs(v) >= size - 0.5 or abs(u) + abs(v) * 0.6 >= size * 1.7 - 0.8:
-                    s = 4
-                img[y % TEX, x % TEX] = idx(GEM, min(15, max(2, s)))
+                    shade = 4
+                img[fy % WALL, fx % WALL] = idx(GEM, min(15, max(2, shade)))
 
 
 def wood_door(rng=RNG):
-    shade = np.zeros((TEX, TEX))
-    ramps = np.full((TEX, TEX), WOOD)
-    grain = fbm(3, 4, rng)
+    s = WALL_SCALE
+    shade = np.zeros((WALL, WALL))
+    ramps = np.full((WALL, WALL), WOOD)
+    grain = fbm(3, 4, rng, WALL)
+    detail = child_rng(rng)
+    fibers = detail.random(WALL)          # streaks along each texel column
+    speck = detail.random((WALL, WALL))
     planks = 5
     pw = TEX / planks
-    for x in range(TEX):
-        p = int(x / pw)
-        tone = 6.5 + ((p * 7) % 3 - 1) * 0.7
-        lx = x - p * pw
-        for y in range(TEX):
-            g = np.sin((y * 0.35 + grain[y, x] * 9 + p * 3.1)) * 0.9
-            s = tone + g + (grain[y, x] - 0.5) * 2
-            if lx < 1:
-                s = 2.5
-            elif lx < 2:
-                s += 1.2
-            shade[y, x] = s
-    # frame
-    for i in range(TEX):
-        for t in range(3):
-            for (y, x) in ((t, i), (TEX - 1 - t, i), (i, t), (i, TEX - 1 - t)):
-                ramps[y, x] = STONE
-                shade[y, x] = 4 + t
+    for x in range(WALL):
+        p = int(DESIGN[x] / pw)
+        tone = 6.5 + ((p * 7) % 3 - 1) * 0.7 + (fibers[x] - 0.5) * 0.9
+        lx = DESIGN[x] - p * pw
+        for y in range(WALL):
+            g = np.sin((DESIGN[y] * 0.35 + grain[y, x] * 9 + p * 3.1)) * 0.9
+            v = tone + g + (grain[y, x] - 0.5) * 2 + (speck[y, x] - 0.5) * 0.5
+            if lx < 0.75:
+                v = 2.5        # gap between planks
+            elif lx < 1.75:
+                v += 1.2       # plank edge catching the light
+            shade[y, x] = v
+    # stone frame, three design texels wide, darker toward the outside
+    yi = np.arange(WALL)[:, None] // s
+    xi = np.arange(WALL)[None, :] // s
+    edge = np.minimum(np.minimum(yi, xi), np.minimum(TEX - 1 - yi, TEX - 1 - xi))
+    frame = edge < 3
+    ramps[frame] = STONE
+    shade[frame] = (4 + edge + (speck - 0.5) * 0.8)[frame]
     # iron bands with rivets
     for by in (12, 48):
-        for y in range(by, by + 5):
-            for x in range(3, TEX - 3):
+        for y in range(by * s, (by + 5) * s):
+            ly = y - by * s
+            for x in range(3 * s, (TEX - 3) * s):
                 ramps[y, x] = GRAY
-                shade[y, x] = 5 + (y == by) * 3 - (y == by + 4) * 2
+                v = 5 + (speck[y, x] - 0.5) * 0.6
+                if ly < 2:
+                    v += 3 - ly                        # lit top edge
+                elif ly >= 5 * s - 2:
+                    v -= 1 + (ly - (5 * s - 2))        # shadowed bottom edge
+                shade[y, x] = v
         for x in range(8, TEX - 5, 12):
-            ramps[by + 2, x] = GRAY
-            shade[by + 2, x] = 12
-            shade[by + 3, x] = 3
-    # ring handle
-    for a in np.linspace(0, 2 * np.pi, 40):
-        x = int(round(46 + 4 * np.cos(a)))
-        y = int(round(34 + 4 * np.sin(a)))
-        ramps[y, x] = GOLD
-        shade[y, x] = 9 + 3 * (np.sin(a) < 0)
+            rivet(ramps, shade, x * s + 0.5, (by + 2) * s + 0.5)
+    # ring handle, with its shadow on the planks
+    cx, cy = 46 * s + 0.5, 34 * s + 0.5
+    radius = 4 * s
+    for y in range(int(cy - radius) - 3, int(cy + radius) + 4):
+        for x in range(int(cx - radius) - 3, int(cx + radius) + 4):
+            if abs(np.hypot(x - cx, y - cy) - radius) <= 1.2:
+                ramps[y, x] = GOLD
+                # brighter on the upper half and toward the upper left
+                shade[y, x] = 10 - (y - cy) / radius * 2.0 - (x - cx) / radius * 0.8
+            elif abs(np.hypot(x - cx - 1.5, y - cy - 1.5) - radius) <= 1.0:
+                shade[y, x] = min(shade[y, x], 2.5)
     return idx(ramps, np.clip(shade, 1, 15))
 
 
 def iron_door(rng=RNG):
-    n = fbm(4, 8, rng)
-    shade = 4.5 + n * 3
-    ramps = np.full((TEX, TEX), DEEP)
-    for i in range(TEX):
-        for t in range(4):
-            for (y, x) in ((t, i), (TEX - 1 - t, i), (i, t), (i, TEX - 1 - t)):
-                ramps[y, x] = GRAY
-                shade[y, x] = 6 + (t == 0) * 3
+    s = WALL_SCALE
+    n = fbm(4, 8, rng, WALL)
+    brushed = child_rng(rng).random((WALL, WALL))
+    shade = 4.5 + n * 3 + (brushed - 0.5) * 0.5
+    ramps = np.full((WALL, WALL), DEEP)
+    # steel frame, four design texels wide, with a lit outer lip and a
+    # shadow line where it meets the panel
+    fy = np.arange(WALL)[:, None]
+    fx = np.arange(WALL)[None, :]
+    edge = np.minimum(np.minimum(fy, fx), np.minimum(WALL - 1 - fy, WALL - 1 - fx))
+    frame = edge < 4 * s
+    ramps[frame] = GRAY
+    frame_shade = (6 + (brushed - 0.5) * 0.6 + 3 * (edge == 0) + 1.5 * (edge == 1)
+                   - 2 * (edge == 4 * s - 1))
+    shade[frame] = frame_shade[frame]
     for y in range(8, TEX - 8, 8):
         for x in range(8, TEX - 7, 8):
-            ramps[y, x] = GRAY
-            shade[y, x] = 12
-            shade[min(y + 1, TEX - 1), x] = 2
-    # gold lock plate with keyhole
-    for y in range(24, 42):
-        for x in range(25, 39):
+            rivet(ramps, shade, x * s + 0.5, y * s + 0.5, radius=1.5)
+    # gold lock plate with a beveled edge
+    for y in range(24 * s, 42 * s):
+        for x in range(25 * s, 39 * s):
             ramps[y, x] = GOLD
-            edge = y in (24, 41) or x in (25, 38)
-            shade[y, x] = 7 if edge else 10 - (y - 24) * 0.15
-    for y in range(29, 37):
-        for x in range(31, 33):
-            ramps[y, x] = GRAY
-            shade[y, x] = 1
-    for y in range(28, 31):
-        for x in range(30, 34):
-            ramps[y, x] = GRAY
-            shade[y, x] = 1
+            top, left = y - 24 * s, x - 25 * s
+            bottom, right = 42 * s - 1 - y, 39 * s - 1 - x
+            if min(top, left) == 0:
+                v = 12
+            elif min(bottom, right) == 0:
+                v = 4
+            elif min(top, left, bottom, right) < s:
+                v = 7
+            else:
+                v = 10 - (DESIGN[y] - 24) * 0.15 + (brushed[y, x] - 0.5) * 0.6
+            shade[y, x] = v
+    # keyhole: a round top over a slot that widens downward
+    kx, ky = 31.5 * s + 0.5, 29 * s + 0.5
+    for y in range(26 * s, 38 * s):
+        for x in range(29 * s, 35 * s):
+            in_top = (x - kx) ** 2 + (y - ky) ** 2 <= (1.7 * s) ** 2
+            in_slot = ky <= y <= 36.5 * s and abs(x - kx) <= 0.75 * s + (y - ky) * 0.06
+            if in_top or in_slot:
+                ramps[y, x] = GRAY
+                shade[y, x] = 1
     return idx(ramps, np.clip(shade, 1, 15))
 
 
 def rune_wall(rng=RNG, ramp=PURPLE):
-    base = cave_rock(DEEP, rng)
-    img = base.copy()
-    # Carve a grid of glowing glyphs: random strokes on a 3x3 lattice.
+    img = cave_rock(DEEP, rng, size=WALL)
+    # Carve a grid of glowing glyphs: random strokes on a 3x3 lattice of
+    # design points, rasterized by distance so they stay smooth.
+    xs = DESIGN[None, :]
+    ys = DESIGN[:, None]
+    dist = np.full((WALL, WALL), np.inf)
     for gx in (12, 32, 52):
         for gy in (14, 34, 52):
             if rng.random() < 0.35:
@@ -315,15 +436,11 @@ def rune_wall(rng=RNG, ramp=PURPLE):
             for _ in range(rng.integers(2, 5)):
                 a = pts[rng.integers(0, 9)]
                 b = pts[rng.integers(0, 9)]
-                for t in np.linspace(0, 1, 12):
-                    x = int(round(a[0] + (b[0] - a[0]) * t))
-                    y = int(round(a[1] + (b[1] - a[1]) * t))
-                    img[y, x] = idx(ramp, 13)
-                    for (oy, ox) in ((0, 1), (1, 0), (0, -1), (-1, 0)):
-                        yy, xx = y + oy, x + ox
-                        if img[yy, xx] // 16 != ramp:
-                            img[yy, xx] = idx(ramp, 6)
-    return img
+                dist = np.minimum(dist, segment_distance(xs, ys, a, b))
+    core = dist <= 0.6
+    glow = (dist <= 1.5) & ~core
+    img = np.where(core, idx(ramp, 13 + (dist <= 0.25)), img)
+    return np.where(glow, idx(ramp, 7 - (dist - 0.6) * 2.5), img)
 
 
 
@@ -361,29 +478,49 @@ def cracked_wall(rng=RNG):
     img = bricks(STONE, rng=rng, base=6.5)
     ramps = img // 16
     shade = (img % 16).astype(np.float64)
+    # The crack's center line has one x per design row (a jittered walk);
+    # sparks of light escape beside it.
+    center = {}
+    sparks = []
     x = 30.0
     for y in range(4, 60):
         x += rng.uniform(-1.6, 1.6)
         x = min(max(x, 8), 56)
-        w = 1 + (16 < y < 48)
-        for dx in range(-w, w + 1):
-            xx = int(round(x)) + dx
-            if abs(dx) < w or w == 1 and dx == 0:
-                ramps[y, xx] = FIRE if abs(dx) == 0 else GOLD
-                shade[y, xx] = 14 if abs(dx) == 0 else 11
-            else:
-                ramps[y, xx] = STONE
-                shade[y, xx] = 2
+        center[y] = x
         if rng.random() < 0.12:
-            # side branch
             bx = int(round(x))
             for k in range(1, rng.integers(4, 9)):
-                xx = bx + k * (1 if rng.random() < 0.5 else -1)
-                yy = y + k // 2
-                if 0 <= xx < TEX and 0 <= yy < TEX:
-                    ramps[yy, xx] = FIRE
-                    shade[yy, xx] = 9
-    return idx(ramps, shade)
+                sparks.append((bx + k * (1 if rng.random() < 0.5 else -1), y + k // 2))
+    # Each fine row interpolates the center line; by distance from it, a
+    # texel is the white-hot core, the gold glow (in the wide middle), the
+    # dark rim, or brick lit by the light leaking out.
+    for fy in range(4 * WALL_SCALE, 60 * WALL_SCALE):
+        yd = min(max(DESIGN[fy], 4.0), 59.0)
+        y0 = int(yd)
+        y1 = min(y0 + 1, 59)
+        xc = center[y0] + (center[y1] - center[y0]) * (yd - y0)
+        w = 1 + (16 < round(yd) < 48)
+        for fx in range(WALL):
+            d = abs(DESIGN[fx] - xc)
+            if d < 0.5:
+                ramps[fy, fx] = FIRE
+                shade[fy, fx] = 15 if d < 0.25 else 14
+            elif d < w - 0.5:
+                ramps[fy, fx] = GOLD
+                shade[fy, fx] = 12 - (d - 0.5)
+            elif d < w + 0.5:
+                ramps[fy, fx] = STONE
+                shade[fy, fx] = 2
+            elif d < w + 2.0:
+                shade[fy, fx] += 1.5 * (w + 2.0 - d) / 1.5
+    s = WALL_SCALE
+    for sx, sy in sparks:
+        if 0 <= sx < TEX and 0 <= sy < TEX:
+            ramps[sy * s, sx * s] = FIRE
+            shade[sy * s, sx * s] = 11
+            ramps[sy * s + 1, sx * s + 1] = FIRE
+            shade[sy * s + 1, sx * s + 1] = 9
+    return idx(ramps, np.clip(shade, 1, 15))
 
 
 def flagstones(ramp=STONE, rng=RNG, base=6.0):
@@ -1037,18 +1174,42 @@ def build_sprites():
 FLATS = []  # floor/ceiling textures, row-major
 
 
-TEXTURES = []  # (name, row-major index array)
+TEXTURES = []  # (name, [row-major index array per mip level])
+
+
+def halve(img):
+    """Box-filter a palette-index texture to half size: each 2x2 block becomes
+    the palette entry nearest its mean color among the ramps the block uses,
+    so a mip level never brings in a hue its texture lacks."""
+    n = img.shape[0] // 2
+    blocks = img.reshape(n, 2, n, 2).transpose(0, 2, 1, 3).reshape(n, n, 4)
+    mean = PALETTE[blocks].mean(axis=2)
+    best = np.zeros((n, n), dtype=np.int64)
+    best_err = np.full((n, n), np.inf)
+    for k in range(4):
+        candidates = (blocks[:, :, k] // 16)[:, :, None] * 16 + np.arange(16)
+        err = ((PALETTE[candidates] - mean[:, :, None, :]) ** 2).sum(axis=3)
+        pick = err.argmin(axis=2)[:, :, None]
+        pick_err = np.take_along_axis(err, pick, 2)[:, :, 0]
+        better = pick_err < best_err
+        best = np.where(better, np.take_along_axis(candidates, pick, 2)[:, :, 0], best)
+        best_err = np.where(better, pick_err, best_err)
+    return best
 
 
 def add_texture(name, img):
-    TEXTURES.append((name, np.asarray(img, dtype=np.int64)))
+    """Register a WALL-texel wall texture with its smaller mip levels."""
+    mips = [np.asarray(img, dtype=np.int64)]
+    for _ in range(WALL_MIPS - 1):
+        mips.append(halve(mips[-1]))
+    TEXTURES.append((name, mips))
 
 
 def build_textures():
     add_texture("brick", bricks(STONE, rng=np.random.default_rng(1)))
     add_texture("brick_moss", bricks(STONE, moss=0.55, rng=np.random.default_rng(2)))
-    add_texture("rock", cave_rock(RUST, rng=np.random.default_rng(3)))
-    add_texture("rock_gem", cave_rock(DEEP, rng=np.random.default_rng(4), crystals=6))
+    add_texture("rock", cave_rock(RUST, rng=np.random.default_rng(3), size=WALL))
+    add_texture("rock_gem", cave_rock(DEEP, rng=np.random.default_rng(4), crystals=6, size=WALL))
     add_texture("door", wood_door(np.random.default_rng(5)))
     add_texture("door_locked", iron_door(np.random.default_rng(6)))
     add_texture("runes", rune_wall(np.random.default_rng(7)))
@@ -1230,20 +1391,23 @@ def preview(dirname, shade_tables):
         r, s = divmod(i, 16)
         pal[r * 8:(r + 1) * 8, s * 8:(s + 1) * 8] = rgb_of[i]
     write_png(os.path.join(dirname, "palette.png"), pal)
-    # textures sheet, 3x scale, 4 per row
-    scale = 3
+    # texture sheets, every texture blown up to `size` pixels, 4 per row:
+    # walls at mip level 0 then the flats, and each wall's mip levels
+    size = 256
     per_row = 4
-    n = len(TEXTURES) + len(FLATS)
-    rows = (n + per_row - 1) // per_row
-    sheet = np.zeros((rows * (TEX * scale + 4), per_row * (TEX * scale + 4), 3), dtype=np.uint8)
-    for k, (_, img) in enumerate(TEXTURES + FLATS):
-        r, c = divmod(k, per_row)
-        rgb = rgb_of[img]
-        rgb = np.repeat(np.repeat(rgb, scale, 0), scale, 1)
-        y0 = r * (TEX * scale + 4)
-        x0 = c * (TEX * scale + 4)
-        sheet[y0:y0 + TEX * scale, x0:x0 + TEX * scale] = rgb
-    write_png(os.path.join(dirname, "textures.png"), sheet)
+
+    def texture_sheet(images, name):
+        rows = (len(images) + per_row - 1) // per_row
+        sheet = np.zeros((rows * (size + 4), per_row * (size + 4), 3), dtype=np.uint8)
+        for k, img in enumerate(images):
+            r, c = divmod(k, per_row)
+            scale = size // img.shape[0]
+            rgb = np.repeat(np.repeat(rgb_of[img], scale, 0), scale, 1)
+            sheet[r * (size + 4):r * (size + 4) + size, c * (size + 4):c * (size + 4) + size] = rgb
+        write_png(os.path.join(dirname, name), sheet)
+
+    texture_sheet([mips[0] for _, mips in TEXTURES] + [img for _, img in FLATS], "textures.png")
+    texture_sheet([m for _, mips in TEXTURES for m in mips], "wall_mips.png")
     # sprites sheet, 4x scale, 8 per row, on a dark checker background
     scale = 4
     per_row = 8
@@ -1304,16 +1468,18 @@ def main():
     q = [(n * n) // 4 for n in range(-510, 511)]
     emit_halfs(out, "qsq_table", q[:510])
     emit_halfs(out, "qsq_center", q[510:])
-    # The texel arrays start on page boundaries so every 4 KB texture sits in
-    # a single page: the renderer's inner loops touch one TLB entry per
-    # texture instead of two (the TLB holds only 16).
-    out.append("  .align 4096")
-    # Walls are sampled down columns, so store each texture column-major.
-    out.append("  .global wall_textures")
-    out.append("wall_textures:")
-    for name, img in TEXTURES:
-        out.append(f"  # {name}")
-        emit_bytes(out, None, img.T.reshape(-1))
+    # The texel arrays start on page boundaries so no texture column, and no
+    # 4 KB flat or sprite, straddles two pages: the renderer's inner loops
+    # then touch one TLB entry per column or flat (the TLB holds only 16).
+    # Walls are sampled down columns, so each mip level stores its textures
+    # column-major, one array per level (wall_textures is level 0).
+    for level, label in enumerate(("wall_textures", "wall_mip1", "wall_mip2")[:WALL_MIPS]):
+        out.append("  .align 4096")
+        out.append(f"  .global {label}")
+        out.append(f"{label}:")
+        for name, mips in TEXTURES:
+            out.append(f"  # {name}")
+            emit_bytes(out, None, mips[level].T.reshape(-1))
     out.append("  .align 4096")
     # Floors and ceilings are sampled at arbitrary (u, v), stored row-major.
     out.append("  .global flat_textures")

@@ -139,9 +139,17 @@ struct Door {
 #define MAX_DOORS 40
 #define DOOR_PASSABLE 0xC000
 
-/* ---- Textures (assets.s order) ---- */
-#define TEX_SIZE 64
-#define TEX_BYTES 4096
+/* ---- Textures (assets.s order) ----
+ * Wall textures are WALL_SIZE texels square, stored column-major, with two
+ * smaller mip levels (WALL_SIZE / 2 and WALL_SIZE / 4 texels) in arrays of
+ * their own; each wall column samples the level that suits its height
+ * (render.c). Floor and ceiling flats are 64 texels square, row-major
+ * (draw_flats_asm assumes that size). */
+#define WALL_SIZE 128
+#define WALL_SHIFT 7             /* log2(WALL_SIZE) */
+#define WALL_MIP1_HEIGHT 90      /* wall columns shorter than this use level 1 */
+#define WALL_MIP2_HEIGHT 45      /* and shorter than this, level 2 */
+#define FLAT_BYTES 4096
 #define TEX_BRICK 0
 #define TEX_BRICK_MOSS 1
 #define TEX_ROCK 2
@@ -406,8 +414,10 @@ void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
-extern unsigned char wall_textures[36864];
-extern unsigned char flat_textures[16384];
+extern unsigned char wall_textures[147456];   /* mip level 0: 9 textures, 128x128 */
+extern unsigned char wall_mip1[36864];        /* 9 textures, 64x64 */
+extern unsigned char wall_mip2[9216];         /* 9 textures, 32x32 */
+extern unsigned char flat_textures[16384];    /* 4 flats, 64x64 */
 #define FLAT_FLOOR_STONE 0
 #define FLAT_CEILING_BEAMS 1
 #define FLAT_FLOOR_MOSS 2

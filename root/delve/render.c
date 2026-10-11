@@ -33,7 +33,7 @@ struct Column {
   int delta_y;
   int depth;       /* perpendicular wall distance (16.16): the z-buffer */
   short tex;       /* texture index, -1 when the ray hit nothing */
-  short tex_x;     /* texel column */
+  short tex_x;     /* texel column at mip level 0 */
   short height;    /* projected wall height in pixels */
   short level;     /* light level */
   int unused;      /* pads the record to 32 bytes */
@@ -55,7 +55,8 @@ static unsigned short* view_at(int x, int y){
  * walls of all eight of its screen columns (see draw_flats_asm). */
 static int flat_skip[40];           /* VIEW_GROUPS */
 
-/* Texture step (16.16 texels per pixel) for wall heights below STEP_TABLE. */
+/* Mip level 0 texture step (16.16 texels per pixel) for wall heights below
+ * STEP_TABLE; level n steps are these shifted right by n. */
 #define STEP_TABLE 1024
 static int step_for_height[STEP_TABLE];
 
@@ -223,14 +224,14 @@ void render_init(void){
     recip_table[i] = r > DELTA_CAP ? DELTA_CAP : r;
   }
   for (int h = 1; h < STEP_TABLE; ++h){
-    step_for_height[h] = udiv32(TEX_SIZE << 16, h);
+    step_for_height[h] = udiv32(WALL_SIZE << 16, h);
   }
-  step_for_height[0] = TEX_SIZE << 16;
+  step_for_height[0] = WALL_SIZE << 16;
   for (int i = 0; i < HEIGHT_TABLE; ++i){
     height_for_dist[i] = udiv32(PROJ_K << 16, FIX_ONE + (i << 8));
   }
-  floor_tex = flat_textures + FLAT_FLOOR_STONE * TEX_BYTES;
-  ceil_tex = flat_textures + FLAT_CEILING_BEAMS * TEX_BYTES;
+  floor_tex = flat_textures + FLAT_FLOOR_STONE * FLAT_BYTES;
+  ceil_tex = flat_textures + FLAT_CEILING_BEAMS * FLAT_BYTES;
 }
 
 /* Per-row floor casting state handed to draw_flats_asm(). */
@@ -318,7 +319,11 @@ static int dist_mul(int a, int b){
 }
 
 /* Draw the wall slice of screen column x (floor and ceiling are already
- * cast) from the raycast pass's column record. */
+ * cast) from the raycast pass's column record. The texture's mip level is
+ * picked by the column's height, switching where the level 0 step reaches
+ * sqrt(2) and 2 sqrt(2) texels per pixel: near walls show every texel, and
+ * far ones, which would skip most texels of a large texture and shimmer as
+ * the view moves, read a smaller pre-filtered copy. */
 static void draw_column(int x){
   struct Column* col = &columns[x];
   int tex = col->tex;
@@ -329,7 +334,18 @@ static void draw_column(int x){
   int y0 = top < 0 ? 0 : top;
   int y1 = bottom > VIEW_H ? VIEW_H : bottom;
   if (y1 <= y0) return;
-  int step = height < STEP_TABLE ? step_for_height[height] : udiv32(TEX_SIZE << 16, height);
+  int step = height < STEP_TABLE ? step_for_height[height] : udiv32(WALL_SIZE << 16, height);
+  unsigned char* texels = wall_textures;
+  int mip = 0;
+  if (height < WALL_MIP2_HEIGHT){
+    texels = wall_mip2;
+    mip = 2;
+  } else if (height < WALL_MIP1_HEIGHT){
+    texels = wall_mip1;
+    mip = 1;
+  }
+  step >>= mip;
+  /* a column taller than the view is level 0, whose step fits in 16 bits */
   int pos = 0;
   if (top < 0){
     pos = umul16(-top, step);
@@ -337,7 +353,9 @@ static void draw_column(int x){
   int level = col->level;
   if (level < 0) level = 0;
   if (level > LIGHT_LEVELS - 1) level = LIGHT_LEVELS - 1;
-  unsigned char* texcol = wall_textures + tex * TEX_BYTES + col->tex_x * TEX_SIZE;
+  /* level `mip` holds textures of (WALL_SIZE >> mip)^2 texels */
+  int size_shift = WALL_SHIFT - mip;
+  unsigned char* texcol = texels + (tex << (size_shift << 1)) + ((col->tex_x >> mip) << size_shift);
   draw_wall(view_at(x, y0), y1 - y0, texcol, pos, step,
             shade_tables + level * SHADE_TABLE_SHORTS, HALF_LEFT(y0));
 }
@@ -427,9 +445,9 @@ static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
     col->height = 0;
     return;
   }
-  int tex_x = (wall_x >> 10) & (TEX_SIZE - 1);
-  if (side == 0 && rx > 0) tex_x = TEX_SIZE - 1 - tex_x;
-  if (side == 1 && ry < 0) tex_x = TEX_SIZE - 1 - tex_x;
+  int tex_x = (wall_x >> (16 - WALL_SHIFT)) & (WALL_SIZE - 1);
+  if (side == 0 && rx > 0) tex_x = WALL_SIZE - 1 - tex_x;
+  if (side == 1 && ry < 0) tex_x = WALL_SIZE - 1 - tex_x;
   col->depth = dist;
   col->tex_x = tex_x;
   col->height = wall_height(dist);
@@ -496,8 +514,8 @@ void render_view_groups(struct Camera* cam, struct ViewExtras* extras,
   if (cam->angle != table_angle){
     build_ray_tables(cam->angle);
   }
-  floor_tex = flat_textures + g_floor_flat * TEX_BYTES;
-  ceil_tex = flat_textures + g_ceiling_flat * TEX_BYTES;
+  floor_tex = flat_textures + g_floor_flat * FLAT_BYTES;
+  ceil_tex = flat_textures + g_ceiling_flat * FLAT_BYTES;
   select_lights(cam);
   int map_x0 = cam->x >> 16;
   int map_y0 = cam->y >> 16;

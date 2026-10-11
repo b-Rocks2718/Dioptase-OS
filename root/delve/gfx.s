@@ -175,8 +175,10 @@ copy_words:
 
 # Draw one textured wall slice down a view column.
 # Inputs:  r1 = first destination pixel (back buffer), r2 = pixel count (> 0),
-#          r3 = texture column (64 palette-index bytes),
-#          r4 = texture position (16.16 texels, < 64.0 for every pixel drawn),
+#          r3 = texture column (palette-index bytes; 128, 64, or 32 of them
+#               by mip level),
+#          r4 = texture position (16.16 texels, inside the column for every
+#               pixel drawn),
 #          r5 = texture step per pixel (16.16), r6 = shade table (256 halfwords),
 #          r7 = rows before the column crosses into the bottom half
 #               (HALF_LEFT(y) in delve.h).
