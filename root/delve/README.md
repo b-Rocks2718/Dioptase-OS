@@ -33,6 +33,7 @@ and take the **Heart of Dioptase** to win.
 | Keys | Action |
 | --- | --- |
 | `W` `S` / up, down | step forward / back |
+| `Shift+W` | run ahead until a junction, door, or monster |
 | `A` `D` | step left / right |
 | `Q` `E` / left, right | turn |
 | mouse | aim (the crosshair) |

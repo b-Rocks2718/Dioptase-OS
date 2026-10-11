@@ -83,6 +83,7 @@ struct Player {
   int from_angle;
   int to_angle;
   int queued;      /* next command byte, 0 if none */
+  int running;     /* Shift+W: keep stepping forward until something happens */
   int cooldown;    /* ticks until the next spell */
   int cast_t;      /* staff thrust animation */
   int regen;
@@ -456,6 +457,26 @@ static void start_command(int key){
 }
 
 /* Whether `key` is one of the step/turn keys (buffered while animating). */
+/* Whether the run (Shift+W) should stop before the next step: the way ahead
+ * is blocked, a side passage opens, or a monster is in sight. */
+static bool run_should_stop(void){
+  int f = player.facing;
+  int nx = player.cx + dir_dx[f];
+  int ny = player.cy + dir_dy[f];
+  if (cell_solid(nx, ny) || door_at(nx, ny) != NULL || monster_at(nx, ny) != NULL) return true;
+  int left = (f + 3) & 3;
+  int right = (f + 1) & 3;
+  if (!cell_solid(player.cx + dir_dx[left], player.cy + dir_dy[left]) ||
+      !cell_solid(player.cx + dir_dx[right], player.cy + dir_dy[right])){
+    return true;
+  }
+  for (int i = 0; i < MAX_MONSTERS; ++i){
+    struct Monster* m = &g_monsters[i];
+    if (m->alive && m->awake && approx_dist(m->x - camera.x, m->y - camera.y) < 0x60000) return true;
+  }
+  return false;
+}
+
 static bool is_motion_key(int key){
   switch (key){
     case 'w': case 'W': case KEY_UP: case 's': case 'S': case KEY_DOWN:
@@ -474,6 +495,12 @@ static bool update_player(void){
     int key = player.queued;
     player.queued = 0;
     start_command(key);
+  } else if (player.anim == 0 && player.running){
+    if (run_should_stop()){
+      player.running = 0;
+    } else {
+      try_move(player.facing);
+    }
   }
   if (player.anim != 0){
     player.anim_t += 1;
@@ -488,6 +515,7 @@ static bool update_player(void){
     }
     if (player.anim_t >= player.anim_len){
       arrived = player.anim == 1;
+      if (player.anim == 2 && !demo) hud_redraw();
       player.anim = 0;
       camera.x = cell_center(player.cx);
       camera.y = cell_center(player.cy);
@@ -521,7 +549,12 @@ static void handle_key(int key){
       state_t = 0;
       break;
     case STATE_PLAY:
-      if (is_motion_key(key)){
+      player.running = 0;
+      if (key == 'W'){
+        /* Shift+W: run ahead until a junction, a door, or a monster */
+        player.running = 1;
+        if (player.anim == 0) try_move(player.facing);
+      } else if (is_motion_key(key)){
         if (player.anim == 0 && player.queued == 0) start_command(key);
         else player.queued = key;
       } else if (key == ' '){
@@ -722,7 +755,7 @@ static void hud_redraw(void){
   fill_rect(SURF_HUD, 0, 0, HUD_W, HUD_H, 0x0211);
   fill_rect(SURF_HUD, 0, 0, HUD_W, 1, 0x027C);
   fill_rect(SURF_HUD, 0, 1, HUD_W, 1, 0x0136);
-  if (state == STATE_TITLE || state == STATE_HELP){
+  if (state == STATE_TITLE || state == STATE_HELP || state == STATE_NAME){
     draw_text(SURF_HUD, 4, 6, "A DIOPTASE ADVENTURE", 0x0ACE);
     draw_text(SURF_HUD, 4, 14, "CPU, OS, COMPILER: ALL HOMEMADE", 0x0688);
     hud_upload();
@@ -746,6 +779,11 @@ static void hud_redraw(void){
   }
   draw_text(SURF_HUD, 102, 6, "DEPTH", 0x0899);
   draw_text(SURF_HUD, 126, 6, format_int(buf, g_stats.depth), 0x0FFF);
+  /* compass: the direction the hero faces */
+  static char* compass[4] = {"E", "S", "W", "N"};
+  fill_rect(SURF_HUD, 145, 4, 11, 9, 0x0000);
+  fill_rect(SURF_HUD, 146, 5, 9, 7, 0x0322);
+  draw_text(SURF_HUD, 149, 6, compass[player.facing], 0x02CF);
   draw_text(SURF_HUD, 102, 15, format_int(buf, g_stats.score), 0x04DF);
   hud_upload();
 }
@@ -820,7 +858,7 @@ static void draw_help(void){
   dim_view(g_view);
   dim_view(g_view);
   draw_centered(3, "HOW TO PLAY", 0x02CF);
-  draw_text_shadow(SURF_VIEW, 8, 13, "W S    STEP FORWARD / BACK", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 13, "W S    STEP FORWARD / BACK  SHIFT+W RUN", 0x0FFF);
   draw_text_shadow(SURF_VIEW, 8, 20, "A D    STEP LEFT / RIGHT", 0x0FFF);
   draw_text_shadow(SURF_VIEW, 8, 27, "Q E    TURN (OR ARROW KEYS)", 0x0FFF);
   draw_text_shadow(SURF_VIEW, 8, 36, "MOUSE  AIM", 0x0ACE);
