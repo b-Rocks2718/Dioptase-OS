@@ -582,8 +582,10 @@ static void handle_key(int key){
         god_mode = !god_mode;
         show_message(god_mode ? "GOD MODE" : "MORTAL AGAIN");
       } else if (key == '='){
-        /* cheat for the impatient: take the portal right now */
-        g_stats.exit_reached = 1;
+        /* cheat for the impatient: take the portal right now (the last
+         * depth has no portal, only the Heart) */
+        if (g_stats.depth < FINAL_DEPTH) g_stats.exit_reached = 1;
+        else show_message("NO DEEPER - TAKE THE HEART");
       } else if (key == '\\'){
         autopilot = !autopilot;
         show_message(autopilot ? "AUTOPILOT ON" : "AUTOPILOT OFF");
