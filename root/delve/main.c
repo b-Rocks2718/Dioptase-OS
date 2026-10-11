@@ -872,19 +872,20 @@ static void draw_title(void){
 static void draw_help(void){
   dim_view(g_view);
   dim_view(g_view);
-  draw_centered(3, "HOW TO PLAY", 0x02CF);
-  draw_text_shadow(SURF_VIEW, 8, 13, "W S    STEP FORWARD / BACK  SHIFT+W RUN", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 20, "A D    STEP LEFT / RIGHT", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 27, "Q E    TURN (OR ARROW KEYS)", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 36, "MOUSE  AIM", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 43, "LEFT   SPARK BOLT   (SPACE)", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 50, "RIGHT  FIREBALL     (F)", 0x0ACE);
-  draw_text_shadow(SURF_VIEW, 8, 59, "M MAP  P PAUSE  (NOT ESC: IT", 0x0999);
-  draw_text_shadow(SURF_VIEW, 8, 65, "               CLOSES THE EMULATOR)", 0x0777);
-  draw_text_shadow(SURF_VIEW, 8, 72, "FIREBALLS SHATTER CRACKED WALLS.", 0x03AF);
-  draw_centered(79, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
-  draw_centered(85, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
-  draw_centered(91, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
+  draw_centered(2, "HOW TO PLAY", 0x02CF);
+  draw_text_shadow(SURF_VIEW, 8, 10, "W S      STEP FORWARD / BACK", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 16, "A D      STEP LEFT / RIGHT", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 22, "Q E      TURN (OR ARROW KEYS)", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 28, "SHIFT+W  RUN AHEAD", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 35, "MOUSE    AIM", 0x0ACE);
+  draw_text_shadow(SURF_VIEW, 8, 41, "LEFT     SPARK BOLT  (SPACE)", 0x0ACE);
+  draw_text_shadow(SURF_VIEW, 8, 47, "RIGHT    FIREBALL    (F)", 0x0ACE);
+  draw_text_shadow(SURF_VIEW, 8, 54, "M MAP  P PAUSE  (NOT ESC: IT", 0x0999);
+  draw_text_shadow(SURF_VIEW, 8, 60, "               CLOSES THE EMULATOR)", 0x0777);
+  draw_text_shadow(SURF_VIEW, 8, 67, "FIREBALLS SHATTER CRACKED WALLS.", 0x03AF);
+  draw_centered(74, "GATHER CRYSTALS. FIND THE RUNE KEY.", 0x09F4);
+  draw_centered(80, "BREAK THE SEAL, ENTER THE PORTAL.", 0x09F4);
+  draw_centered(88, "AT DEPTH 8 THE HEART AWAITS.", 0x0FF8);
 }
 
 /* In-game overlays: automap, boss health bar, messages, and the pause panel. */
