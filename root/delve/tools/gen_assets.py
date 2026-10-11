@@ -22,6 +22,8 @@ import numpy as np
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pngout import write_png  # noqa: E402
+import music  # noqa: E402
+import songs  # noqa: E402
 
 RNG = np.random.default_rng(0xD10D)
 TEX = 64  # floor/ceiling texture size in texels, and the walls' design grid
@@ -1222,130 +1224,6 @@ def build_textures():
 
 
 # ---------------------------------------------------------------------------
-# Music: a tiny tracker. Each song has four channels (lead, arpeggio, bass,
-# drums); each row is one eighth note. Tokens: a note like "D4" or "Bb3",
-# "-" to hold, "." for silence. Drum tokens: "K" kick, "S" snare, "h" hat.
-# ---------------------------------------------------------------------------
-AUDIO_RATE = 25000
-NOTE_NAMES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-# Drum "notes" set the noise channel's LFSR clock: low = thump, high = hiss.
-DRUM_NOTES = {"K": 57, "S": 100, "h": 120}
-ROW_HOLD = 0
-ROW_OFF = 1
-
-
-def note_number(tok):
-    if tok in DRUM_NOTES:
-        return DRUM_NOTES[tok]
-    name = tok[0]
-    rest = tok[1:]
-    semis = NOTE_NAMES[name]
-    while rest and rest[0] in "#b":
-        semis += 1 if rest[0] == "#" else -1
-        rest = rest[1:]
-    octave = int(rest)
-    return 12 * (octave + 1) + semis
-
-
-def parse_track(text):
-    rows = []
-    for tok in text.replace("|", " ").split():
-        if tok == "-":
-            rows.append(ROW_HOLD)
-        elif tok == ".":
-            rows.append(ROW_OFF)
-        else:
-            rows.append(note_number(tok))
-    return rows
-
-
-def arp(chords, pattern=(0, 1, 2, 1, 0, 1, 2, 1)):
-    """Broken-chord eighths: one bar per chord, chord given as note names."""
-    out = []
-    for chord in chords:
-        notes = chord.split()
-        for i in pattern:
-            out.append(notes[i % len(notes)])
-    return " ".join(out)
-
-
-def bass_line(roots, style):
-    out = []
-    for r in roots:
-        lo = r
-        hi = r[:-1] + str(int(r[-1]) + 1)
-        if style == "drive":
-            out += [lo, lo, hi, lo, lo, lo, hi, lo]
-        else:
-            out += [lo, "-", "-", "-", hi, "-", lo, "-"]
-    return " ".join(out)
-
-
-SONGS = []
-
-
-def add_song(name, bpm, lead, arpeggio, bass, drums, loop=True):
-    tracks = [parse_track(t) for t in (lead, arpeggio, bass, drums)]
-    length = max(len(t) for t in tracks)
-    for t in tracks:
-        while len(t) < length:
-            t.append(ROW_HOLD if t else ROW_OFF)
-    row_samples = int(AUDIO_RATE * 60 / bpm / 2)
-    SONGS.append((name, row_samples, length, loop, tracks))
-
-
-add_song_later = []   # songs whose ids follow the ones added in order
-
-
-def build_music():
-    # 1: title -- slow A minor, bell lead over a soft arpeggio
-    add_song(
-        "title", 84,
-        lead=". . . . . . . . | " * 4 +
-             "E5 - - - D5 - C5 - | C5 - - - A4 - - - | B4 - - - G4 - D5 - | E5 - - - - - - - | "
-             "F5 - E5 - D5 - C5 - | E5 - - - A4 - C5 - | B4 - G#4 - E4 - B4 - | A4 - - - - - - . |",
-        arpeggio=arp(["A3 C4 E4", "F3 A3 C4", "G3 B3 D4", "E3 G3 B3"] * 2 +
-                     ["A3 C4 E4", "F3 A3 C4", "G3 B3 D4", "E3 G3 B3",
-                      "D3 F3 A3", "A3 C4 E4", "E3 G#3 B3", "A3 C4 E4"]),
-        bass=bass_line(["A2", "F2", "G2", "E2"] * 3 + ["D2", "A2", "E2", "A2"], "slow"),
-        drums="",
-    )
-    # 2: dungeon -- driving D minor
-    kit = "K h S h K h S h | " * 16
-    add_song(
-        "dungeon", 112,
-        lead=". . . . . . . . | " * 8 +
-             "D5 - - F5 - E5 D5 - | A4 - - - - - - . | Bb4 - - D5 - C5 Bb4 - | C5 - - - - - E5 - | "
-             "F5 - E5 - D5 - C5 - | D5 - - - A4 - - . | G4 - Bb4 - D5 - G5 - | E5 - - - C#5 - - . |",
-        arpeggio=arp(["D4 F4 A4", "D4 F4 A4", "Bb3 D4 F4", "C4 E4 G4",
-                      "D4 F4 A4", "D4 F4 A4", "G3 Bb3 D4", "A3 C#4 E4"] * 2),
-        bass=bass_line(["D2", "D2", "Bb1", "C2", "D2", "D2", "G1", "A1"] * 2, "drive"),
-        drums=kit,
-    )
-    # 4 (emitted after victory): the Warden's depth -- fast E minor
-    boss_kit = "K h S h K K S h | " * 8
-    add_song_later.append(dict(
-        name="boss", bpm=140,
-        lead="E5 . E5 G5 F#5 . E5 . | G5 - - - E5 - C5 - | D5 . D5 F#5 A5 . F#5 . | D#5 - - - B4 - - . | "
-             "E5 G5 B5 G5 E5 G5 B5 G5 | C6 - B5 - G5 - E5 - | F#5 - A5 - D6 - C6 B5 | B5 - - - D#5 - F#5 - |",
-        arpeggio=arp(["E4 G4 B4", "C4 E4 G4", "D4 F#4 A4", "B3 D#4 F#4"] * 2, pattern=(0, 1, 2, 1, 0, 2, 1, 2)),
-        bass=bass_line(["E2", "C2", "D2", "B1"] * 2, "drive"),
-        drums=boss_kit,
-    ))
-    # 3: victory fanfare (plays once)
-    add_song(
-        "victory", 120,
-        lead="D5 F#5 A5 D6 - - A5 - | B5 - - G5 - - A5 - | F#5 - D5 - E5 - - - | D5 - - - - - - . |",
-        arpeggio="D4 . D4 . D4 . . . | G4 . G4 . E4 . . . | D4 . A3 . C#4 . . . | D4 - - - - - - . |",
-        bass="D3 - - - - - - - | G2 - - - E2 - - - | D2 - A2 - A1 - - - | D2 - - - - - - . |",
-        drums="K . . . S . . . | K . . . S . . . | K . K . S . S . | K - - - - - - . |",
-        loop=False,
-    )
-    for song in add_song_later:
-        add_song(song["name"], song["bpm"], song["lead"], song["arpeggio"], song["bass"], song["drums"])
-
-
-# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 def emit_words(out, words):
@@ -1448,7 +1326,7 @@ def main():
     shade_tables = build_shade_tables()
     build_textures()
     build_sprites()
-    build_music()
+    music_data = music.MusicData(music.build_instruments(), songs.build_songs())
 
     out = [
         "# Generated by tools/gen_assets.py -- do not edit by hand.",
@@ -1530,26 +1408,7 @@ def main():
     out.append("  .align 4")
     emit_halfs(out, "overlay_cursor", to_sprite_pixels(overlay_cursor(), full))
     out.append("  .align 4")
-    # Phase increment per sample for each MIDI note at 25 kHz (2^32 / rate).
-    incs = [int(round(440.0 * 2 ** ((n - 69) / 12.0) * 2 ** 32 / AUDIO_RATE)) & 0xFFFFFFFF for n in range(128)]
-    out.append("  .global note_incs")
-    out.append("note_incs:")
-    emit_words(out, incs)
-    # Songs: a directory of (row_samples, rows, loop, data offset) words,
-    # then row-major data with 4 bytes (lead, arp, bass, drums) per row.
-    out.append("  .global song_table")
-    out.append("song_table:")
-    offset = 0
-    dir_words = []
-    for name, row_samples, length, loop, tracks in SONGS:
-        dir_words += [row_samples, length, 1 if loop else 0, offset]
-        offset += length * 4
-    emit_words(out, dir_words)
-    data = []
-    for name, row_samples, length, loop, tracks in SONGS:
-        for r in range(length):
-            data += [tracks[c][r] for c in range(4)]
-    emit_bytes(out, "song_data", data)
+    music.emit_music(out, music_data, emit_bytes, emit_words, emit_halfs)
     out.append("  .align 4")
     here = os.path.dirname(os.path.abspath(__file__))
     rows, spans = big_font_bytes(os.path.join(here, "..", "..", "..", "common", "text_tiles.s"))
@@ -1560,9 +1419,14 @@ def main():
         f.write("\n".join(out))
     if preview_dir:
         preview(preview_dir, shade_tables)
-    print(f"wrote {out_path}: {len(TEXTURES)} textures, {len(FLATS)} flats, {len(SPRITES)} sprites, {len(SONGS)} songs")
-    for name, row_samples, length, loop, tracks in SONGS:
-        print(f"  song {name}: {length} rows, {length * row_samples / AUDIO_RATE:.1f} s")
+    here_out = os.path.dirname(os.path.abspath(out_path))
+    header = os.path.join(here_out, "music_data.h")
+    with open(header, "w") as f:
+        f.write(music.header_text(music_data))
+    music.write_samples(os.path.join(here_out, "music.dat"), music_data)
+    print(f"wrote {out_path} and {header}: {len(TEXTURES)} textures, {len(FLATS)} flats, "
+          f"{len(SPRITES)} sprites, {len(music_data.inst_names)} instruments, "
+          f"{len(music_data.song_words) // 4} songs")
     for i, (name, _) in enumerate(SPRITES):
         print(f"  sprite {i:2d} {name}")
 

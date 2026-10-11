@@ -604,3 +604,134 @@ mix_add:
   add  r2, r2, -1
   bnz  mix_add
   ret
+
+# Add one sampled music voice into the audio mix accumulator (audio.c).
+# Inputs:  r1 = int accumulator (count words), r2 = sample count (> 0),
+#          r3 = the instrument's mu-law sample bytes, r4 = position (16.16),
+#          r5 = step per output sample (16.16), r6 = end (length << 16,
+#          below 2^32 minus one step), r7 = looped part's length << 16
+#          (0 for a one-shot), r8 = volume row (256 signed halfwords: each
+#          mu-law code at the voice's level).
+# Each output sample adds row[sample[pos >> 16]]; past the end, a looped
+# voice steps back by the loop length and a one-shot stops.
+# Outputs: r1 = the position after the last sample mixed, or r6 (the end)
+#          if a one-shot ran out. Clobbers r2, r4, r9, r10.
+  .global mix_sample
+mix_sample:
+mix_sample_loop:
+  lsr  r9, r4, 16
+  add  r9, r3, r9
+  lba  r9, [r9]
+  lsl  r9, r9, 1
+  add  r9, r8, r9
+  lda  r9, [r9]
+  sxtd r9, r9
+  lwa  r10, [r1]
+  add  r10, r10, r9
+  swa  r10, [r1], 4
+  add  r4, r4, r5
+  cmp  r4, r6
+  bae  mix_sample_wrap
+mix_sample_next:
+  add  r2, r2, -1
+  bnz  mix_sample_loop
+  mov  r1, r4
+  ret
+mix_sample_wrap:
+  cmp  r7, r0
+  bz   mix_sample_done
+  sub  r4, r4, r7
+  cmp  r4, r6
+  bae  mix_sample_wrap
+  jmp  mix_sample_next
+mix_sample_done:
+  mov  r1, r6
+  ret
+
+# Add the reverb to one mixed chunk and write it out as 16-bit samples.
+# Inputs:  r1 = int mix (count words), r2 = output (count halfwords),
+#          r3 = sample count (> 0), r4 = struct Reverb (delve.h): the three
+#          delay lines' base, end, and current pointers at offsets 0..32,
+#          then the two combs' damping filter states at 36 and 40. The
+#          pointers and states are written back.
+# Per sample x: each comb reads y from its line, damps it (lp += (y - lp)
+# >> 2), and writes x/2 + lp * 9/16 back (feedback 0.5625); the combs'
+# average s goes through an allpass with gain 1/2 (d = line; o = d - s/2;
+# line = s + o/2); the output is x + o/4, clipped to 16 bits.
+# Outputs: none. Clobbers r1-r3, r5-r19.
+  .global reverb_mix
+reverb_mix:
+  lwa  r5, [r4, 8]             # comb1 pointer
+  lwa  r6, [r4, 4]             # comb1 end
+  lwa  r7, [r4, 20]            # comb2 pointer
+  lwa  r8, [r4, 16]            # comb2 end
+  lwa  r9, [r4, 32]            # allpass pointer
+  lwa  r10, [r4, 28]           # allpass end
+  lwa  r11, [r4, 36]           # comb1 damping state
+  lwa  r12, [r4, 40]           # comb2 damping state
+  movi r18, 32767
+  movi r19, -32768
+reverb_loop:
+  lwa  r13, [r1], 4            # x
+  lwa  r14, [r5]               # y1
+  sub  r16, r14, r11
+  asr  r16, r16, 2
+  add  r11, r11, r16
+  asr  r16, r13, 1
+  asr  r17, r11, 1
+  add  r16, r16, r17
+  asr  r17, r11, 4
+  add  r16, r16, r17
+  swa  r16, [r5], 4
+  cmp  r5, r6
+  bnz  reverb_comb1_ok
+  lwa  r5, [r4, 0]
+reverb_comb1_ok:
+  lwa  r15, [r7]               # y2
+  sub  r16, r15, r12
+  asr  r16, r16, 2
+  add  r12, r12, r16
+  asr  r16, r13, 1
+  asr  r17, r12, 1
+  add  r16, r16, r17
+  asr  r17, r12, 4
+  add  r16, r16, r17
+  swa  r16, [r7], 4
+  cmp  r7, r8
+  bnz  reverb_comb2_ok
+  lwa  r7, [r4, 12]
+reverb_comb2_ok:
+  add  r14, r14, r15
+  asr  r14, r14, 1             # s
+  lwa  r15, [r9]               # d
+  asr  r16, r14, 1
+  sub  r15, r15, r16           # o
+  asr  r16, r15, 1
+  add  r16, r14, r16
+  swa  r16, [r9], 4
+  cmp  r9, r10
+  bnz  reverb_allpass_ok
+  lwa  r9, [r4, 24]
+reverb_allpass_ok:
+  asr  r15, r15, 2
+  add  r13, r13, r15
+  cmp  r13, r18
+  bg   reverb_high
+  cmp  r13, r19
+  bl   reverb_low
+reverb_store:
+  sda  r13, [r2], 2
+  add  r3, r3, -1
+  bnz  reverb_loop
+  swa  r5, [r4, 8]
+  swa  r7, [r4, 20]
+  swa  r9, [r4, 32]
+  swa  r11, [r4, 36]
+  swa  r12, [r4, 40]
+  ret
+reverb_high:
+  mov  r13, r18
+  jmp  reverb_store
+reverb_low:
+  mov  r13, r19
+  jmp  reverb_store

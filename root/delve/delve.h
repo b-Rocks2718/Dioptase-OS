@@ -426,6 +426,26 @@ void draw_sprite_col(unsigned short* dst, int count, unsigned char* texcol,
                      int texpos, int texstep, unsigned short* shade, int half_left);
 void draw_image_col(unsigned short* dst, int count, unsigned short* src, int half_left);
 void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
+unsigned mix_sample(int* acc, int count, unsigned char* data, unsigned pos, unsigned step,
+                    unsigned end, unsigned loop_len, short* vol_row);
+
+/* The music reverb's state, as reverb_mix (gfx.s) reads it: three delay
+ * lines (two feedback combs and an allpass), each as its base, end, and
+ * current read/write pointer, and the combs' damping filter states. */
+struct Reverb {
+  int* comb1;
+  int* comb1_end;
+  int* comb1_at;
+  int* comb2;
+  int* comb2_end;
+  int* comb2_at;
+  int* allpass;
+  int* allpass_end;
+  int* allpass_at;
+  int lp1;
+  int lp2;
+};
+void reverb_mix(int* acc, short* out, int count, struct Reverb* reverb);
 void shade_strip(unsigned short* view, int g0, int g1, int and_mask, int or_mask,
                  int shift);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
@@ -446,9 +466,6 @@ extern unsigned char flat_textures[16384];    /* 4 flats, 64x64 */
 extern int sin_table[4096];
 extern unsigned char sprite_texels[229376];   /* SPR_COUNT sprites, column-major */
 extern unsigned char sprite_spans[7168];      /* per sprite column: opaque [top, bottom) */
-extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
-extern int song_table[16];                    /* per song: row samples, rows, loop, offset */
-extern unsigned char song_data[1408];         /* 4 bytes (lead, arp, bass, drums) per row */
 /* The staff resting and casting: column-major 12-bit pixels (0 = clear), then
  * each column's opaque [top, bottom) rows, per image. */
 extern unsigned short staff_images[16384];
@@ -598,11 +615,14 @@ void player_hurt(int amount);
 void show_message(char* text);
 
 /* ---- audio.c ---- */
+/* Songs, in tools/music.py's order: depth d (1..FINAL_DEPTH - 1) plays
+ * MUSIC_DEPTH + d - 1, and the Warden's depth plays MUSIC_BOSS. */
 #define MUSIC_NONE 0
 #define MUSIC_TITLE 1
-#define MUSIC_DUNGEON 2
-#define MUSIC_VICTORY 3
+#define MUSIC_VICTORY 2
+#define MUSIC_DEATH 3
 #define MUSIC_BOSS 4
+#define MUSIC_DEPTH 5
 void sfx(int id);
 void audio_start(void);
 void audio_stop(void);

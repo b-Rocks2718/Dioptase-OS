@@ -49,11 +49,16 @@ $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 $(BUILD_DIR)/%.s: %.c delve.h Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
+# The music tables' sizes are generated along with assets.s.
+$(BUILD_DIR)/audio.s: music_data.h
+
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
-# Regenerate the art, fonts, and music in assets.s (needs python3 and numpy).
-# The generated file is checked in, so ordinary builds do not need Python.
+# Regenerate the art, fonts, and music: assets.s, the instrument samples in
+# music.dat (read by the game at run time), and music_data.h (needs python3
+# and numpy). The generated files are checked in, so ordinary builds do not
+# need Python.
 assets:
 	python3 tools/gen_assets.py assets.s
 

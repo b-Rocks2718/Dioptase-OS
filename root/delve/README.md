@@ -2,7 +2,7 @@
 
 A real-time, first-person dungeon crawler for the Dioptase computer: textured
 3D corridors, flickering torchlight, monsters, spells you aim with the mouse,
-procedurally generated levels, a boss, chiptune music, and a high-score table
+procedurally generated levels, a boss, a full soundtrack, and a high-score table
 saved to disk. Everything — code, art, music — is generated or written for
 this machine; the game runs as an ordinary user program on Dioptase-OS.
 
@@ -158,10 +158,30 @@ modes and falls back to a single process if parallel turns out slower (for
 example with fewer cores).
 
 **Sound.** `audio_start()` forks a synthesizer process that owns the PCM
-device: eight voices (wavetables and an LFSR noise channel), a four-channel
-tracker for the music, and pitch-swept segment programs for the effects. The
-game sends it one-byte commands through a pipe. A heartbeat and a
+device. The game sends it one-byte commands through a pipe; a heartbeat and a
 `SIGNAL_TERMINATE` handler make sure it never outlives the game.
+
+The music is a sample-playback tracker. Twenty-one instruments — chord pads,
+strings, choir, flute, cello, horn, harp, celesta, electric piano, music box,
+bass, and a drum kit with timpani and a gong — are synthesized at build time
+by `tools/music.py` (additive, FM, and plucked-string synthesis) and stored as
+8-bit mu-law samples in `music.dat`, which the synthesizer maps at startup.
+Each depth has its own piece, and the title, the Warden, victory, and death
+have theirs (`tools/songs.py`): eleven pieces in all, the depth themes one and
+a half to two and a half minutes long before they loop. A song is an order
+list of patterns of note events on eight channels; each note plays a sample at
+a 16.16 step for its pitch under an attack/decay/sustain/release envelope, and
+a note that cuts another hands it to a tail voice that fades it out instead of
+clicking. The mix runs through a small reverb (two damped feedback combs into
+an allpass, `reverb_mix` in `gfx.s`) for the cavern's space. Mixing needs no
+multiplies: a table holds every mu-law code at each of 64 levels. The sound
+effects are a separate four-voice wavetable synthesizer with pitch and volume
+sweeps. Changing songs fades the old one out.
+
+The synthesizer keeps about 100 ms queued in the device and adds more if it
+ever finds the ring nearly empty (a busy host can stall the emulator), so
+music does not break up; on the seeded benchmark it costs about 3 million
+instructions a second on the core it shares with the terminal.
 
 **Attract mode.** Behind the title screen an autopilot plays the game: it
 breadth-first searches toward potions, keys, crystals, the seal, and
@@ -179,12 +199,15 @@ unexplored space, and turns to fire at monsters in line with it.
 | `render.c` | raycaster, floor casting, lighting, billboards, particles |
 | `world.c` | level generator, doors, monsters and AI, items, projectiles |
 | `hud.c` | status bar, tile-layer text and banners, back-buffer addressing |
-| `audio.c` | synthesizer process and its command protocol |
+| `audio.c` | synthesizer process: music tracker, effects, reverb, command protocol |
 | `autopilot.c` | the computer player for the attract mode |
 | `parallel.c` | worker processes that render strips of the view |
 | `gfx.s` | hand-written inner loops and arithmetic helpers |
-| `assets.s` | generated palette, shade tables, textures, sprites, fonts, music |
-| `tools/gen_assets.py` | the generator for `assets.s` (`make assets`; needs numpy) |
+| `assets.s` | generated palette, shade tables, textures, sprites, fonts, song tables |
+| `music.dat`, `music_data.h` | generated instrument samples and the music tables' sizes |
+| `tools/gen_assets.py` | the generator for `assets.s`, `music.dat`, and `music_data.h` (`make assets`; needs numpy) |
+| `tools/music.py` | instrument synthesis, the song compiler, and a Python model of the music engine |
+| `tools/songs.py` | the eleven pieces of music |
 
 `python3 tools/gen_assets.py assets.s --preview <dir>` also writes PNG contact
 sheets of the palette, textures, and sprites.

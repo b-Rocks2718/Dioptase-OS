@@ -190,7 +190,7 @@ void player_hurt(int amount){
     state_t = 0;
     autopilot = false;
     sfx(SFX_DEATH);
-    audio_music(MUSIC_NONE);
+    audio_music(MUSIC_DEATH);
   }
   hud_redraw();
 }
@@ -289,6 +289,12 @@ static void score_insert(int slot){
 
 /* ---- Levels ---- */
 
+/* The song for depth `depth`: each depth has its own, and the Warden's
+ * depth plays the boss theme. */
+static int depth_music(int depth){
+  return depth >= FINAL_DEPTH ? MUSIC_BOSS : MUSIC_DEPTH + depth - 1;
+}
+
 static void enter_level(int depth){
   int sx;
   int sy;
@@ -346,7 +352,7 @@ static void new_game(void){
   enter_level(1);
   fade = LIGHT_LEVELS;
   show_message("FIND THE RUNE KEY");
-  audio_music(MUSIC_DUNGEON);
+  audio_music(depth_music(1));
   parallel_autotune_begin();
 }
 
@@ -1243,7 +1249,7 @@ static void tick(void){
         state = STATE_PLAY;
         state_t = 0;
         enter_level(g_stats.depth + 1);
-        if (g_stats.depth == FINAL_DEPTH) audio_music(MUSIC_BOSS);
+        audio_music(depth_music(g_stats.depth));
         fade = LIGHT_LEVELS;
         static char buf[40];
         char num[12];
