@@ -4,6 +4,7 @@
 #include "../crt/unistd.h"
 #include "../crt/ps2.h"
 #include "../crt/mouse.h"
+#include "../crt/terminal.h"
 
 /*
  * DELVE entry point and game flow: display ownership, the main loop, input,
@@ -16,11 +17,13 @@
  * scale, scroll, and sprites (docs/terminal.md, "Foreground display
  * recovery"), so we do not undo our VGA changes ourselves.
  *
- * Input: the terminal consumes raw keyboard events and forwards only key
- * presses, as bytes, to our STDIN; there are no key-release events and no
- * auto-repeat. Every keyboard control is therefore a press (grid steps and
- * quarter turns). The mouse stream is ours alone (the terminal never reads
- * it), so aiming and casting use real button state from getmouse().
+ * Input: the terminal runs in raw keyboard mode while we play
+ * (docs/terminal.md), forwarding every key press and release as a two-byte
+ * record, so movement follows the keys actually held. Ctrl-C still reaches
+ * the terminal, which leaves raw mode and terminates us; the shell turns raw
+ * mode off after we exit in any case. The mouse stream is ours alone (the
+ * terminal never reads it), so aiming and casting use real button state from
+ * getmouse().
  *
  * Timing: game logic runs in 60 Hz ticks paced by the VGA frame counter,
  * which follows wall-clock time on both the emulator and hardware (PIT
@@ -35,9 +38,14 @@ unsigned g_view_words[7680];
 unsigned short* g_view;
 unsigned g_frame;
 
-/* Ticks a grid step or a quarter turn takes. */
-#define STEP_TICKS 13
-#define TURN_TICKS 11
+/* Movement, per 60 Hz tick: speeds in cells (16.16), turning in angle units
+ * (TURN_MAX in delve.h is the fastest). A held turn key starts at TURN_MIN
+ * and speeds up by TURN_ACCEL per tick, so taps make fine adjustments. */
+#define WALK_SPEED 0x0B00          /* ~2.6 cells per second */
+#define RUN_SPEED 0x1280           /* ~4.3 cells per second */
+#define TURN_MIN 12
+#define TURN_ACCEL 3
+#define STEP_DISTANCE 0xA000       /* walking distance per footstep sound */
 
 /* Spell costs and cooldowns (ticks); speeds in cells per tick (16.16). */
 #define SPARK_COST 5
@@ -69,26 +77,23 @@ unsigned g_frame;
 #define STATE_DESCEND 6
 #define STATE_NAME 7
 
-/* Player on the grid; the camera interpolates between grid poses. */
+/* The player moves freely: a square of half-width PLAYER_RADIUS sliding
+ * along walls (see move_player). The camera is the player's eye. */
 struct Player {
-  int cx;
+  int x;           /* position, 16.16 cells */
+  int y;
+  int angle;       /* heading, 12-bit */
+  int vx;          /* velocity, 16.16 cells per tick */
+  int vy;
+  int turn_rate;   /* current turn speed while a turn key is held */
+  int cx;          /* the cell holding (x, y) */
   int cy;
-  int facing;      /* 0 east, 1 south, 2 west, 3 north */
-  int anim;        /* 0 none, 1 move, 2 turn */
-  int anim_t;
-  int anim_len;
-  int from_x;
-  int from_y;
-  int to_x;
-  int to_y;
-  int from_angle;
-  int to_angle;
-  int queued;      /* next command byte, 0 if none */
-  int running;     /* Shift+W: keep stepping forward until something happens */
   int cooldown;    /* ticks until the next spell */
   int cast_t;      /* staff thrust animation */
   int regen;
-  int walk_phase;
+  int walk_phase;  /* staff bob phase, advanced by walking */
+  int stride;      /* distance walked since the last footstep sound */
+  int bump_t;      /* ticks before another bump or door message */
 };
 
 static struct Player player;
@@ -98,7 +103,6 @@ static int state = STATE_TITLE;
 static int state_t;            /* ticks spent in the current state */
 static bool demo;              /* attract mode: the autopilot plays behind the title */
 static bool autopilot;         /* the autopilot drives the player (demo or '\\' key) */
-static int autopilot_wait;     /* ticks before the autopilot's next decision */
 static bool god_mode;          /* cheat: no damage */
 static unsigned game_seed;
 static bool show_map;
@@ -109,11 +113,13 @@ static int cursor_x = 320;
 static int cursor_y = 192;
 static int mouse_buttons;
 
+/* Keys held right now, by keycode (raw keyboard records, see poll_input). */
+static bool key_down[256];
+/* The first byte of a raw record whose second byte has not arrived yet. */
+static int pending_code = -1;
+
 static char message[40];
 static int message_t;
-
-static int dir_dx[4] = {1, 0, -1, 0};
-static int dir_dy[4] = {0, 1, 0, -1};
 
 /* High score table (persisted in /delve.hi as "NAME SCORE DEPTH" lines). */
 #define SCORE_SLOTS 5
@@ -284,15 +290,19 @@ static void enter_level(int depth){
   g_stats.keys = 0;
   g_stats.exit_reached = 0;
   world_generate(depth, game_seed, &sx, &sy, &sdir);
+  player.x = cell_center(sx);
+  player.y = cell_center(sy);
   player.cx = sx;
   player.cy = sy;
-  player.facing = sdir;
-  player.anim = 0;
-  player.queued = 0;
-  camera.x = cell_center(sx);
-  camera.y = cell_center(sy);
-  camera.angle = sdir * ANGLE_QUARTER;
-  world_tick(player.cx, player.cy, camera.x, camera.y, true);
+  player.angle = sdir * ANGLE_QUARTER;
+  player.vx = 0;
+  player.vy = 0;
+  player.turn_rate = 0;
+  camera.x = player.x;
+  camera.y = player.y;
+  camera.angle = player.angle;
+  autopilot_reset();
+  world_tick(player.cx, player.cy, player.x, player.y, true);
   hud_redraw();
 }
 
@@ -353,54 +363,87 @@ static void title_init(void){
 
 /* ---- Player ---- */
 
-static void try_move(int dir){
-  int nx = player.cx + dir_dx[dir];
-  int ny = player.cy + dir_dy[dir];
-  struct Door* door = door_at(nx, ny);
-  if (door != NULL && door->locked){
-    if (g_stats.keys > 0){
-      g_stats.keys -= 1;
-      door->locked = 0;
-      door_open(nx, ny);
-      sfx(SFX_KEY);
-      show_message("THE RUNE KEY BREAKS THE SEAL");
-      hud_redraw();
-    } else {
-      sfx(SFX_LOCKED);
-      show_message("SEALED - FIND THE RUNE KEY");
+/* The door the last blocked move pushed against, if any. */
+static int push_cx = -1;
+static int push_cy = -1;
+
+/* Whether a player centered at (x, y) would overlap a wall, a door that is
+ * not open far enough, or (moving closer) a monster. A door it would overlap
+ * is remembered in push_cx/push_cy so walking into a door opens it. */
+static bool player_blocked(int x, int y){
+  int x0 = (x - PLAYER_RADIUS) >> 16;
+  int x1 = (x + PLAYER_RADIUS) >> 16;
+  int y0 = (y - PLAYER_RADIUS) >> 16;
+  int y1 = (y + PLAYER_RADIUS) >> 16;
+  bool blocked = false;
+  for (int cy = y0; cy <= y1; ++cy){
+    for (int cx = x0; cx <= x1; ++cx){
+      if (!cell_solid(cx, cy)) continue;
+      blocked = true;
+      if (door_at(cx, cy) != NULL){
+        push_cx = cx;
+        push_cy = cy;
+      }
     }
-    return;
   }
-  if (door != NULL){
-    door_open(nx, ny);
-  } else if (cell_solid(nx, ny)){
-    sfx(SFX_BUMP);
-    return;
+  if (blocked) return true;
+  for (int i = 0; i < MAX_MONSTERS; ++i){
+    struct Monster* m = &g_monsters[i];
+    if (!m->alive) continue;
+    int d = approx_dist(m->x - x, m->y - y);
+    /* moving away from an overlapping monster is always allowed */
+    if (d < 0x9000 && d < approx_dist(m->x - player.x, m->y - player.y)) return true;
   }
-  if (monster_at(nx, ny) != NULL){
-    sfx(SFX_BUMP);
-    return;
-  }
-  player.anim = 1;
-  player.anim_t = 0;
-  player.anim_len = STEP_TICKS;
-  player.from_x = cell_center(player.cx);
-  player.from_y = cell_center(player.cy);
-  player.to_x = cell_center(nx);
-  player.to_y = cell_center(ny);
-  player.cx = nx;
-  player.cy = ny;
-  sfx(SFX_STEP);
+  return false;
 }
 
-/* Start a quarter turn: +1 clockwise (right), -1 counterclockwise (left). */
-static void try_turn(int delta){
-  player.anim = 2;
-  player.anim_t = 0;
-  player.anim_len = TURN_TICKS;
-  player.from_angle = player.facing * ANGLE_QUARTER;
-  player.to_angle = player.from_angle + delta * ANGLE_QUARTER;
-  player.facing = (player.facing + delta) & 3;
+/* Open the door the player walked into, or explain why it stays shut. */
+static void push_door(int cx, int cy){
+  struct Door* door = door_at(cx, cy);
+  if (door == NULL) return;
+  if (!door->locked){
+    door_open(cx, cy);
+    return;
+  }
+  if (g_stats.keys > 0){
+    g_stats.keys -= 1;
+    door->locked = 0;
+    door_open(cx, cy);
+    sfx(SFX_KEY);
+    show_message("THE RUNE KEY BREAKS THE SEAL");
+    hud_redraw();
+  } else if (player.bump_t == 0){
+    sfx(SFX_LOCKED);
+    show_message("SEALED - FIND THE RUNE KEY");
+    player.bump_t = 90;
+  }
+}
+
+/* Move by the current velocity one axis at a time, so a blocked axis does
+ * not stop motion along the other (the player slides along walls). */
+static void move_player(void){
+  push_cx = -1;
+  bool bumped = false;
+  int nx = player.x + player.vx;
+  if (player_blocked(nx, player.y)){
+    bumped = player.vx > WALK_SPEED / 2 || player.vx < -WALK_SPEED / 2;
+    player.vx = 0;
+  } else {
+    player.x = nx;
+  }
+  int ny = player.y + player.vy;
+  if (player_blocked(player.x, ny)){
+    bumped = bumped || player.vy > WALK_SPEED / 2 || player.vy < -WALK_SPEED / 2;
+    player.vy = 0;
+  } else {
+    player.y = ny;
+  }
+  if (push_cx >= 0){
+    push_door(push_cx, push_cy);
+  } else if (bumped && player.bump_t == 0){
+    sfx(SFX_BUMP);
+    player.bump_t = 30;
+  }
 }
 
 /* Unit vector (16.16) through view column `col` at the current camera angle. */
@@ -425,7 +468,7 @@ static void cast(int kind, int col){
   int cost = kind == SHOT_FIRE ? FIRE_COST : SPARK_COST;
   if (g_stats.mp < cost){
     sfx(SFX_NOMANA);
-    player.cooldown = 10;
+    player.cooldown = 20;
     return;
   }
   g_stats.mp -= cost;
@@ -442,93 +485,91 @@ static void cast(int kind, int col){
   hud_redraw();
 }
 
-/* View column under the mouse crosshair (screen x / 4). */
+/* View column under the mouse crosshair. */
 static int cursor_col(void){
-  int col = cursor_x >> 2;
+  int col = cursor_x * VIEW_W / 640;
   if (col >= VIEW_W) col = VIEW_W - 1;
   return col;
 }
 
-/* Begin the step or turn bound to `key`, relative to the current facing. */
-static void start_command(int key){
-  int f = player.facing;
-  switch (key){
-    case 'w': case 'W': case KEY_UP:    try_move(f); break;
-    case 's': case 'S': case KEY_DOWN:  try_move((f + 2) & 3); break;
-    case 'a': case 'A':                 try_move((f + 3) & 3); break;
-    case 'd': case 'D':                 try_move((f + 1) & 3); break;
-    case 'q': case 'Q': case KEY_LEFT:  try_turn(-1); break;
-    case 'e': case 'E': case KEY_RIGHT: try_turn(1); break;
-    default: break;
-  }
+/* Whether the key with this keycode is held. */
+static bool held(int code){
+  return key_down[code & 255];
 }
 
-/* Whether `key` is one of the step/turn keys (buffered while animating). */
-/* Whether the run (Shift+W) should stop before the next step: the way ahead
- * is blocked, a side passage opens, or a monster is in sight. */
-static bool run_should_stop(void){
-  int f = player.facing;
-  int nx = player.cx + dir_dx[f];
-  int ny = player.cy + dir_dy[f];
-  if (cell_solid(nx, ny) || door_at(nx, ny) != NULL || monster_at(nx, ny) != NULL) return true;
-  int left = (f + 3) & 3;
-  int right = (f + 1) & 3;
-  if (!cell_solid(player.cx + dir_dx[left], player.cy + dir_dy[left]) ||
-      !cell_solid(player.cx + dir_dx[right], player.cy + dir_dy[right])){
-    return true;
-  }
-  for (int i = 0; i < MAX_MONSTERS; ++i){
-    struct Monster* m = &g_monsters[i];
-    if (m->alive && m->awake && approx_dist(m->x - camera.x, m->y - camera.y) < 0x60000) return true;
-  }
-  return false;
+/* Whether either Shift key is held. */
+static bool shift_held(void){
+  return held(KEY_LEFT_SHIFT) || held(KEY_RIGHT_SHIFT);
 }
 
-static bool is_motion_key(int key){
-  switch (key){
-    case 'w': case 'W': case KEY_UP: case 's': case 'S': case KEY_DOWN:
-    case 'a': case 'A': case 'd': case 'D': case 'q': case 'Q': case KEY_LEFT:
-    case 'e': case 'E': case KEY_RIGHT:
-      return true;
-    default:
-      return false;
+/* Read this tick's controls from the held keys and mouse buttons. A held
+ * turn key turns slowly at first and speeds up (player.turn_rate). */
+static void read_controls(struct Controls* c){
+  c->forward = 0;
+  c->strafe = 0;
+  c->turn = 0;
+  c->cast = 0;
+  if (held('w') || held(KEY_UP)) c->forward += 1;
+  if (held('s') || held(KEY_DOWN)) c->forward -= 1;
+  if (held('d')) c->strafe += 1;
+  if (held('a')) c->strafe -= 1;
+  int turn = 0;
+  if (held('e') || held(KEY_RIGHT)) turn += 1;
+  if (held('q') || held(KEY_LEFT)) turn -= 1;
+  if (turn == 0){
+    player.turn_rate = 0;
+  } else {
+    player.turn_rate = player.turn_rate < TURN_MIN ? TURN_MIN : player.turn_rate + TURN_ACCEL;
+    if (player.turn_rate > TURN_MAX) player.turn_rate = TURN_MAX;
+    c->turn = turn > 0 ? player.turn_rate : -player.turn_rate;
   }
+  c->run = shift_held();
+  if (held(' ')) c->cast = SHOT_SPARK + 1;
+  else if (held('f')) c->cast = SHOT_FIRE + 1;
 }
 
-/* Advance the player one tick; true when a step just finished. */
-static bool update_player(void){
-  bool arrived = false;
-  if (player.anim == 0 && player.queued){
-    int key = player.queued;
-    player.queued = 0;
-    start_command(key);
-  } else if (player.anim == 0 && player.running){
-    if (run_should_stop()){
-      player.running = 0;
-    } else {
-      try_move(player.facing);
-    }
+/* Advance the player one tick under controls `c`: turn, accelerate toward
+ * the held direction, slide along walls, cast, bob the staff, and regenerate
+ * mana. Returns true when the player entered a new cell. */
+static bool update_player(struct Controls* c){
+  player.angle = (player.angle + c->turn) & ANGLE_MASK;
+  int speed = c->run ? RUN_SPEED : WALK_SPEED;
+  if (c->forward != 0 && c->strafe != 0) speed = fixmul(speed, 46341);  /* 1/sqrt(2) */
+  int fx = fixmul(icos(player.angle), speed);
+  int fy = fixmul(isin(player.angle), speed);
+  int tvx = 0;
+  int tvy = 0;
+  if (c->forward > 0){ tvx += fx; tvy += fy; }
+  if (c->forward < 0){ tvx -= fx; tvy -= fy; }
+  /* right is (-sin, cos): clockwise on the map, since y grows southward */
+  if (c->strafe > 0){ tvx -= fy; tvy += fx; }
+  if (c->strafe < 0){ tvx += fy; tvy -= fx; }
+  /* ease toward the target velocity: a short start and stop, no ice */
+  player.vx += (tvx - player.vx) / 3;
+  player.vy += (tvy - player.vy) / 3;
+  if (tvx == 0 && player.vx > -0x100 && player.vx < 0x100) player.vx = 0;
+  if (tvy == 0 && player.vy > -0x100 && player.vy < 0x100) player.vy = 0;
+  int old_x = player.x;
+  int old_y = player.y;
+  move_player();
+  int moved = approx_dist(player.x - old_x, player.y - old_y);
+  player.walk_phase += moved >> 4;
+  player.stride += moved;
+  if (player.stride >= STEP_DISTANCE){
+    player.stride -= STEP_DISTANCE;
+    sfx(SFX_STEP);
   }
-  if (player.anim != 0){
-    player.anim_t += 1;
-    int k = ease(player.anim_t, player.anim_len);
-    if (player.anim == 1){
-      camera.x = player.from_x + fixmul(player.to_x - player.from_x, k);
-      camera.y = player.from_y + fixmul(player.to_y - player.from_y, k);
-      player.walk_phase += 1;
-    } else {
-      camera.angle = (player.from_angle +
-                      fixmul(player.to_angle - player.from_angle, k)) & ANGLE_MASK;
-    }
-    if (player.anim_t >= player.anim_len){
-      arrived = player.anim == 1;
-      if (player.anim == 2 && !demo) hud_redraw();
-      player.anim = 0;
-      camera.x = cell_center(player.cx);
-      camera.y = cell_center(player.cy);
-      camera.angle = player.facing * ANGLE_QUARTER;
-    }
+  if (c->cast == SHOT_SPARK + 1) cast(SHOT_SPARK, VIEW_W / 2);
+  else if (c->cast == SHOT_FIRE + 1) cast(SHOT_FIRE, VIEW_W / 2);
+  if (state == STATE_PLAY && !autopilot && player.cooldown == 0){
+    if (mouse_buttons & MOUSE_BUTTON_LEFT) cast(SHOT_SPARK, cursor_col());
+    else if (mouse_buttons & MOUSE_BUTTON_RIGHT) cast(SHOT_FIRE, cursor_col());
   }
+  camera.x = player.x;
+  camera.y = player.y;
+  camera.angle = player.angle;
+
+  if (player.bump_t > 0) player.bump_t -= 1;
   if (player.cooldown > 0) player.cooldown -= 1;
   if (player.cast_t > 0) player.cast_t -= 1;
   player.regen += 1;
@@ -539,45 +580,47 @@ static bool update_player(void){
       if ((g_stats.mp & 3) == 0) hud_redraw();
     }
   }
-  return arrived;
+  int cx = player.x >> 16;
+  int cy = player.y >> 16;
+  bool entered = cx != player.cx || cy != player.cy;
+  player.cx = cx;
+  player.cy = cy;
+  return entered;
+}
+
+/* Compass heading for the status bar: 0 east, 1 south, 2 west, 3 north. */
+static int facing(void){
+  return ((player.angle + ANGLE_QUARTER / 2) >> 10) & 3;
 }
 
 /* ---- Input ---- */
 
+/* React to a key going down (menus, toggles, cheats). Movement and casting
+ * read the held keys every tick instead (read_controls). `key` is a raw
+ * keycode: lowercase letters, KEY_ENTER for Enter. */
 static void handle_key(int key){
+  bool shift = shift_held();
   switch (state){
     case STATE_TITLE:
-      if (key == '\n' || key == ' ') new_game();
-      else if (key == 'h' || key == 'H'){ state = STATE_HELP; state_t = 0; }
-      else if (key == 'x' || key == 'X') running = false;
+      if (key == KEY_ENTER || key == ' ') new_game();
+      else if (key == 'h'){ state = STATE_HELP; state_t = 0; }
+      else if (key == 'x') running = false;
       break;
     case STATE_HELP:
       state = STATE_TITLE;
       state_t = 0;
       break;
     case STATE_PLAY:
-      player.running = 0;
-      if (key == 'W'){
-        /* Shift+W: run ahead until a junction, a door, or a monster */
-        player.running = 1;
-        if (player.anim == 0) try_move(player.facing);
-      } else if (is_motion_key(key)){
-        if (player.anim == 0 && player.queued == 0) start_command(key);
-        else player.queued = key;
-      } else if (key == ' '){
-        cast(SHOT_SPARK, VIEW_W / 2);
-      } else if (key == 'f' || key == 'F'){
-        cast(SHOT_FIRE, VIEW_W / 2);
-      } else if (key == 'm' || key == 'M' || key == '\t'){
+      if (key == 'm' || key == '\t'){
         show_map = !show_map;
-      } else if (key == 'p' || key == 'P'){
+      } else if (key == 'p'){
         state = STATE_PAUSE;
         state_t = 0;
       } else if (key == '`'){
         show_fps = !show_fps;
       } else if (key == '['){
         parallel_toggle();
-      } else if (key == 'G'){
+      } else if (key == 'g' && shift){
         /* cheat (shift+G): invulnerable */
         god_mode = !god_mode;
         show_message(god_mode ? "GOD MODE" : "MORTAL AGAIN");
@@ -588,22 +631,23 @@ static void handle_key(int key){
         else show_message("NO DEEPER - TAKE THE HEART");
       } else if (key == '\\'){
         autopilot = !autopilot;
+        autopilot_reset();
         show_message(autopilot ? "AUTOPILOT ON" : "AUTOPILOT OFF");
       }
       break;
     case STATE_PAUSE:
-      if (key == 'x' || key == 'X'){
+      if (key == 'x'){
         title_init();
       } else if (key == '['){
         /* render-mode A/B on a frozen scene */
         parallel_toggle();
-      } else {
+      } else if (key != KEY_LEFT_SHIFT && key != KEY_RIGHT_SHIFT){
         state = STATE_PLAY;
       }
       break;
     case STATE_DEAD:
     case STATE_WON:
-      if (state_t > 60 && (key == '\n' || key == ' ')){
+      if (state_t > 60 && (key == KEY_ENTER || key == ' ')){
         final_score = g_stats.score;
         final_depth = g_stats.depth;
         entry_slot = score_rank(final_score);
@@ -618,7 +662,7 @@ static void handle_key(int key){
       }
       break;
     case STATE_NAME:
-      if (key == '\n' && entry_len > 0){
+      if (key == KEY_ENTER && entry_len > 0){
         while (entry_len < 3) entry_name[entry_len++] = ' ';
         entry_name[3] = 0;
         score_insert(entry_slot);
@@ -626,8 +670,7 @@ static void handle_key(int key){
       } else if (key == KEY_BACKSPACE && entry_len > 0){
         entry_len -= 1;
         entry_name[entry_len] = 0;
-      } else if (entry_len < 3 && ((key >= 'a' && key <= 'z') || (key >= 'A' && key <= 'Z') ||
-                                   (key >= '0' && key <= '9'))){
+      } else if (entry_len < 3 && ((key >= 'a' && key <= 'z') || (key >= '0' && key <= '9'))){
         entry_name[entry_len++] = (key >= 'a' && key <= 'z') ? key - 32 : key;
         entry_name[entry_len] = 0;
       }
@@ -637,15 +680,32 @@ static void handle_key(int key){
   }
 }
 
-/* Drain terminal key bytes and mouse events. Mouse motion moves the
- * crosshair within the view; a fresh button press casts toward it. */
+/* Drain the terminal's raw key records and the mouse. A record is two bytes
+ * (keycode, then TERMINAL_RAW_RELEASE or 0); a read may end between the two,
+ * so the first byte waits in pending_code. Only a key's first press reaches
+ * handle_key, so held keys never repeat menu actions. Mouse motion moves the
+ * crosshair within the view; held buttons cast toward it (update_player). */
 static void poll_input(void){
+  unsigned char buf[32];
   int avail = fd_bytes_available(STDIN);
   while (avail > 0){
-    unsigned char byte = 0;
-    if (read(STDIN, &byte, 1) != 1) break;
-    avail -= 1;
-    handle_key(byte);
+    int n = read(STDIN, buf, avail < 32 ? avail : 32);
+    if (n <= 0) break;
+    avail -= n;
+    for (int i = 0; i < n; ++i){
+      if (pending_code < 0){
+        pending_code = buf[i];
+        continue;
+      }
+      int code = pending_code;
+      pending_code = -1;
+      if (buf[i] == TERMINAL_RAW_RELEASE){
+        key_down[code] = false;
+      } else if (!key_down[code]){
+        key_down[code] = true;
+        handle_key(code);
+      }
+    }
   }
   int event;
   while ((event = getmouse()) != 0){
@@ -655,13 +715,35 @@ static void poll_input(void){
     if (cursor_y < 0) cursor_y = 0;
     if (cursor_x > CURSOR_MAX_X) cursor_x = CURSOR_MAX_X;
     if (cursor_y > CURSOR_MAX_Y) cursor_y = CURSOR_MAX_Y;
-    int buttons = MOUSE_BUTTONS(event);
-    int pressed = buttons & ~mouse_buttons;
-    mouse_buttons = buttons;
-    if (state == STATE_PLAY){
-      if (pressed & MOUSE_BUTTON_LEFT) cast(SHOT_SPARK, cursor_col());
-      if (pressed & MOUSE_BUTTON_RIGHT) cast(SHOT_FIRE, cursor_col());
-    }
+    mouse_buttons = MOUSE_BUTTONS(event);
+  }
+}
+
+/* Switch the terminal to raw keyboard mode and drop whatever input was
+ * already queued: until the terminal acts on the request, keys arrive as
+ * translated single bytes, and parsing those as records would misalign. */
+static void keyboard_begin(void){
+  puts(TERMINAL_RAW_KEYBOARD_ON);
+  unsigned start = get_vga_frame_counter();
+  while (get_vga_frame_counter() - start < 6) yield();
+  unsigned char buf[32];
+  int avail;
+  while ((avail = fd_bytes_available(STDIN)) > 0){
+    read(STDIN, buf, avail < 32 ? avail : 32);
+  }
+}
+
+/* Leave raw keyboard mode before exiting. Records the terminal forwarded
+ * before it processed the request are still queued, and would reach the
+ * shell as stray characters, so keep discarding input for a few frames. */
+static void keyboard_end(void){
+  puts(TERMINAL_RAW_KEYBOARD_OFF);
+  unsigned start = get_vga_frame_counter();
+  unsigned char buf[32];
+  while (get_vga_frame_counter() - start < 12){
+    int avail = fd_bytes_available(STDIN);
+    if (avail > 0) read(STDIN, buf, avail < 32 ? avail : 32);
+    else yield();
   }
 }
 
@@ -694,7 +776,7 @@ static void place_overlays(void){
     return;
   }
   if (playing && !show_map){
-    int bob = isin(player.walk_phase * 160) >> 14;
+    int bob = isin(player.walk_phase) >> 14;
     if (bob < 0) bob = -bob;
     int thrust = player.cast_t > 6 ? 12 - player.cast_t : player.cast_t;
     int y = STAFF_Y + bob - thrust;
@@ -798,7 +880,7 @@ static void hud_redraw(void){
   static char* compass[4] = {"E", "S", "W", "N"};
   fill_rect(SURF_HUD, 145, 4, 11, 9, 0x0000);
   fill_rect(SURF_HUD, 146, 5, 9, 7, 0x0322);
-  draw_text(SURF_HUD, 149, 6, compass[player.facing], 0x02CF);
+  draw_text(SURF_HUD, 149, 6, compass[facing()], 0x02CF);
   draw_text(SURF_HUD, 102, 15, format_int(buf, g_stats.score), 0x04DF);
   hud_upload();
 }
@@ -842,10 +924,12 @@ static void draw_automap(void){
     else if (it->type == ITEM_PORTAL || it->type == ITEM_HEART) color = 0x0FF8;
     fill_rect(SURF_VIEW, ox + it->cx * 3 + 1, it->cy * 3 + 1, 1, 1, color);
   }
-  int px = ox + player.cx * 3 + 1;
-  int py = player.cy * 3 + 1;
+  /* the player: a white dot at its true position, and a dot ahead of it */
+  int px = ox + fixmul(player.x, 3 * FIX_ONE) / FIX_ONE;
+  int py = fixmul(player.y, 3 * FIX_ONE) / FIX_ONE;
   fill_rect(SURF_VIEW, px, py, 1, 1, 0x0FFF);
-  fill_rect(SURF_VIEW, px + dir_dx[player.facing], py + dir_dy[player.facing], 1, 1, 0x0FFF);
+  fill_rect(SURF_VIEW, px + (icos(player.angle) * 2 + FIX_HALF) / FIX_ONE,
+            py + (isin(player.angle) * 2 + FIX_HALF) / FIX_ONE, 1, 1, 0x0FFF);
   draw_text_shadow(SURF_VIEW, 2, 90, "MAP", 0x0ACE);
 }
 
@@ -873,10 +957,10 @@ static void draw_help(void){
   dim_view(g_view);
   dim_view(g_view);
   draw_centered(2, "HOW TO PLAY", 0x02CF);
-  draw_text_shadow(SURF_VIEW, 8, 10, "W S      STEP FORWARD / BACK", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 16, "A D      STEP LEFT / RIGHT", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 10, "W S      WALK FORWARD / BACK", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 16, "A D      SIDESTEP LEFT / RIGHT", 0x0FFF);
   draw_text_shadow(SURF_VIEW, 8, 22, "Q E      TURN (OR ARROW KEYS)", 0x0FFF);
-  draw_text_shadow(SURF_VIEW, 8, 28, "SHIFT+W  RUN AHEAD", 0x0FFF);
+  draw_text_shadow(SURF_VIEW, 8, 28, "SHIFT    RUN", 0x0FFF);
   draw_text_shadow(SURF_VIEW, 8, 35, "MOUSE    AIM", 0x0ACE);
   draw_text_shadow(SURF_VIEW, 8, 41, "LEFT     SPARK BOLT  (SPACE)", 0x0ACE);
   draw_text_shadow(SURF_VIEW, 8, 47, "RIGHT    FIREBALL    (F)", 0x0ACE);
@@ -953,25 +1037,6 @@ static void draw_name_entry(void){
 
 /* ---- Main loop ---- */
 
-/* Let the autopilot press a key when the player is idle. */
-static void run_autopilot(void){
-  if (autopilot_wait > 0){
-    autopilot_wait -= 1;
-    return;
-  }
-  if (player.anim != 0 || player.queued != 0) return;
-  int key = autopilot_decide(player.cx, player.cy, player.facing,
-                             g_stats.keys > 0, g_stats.mp);
-  if (key == ' '){
-    cast(SHOT_SPARK, VIEW_W / 2);
-  } else if (key == 'f'){
-    cast(SHOT_FIRE, VIEW_W / 2);
-  } else if (key != 0){
-    start_command(key);
-  }
-  autopilot_wait = 6;
-}
-
 /* Ticks until the next ambient water drip. */
 static int drip_wait = 300;
 
@@ -983,12 +1048,18 @@ static void play_tick(void){
     drip_wait = 240 + rng_range(600);
   }
   if (fade > 0 && (state_t & 1)) fade -= 1;
-  if (autopilot) run_autopilot();
-  bool arrived = update_player();
+  struct Controls controls;
+  if (autopilot){
+    autopilot_steer(player.x, player.y, player.angle, g_stats.keys > 0, g_stats.mp, &controls);
+  } else {
+    read_controls(&controls);
+  }
+  int old_facing = facing();
+  bool entered = update_player(&controls);
   if (g_stats.hurt > 0) g_stats.hurt -= 1;
   if (g_stats.shake > 0) g_stats.shake -= 1;
-  world_tick(player.cx, player.cy, camera.x, camera.y, arrived);
-  if (arrived && !demo) hud_redraw();
+  world_tick(player.cx, player.cy, player.x, player.y, entered);
+  if (!demo && facing() != old_facing) hud_redraw();
 }
 
 /* Advance the whole game by one 60 Hz tick according to the current state. */
@@ -1007,7 +1078,7 @@ static void tick(void){
       break;
     case STATE_PLAY: {
       play_tick();
-      if (g_stats.exit_reached == 1 && player.anim == 0){
+      if (g_stats.exit_reached == 1){
         state = STATE_DESCEND;
         state_t = 0;
         sfx(SFX_PORTAL);
@@ -1103,6 +1174,7 @@ int main(void){
   g_view = (unsigned short*)g_view_words;
   world_init();
   display_init();
+  keyboard_begin();
   render_init();
   audio_start();
   parallel_start();
@@ -1146,5 +1218,6 @@ int main(void){
   }
   parallel_stop();
   audio_stop();
+  keyboard_end();
   return 0;
 }

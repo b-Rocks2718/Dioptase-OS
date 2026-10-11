@@ -1,20 +1,20 @@
 #include "delve.h"
-#include "../crt/ps2.h"
 
 /*
  * Autopilot: a simple player that plays DELVE by itself. It drives the
  * attract-mode demo behind the title screen and is handy for automated
  * play-testing.
  *
- * Every decision is a key the human could press, chosen from the player's
- * grid pose:
- *   - a monster in a straight, clear line ahead within range: cast at it;
- *   - a monster in a straight line to the side or behind: turn toward it;
- *   - a cracked wall beside it: turn to it and fireball it open;
- *   - otherwise walk the shortest path (BFS) to the most useful target: a
- *     potion when hurt, the rune key, crystals, the sealed door once the key
- *     is held, the portal, a seen cracked wall, and finally the nearest
- *     unexplored frontier.
+ * Every tick it produces the same controls a human holds (struct Controls):
+ *   - an awake monster in clear sight within range: turn to face it, cast
+ *     when lined up, and back off when it comes close or mana runs dry;
+ *   - a cracked wall beside it: face the wall and fireball it open;
+ *   - otherwise walk toward the center of the next cell on the shortest path
+ *     (BFS) to the most useful target: a potion when hurt, the rune key,
+ *     crystals, the sealed door once the key is held, the portal, a seen
+ *     cracked wall, and finally the nearest unexplored frontier.
+ * If walking makes no progress for a while (a monster in a corridor, a
+ * corner), it turns and sidesteps for a moment.
  */
 
 static unsigned char dist[MAP_CELLS];
@@ -130,56 +130,150 @@ static int path_step(int cx, int cy, bool has_key){
   return -1;
 }
 
-/* Direction (0..3) of an awake monster in a straight, unobstructed line
- * within `range` cells, nearest first, or -1. *out_dist gets its distance. */
-static int monster_in_line(int cx, int cy, int range, int* out_dist){
-  for (int d = 1; d <= range; ++d){
-    for (int k = 0; k < 4; ++k){
-      int x = cx + ap_dx[k] * d;
-      int y = cy + ap_dy[k] * d;
-      /* the line must be clear up to this cell */
-      bool clear = true;
-      for (int s = 1; s < d && clear; ++s){
-        if (cell_solid(cx + ap_dx[k] * s, cy + ap_dy[k] * s)) clear = false;
-      }
-      if (!clear || cell_solid(x, y)) continue;
-      struct Monster* m = monster_at(x, y);
-      if (m != NULL){
-        *out_dist = d;
-        return k;
-      }
-    }
+/* Path state: the cell the current waypoint was planned from, and the
+ * waypoint (the next cell's center). */
+static int plan_cell = -1;
+static int plan_age;
+static int way_x;
+static int way_y;
+static bool way_valid;
+
+/* Progress check: where the player was STUCK_TICKS ago, and the remaining
+ * ticks of an evasive turn-and-sidestep. */
+#define STUCK_TICKS 45
+static int check_t;
+static int check_x;
+static int check_y;
+static int evade_t;
+static int evade_turn;
+
+/* Turn rate in angle units per radian: 4096 / (2 pi). */
+#define UNITS_PER_RADIAN 652
+
+/* Steer toward world point (tx, ty): set c->turn to the angle units that
+ * face it this tick (at most TURN_MAX). Returns how well lined up it is:
+ * 2 within ~7 degrees, 1 within 45 degrees, 0 otherwise. */
+static int face_point(int x, int y, int angle, int tx, int ty, struct Controls* c){
+  int dir_x = icos(angle);
+  int dir_y = isin(angle);
+  int rx = tx - x;
+  int ry = ty - y;
+  int dot = fixmul(rx, dir_x) + fixmul(ry, dir_y);
+  int cross = fixmul(dir_x, ry) - fixmul(dir_y, rx);
+  int across = cross < 0 ? -cross : cross;
+  int units = TURN_MAX;
+  if (dot > 0 && across <= dot){
+    /* atan(cross / dot) ~ cross / dot radians for the remaining 45 degrees */
+    units = udiv32(UNITS_PER_RADIAN * across, dot);
+    if (units > TURN_MAX) units = TURN_MAX;
   }
-  return -1;
+  c->turn = cross < 0 ? -units : units;
+  if (dot > 0 && across * 8 < dot) return 2;
+  if (dot > 0 && across < dot) return 1;
+  return 0;
 }
 
-/* Choose the next key for a player at (cx, cy) facing `facing`. */
-int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp){
+/* Nearest awake monster within `range` (16.16) in clear sight, or NULL. */
+static struct Monster* visible_monster(int x, int y, int range, int* out_dist){
+  struct Monster* best = NULL;
+  for (int i = 0; i < MAX_MONSTERS; ++i){
+    struct Monster* m = &g_monsters[i];
+    if (!m->alive || !m->awake) continue;
+    int d = approx_dist(m->x - x, m->y - y);
+    if (d >= range || !world_line_clear(x, y, m->x, m->y)) continue;
+    range = d;
+    best = m;
+  }
+  *out_dist = range;
+  return best;
+}
+
+/* Fill `c` with this tick's controls for a player at (x, y) facing `angle`. */
+void autopilot_steer(int x, int y, int angle, bool has_key, int mp, struct Controls* c){
+  c->forward = 0;
+  c->strafe = 0;
+  c->turn = 0;
+  c->run = false;
+  c->cast = 0;
+  int cx = x >> 16;
+  int cy = y >> 16;
+
+  if (evade_t > 0){
+    evade_t -= 1;
+    c->turn = evade_turn * TURN_MAX;
+    c->strafe = evade_turn;
+    c->forward = 1;
+    return;
+  }
+
   int mdist = 0;
-  int mdir = monster_in_line(cx, cy, 6, &mdist);
-  if (mdir >= 0){
-    if (mdir == facing){
-      if (mp >= 40 && mdist >= 2) return 'f';
-      if (mp >= 5) return ' ';
-      /* out of mana: back away if it is close */
-      return mdist <= 1 ? 's' : 0;
+  struct Monster* m = visible_monster(x, y, 0x70000, &mdist);
+  if (m != NULL){
+    int aim = face_point(x, y, angle, m->x, m->y, c);
+    if (aim == 2){
+      if (mp >= 40 && mdist >= 0x28000) c->cast = SHOT_FIRE + 1;
+      else if (mp >= 5) c->cast = SHOT_SPARK + 1;
     }
-    if (mdir == ((facing + 1) & 3)) return 'e';
-    return 'q';
+    /* keep out of reach; with no mana left, fall back */
+    if (mdist < MONSTER_REACH + 0x8000 || mp < 5) c->forward = -1;
+    check_t = 0;
+    return;
   }
-  /* a cracked wall beside us: face it and blast it open with a fireball */
-  for (int k = 0; k < 4; ++k){
-    int x = cx + ap_dx[k];
-    int y = cy + ap_dy[k];
-    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
-    if (g_map[y * MAP_W + x] != TEX_CRACKED + 1) continue;
-    if (k == facing) return mp >= 22 ? 'f' : 0;
-    return k == ((facing + 1) & 3) ? 'e' : 'q';
+
+  /* a cracked wall beside us: blast it open */
+  if (mp >= 22){
+    for (int k = 0; k < 4; ++k){
+      int wx = cx + ap_dx[k];
+      int wy = cy + ap_dy[k];
+      if (wx < 0 || wy < 0 || wx >= MAP_W || wy >= MAP_H) continue;
+      if (g_map[wy * MAP_W + wx] != TEX_CRACKED + 1) continue;
+      if (face_point(x, y, angle, (wx << 16) + FIX_HALF, (wy << 16) + FIX_HALF, c) == 2){
+        c->cast = SHOT_FIRE + 1;
+      }
+      check_t = 0;
+      return;
+    }
   }
-  int dir = path_step(cx, cy, has_key);
-  if (dir < 0) return 'e';
-  if (dir == facing) return 'w';
-  if (dir == ((facing + 1) & 3)) return 'e';
-  if (dir == ((facing + 3) & 3)) return 'q';
-  return 'e';
+
+  /* plan from each new cell (and now and then, as targets change) */
+  int cell = cy * MAP_W + cx;
+  plan_age += 1;
+  if (cell != plan_cell || plan_age > 90){
+    plan_cell = cell;
+    plan_age = 0;
+    int k = path_step(cx, cy, has_key);
+    way_valid = k >= 0;
+    if (way_valid){
+      way_x = ((cx + ap_dx[k]) << 16) + FIX_HALF;
+      way_y = ((cy + ap_dy[k]) << 16) + FIX_HALF;
+    }
+  }
+  if (!way_valid){
+    c->turn = TURN_MAX / 2;
+    return;
+  }
+  if (face_point(x, y, angle, way_x, way_y, c) >= 1){
+    c->forward = 1;
+  }
+
+  /* no progress while walking: turn and sidestep for a moment */
+  check_t += 1;
+  if (check_t >= STUCK_TICKS){
+    if (c->forward != 0 && approx_dist(x - check_x, y - check_y) < 0x2000){
+      evade_t = 20;
+      evade_turn = rng_range(2) ? 1 : -1;
+      plan_cell = -1;
+    }
+    check_t = 0;
+    check_x = x;
+    check_y = y;
+  }
+}
+
+/* Forget the current plan (a new level, or the human handed over control). */
+void autopilot_reset(void){
+  plan_cell = -1;
+  way_valid = false;
+  evade_t = 0;
+  check_t = 0;
 }

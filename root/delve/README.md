@@ -37,10 +37,10 @@ and take the **Heart of Dioptase** to win.
 
 | Keys | Action |
 | --- | --- |
-| `W` `S` / up, down | step forward / back |
-| `Shift+W` | run ahead until a junction, door, or monster |
-| `A` `D` | step left / right |
-| `Q` `E` / left, right | turn |
+| `W` `S` / up, down | walk forward / back |
+| `A` `D` | sidestep left / right |
+| `Q` `E` / left, right | turn (tap to fine-tune, hold to spin) |
+| `Shift` | run |
 | mouse | aim (the crosshair) |
 | left button / `Space` | spark bolt (cheap, fast; `Space` fires straight ahead) |
 | right button / `F` | fireball (costly, slow, splash damage) |
@@ -55,7 +55,8 @@ sparks, health, mana flow, and fireballs grow stronger for the rest of the
 run. Some walls are cracked, with light seeping through — a fireball shatters
 them and opens a hidden vault.
 Monsters wake when you come near: slimes and bats bite, floating eyes spit
-bolts you can sidestep, and wraiths hit hard. Ctrl-C quits at any time.
+bolts you can sidestep, and wraiths hit hard. Hold a spell key or mouse
+button to keep casting as fast as your mana allows. Ctrl-C quits at any time.
 
 Cheats, for exploring the deep levels quickly: `Shift+G` toggles invulnerable
 mode, `=` takes the portal immediately, `\` hands the controls to the
@@ -63,11 +64,13 @@ autopilot, `` ` `` shows the frame rate (followed by billboards queued and
 visible, active lights, and how many processes render the view), and `[`
 switches between parallel and single-process rendering.
 
-Why steps instead of smooth walking? The terminal forwards key *presses* to the
-foreground program but never key releases, so a program run from the shell
-cannot tell how long a key is held. DELVE is designed around that: every key
-press is one grid step or a quarter turn (animated smoothly), and the mouse —
-whose button state the program reads directly — handles aiming and casting.
+**Held keys.** Normally the terminal forwards only key *presses*, translated
+into characters. DELVE switches it into raw keyboard mode (`ESC [ ? 68 h`,
+see `docs/terminal.md`), where every press and release arrives as a two-byte
+record, so the game knows exactly which keys are down: you walk while `W` is
+held, and turning speeds up the longer you hold it. Ctrl-C still works (the
+terminal leaves raw mode and ends the game), and the shell switches raw mode
+off again after any program exits.
 
 ## How it works
 
@@ -82,8 +85,9 @@ straight 30 KiB copy from the back buffer. The status bar below is five 32x32
 hardware sprites at scale 2; the staff and crosshair are more sprites.
 
 **Raycasting.** One DDA ray per screen column finds walls and Wolfenstein-style
-sliding doors (thin panels on a cell's center plane). Per-angle ray tables are
-cached, since the camera only turns during the quarter-turn animation. Floors
+sliding doors (thin panels on a cell's center plane). Ray directions step
+incrementally across the view and their reciprocals come from a table, so a
+new camera angle every frame costs little. Floors
 and ceilings use row-based floor casting (texture coordinates step linearly
 along each screen row). Billboards (monsters,
 items, torches, spells) are depth-sorted and clipped against a per-column

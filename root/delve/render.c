@@ -8,9 +8,9 @@
  * perpendicular wall distance falls out of the side distances without a
  * fisheye correction). The ISA has no multiply or divide instruction, so the
  * per-column arithmetic is built to avoid both: multiplies are single 16x16
- * umul16 calls (gfx.s), wall heights and texture steps come from tables, and
- * the per-ray reciprocals are cached per camera angle because the camera
- * only turns during the short turn animation.
+ * umul16 calls (gfx.s), wall heights, texture steps, and the per-ray
+ * reciprocals come from tables, and ray directions step incrementally across
+ * the view, so a new camera angle (the player turns freely) costs little.
  *
  * Rendering can be confined to a strip of tile columns so several processes
  * can share a frame (parallel.c); all per-strip state is process-local.
@@ -66,6 +66,17 @@ static unsigned char* ceil_tex;
 
 /* Largest reciprocal we keep; rays more parallel than this never cross. */
 #define DELTA_CAP 0x01000000
+
+/* Reciprocals for the DDA's per-ray deltas: recip_table[i] is 1 / r in 16.16
+ * for a ray component r = (16 i + 8) / 65536 (the middle of the components
+ * that share the entry), capped at DELTA_CAP; the delta for a component c is
+ * recip_table[|c| >> RECIP_SHIFT]. Ray components stay below
+ * sqrt(1 + 0.7^2) < 1.23, inside the table's 2.0. The sampling error is under
+ * 0.4% for components above 1/32; smaller ones belong to rays running nearly
+ * parallel to that axis, whose crossings of it lie far away. 32 KB, built by
+ * render_init() (array bounds must be literals: 8192 = 2.0 >> RECIP_SHIFT). */
+#define RECIP_SHIFT 4
+static int recip_table[8192];
 #define MAX_RAY_STEPS 48
 /* Closest a wall may be before its height computation is clamped. */
 #define MIN_WALL_DIST 0x0800
@@ -81,7 +92,8 @@ int icos(int angle){
 }
 
 /* Signed 16.16 multiply: (a * b) >> 16 with a 48-bit intermediate, built
- * from four 16x16 partial products. Truncates toward zero. */
+ * from up to four 16x16 partial products (zero high halves are skipped).
+ * Truncates toward zero. */
 int fixmul(int a, int b){
   int negative = 0;
   unsigned ua = a;
@@ -92,9 +104,11 @@ int fixmul(int a, int b){
   unsigned al = ua & 0xFFFF;
   unsigned bh = ub >> 16;
   unsigned bl = ub & 0xFFFF;
-  unsigned r = (umul16(al, bl) >> 16) + umul16(ah, bl) + umul16(al, bh);
-  if (ah != 0 && bh != 0){
-    r += umul16(ah, bh) << 16;
+  unsigned r = umul16(al, bl) >> 16;
+  if (ah != 0) r += umul16(ah, bl);
+  if (bh != 0){
+    r += umul16(al, bh);
+    if (ah != 0) r += umul16(ah, bh) << 16;
   }
   return negative ? -(int)r : (int)r;
 }
@@ -114,23 +128,28 @@ static void build_ray_tables(int angle){
   int dir_y = isin(angle);
   int plane_x = fixmul(-dir_y, PLANE_LEN);
   int plane_y = fixmul(dir_x, PLANE_LEN);
+  /* Column x looks along dir + plane * (2x + 1 - W) / W, so the direction
+   * steps by plane * 2 / W per column. The walk keeps 8 extra fraction bits
+   * so rounding cannot build up across the view. */
+  int wide_step_x = (plane_x << 9) / VIEW_W;
+  int wide_step_y = (plane_y << 9) / VIEW_W;
+  int wide_x = ((dir_x - plane_x) << 8) + (wide_step_x >> 1);
+  int wide_y = ((dir_y - plane_y) << 8) + (wide_step_y >> 1);
   for (int x = 0; x < VIEW_W; ++x){
-    /* camera-space x in -1..1 at the column center: (2x + 1 - W) / W */
-    int cam = ((2 * x + 1 - VIEW_W) * FIX_ONE) / VIEW_W;
-    int rx = dir_x + fixmul(plane_x, cam);
-    int ry = dir_y + fixmul(plane_y, cam);
+    int rx = wide_x >> 8;
+    int ry = wide_y >> 8;
     ray_dx[x] = rx;
     ray_dy[x] = ry;
     unsigned ax = rx < 0 ? -rx : rx;
     unsigned ay = ry < 0 ? -ry : ry;
-    delta_x[x] = ax < 256 ? DELTA_CAP : udiv32(0xFFFFFFFF, ax);
-    delta_y[x] = ay < 256 ? DELTA_CAP : udiv32(0xFFFFFFFF, ay);
-    if (delta_x[x] > DELTA_CAP) delta_x[x] = DELTA_CAP;
-    if (delta_y[x] > DELTA_CAP) delta_y[x] = DELTA_CAP;
+    delta_x[x] = recip_table[ax >> RECIP_SHIFT];
+    delta_y[x] = recip_table[ay >> RECIP_SHIFT];
+    wide_x += wide_step_x;
+    wide_y += wide_step_y;
   }
-  /* per-pixel change of the ray direction along a row: plane * 2 / W */
-  int step_x = fixmul(plane_x, (2 * FIX_ONE) / VIEW_W);
-  int step_y = fixmul(plane_y, (2 * FIX_ONE) / VIEW_W);
+  /* per-pixel change of the ray direction along a floor row */
+  int step_x = wide_step_x >> 8;
+  int step_y = wide_step_y >> 8;
   for (int k = 0; k < VIEW_HALF_H; ++k){
     int d = row_dist[k];
     row_u0[k] = fixmul(d, ray_dx[0]);
@@ -179,6 +198,10 @@ static void build_row_tables(void){
 /* One-time renderer setup: floor row tables and default flats. */
 void render_init(void){
   build_row_tables();
+  for (int i = 0; i < 8192; ++i){
+    unsigned r = udiv32(0xFFFFFFFF, (i << RECIP_SHIFT) + (1 << (RECIP_SHIFT - 1)));
+    recip_table[i] = r > DELTA_CAP ? DELTA_CAP : r;
+  }
   for (int h = 1; h < STEP_TABLE; ++h){
     step_for_height[h] = udiv32(TEX_SIZE << 16, h);
   }

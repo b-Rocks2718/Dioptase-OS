@@ -277,6 +277,12 @@ struct Light {
 #define MAX_MP 100
 #define FINAL_DEPTH 8
 
+/* The player is a square of half-width PLAYER_RADIUS (16.16 cells) for
+ * collisions; corridors are one cell wide. Biting monsters reach the player
+ * within MONSTER_REACH of their center. */
+#define PLAYER_RADIUS 0x4400
+#define MONSTER_REACH 0x14000
+
 struct PlayerStats {
   int hp;
   int max_hp;
@@ -324,7 +330,6 @@ struct Camera {
   int x;
   int y;
   int angle;
-  int bob;       /* vertical bob in view pixels (head motion while walking) */
 };
 
 /* Per-row floor casting state for draw_flats_asm() in gfx.s (field order is
@@ -455,6 +460,7 @@ void spawn_effect(int kind, int x, int y, int z);
 void spawn_burst(int x, int y, int z, int count, int color, int speed);
 extern struct Particle g_particles[MAX_PARTICLES];
 int world_monsters_left(void);
+bool world_line_clear(int x0, int y0, int x1, int y1);
 int world_flow(int cx, int cy);
 bool world_boss(int* hp, int* max_hp);
 
@@ -467,7 +473,20 @@ void parallel_toggle(void);
 void parallel_autotune_begin(void);
 
 /* ---- autopilot.c ---- */
-int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp);
+/* One tick of player controls: what a human holds on the keyboard, or what
+ * the autopilot chooses. `turn` is in angle units for this tick (positive
+ * turns right, clockwise on the map); `cast` is 0 or SHOT_SPARK + 1 /
+ * SHOT_FIRE + 1 for a spell cast straight ahead. */
+struct Controls {
+  int forward;     /* 1 forward, -1 back */
+  int strafe;      /* 1 right, -1 left */
+  int turn;
+  bool run;
+  int cast;
+};
+#define TURN_MAX 44       /* fastest turn, angle units per tick (~230 deg/s) */
+void autopilot_steer(int x, int y, int angle, bool has_key, int mp, struct Controls* c);
+void autopilot_reset(void);
 
 /* ---- main.c (game) ---- */
 void player_hurt(int amount);

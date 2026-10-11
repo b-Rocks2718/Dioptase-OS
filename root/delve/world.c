@@ -4,9 +4,9 @@
  * The dungeon: procedural level generation, map queries, doors, monsters,
  * items, projectiles, and short-lived effects.
  *
- * All simulation runs in 60 Hz ticks (world_tick). Creatures live on the grid
- * like the player: they occupy one cell at a time and slide to a neighbor
- * over a few ticks. Projectiles move freely in 16.16 world space.
+ * All simulation runs in 60 Hz ticks (world_tick). Creatures live on the
+ * grid: they occupy one cell at a time and slide to a neighbor over a few
+ * ticks. The player and projectiles move freely in 16.16 world space.
  */
 
 unsigned char g_map[MAP_CELLS];
@@ -15,6 +15,8 @@ unsigned char* g_seen;                 /* cells the player has seen (automap) */
 static unsigned char occupant[MAP_CELLS]; /* monster index + 1, 0 = none */
 static unsigned char flow[MAP_CELLS];  /* BFS steps to the player, 255 = none */
 static bool map_changed;               /* a wall fell: rebuild the flow field */
+static int player_x;                   /* the player's position this tick (16.16) */
+static int player_y;
 
 struct Door g_doors[MAX_DOORS];
 int g_door_count;
@@ -928,8 +930,9 @@ static void update_shots(int px, int py){
 
 /* ---- Monsters ---- */
 
-/* Straight-line visibility between two world points, sampled every 1/4 cell. */
-static bool line_clear(int x0, int y0, int x1, int y1){
+/* Straight-line visibility between two world points, sampled every 1/4 cell.
+ * Walls and doors that are not yet passable block it. */
+bool world_line_clear(int x0, int y0, int x1, int y1){
   int dx = x1 - x0;
   int dy = y1 - y0;
   int dist = approx_dist(dx, dy);
@@ -951,6 +954,14 @@ static bool line_clear(int x0, int y0, int x1, int y1){
   return true;
 }
 
+/* Whether the player's body overlaps cell (cx, cy) or comes within a
+ * sliver of it: monsters may not step there. */
+static bool player_near_cell(int cx, int cy){
+  int r = PLAYER_RADIUS + 0x1000;
+  return ((player_x - r) >> 16) <= cx && ((player_x + r) >> 16) >= cx &&
+         ((player_y - r) >> 16) <= cy && ((player_y + r) >> 16) >= cy;
+}
+
 /* Reserve cell (nx, ny) for monster `index` and start sliding into it,
  * opening a door if one is there. */
 static void monster_start_move(struct Monster* m, int index, int nx, int ny){
@@ -966,9 +977,9 @@ static void monster_start_move(struct Monster* m, int index, int nx, int ny){
 }
 
 /* One AI decision for an idle monster: wake when the player is near on the
- * flow field, bite when adjacent, shoot when in clear sight (ranged kinds),
- * otherwise step downhill toward the player. */
-static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py){
+ * flow field, bite when within reach, shoot when in clear sight (ranged
+ * kinds), otherwise step downhill toward the player. */
+static void think(struct Monster* m, int index, int px, int py){
   struct MonsterKind* k = &kinds[m->kind];
   int here = flow[cell_at(m->cx, m->cy)];
   if (!m->awake){
@@ -980,26 +991,24 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
       return;
     }
   }
-  /* adjacent: bite */
-  int adx = m->cx - pcx;
-  int ady = m->cy - pcy;
-  if (adx < 0) adx = -adx;
-  if (ady < 0) ady = -ady;
-  if (!k->ranged && adx + ady == 1){
+  /* within reach: bite. The player moves freely, so reach is a distance
+   * (a little over one cell) rather than grid adjacency. */
+  if (!k->ranged && approx_dist(px - m->x, py - m->y) < MONSTER_REACH &&
+      world_line_clear(m->x, m->y, px, py)){
     m->attack_t = 16;
     m->cooldown = k->attack_ticks;
     player_hurt(k->damage);
     return;
   }
   /* the Warden winds up (charge frame) before each volley */
-  if (k->ranged == 2 && m->attack_t == 0 && here <= 10 && line_clear(m->x, m->y, px, py)){
+  if (k->ranged == 2 && m->attack_t == 0 && here <= 10 && world_line_clear(m->x, m->y, px, py)){
     m->attack_t = WARDEN_CHARGE_TICKS;
     m->cooldown = WARDEN_CHARGE_TICKS;
     sfx(SFX_GROWL);
     return;
   }
   /* ranged: shoot when the player is visible and not too far */
-  if (k->ranged && here <= (k->ranged == 2 ? 10 : 8) && line_clear(m->x, m->y, px, py)){
+  if (k->ranged && here <= (k->ranged == 2 ? 10 : 8) && world_line_clear(m->x, m->y, px, py)){
     int dx = px - m->x;
     int dy = py - m->y;
     int d = approx_dist(dx, dy);
@@ -1035,7 +1044,7 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
       int ny = m->cy + (dir == 1) - (dir == 3);
       if (!in_map(nx, ny)) continue;
       int c = cell_at(nx, ny);
-      if (occupant[c] || (nx == pcx && ny == pcy) || g_map[c] != CELL_EMPTY) continue;
+      if (occupant[c] || player_near_cell(nx, ny) || g_map[c] != CELL_EMPTY) continue;
       if (retreat && flow[c] <= here) continue;
       monster_start_move(m, index, nx, ny);
       m->cooldown = k->think_ticks;
@@ -1053,7 +1062,7 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
     int ny = m->cy + (dir == 1) - (dir == 3);
     if (!in_map(nx, ny)) continue;
     int c = cell_at(nx, ny);
-    if (occupant[c] || (nx == pcx && ny == pcy)) continue;
+    if (occupant[c] || player_near_cell(nx, ny)) continue;
     int v = g_map[c];
     if (v != CELL_EMPTY){
       if (v < CELL_DOOR_BASE || g_doors[v - CELL_DOOR_BASE].locked) continue;
@@ -1071,7 +1080,7 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
 }
 
 /* Animate moving monsters and let idle ones think when their cooldown ends. */
-static void update_monsters(int pcx, int pcy, int px, int py){
+static void update_monsters(int px, int py){
   for (int i = 0; i < MAX_MONSTERS; ++i){
     struct Monster* m = &g_monsters[i];
     if (!m->alive) continue;
@@ -1096,7 +1105,7 @@ static void update_monsters(int pcx, int pcy, int px, int py){
       m->cooldown -= 1;
       continue;
     }
-    think(m, i, pcx, pcy, px, py);
+    think(m, i, px, py);
   }
 }
 
@@ -1191,9 +1200,12 @@ static void update_items(int pcx, int pcy){
 
 /* ---- Per tick ---- */
 
-/* Advance the world one 60 Hz tick. (px, py) is the camera position and
- * (pcx, pcy) the cell the player occupies (or is moving into). */
+/* Advance the world one 60 Hz tick. (px, py) is the player's position and
+ * (pcx, pcy) the cell it is in; `player_moved` means that cell changed (the
+ * monsters' flow field is rebuilt). */
 void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
+  player_x = px;
+  player_y = py;
   g_light_count = 0;
   if (player_moved || map_changed){
     bfs_from(pcx, pcy, flow, false);
@@ -1209,7 +1221,7 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
       }
     }
   }
-  update_monsters(pcx, pcy, px, py);
+  update_monsters(px, py);
   update_shots(px, py);
   update_items(pcx, pcy);
   update_particles();
