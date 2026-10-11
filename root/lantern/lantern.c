@@ -2,10 +2,11 @@
  * Lantern: a first-person walk through a sealed vault.
  *
  * The picture is an 80x60 raycast in the pixel framebuffer at scale 2, so
- * each pixel is 8 screen pixels (docs/mem_map.md). The tile layer carries the
- * goal and the controls. WASD comes from raw key events on stdin, including
- * releases, so movement is held rather than tapped. Mouse look uses
- * getmouse(); the right button walks forward.
+ * each pixel is 8 screen pixels (docs/mem_map.md). The title screen carries
+ * the instructions. During play the tile layer is only health and a short
+ * notice. WASD comes from raw key events on stdin, including releases, so
+ * movement is held rather than tapped. Mouse look uses getmouse(); the right
+ * button walks forward.
  *
  * From the shell, with VGA on: lantern
  * Headless timing: lantern bench
@@ -13,6 +14,11 @@
 
 #include "lantern.h"
 #include "../crt/sys.h"
+
+/* docs/mem_map.md: a tile pixel of 0xCXXX is replaced by the entry color byte. */
+#define TEXT_GLYPH 0xC000
+/* docs/mem_map.md: a tile pixel of 0xFXXX is not drawn. */
+#define TEXT_CLEAR 0xF000
 #include "../crt/unistd.h"
 #include "../crt/mouse.h"
 #include "../crt/ps2.h"
@@ -149,7 +155,8 @@ static int startup(int bench) {
     puts("lantern: display mapping failed\n");
     return -1;
   }
-  load_text_tiles();
+  /* Glyph pixels take the tile color. The rest of each letter stays clear. */
+  load_text_tiles_colored(TEXT_GLYPH, TEXT_CLEAR);
   set_pixel_scale(PIXEL_SCALE_PLAY);
   if (render_init(pixel_fb, tile_fb, sprite_fb) != 0) {
     puts("lantern: the view buffer could not be allocated\n");
@@ -278,7 +285,6 @@ static int run_game(void) {
       else if (edge_restart) {
         load_level();
         state = STATE_PLAY;
-        set_message("The vault resets.", 100);
       } else if (next != STATE_PLAY) {
         state = next;
       }
@@ -287,7 +293,6 @@ static int run_game(void) {
     } else if (edge_restart || edge_start) {
       load_level();
       state = STATE_PLAY;
-      set_message("The vault resets.", 100);
     }
     render_frame(state, show_map);
   }

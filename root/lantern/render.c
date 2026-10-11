@@ -30,11 +30,6 @@ static int last_y;
 static int last_angle;
 static int have_walls;
 static int hud_mode;
-/* What the center ray hit, and the nearest billboard covering the crosshair. */
-static int look_cell;
-static int look_dist;
-static int focus_kind;
-static int focus_dist;
 
 /* Quarter-wave sine, 0 through 90 degrees, in 8.8. Index 64 is 256. */
 static int quarter_sin[65] = {
@@ -386,10 +381,6 @@ static void cast_column(int col) {
   perp = (along * sin_fp(rel + ANGLE_RIGHT)) >> 8;
   if (perp < 1) perp = 1;
   col_perp[col] = perp;
-  if (col == VIEW_CENTER) {
-    look_cell = hit_cell;
-    look_dist = perp;
-  }
 
   if (hit_cell == CELL_BRICK) tex = 1;
   else if (hit_cell == CELL_METAL) tex = 2;
@@ -532,10 +523,6 @@ static int project_sprite(int wx, int wy, int kind, int* left, int* top, int* si
   *top = VIEW_H / 2 + wall / 2 - sprite_h;
   *size = sprite_h;
   *depth = rel_f;
-  if (rel_f < focus_dist && scol <= VIEW_CENTER + sprite_h / 4 && scol >= VIEW_CENTER - sprite_h / 4) {
-    focus_kind = kind;
-    focus_dist = rel_f;
-  }
   return 1;
 }
 
@@ -551,8 +538,6 @@ static void draw_sprites(void) {
   int n = 0;
   int i;
 
-  focus_kind = -1;
-  focus_dist = 100000;
   for (i = 0; i < actor_count; i++) {
     struct Actor* actor = &actors[i];
     int left;
@@ -705,7 +690,7 @@ static void hud_int(char* buf, int* n, int value) {
   }
 }
 
-/* Write one tile row. Spaces stay transparent so the picture shows through. */
+/* Write one tile row. Spaces and the rest of the row stay transparent. */
 static void draw_row(int row, char* text, int color) {
   int x;
   int n = 0;
@@ -719,11 +704,32 @@ static void draw_row(int row, char* text, int color) {
   }
 }
 
-/* Objective, the thing in front of the player, and the control strip. */
-static void present_hud(int state) {
+/* Center one line. The caller passes a single string; spaces stay clear. */
+static void draw_centered(int row, char* text, int color) {
   char line[80];
   int n = 0;
-  int goal_color = 0xFF;
+  int i = 0;
+  int pad;
+  while (text[n] != 0 && n < 80) n++;
+  pad = (80 - n) / 2;
+  while (i < pad && i < 79) {
+    line[i] = ' ';
+    i++;
+  }
+  n = 0;
+  while (text[n] != 0 && i < 79) {
+    line[i] = text[n];
+    i++;
+    n++;
+  }
+  line[i] = 0;
+  draw_row(row, line, color);
+}
+
+/* Title instructions, or a short status line once the vault is open. */
+static void present_hud(int state) {
+  char line[80];
+  int n;
   int x;
 
   if (lantern_bench) return;
@@ -731,64 +737,46 @@ static void present_hud(int state) {
     for (x = 0; x < TILE_ROW_WIDTH * TILE_COL_HEIGHT; x++) tiles[x] = 255;
     hud_mode = state;
     if (state == STATE_TITLE) {
-      draw_row(16, "LANTERN", 0xFF);
-      draw_row(19, "Destroy the 3 purple cores.", 0xE3);
-      draw_row(21, "Then walk to the cyan crystal.", 0x1F);
-      draw_row(24, "Red figures attack. Green crosses heal.", 0xFF);
-      draw_row(40, "WASD moves. Arrows or the mouse turn.", 0xFF);
-      draw_row(42, "Click or F shoots. E opens. Q quits.", 0xFF);
-      draw_row(45, "Hold the right mouse button to walk.", 0xFF);
-      draw_row(50, "Press SPACE or click to begin.", 0xFC);
-      draw_row(58, "WASD move   Arrows turn   Mouse looks   Click or F shoots   E opens   Q quits", 0xFF);
+      draw_centered(2, "LANTERN", 0xFF);
+      draw_centered(4, "Grok 4.7", 0xFC);
+      draw_centered(8, "Destroy the three purple cores.", 0xE3);
+      draw_centered(10, "Then reach the cyan crystal.", 0x1F);
+      draw_centered(14, "WASD moves. Arrows or mouse look.", 0xFF);
+      draw_centered(16, "Click or F shoots. E opens.", 0xFF);
+      draw_centered(18, "Right mouse walks. Q quits.", 0xFF);
+      draw_centered(52, "SPACE or click to begin.", 0xFC);
     }
   }
   if (state == STATE_TITLE) return;
 
   if (state == STATE_DEAD) {
-    hud_text(line, &n, "You died. Press R to try again.");
-    goal_color = 0xE0;
-  } else if (state == STATE_WON) {
-    hud_text(line, &n, "You escaped. Press R to play again.");
-    goal_color = 0x1F;
-  } else if (state == STATE_PAUSE) {
-    hud_text(line, &n, "Paused. Press P to continue.");
-  } else if (cores_left <= 0) {
-    hud_text(line, &n, "The gate is open. Reach the cyan crystal.");
-    goal_color = 0x1F;
-  } else {
-    hud_text(line, &n, "Destroy ");
-    hud_int(line, &n, cores_left);
-    hud_text(line, &n, " purple cores, then the cyan crystal.");
-    goal_color = 0xE3;
+    draw_centered(2, "Dead. Press R.", 0xE0);
+    return;
   }
-  if (hurt_timer > 0) goal_color = 0xE0;
-  line[n] = 0;
-  draw_row(0, line, goal_color);
+  if (state == STATE_WON) {
+    draw_centered(2, "Escaped. Press R.", 0x1F);
+    return;
+  }
+  if (state == STATE_PAUSE) {
+    draw_centered(2, "Paused. Press P.", 0xFF);
+    return;
+  }
 
   n = 0;
   hud_text(line, &n, "HP ");
   hud_int(line, &n, player_hp);
-  if (state == STATE_PLAY && lantern_time < message_until && message[0] != 0) {
-    hud_text(line, &n, "  ");
-    hud_text(line, &n, message);
-  } else if (state == STATE_PLAY && look_cell == CELL_DOOR && look_dist < 900) {
-    hud_text(line, &n, "  Press E to open the door.");
-  } else if (state == STATE_PLAY && look_cell == CELL_GATE && look_dist < 900 && cores_left > 0) {
-    hud_text(line, &n, "  Purple cores seal this gate.");
-  } else if (state == STATE_PLAY && focus_kind == KIND_SENTRY) {
-    hud_text(line, &n, "  Shoot the red figure. Click or F.");
-  } else if (state == STATE_PLAY && focus_kind == KIND_CORE) {
-    hud_text(line, &n, "  Shoot the purple core. Click or F.");
-  } else if (state == STATE_PLAY && focus_kind == KIND_HEALTH) {
-    hud_text(line, &n, "  Walk into the green cross to heal.");
-  } else if (state == STATE_PLAY && focus_kind == KIND_CRYSTAL && cores_left <= 0) {
-    hud_text(line, &n, "  Walk into the cyan crystal.");
-  } else {
-    hud_text(line, &n, "   you white  enemy red  core purple  exit cyan");
+  if (cores_left > 0) {
+    hud_text(line, &n, "   ");
+    hud_int(line, &n, cores_left);
+    hud_text(line, &n, " cores");
   }
   line[n] = 0;
-  draw_row(1, line, hurt_timer > 0 ? 0xE0 : 0xFF);
-  draw_row(58, "WASD move   Arrows turn   Mouse looks   Click or F shoots   E opens   Q quits", 0xFF);
+  draw_row(0, line, hurt_timer > 0 ? 0xE0 : 0xFF);
+  if (lantern_time < message_until && message[0] != 0) {
+    draw_row(1, message, 0xFF);
+  } else {
+    draw_row(1, "", 0);
+  }
 }
 
 /* Flicker only the lantern flame. Repainting the whole sprite would be a thousand MMIO stores. */
