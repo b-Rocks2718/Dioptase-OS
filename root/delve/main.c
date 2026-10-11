@@ -926,8 +926,12 @@ static void draw_end_screen(bool won){
   draw_text_shadow(SURF_VIEW, 84, 60, format_int(buf, g_stats.crystals), 0x09F4);
   draw_text_shadow(SURF_VIEW, 44, 67, "SLAIN", 0x0899);
   draw_text_shadow(SURF_VIEW, 84, 67, format_int(buf, g_stats.kills), 0x066F);
+  if (won){
+    draw_centered(75, "PLAYED ON DIOPTASE: HOMEMADE CPU,", 0x0688);
+    draw_centered(81, "OS, COMPILER, AND ASSEMBLER", 0x0688);
+  }
   if (state_t > 60 && (state_t & 32)){
-    draw_centered(82, "PRESS ENTER", 0x0FFF);
+    draw_centered(won ? 89 : 82, "PRESS ENTER", 0x0FFF);
   }
 }
 
