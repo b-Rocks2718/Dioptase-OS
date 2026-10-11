@@ -51,7 +51,7 @@ unsigned g_frame;
  * top, so the status bar covers the bottom of the staff. */
 #define STAFF_SPRITE_TOP 7      /* staff: sprites 7 and 8, stacked, scale 2 */
 #define STAFF_SPRITE_BOTTOM 8
-#define CURSOR_SPRITE 10        /* crosshair, scale 0 */
+#define CURSOR_SPRITE 10        /* crosshair, scale 1 */
 #define STAFF_X 116             /* staff position in scale-2 sprite units */
 #define STAFF_Y 50
 
@@ -97,6 +97,7 @@ static int state_t;            /* ticks spent in the current state */
 static bool demo;              /* attract mode: the autopilot plays behind the title */
 static bool autopilot;         /* the autopilot drives the player (demo or '\\' key) */
 static int autopilot_wait;     /* ticks before the autopilot's next decision */
+static bool god_mode;          /* cheat: no damage */
 static unsigned game_seed;
 static bool show_map;
 static bool show_fps;
@@ -158,6 +159,7 @@ void player_hurt(int amount){
     return;
   }
   if (state != STATE_PLAY) return;
+  if (god_mode) amount = 0;
   g_stats.hp -= amount;
   g_stats.hurt = 12;
   g_stats.shake = 6;
@@ -300,6 +302,7 @@ static void reset_stats(void){
 static void new_game(void){
   game_seed = rng_next() ^ (get_vga_frame_counter() * 2654435761u);
   demo = false;
+  god_mode = false;
   autopilot = false;
   reset_stats();
   state = STATE_PLAY;
@@ -518,6 +521,13 @@ static void handle_key(int key){
         state_t = 0;
       } else if (key == '`'){
         show_fps = !show_fps;
+      } else if (key == 'G'){
+        /* cheat (shift+G): invulnerable */
+        god_mode = !god_mode;
+        show_message(god_mode ? "GOD MODE" : "MORTAL AGAIN");
+      } else if (key == '='){
+        /* cheat for the impatient: take the portal right now */
+        g_stats.exit_reached = 1;
       } else if (key == '\\'){
         autopilot = !autopilot;
         show_message(autopilot ? "AUTOPILOT ON" : "AUTOPILOT OFF");
@@ -600,7 +610,14 @@ static void upload_sprite(int sprite, unsigned short* pixels){
   copy_words((void*)(g_spritemap + sprite * SPRITE_SHORTS), pixels, SPRITE_SHORTS / 2);
 }
 
+static bool staff_glowing;
+
 static void place_overlays(void){
+  bool glow = player.cast_t > 4 && state == STATE_PLAY;
+  if (glow != staff_glowing){
+    upload_sprite(STAFF_SPRITE_TOP, glow ? overlay_staff_glow : overlay_staff);
+    staff_glowing = glow;
+  }
   bool playing = state == STATE_PLAY || state == STATE_PAUSE;
   if (playing && !show_map){
     int bob = isin(player.walk_phase * 160) >> 14;
@@ -609,7 +626,8 @@ static void place_overlays(void){
     int y = STAFF_Y + bob - thrust;
     set_sprite_coords(STAFF_SPRITE_TOP, STAFF_X, y);
     set_sprite_coords(STAFF_SPRITE_BOTTOM, STAFF_X, y + 32);
-    set_sprite_coords(CURSOR_SPRITE, cursor_x - 16, cursor_y - 16);
+    /* scale-1 sprite: coordinates are in 2-pixel units */
+    set_sprite_coords(CURSOR_SPRITE, (cursor_x >> 1) - 16, (cursor_y >> 1) - 16);
   } else {
     set_sprite_coords(STAFF_SPRITE_TOP, SPRITE_HIDDEN, SPRITE_HIDDEN);
     set_sprite_coords(STAFF_SPRITE_BOTTOM, SPRITE_HIDDEN, SPRITE_HIDDEN);
@@ -656,7 +674,7 @@ static void display_init(void){
   upload_sprite(CURSOR_SPRITE, overlay_cursor);
   set_sprite_scale(STAFF_SPRITE_TOP, TILE_SCALE_4X);
   set_sprite_scale(STAFF_SPRITE_BOTTOM, TILE_SCALE_4X);
-  set_sprite_scale(CURSOR_SPRITE, 0);
+  set_sprite_scale(CURSOR_SPRITE, 1);
 }
 
 /* ---- Status bar ---- */
@@ -787,6 +805,14 @@ static void draw_play_overlays(void){
   if (show_map){
     draw_automap();
   }
+  int boss_hp;
+  int boss_max;
+  if (!show_map && world_boss(&boss_hp, &boss_max)){
+    draw_centered(82, "THE WARDEN", 0x08F6);
+    fill_rect(SURF_VIEW, 39, 89, 82, 5, 0x0000);
+    fill_rect(SURF_VIEW, 40, 90, 80, 3, 0x0222);
+    fill_rect(SURF_VIEW, 40, 90, boss_hp * 80 / boss_max, 3, 0x05E8);
+  }
   if (message_t > 0){
     draw_centered(3, message, message_t > 30 || (message_t & 4) ? 0x0FFF : 0x0999);
   }
@@ -907,7 +933,7 @@ static void tick(void){
         int n = 6;
         for (int i = 0; num[i]; ++i) buf[n++] = num[i];
         buf[n] = 0;
-        show_message(g_stats.depth >= FINAL_DEPTH ? "THE HEART LIES BEYOND THE SEAL" : buf);
+        show_message(g_stats.depth >= FINAL_DEPTH ? "THE WARDEN GUARDS THE HEART" : buf);
       }
       break;
     case STATE_DEAD:
@@ -975,7 +1001,10 @@ int main(void){
       fps_mark = now;
     }
     if (show_fps){
-      draw_text_shadow(SURF_VIEW, 2, 89, format_int(fps_text, fps), 0x00FF);
+      int x = draw_text_shadow(SURF_VIEW, 2, 89, format_int(fps_text, fps), 0x00FF);
+      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_bills), 0x0FF0);
+      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_visible), 0x0F0F);
+      draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_light_count), 0x0FFF);
     }
     blit_view(g_tilemap, g_view);
     place_overlays();

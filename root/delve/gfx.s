@@ -181,25 +181,43 @@ udiv32_next:
   ret
 
 # Cast the floor and ceiling over the whole view (perspective-correct floor
-# casting: along a screen row the texture coordinates advance linearly).
+# casting: along a screen row the texture coordinates advance linearly), lit
+# by the frame's point lights.
 #
 # Pixels are visited one 8-pixel-wide tile column at a time (all 48 row pairs
 # of one 1536-byte group before the next) so the back-buffer working set is a
 # single page; walking whole screen rows instead touches eight pages per row
 # and thrashes the 16-entry TLB.
 #
+# Lighting: each 8-pixel run of a row takes one light level, the row's
+# distance level plus, for every light, max(0, (radius - d) >> 15) where d is
+# the octagonal distance max + min / 2 from the run's center (one level per
+# half cell, matching light_bonus() in render.c).
+#
 # Inputs:  r1 = 48 FlatRow records (delve.h), one per floor row k, holding the
-#               row's current (u, v), per-pixel (du, dv) and shade tables.
-#               u and v are advanced in place across the tile columns.
+#               row's current (u, v), per-pixel (du, dv), and base light
+#               level. u and v are advanced in place across the tile columns.
 #          r2 = back buffer (view pixel (0, 0)).
 #          r3 = floor texture, r4 = ceiling texture (64x64, row-major).
-# Outputs: none. Clobbers r1-r19; preserves r20-r21 (saved on the stack).
+#          r5 = FlatLight records (x, y, radius words), r6 = their count.
+# Outputs: none. Clobbers r1-r19; preserves r20-r27 (saved on the stack).
+#
+# Register map: r1 rows, r2 group base, r3/r4 textures, r5 lights, r6 light
+# count, r7 row counter, r8 row cursor, r9-r12 u v du dv, r13/r14 floor and
+# ceiling shade tables, r15/r16 floor and ceiling cursors, r17-r19 and
+# r20-r23 scratch, r24 texel mask, r25 group counter, r26 shade_tables.
   .global draw_flats_asm
 draw_flats_asm:
   push r20
   push r21
-  movi r5, 0xFC0               # mask for (v >> 4): texel row * 64
-  movi r6, 20                  # tile columns
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  movi r24, 0xFC0              # mask for (v >> 4): texel row * 64
+  movi r25, 20                 # tile columns
+  adpc r26, shade_tables
 flats_group:
   mov  r8, r1                  # FlatRow cursor
   movi r7, 48                  # row pairs
@@ -212,14 +230,64 @@ flats_row:
   lwa  r10, [r8, 4]            # v
   lwa  r11, [r8, 8]            # du
   lwa  r12, [r8, 12]           # dv
-  lwa  r13, [r8, 16]           # floor shade table
-  lwa  r14, [r8, 20]           # ceiling shade table
+  lwa  r13, [r8, 16]           # base light level
+  # light the run at its center (u + 4 du, v + 4 dv)
+  mov  r20, r6
+  cmp  r20, r0
+  bz   flats_lit
+  lsl  r21, r11, 2
+  add  r21, r9, r21            # center u
+  lsl  r22, r12, 2
+  add  r22, r10, r22           # center v
+  mov  r23, r5
+flats_light:
+  lwa  r17, [r23, 0]
+  sub  r17, r21, r17           # dx
+  bns  flats_dx_pos
+  sub  r17, r0, r17
+flats_dx_pos:
+  lwa  r18, [r23, 4]
+  sub  r18, r22, r18           # dy
+  bns  flats_dy_pos
+  sub  r18, r0, r18
+flats_dy_pos:
+  cmp  r17, r18
+  bge  flats_ordered
+  mov  r19, r17
+  mov  r17, r18
+  mov  r18, r19
+flats_ordered:
+  lsr  r18, r18, 1
+  add  r17, r17, r18           # d = max + min / 2
+  lwa  r18, [r23, 8]
+  sub  r18, r18, r17           # radius - d
+  bs   flats_light_next
+  lsr  r18, r18, 15
+  add  r13, r13, r18
+flats_light_next:
+  add  r23, r23, 12
+  add  r20, r20, -1
+  bnz  flats_light
+flats_lit:
+  # clamp to 0..15 and select the shade table (512 bytes each)
+  cmp  r13, r0
+  bge  flats_level_low_ok
+  mov  r13, r0
+flats_level_low_ok:
+  movi r17, 15
+  cmp  r13, r17
+  ble  flats_level_high_ok
+  mov  r13, r17
+flats_level_high_ok:
+  lsl  r13, r13, 9
+  add  r13, r26, r13
+  mov  r14, r13
   movi r17, 8
 flats_pixel:
   lsr  r18, r9, 10
   and  r18, r18, 63
   lsr  r19, r10, 4
-  and  r19, r19, r5
+  and  r19, r19, r24
   or   r18, r18, r19           # texel index (v_texel * 64 + u_texel)
   add  r19, r3, r18
   lba  r19, [r19]
@@ -245,10 +313,15 @@ flats_pixel:
   add  r16, r16, -32
   add  r7, r7, -1
   bnz  flats_row
-  movi r21, 1536
-  add  r2, r2, r21
-  add  r6, r6, -1
+  movi r17, 1536
+  add  r2, r2, r17
+  add  r25, r25, -1
   bnz  flats_group
+  pop  r26
+  pop  r25
+  pop  r24
+  pop  r23
+  pop  r22
   pop  r21
   pop  r20
   ret

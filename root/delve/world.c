@@ -22,6 +22,10 @@ struct Projectile g_shots[MAX_SHOTS];
 struct Effect g_effects[MAX_EFFECTS];
 struct Light g_lights[MAX_LIGHTS];
 int g_light_count;
+static struct Torch torches[MAX_TORCHES];
+static int torch_count;
+struct Particle g_particles[MAX_PARTICLES];
+static int next_particle;
 struct PlayerStats g_stats;
 
 /* Base wall texture and the floor/ceiling for the current level. */
@@ -71,7 +75,9 @@ static struct MonsterKind kinds[MONSTER_KINDS] = {
   {  2,  9,   4,  5,  0,  30, SPR_BAT,     4, 30000, 22000, 15, 12 },
   {  5, 26,  20, 10,  1,  90, SPR_EYE,     3, 42000, 10000, 25, 11 },
   {  8, 14,   8, 14,  0,  40, SPR_WRAITH,  4, 52000,  4000, 40, 14 },
+  { 36, 30,  14, 16,  2,  80, SPR_WARDEN,  2, 62000,  2000, 500, 30 },
 };
+#define WARDEN_CHARGE_TICKS 28
 
 /* ---- Map helpers ---- */
 
@@ -233,6 +239,31 @@ static int add_door(int cx, int cy, bool axis_x, bool locked){
   return g_door_count - 1;
 }
 
+/* Mount one or two torches on the walls of most rooms. A torch hangs just in
+ * front of the wall face, so it is placed in the room cell next to the wall
+ * and pushed toward it. */
+static void place_torches(void){
+  torch_count = 0;
+  for (int r = 0; r < room_count && torch_count < MAX_TORCHES; ++r){
+    int want = 1 + (rooms[r].w * rooms[r].h > 20);
+    for (int tries = 0; tries < 20 && want > 0 && torch_count < MAX_TORCHES; ++tries){
+      int x = rooms[r].x + rng_range(rooms[r].w);
+      int y = rooms[r].y + rng_range(rooms[r].h);
+      int dir = rng_range(4);
+      int wx = x + (dir == 0) - (dir == 2);
+      int wy = y + (dir == 1) - (dir == 3);
+      if (!in_map(wx, wy)) continue;
+      int w = g_map[cell_at(wx, wy)];
+      if (w == CELL_EMPTY || w >= CELL_DOOR_BASE) continue;
+      struct Torch* t = &torches[torch_count++];
+      t->x = (x << 16) + FIX_HALF + ((wx - x) * 0x7000);
+      t->y = (y << 16) + FIX_HALF + ((wy - y) * 0x7000);
+      t->phase = rng_range(64);
+      want -= 1;
+    }
+  }
+}
+
 /* Put doors where corridors leave rooms, if the doorway is a clean 1-wide gap. */
 static void place_doors(void){
   for (int cy = 1; cy < MAP_H - 1; ++cy){
@@ -363,6 +394,7 @@ void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
   for (int i = 0; i < MAX_ITEMS; ++i) g_items[i].active = 0;
   for (int i = 0; i < MAX_SHOTS; ++i) g_shots[i].active = 0;
   for (int i = 0; i < MAX_EFFECTS; ++i) g_effects[i].active = 0;
+  for (int i = 0; i < MAX_PARTICLES; ++i) g_particles[i].life = 0;
   g_door_count = 0;
 
   /* rooms */
@@ -496,6 +528,8 @@ void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
     if (random_room_cell(exit_room, &x, &y)) add_item(depth >= FINAL_DEPTH ? ITEM_HEART : ITEM_PORTAL, x, y);
   }
 
+  place_torches();
+
   /* key in a room reachable without the locked door, away from the start */
   bfs_from(*sx, *sy, flow, false);
   int key_room = -1;
@@ -509,7 +543,16 @@ void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir){
       key_room = i;
     }
   }
-  if (placed){
+  if (depth >= FINAL_DEPTH){
+    /* the Warden waits in the exit room with the key */
+    int x;
+    int y;
+    if (random_room_cell(exit_room, &x, &y)){
+      add_monster(MON_WARDEN, x, y);
+    } else if (random_room_cell(key_room < 0 ? exit_room : key_room, &x, &y)){
+      add_item(ITEM_KEY, x, y);
+    }
+  } else if (placed){
     int x;
     int y;
     if (key_room < 0) key_room = exit_room;
@@ -568,14 +611,60 @@ void spawn_effect(int kind, int x, int y, int z){
   }
 }
 
-static void add_light(int x, int y, int radius, int strength){
+/* Add a point light for this frame (one level per half cell of radius). */
+/* Throw `count` sparks from (x, y, z) in random directions. */
+void spawn_burst(int x, int y, int z, int count, int color, int speed){
+  for (int i = 0; i < count; ++i){
+    struct Particle* p = &g_particles[next_particle];
+    next_particle = (next_particle + 1) % MAX_PARTICLES;
+    int a = rng_range(ANGLE_COUNT);
+    int s = (speed >> 1) + rng_range(speed >> 1);
+    p->x = x;
+    p->y = y;
+    p->z = z;
+    p->vx = fixmul(icos(a), s);
+    p->vy = fixmul(isin(a), s);
+    p->vz = (rng_range(speed) + (speed >> 1));
+    p->life = 18 + rng_range(18);
+    p->color = color;
+  }
+}
+
+static void update_particles(void){
+  for (int i = 0; i < MAX_PARTICLES; ++i){
+    struct Particle* p = &g_particles[i];
+    if (p->life <= 0) continue;
+    p->life -= 1;
+    int nx = p->x + p->vx;
+    int ny = p->y + p->vy;
+    /* bounce off walls by reversing the blocked axis */
+    if (cell_solid(nx >> 16, p->y >> 16)){
+      p->vx = -(p->vx >> 1);
+      nx = p->x;
+    }
+    if (cell_solid(p->x >> 16, ny >> 16)){
+      p->vy = -(p->vy >> 1);
+      ny = p->y;
+    }
+    p->x = nx;
+    p->y = ny;
+    p->z += p->vz;
+    p->vz -= 0x140;
+    if (p->z < 0){
+      p->z = 0;
+      p->vz = -(p->vz >> 1);
+      p->vx = p->vx >> 1;
+      p->vy = p->vy >> 1;
+    }
+  }
+}
+
+static void add_light(int x, int y, int radius){
   if (g_light_count >= MAX_LIGHTS) return;
   struct Light* l = &g_lights[g_light_count++];
   l->x = x;
   l->y = y;
   l->radius = radius;
-  l->strength = strength;
-  l->scale = udiv32(strength << 20, radius);
 }
 
 /* ---- Projectiles ---- */
@@ -614,9 +703,17 @@ static void damage_monster(struct Monster* m, int amount){
     g_stats.score += kinds[m->kind].score * g_stats.depth;
     g_stats.kills += 1;
     spawn_effect(EFFECT_GEM_PUFF, m->x, m->y, kinds[m->kind].z + kinds[m->kind].size / 2);
+    spawn_burst(m->x, m->y, kinds[m->kind].z + kinds[m->kind].size / 2, 10, 0x08F6, 0x1000);
     sfx(SFX_MONSTER_DIE);
-    /* slain creatures sometimes leave a crystal behind */
-    if (rng_range(100) < 35){
+    if (m->kind == MON_WARDEN){
+      /* the Warden carries the rune key to the Heart's seal */
+      add_item(ITEM_KEY, m->cx, m->cy);
+      spawn_burst(m->x, m->y, FIX_HALF, 24, 0x0BFA, 0x1800);
+      spawn_effect(EFFECT_FIRE_PUFF, m->x, m->y, FIX_HALF);
+      sfx(SFX_EXPLODE);
+      g_stats.shake = 20;
+    } else if (rng_range(100) < 35){
+      /* slain creatures sometimes leave a crystal behind */
       add_item(ITEM_CRYSTAL, m->cx, m->cy);
     }
   } else {
@@ -627,7 +724,11 @@ static void damage_monster(struct Monster* m, int amount){
 static void explode(struct Projectile* p){
   p->active = 0;
   int kind = p->kind;
-  spawn_effect(kind == SHOT_ENEMY ? EFFECT_GEM_PUFF : EFFECT_FIRE_PUFF, p->x, p->y, FIX_HALF - 0x2000);
+  int effect = kind == SHOT_ENEMY ? EFFECT_PINK_PUFF : (kind == SHOT_FIRE ? EFFECT_FIRE_PUFF : EFFECT_SPARK_PUFF);
+  spawn_effect(effect, p->x, p->y, FIX_HALF - 0x2000);
+  int color = kind == SHOT_ENEMY ? 0x0B5F : (kind == SHOT_FIRE ? 0x03AF : 0x0FE8);
+  spawn_burst(p->x - (p->vx >> 1), p->y - (p->vy >> 1), FIX_HALF - 0x1000,
+              kind == SHOT_FIRE ? 14 : 7, color, kind == SHOT_FIRE ? 0x1400 : 0x0C00);
   if (kind == SHOT_FIRE){
     sfx(SFX_EXPLODE);
     g_stats.shake = 10;
@@ -679,8 +780,8 @@ static void update_shots(int px, int py){
       }
     }
     if (p->active){
-      int radius = p->kind == SHOT_FIRE ? 0x30000 : 0x20000;
-      add_light(p->x, p->y, radius, p->kind == SHOT_FIRE ? 7 : 5);
+      int radius = p->kind == SHOT_FIRE ? 0x30000 : 0x1C000;
+      add_light(p->x, p->y, radius);
     }
   }
 }
@@ -745,8 +846,15 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
     player_hurt(k->damage);
     return;
   }
+  /* the Warden winds up (charge frame) before each volley */
+  if (k->ranged == 2 && m->attack_t == 0 && here <= 10 && line_clear(m->x, m->y, px, py)){
+    m->attack_t = WARDEN_CHARGE_TICKS;
+    m->cooldown = WARDEN_CHARGE_TICKS;
+    sfx(SFX_GROWL);
+    return;
+  }
   /* ranged: shoot when the player is visible and not too far */
-  if (k->ranged && here <= 8 && line_clear(m->x, m->y, px, py)){
+  if (k->ranged && here <= (k->ranged == 2 ? 10 : 8) && line_clear(m->x, m->y, px, py)){
     int dx = px - m->x;
     int dy = py - m->y;
     int d = approx_dist(dx, dy);
@@ -757,9 +865,16 @@ static void think(struct Monster* m, int index, int pcx, int pcy, int px, int py
       int vx = fixmul(fixmul(dx, inv), speed);
       int vy = fixmul(fixmul(dy, inv), speed);
       spawn_shot(SHOT_ENEMY, m->x, m->y, vx, vy, false);
+      if (k->ranged == 2){
+        /* a fan of three: the center shot plus two turned by ~14 degrees */
+        int c = icos(160);
+        int sn = isin(160);
+        spawn_shot(SHOT_ENEMY, m->x, m->y, fixmul(vx, c) - fixmul(vy, sn), fixmul(vx, sn) + fixmul(vy, c), false);
+        spawn_shot(SHOT_ENEMY, m->x, m->y, fixmul(vx, c) + fixmul(vy, sn), fixmul(vy, c) - fixmul(vx, sn), false);
+      }
       sfx(SFX_ENEMY_SHOOT);
     }
-    m->attack_t = 20;
+    m->attack_t = k->ranged == 2 ? 0 : 20;
     m->cooldown = k->attack_ticks;
     return;
   }
@@ -835,6 +950,7 @@ static void update_items(int pcx, int pcy){
         g_stats.crystals += 1;
         g_stats.score += 10 * g_stats.depth;
         spawn_effect(EFFECT_GEM_PUFF, x, y, 0x3000);
+        spawn_burst(x, y, 0x2000, 8, 0x0CFA, 0x0A00);
         sfx(SFX_CRYSTAL);
         it->active = 0;
         break;
@@ -895,6 +1011,7 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
   update_monsters(pcx, pcy, px, py);
   update_shots(px, py);
   update_items(pcx, pcy);
+  update_particles();
   for (int i = 0; i < MAX_EFFECTS; ++i){
     struct Effect* e = &g_effects[i];
     if (!e->active) continue;
@@ -905,6 +1022,14 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
 
 /* Queue billboards and lights for everything visible this frame. */
 void world_draw(int frame){
+  for (int i = 0; i < torch_count; ++i){
+    struct Torch* t = &torches[i];
+    int flicker = (frame + t->phase) >> 2;
+    struct Billboard* b = add_billboard(t->x, t->y, 0x5000, 0x7000, SPR_TORCH + (flicker & 3));
+    if (b) b->flags = BB_FULLBRIGHT;
+    /* the light breathes a little: radius 2.6..3.0 cells */
+    add_light(t->x, t->y, 0x29000 + ((isin(frame * 37 + t->phase * 64) + FIX_ONE) >> 4));
+  }
   for (int i = 0; i < MAX_ITEMS; ++i){
     struct Item* it = &g_items[i];
     if (!it->active) continue;
@@ -915,7 +1040,7 @@ void world_draw(int frame){
       case ITEM_CRYSTAL:
         b = add_billboard(x, y, 0, 26000, SPR_CRYSTAL + ((it->phase >> 3) & 3));
         if (b) b->light = 2;
-        add_light(x, y, 0x18000, 3);
+        add_light(x, y, 0x14000);
         break;
       case ITEM_POTION_HP:
         add_billboard(x, y, 0, 24000, SPR_POTION_HP);
@@ -930,12 +1055,12 @@ void world_draw(int frame){
       case ITEM_PORTAL:
         b = add_billboard(x, y, 6000, 54000, SPR_PORTAL + ((it->phase >> 3) & 3));
         if (b) b->flags = BB_FULLBRIGHT;
-        add_light(x, y, 0x40000, 6);
+        add_light(x, y, 0x28000);
         break;
       case ITEM_HEART:
         b = add_billboard(x, y, 0, 60000, SPR_CRYSTAL + ((it->phase >> 2) & 3));
         if (b) b->flags = BB_FULLBRIGHT;
-        add_light(x, y, 0x50000, 8);
+        add_light(x, y, 0x30000);
         break;
       default:
         break;
@@ -948,9 +1073,11 @@ void world_draw(int frame){
     int frame_index = (m->anim >> 3) % k->frames;
     if (m->kind == MON_EYE){
       frame_index = m->attack_t > 0 ? 4 : ((m->anim >> 6) % 8 == 7 ? 3 : (m->anim >> 5) % 3);
+    } else if (m->kind == MON_WARDEN){
+      frame_index = m->attack_t > 0 ? 2 : (m->anim >> 5) & 1;
     }
     int z = k->z;
-    if (m->kind == MON_BAT || m->kind == MON_EYE || m->kind == MON_WRAITH){
+    if (m->kind == MON_BAT || m->kind == MON_EYE || m->kind == MON_WRAITH || m->kind == MON_WARDEN){
       z += isin(m->anim * 40 + i * 300) >> 4;   /* hover bob */
     }
     int size = k->size;
@@ -958,6 +1085,10 @@ void world_draw(int frame){
     struct Billboard* b = add_billboard(m->x, m->y, z, size, k->sprite + frame_index);
     if (b && m->flash > 0 && (m->flash & 2)) b->flags = BB_FLASH;
     if (b && m->kind == MON_WRAITH) b->light = 1;
+    if (m->kind == MON_WARDEN){
+      if (b) b->light = 2;
+      add_light(m->x, m->y, m->attack_t > 0 ? 0x30000 : 0x20000);
+    }
   }
   for (int i = 0; i < MAX_SHOTS; ++i){
     struct Projectile* p = &g_shots[i];
@@ -969,10 +1100,13 @@ void world_draw(int frame){
   for (int i = 0; i < MAX_EFFECTS; ++i){
     struct Effect* e = &g_effects[i];
     if (!e->active) continue;
-    int base = e->kind == EFFECT_FIRE_PUFF ? SPR_PUFF_FIRE : SPR_PUFF_GEM;
+    int base = SPR_PUFF_GEM;
+    if (e->kind == EFFECT_FIRE_PUFF) base = SPR_PUFF_FIRE;
+    else if (e->kind == EFFECT_SPARK_PUFF) base = SPR_PUFF_SPARK;
+    else if (e->kind == EFFECT_PINK_PUFF) base = SPR_PUFF_PINK;
     struct Billboard* b = add_billboard(e->x, e->y, e->z - 0x3000 - e->t * 0x200, 30000 + e->t * 1500, base + (e->t >> 2));
     if (b) b->flags = BB_FULLBRIGHT;
-    if (e->kind == EFFECT_FIRE_PUFF && e->t < 8) add_light(e->x, e->y, 0x30000, 8 - e->t);
+    if (e->kind == EFFECT_FIRE_PUFF && e->t < 8) add_light(e->x, e->y, 0x40000 - e->t * 0x6000);
   }
   (void)frame;
 }
@@ -985,4 +1119,17 @@ int world_monsters_left(void){
 /* Monster flow distance of a cell (for the automap's danger hints). */
 int world_flow(int cx, int cy){
   return flow[cell_at(cx, cy)];
+}
+
+/* The awake Warden's health, for the boss bar; false when there is none. */
+bool world_boss(int* hp, int* max_hp){
+  for (int i = 0; i < MAX_MONSTERS; ++i){
+    struct Monster* m = &g_monsters[i];
+    if (m->alive && m->kind == MON_WARDEN && m->awake && flow[cell_at(m->cx, m->cy)] <= 10){
+      *hp = m->hp;
+      *max_hp = kinds[MON_WARDEN].hp;
+      return true;
+    }
+  }
+  return false;
 }

@@ -70,10 +70,13 @@ LIGHT_FULL = 11
 FOG = np.array([2.0, 3.0, 8.0])
 
 
+WARM = np.array([64.0, 34.0, 6.0])   # overbright light leans toward torch orange
+
+
 def light_factor(level):
     if level <= LIGHT_FULL:
         return (level / LIGHT_FULL) ** 1.15
-    return 1.0 + (level - LIGHT_FULL) * 0.16
+    return 1.0 + (level - LIGHT_FULL) * 0.11
 
 
 def to12(rgb):
@@ -94,7 +97,7 @@ def build_shade_tables():
             if f <= 1.0:
                 c = PALETTE[i] * f + FOG * (1.0 - f)
             else:
-                c = PALETTE[i] * f + (f - 1.0) * 40.0
+                c = PALETTE[i] * (1.0 + (f - 1.0) * 0.6) + (f - 1.0) * WARM * 2.2
             tables[level, i] = pack12(to12(c))
     return tables
 
@@ -820,6 +823,81 @@ def to_sprite_pixels(img, full_table):
     return [0xF000 if v == 0 else int(full_table[v]) for v in flat]
 
 
+def sprite_torch(phase):
+    """Wall torch: iron bracket and a flickering flame (phase 0..3)."""
+    c = Canvas()
+    rng = np.random.default_rng(31 + phase)
+    # bracket and handle
+    for y in range(18, 31):
+        c.set(15, y, WOOD, 5)
+        c.set(16, y, WOOD, 7)
+        c.set(17, y, WOOD, 4)
+    for x in range(12, 21):
+        c.set(x, 18, GRAY, 6 + (x == 12) * 4)
+        c.set(x, 19, GRAY, 4)
+    c.set(12, 17, GRAY, 8)
+    c.set(20, 17, GRAY, 8)
+    # flame: stacked shrinking blobs swaying with the phase
+    sway = [0.0, 0.8, 0.0, -0.8][phase % 4]
+    height = 12 + rng.integers(-1, 2)
+    for y in range(17 - height, 18):
+        t = (17 - y) / height
+        half = 3.6 * (1 - t) ** 0.7 + 0.4
+        cx = 16 + sway * t * 2 + np.sin(t * 6 + phase) * 0.6
+        for x in range(SPR):
+            dx = abs(x + 0.5 - cx)
+            if dx <= half:
+                core = 1 - dx / half
+                if t < 0.45 and core > 0.45:
+                    c.set(x, y, GOLD, 13 + core * 2)
+                elif core > 0.25:
+                    c.set(x, y, FIRE, 10 + core * 4 - t * 3)
+                else:
+                    c.set(x, y, RED, 9 - t * 3)
+    return c.px
+
+
+def sprite_warden(phase):
+    """The Warden: a great eye sealed in a dioptase crystal shell, ringed by
+    spikes. Phase 0/1 idle (iris drifts), 2 charging (white-hot iris)."""
+    c = Canvas()
+    # spikes
+    for k in range(10):
+        a = k * 2 * np.pi / 10 + 0.3
+        for r in np.linspace(9, 15.5, 14):
+            w = (15.5 - r) / 6.5 * 1.6
+            for o in np.linspace(-w, w, 4):
+                x = 16 + np.cos(a) * r - np.sin(a) * o
+                y = 15 + np.sin(a) * r + np.cos(a) * o
+                c.set(x, y, GEM, 6 + (r < 12) * 3 - (o > 0) * 2)
+    # faceted shell
+    shaded_blob(c, 16, 15, 10.5, 10.5, GEM, base=8, spec=False)
+    for y in range(SPR):
+        for x in range(SPR):
+            dx, dy = x + 0.5 - 16, y + 0.5 - 15
+            if dx * dx + dy * dy < 110 and (abs(dx + dy) < 0.6 or abs(dx - dy) < 0.6):
+                c.set(x, y, GEM, 4)
+    # eye
+    look = [(-1.5, 0), (1.5, 0.5), (0, 0)][phase % 3]
+    for y in range(SPR):
+        for x in range(SPR):
+            dx, dy = x + 0.5 - 16, y + 0.5 - 15
+            if (dx / 7.0) ** 2 + (dy / 5.0) ** 2 <= 1.0:
+                c.set(x, y, BONE, 12 - abs(dy) * 0.8)
+            ix, iy = dx - look[0], dy - look[1]
+            d = np.hypot(ix, iy)
+            if d < 3.6:
+                if phase == 2:
+                    c.set(x, y, GOLD if d < 2 else FIRE, 15 - d)
+                else:
+                    c.set(x, y, RED, 11 - d * 1.5)
+            if d < 1.4 and phase != 2:
+                c.set(x, y, GRAY, 1)
+    c.set(14, 12, GRAY, 15)
+    c.outline(DEEP, 1)
+    return c.px
+
+
 SPRITES = []  # (name, 32x32 row-major palette indices)
 
 
@@ -846,6 +924,14 @@ def build_sprites():
         SPRITES.append((f"puff_fire{p}", sprite_puff(p, FIRE)))
     for p in range(4):
         SPRITES.append((f"puff_gem{p}", sprite_puff(p, GEM)))
+    for p in range(4):
+        SPRITES.append((f"puff_spark{p}", sprite_puff(p, ICE)))
+    for p in range(4):
+        SPRITES.append((f"puff_pink{p}", sprite_puff(p, PINK)))
+    for p in range(4):
+        SPRITES.append((f"torch{p}", sprite_torch(p)))
+    for p in range(3):
+        SPRITES.append((f"warden{p}", sprite_warden(p)))
 
 
 FLATS = []  # floor/ceiling textures, row-major
@@ -1121,6 +1207,18 @@ def main():
     full = shade_tables[LIGHT_FULL]
     staff = overlay_staff()
     emit_halfs(out, "overlay_staff", to_sprite_pixels(staff[:32], full) + to_sprite_pixels(staff[32:], full))
+    # casting: the crystal blazes (overbright light level) and sparks ring it
+    glow = staff[:32].copy()
+    glow_table = shade_tables[LIGHT_LEVELS - 1]
+    pix = to_sprite_pixels(glow, full)
+    for y in range(32):
+        for x in range(32):
+            v = int(glow[y, x])
+            if v and v // 16 == GEM:
+                pix[y * 32 + x] = int(glow_table[idx(GEM, min(15, v % 16 + 3))])
+    for (x, y) in ((6, 3), (22, 2), (4, 10), (24, 11), (14, 0), (8, 16), (20, 17)):
+        pix[y * 32 + x] = int(full[idx(GRAY, 15)])
+    emit_halfs(out, "overlay_staff_glow", pix)
     emit_halfs(out, "overlay_cursor", to_sprite_pixels(overlay_cursor(), full))
     out.append("  .align 4")
     # Phase increment per sample for each MIDI note at 25 kHz (2^32 / rate).

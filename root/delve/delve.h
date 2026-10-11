@@ -134,7 +134,11 @@ struct Door {
 #define SPR_ORB_ENEMY 30
 #define SPR_PUFF_FIRE 31   /* 4 frames */
 #define SPR_PUFF_GEM 35    /* 4 frames */
-#define SPR_COUNT 39
+#define SPR_PUFF_SPARK 39  /* 4 frames */
+#define SPR_PUFF_PINK 43   /* 4 frames */
+#define SPR_TORCH 47       /* 4 frames */
+#define SPR_WARDEN 51      /* 3 frames: 0-1 idle, 2 charging */
+#define SPR_COUNT 54
 
 /* One sprite to draw this frame. Positions are world 16.16; `z` is the
  * height of the sprite's bottom edge above the floor and `size` its world
@@ -154,11 +158,12 @@ struct Billboard {
 #define MAX_BILLBOARDS 64
 
 /* ---- World entities ---- */
-#define MONSTER_KINDS 4
+#define MONSTER_KINDS 5
 #define MON_SLIME 0
 #define MON_BAT 1
 #define MON_EYE 2
 #define MON_WRAITH 3
+#define MON_WARDEN 4      /* final-depth boss; carries the rune key */
 
 struct Monster {
   int alive;
@@ -214,6 +219,29 @@ struct Projectile {
 
 #define EFFECT_FIRE_PUFF 0
 #define EFFECT_GEM_PUFF 1
+#define EFFECT_SPARK_PUFF 2
+#define EFFECT_PINK_PUFF 3
+
+/* Spark particle: a single bright pixel with simple ballistics. */
+struct Particle {
+  int x;
+  int y;
+  int z;           /* height above the floor, 16.16 */
+  int vx;          /* per tick, 16.16 */
+  int vy;
+  int vz;
+  int life;        /* ticks left, 0 = free slot */
+  int color;       /* 12-bit 0x0BGR */
+};
+#define MAX_PARTICLES 40
+
+/* Wall torch: a flame billboard just in front of a wall face. */
+struct Torch {
+  int x;
+  int y;
+  int phase;
+};
+#define MAX_TORCHES 16
 
 struct Effect {
   int active;
@@ -225,16 +253,14 @@ struct Effect {
 };
 #define MAX_EFFECTS 24
 
-/* Point light for this frame: adds up to `strength` light levels within
- * `radius` (16.16) of (x, y). */
+/* Point light for this frame: within `radius` (16.16) of (x, y) it adds one
+ * light level per half cell of remaining radius. */
 struct Light {
   int x;
   int y;
   int radius;
-  int strength;
-  int scale;       /* (strength << 20) / radius, for the renderer */
 };
-#define MAX_LIGHTS 12
+#define MAX_LIGHTS 24
 
 #define MAX_HP 100
 #define MAX_MP 100
@@ -290,8 +316,15 @@ struct FlatRow {
   int v;
   int du;
   int dv;
-  unsigned short* floor_shade;
-  unsigned short* ceil_shade;
+  int level;       /* the row's light level before point lights */
+  int unused;
+};
+
+/* A point light as draw_flats_asm() reads it (x, y, radius words). */
+struct FlatLight {
+  int x;
+  int y;
+  int radius;
 };
 
 /* ---- gfx.s ---- */
@@ -308,7 +341,8 @@ void dim_view(unsigned short* view);
 void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
 void tint_view(unsigned short* view, int and_mask, int or_mask);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
-                    unsigned char* floor_tex, unsigned char* ceil_tex);
+                    unsigned char* floor_tex, unsigned char* ceil_tex,
+                    struct FlatLight* lights, int light_count);
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
@@ -319,13 +353,14 @@ extern unsigned char flat_textures[16384];
 #define FLAT_FLOOR_MOSS 2
 #define FLAT_CEILING_ROCK 3
 extern int sin_table[4096];
-extern unsigned char sprite_texels[39936];
-extern unsigned char sprite_spans[2496];
+extern unsigned char sprite_texels[55296];
+extern unsigned char sprite_spans[3456];
 extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
 extern int song_table[12];                    /* per song: row samples, rows, loop, offset */
 extern unsigned char song_data[1152];         /* 4 bytes (lead, arp, bass, drums) per row */
 extern unsigned short overlay_staff[2048];   /* two 32x32 sprites, 12-bit */
 extern unsigned short overlay_cursor[1024];
+extern unsigned short overlay_staff_glow[1024]; /* top staff sprite while casting */
 extern unsigned char font_small[320];
 extern unsigned char font_big[768];
 extern unsigned char font_big_spans[192];
@@ -349,6 +384,8 @@ void render_view(struct Camera* cam);
 void set_light_offset(int levels);
 extern struct Billboard g_bills[MAX_BILLBOARDS];
 extern int g_bill_count;
+extern int g_debug_bills;
+extern int g_debug_visible;
 struct Billboard* add_billboard(int x, int y, int z, int size, int frame);
 
 /* ---- hud.c ---- */
@@ -390,8 +427,11 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved);
 void world_draw(int frame);
 void spawn_shot(int kind, int x, int y, int vx, int vy, bool from_player);
 void spawn_effect(int kind, int x, int y, int z);
+void spawn_burst(int x, int y, int z, int count, int color, int speed);
+extern struct Particle g_particles[MAX_PARTICLES];
 int world_monsters_left(void);
 int world_flow(int cx, int cy);
+bool world_boss(int* hp, int* max_hp);
 
 /* ---- autopilot.c ---- */
 int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp);

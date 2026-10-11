@@ -149,6 +149,31 @@ void render_init(void){
 /* Cast the floor and ceiling over the whole view; walls are drawn on top. */
 static struct FlatRow flat_rows[VIEW_HALF_H];
 
+/* This frame's lights that can reach anything visible: within reach of the
+ * lit area (the torch fog makes surfaces past ~6 cells black anyway) and not
+ * wholly behind the camera. Shared by walls, floors, and billboards. */
+#define MAX_ACTIVE_LIGHTS 8
+#define LIGHT_REACH 0x70000
+static struct FlatLight active_lights[MAX_ACTIVE_LIGHTS];
+static int active_light_count;
+
+static void select_lights(struct Camera* cam){
+  int dir_x = icos(cam->angle);
+  int dir_y = isin(cam->angle);
+  active_light_count = 0;
+  for (int i = 0; i < g_light_count && active_light_count < MAX_ACTIVE_LIGHTS; ++i){
+    struct Light* l = &g_lights[i];
+    int dx = l->x - cam->x;
+    int dy = l->y - cam->y;
+    if (approx_dist(dx, dy) > l->radius + LIGHT_REACH) continue;
+    if (fixmul(dx, dir_x) + fixmul(dy, dir_y) < -l->radius) continue;
+    struct FlatLight* a = &active_lights[active_light_count++];
+    a->x = l->x;
+    a->y = l->y;
+    a->radius = l->radius;
+  }
+}
+
 static void draw_flats(struct Camera* cam){
   for (int k = 0; k < VIEW_HALF_H; ++k){
     struct FlatRow* row = &flat_rows[k];
@@ -156,12 +181,9 @@ static void draw_flats(struct Camera* cam){
     row->v = cam->y + row_v0[k];
     row->du = row_du[k];
     row->dv = row_dv[k];
-    int level = row_level[k] + light_offset;
-    if (level < 0) level = 0;
-    row->floor_shade = shade_tables + level * SHADE_TABLE_SHORTS;
-    row->ceil_shade = row->floor_shade;
+    row->level = row_level[k] + light_offset;
   }
-  draw_flats_asm(flat_rows, g_view, floor_tex, ceil_tex);
+  draw_flats_asm(flat_rows, g_view, floor_tex, ceil_tex, active_lights, active_light_count);
 }
 
 /* Extra light levels at world point (x, y) from this frame's point lights.
@@ -170,13 +192,13 @@ static void draw_flats(struct Camera* cam){
  * with x direction `ray_d`, 1 a y face. */
 static int light_bonus(int x, int y, int face_side, int ray_d){
   int bonus = 0;
-  for (int i = 0; i < g_light_count; ++i){
-    struct Light* l = &g_lights[i];
+  for (int i = 0; i < active_light_count; ++i){
+    struct FlatLight* l = &active_lights[i];
     if (face_side == 0 && ((l->x - x) ^ ray_d) >= 0) continue;
     if (face_side == 1 && ((l->y - y) ^ ray_d) >= 0) continue;
     int d = approx_dist(x - l->x, y - l->y);
     if (d < l->radius){
-      bonus += (((l->radius - d) >> 8) * l->scale) >> 12;
+      bonus += (l->radius - d) >> 15;
     }
   }
   return bonus;
@@ -213,6 +235,7 @@ void render_view(struct Camera* cam){
   }
   floor_tex = flat_textures + g_floor_flat * TEX_BYTES;
   ceil_tex = flat_textures + g_ceiling_flat * TEX_BYTES;
+  select_lights(cam);
   draw_flats(cam);
   int map_x0 = cam->x >> 16;
   int map_y0 = cam->y >> 16;
@@ -308,7 +331,7 @@ void render_view(struct Camera* cam){
     if (side == 1 && ry < 0) tex_x = TEX_SIZE - 1 - tex_x;
     g_zbuffer[x] = dist;
     int level = light_at(dist) - side;
-    if (g_light_count > 0){
+    if (active_light_count > 0){
       int hx;
       int hy;
       if (side == 0){
@@ -330,6 +353,8 @@ void render_view(struct Camera* cam){
 
 struct Billboard g_bills[MAX_BILLBOARDS];
 int g_bill_count;
+int g_debug_bills;     /* billboards queued last frame (fps overlay) */
+int g_debug_visible;   /* of those, in front of the camera */
 static struct Billboard* bill_order[MAX_BILLBOARDS];
 
 /* Queue a sprite for this frame; returns NULL when the list is full. */
@@ -377,7 +402,7 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
     level = LIGHT_FULL + light_offset;
   } else {
     level = light_at(depth) + b->light;
-    if (g_light_count > 0) level += light_bonus(b->x, b->y, -1, 0);
+    if (active_light_count > 0) level += light_bonus(b->x, b->y, -1, 0);
   }
   if (level < 0) level = 0;
   if (level > LIGHT_LEVELS - 1) level = LIGHT_LEVELS - 1;
@@ -407,6 +432,35 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
   }
 }
 
+/* Draw the live spark particles as one- or two-pixel points. */
+static void draw_particles(struct Camera* cam, int dir_x, int dir_y){
+  for (int i = 0; i < MAX_PARTICLES; ++i){
+    struct Particle* p = &g_particles[i];
+    if (p->life <= 0) continue;
+    int dx = p->x - cam->x;
+    int dy = p->y - cam->y;
+    int depth = fixmul(dx, dir_x) + fixmul(dy, dir_y);
+    if (depth < 0x3000) continue;
+    int lateral = fixmul(dy, dir_x) - fixmul(dx, dir_y);
+    int inv = udiv32(PROJ_K << 16, depth);
+    int sx = VIEW_W / 2 + fixmul(lateral, inv);
+    int sy = VIEW_HALF_H + fixmul(FIX_HALF - p->z, inv);
+    if (sx < 0 || sx >= VIEW_W || sy < 0 || sy >= VIEW_H) continue;
+    if (depth >= g_zbuffer[sx]) continue;
+    int color = p->color;
+    if (p->life < 8) color = (color >> 1) & 0x0777;
+    unsigned short* px = g_view + (sx >> 3) * VIEW_COL_GROUP_SHORTS + (sx & 7) + sy * VIEW_ROW_SHORTS;
+    *px = color;
+    if (depth < 0x18000 && sx + 1 < VIEW_W && sy + 1 < VIEW_H){
+      /* close sparks are 2x2; (sx + 1) may cross into the next tile column */
+      unsigned short* right = g_view + ((sx + 1) >> 3) * VIEW_COL_GROUP_SHORTS + ((sx + 1) & 7) + sy * VIEW_ROW_SHORTS;
+      right[0] = color;
+      px[VIEW_ROW_SHORTS] = color;
+      right[VIEW_ROW_SHORTS] = color;
+    }
+  }
+}
+
 /* Draw every queued billboard far-to-near, then clear the queue. */
 static void draw_billboards(struct Camera* cam){
   int dir_x = icos(cam->angle);
@@ -428,5 +482,8 @@ static void draw_billboards(struct Camera* cam){
   for (int i = 0; i < n; ++i){
     draw_billboard(cam, bill_order[i], dir_x, dir_y);
   }
+  draw_particles(cam, dir_x, dir_y);
+  g_debug_bills = g_bill_count;
+  g_debug_visible = n;
   g_bill_count = 0;
 }
