@@ -47,11 +47,22 @@ Host rules plus the full-emulator guest check:
 ```sh
 make -C root/emberfall test
 make emberfall_guest.summary-test TEST_RUNS=1
+make emberfall_e2e.summary-test TEST_RUNS=1
 ```
 
 The guest check runs the shipping `emberfall --selftest` binary headless. It
 exercises rules, upgrades, display mappings, raw-mode traps, and score order
 without needing a VGA window. It does not replace a visual playthrough.
+
+The e2e check runs `emberfall --e2e`: 256 scripted frames driven by raw PS/2
+words through a stdin pipe, covering movement and aliases, all casts, pause,
+help, confirm, upgrade picks, restart, score, streaks, level-up, death, game
+over, and best-score persistence. It reads back tile text and pixel words from
+real MMIO, asserts zero transparent-marker leaks, times every frame in
+jiffies, and dumps the framebuffers to SD1 output. The render below is composited
+from one such dumped guest framebuffer, not drawn by hand.
+
+![Emberfall e2e guest framebuffer](e2e_shot.png)
 
 ## Device contracts
 

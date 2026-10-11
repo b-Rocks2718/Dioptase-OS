@@ -11,6 +11,7 @@
 #include "input.h"
 #include "audio.h"
 #include "save.h"
+#include "e2e.h"
 
 #include "../crt/sys.h"
 #include "../crt/print.h"
@@ -150,6 +151,9 @@ int main(int argc, char** argv) {
   int f = 0;
   if (argc > 1 && streq(argv[1], "--selftest")) {
     return run_selftest();
+  }
+  if (argc > 1 && streq(argv[1], "--e2e")) {
+    return run_e2e();
   }
   /* Require the VGA window: pacing follows the 60 Hz frame counter. */
   {

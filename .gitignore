@@ -15,6 +15,7 @@ debugging/*
 # Guest binaries rebuilt from source by `make test-sbin-<name>` / `make root-sbin`
 tests/*.dir/sbin/init
 tests/emberfall_guest.dir/sbin/emberfall
+tests/emberfall_e2e.dir/sbin/emberfall
 tests/*.dir/test/init
 root/hello/bmake
 root/snake/init
