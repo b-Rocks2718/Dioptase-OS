@@ -386,6 +386,7 @@ struct FlatLight {
 
 /* ---- gfx.s ---- */
 void blit_strip(volatile short* fb, unsigned short* view, int g0, int g1);
+void blit_groups(volatile short* fb, unsigned short* view, unsigned char* own, int g0, int g1);
 void copy_words(void* dst, void* src, unsigned words);
 void draw_wall(unsigned short* dst, int count, unsigned char* texcol,
                int texpos, int texstep, unsigned short* shade, int half_left);
@@ -457,7 +458,9 @@ void render_init(void);
 void render_view(struct Camera* cam, struct ViewExtras* extras);
 void set_light_offset(int levels);
 int get_light_offset(void);
-void render_view_strip(struct Camera* cam, struct ViewExtras* extras, int g0, int g1);
+void render_view_groups(struct Camera* cam, struct ViewExtras* extras,
+                        unsigned char* owner, int me);
+void render_blit_own(void);
 extern struct Billboard g_bills[MAX_BILLBOARDS];
 extern int g_bill_count;
 extern int g_debug_bills;
@@ -522,9 +525,21 @@ bool world_line_clear(int x0, int y0, int x1, int y1);
 int world_flow(int cx, int cy);
 bool world_boss(int* hp, int* max_hp);
 
+/* ---- Cores ----
+ * With four or more cores DELVE pins its busy processes (pin_core) so they
+ * never share one: the synthesizer on CORE_AUDIO, which also absorbs the
+ * terminal and kernel work, the game process on CORE_GAME, and render worker
+ * i on CORE_WORKER0 + i. A pin to a core the machine lacks fails and is
+ * ignored, leaving that process to the scheduler. */
+#define CORE_AUDIO 0
+#define CORE_GAME 1
+#define CORE_WORKER0 2
+
 /* ---- parallel.c ---- */
 void parallel_start(void);
 void parallel_render(struct Camera* cam, struct ViewExtras* extras, bool game_overlays);
+void parallel_finish(void);
+int parallel_game_groups(void);
 void parallel_stop(void);
 int parallel_workers(void);
 void parallel_toggle(void);

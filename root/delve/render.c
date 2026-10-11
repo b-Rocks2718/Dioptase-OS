@@ -12,10 +12,10 @@
  * reciprocals come from tables, and ray directions step incrementally across
  * the view, so a new camera angle (the player turns freely) costs little.
  *
- * Rendering can be confined to a strip of 8-pixel column groups so several
- * processes can share a frame (parallel.c); all per-strip state is
- * process-local. The back buffer's band-tiled layout is described in delve.h
- * ("Screen layout").
+ * Rendering can be confined to a set of 8-pixel column groups so several
+ * processes can share a frame (parallel.c); all per-frame renderer state is
+ * process-local. The back buffer's layout is described in delve.h ("Screen
+ * layout").
  */
 
 static void draw_billboards(struct Camera* cam);
@@ -180,10 +180,13 @@ static void build_ray_tables(int angle){
 /* Light levels added to everything (negative during fades). */
 static int light_offset;
 
-/* Screen columns this process renders: [strip_x0, strip_x1). With parallel
- * rendering each process draws one tile-aligned strip of the view. */
+/* The column groups this process renders this frame (own[g] != 0), and the
+ * columns [strip_x0, strip_x1) those groups span. With parallel rendering
+ * each process owns a strip of the view (parallel.c); the per-group test
+ * also allows owned groups that are not contiguous. */
 static int strip_x0;
 static int strip_x1 = VIEW_W;
+static unsigned char own[40];         /* VIEW_GROUPS */
 
 /* Shift every light level by `levels` (negative darkens; used for fades). */
 void set_light_offset(int levels){
@@ -259,7 +262,10 @@ static void select_lights(struct Camera* cam){
   }
 }
 
-/* Set each floor row's starting texture coordinates and light, then cast. */
+/* Set each floor row's starting texture coordinates and light, then cast
+ * groups [strip_x0 / 8, strip_x1 / 8). Groups this process does not own have
+ * every row pair marked hidden (flat_skip), so draw_flats_asm only advances
+ * their texture coordinates and draws nothing there. */
 static void draw_flats(struct Camera* cam){
   int g0 = strip_x0 >> 3;
   int g1 = strip_x1 >> 3;
@@ -440,10 +446,10 @@ static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
 
 /* Render the whole view (single-process rendering). */
 void render_view(struct Camera* cam, struct ViewExtras* extras){
-  render_view_strip(cam, extras, 0, VIEW_GROUPS);
+  render_view_groups(cam, extras, NULL, 0);
 }
 
-/* Draw the staff image over this strip of the view, clipped to the view;
+/* Draw the staff image over this process's columns, clipped to the view;
  * only each image column's opaque span is visited. */
 static void draw_staff(struct ViewExtras* e){
   if (e->staff_image < 0) return;
@@ -452,6 +458,7 @@ static void draw_staff(struct ViewExtras* e){
   int x0 = e->staff_x < strip_x0 ? strip_x0 : e->staff_x;
   int x1 = e->staff_x + STAFF_W > strip_x1 ? strip_x1 : e->staff_x + STAFF_W;
   for (int x = x0; x < x1; ++x){
+    if (!own[x >> 3]) continue;
     int c = x - e->staff_x;
     int first = spans[c * 2];
     int top = e->staff_y + first;
@@ -467,12 +474,23 @@ static void draw_staff(struct ViewExtras* e){
   }
 }
 
-/* Render column groups [g0, g1) of the scene seen by `cam` into g_view:
- * cast every column's ray (z-buffer, automap), cast the floor and ceiling
- * except runs the walls will cover, draw walls, billboards, and particles,
- * then the staff and the recolor pass from `extras`, all clipped to the
- * strip. */
-void render_view_strip(struct Camera* cam, struct ViewExtras* extras, int g0, int g1){
+/* Render the column groups g with owner[g] == me (all of them when owner is
+ * NULL) of the scene seen by `cam` into g_view: cast every owned column's ray
+ * (z-buffer, automap), cast the floor and ceiling except runs the walls will
+ * cover, draw walls, billboards, and particles, then the staff and the
+ * recolor pass from `extras`, all limited to the owned groups. */
+void render_view_groups(struct Camera* cam, struct ViewExtras* extras,
+                        unsigned char* owner, int me){
+  int g0 = VIEW_GROUPS;
+  int g1 = 0;
+  for (int g = 0; g < VIEW_GROUPS; ++g){
+    own[g] = owner == NULL || owner[g] == me;
+    if (own[g]){
+      if (g < g0) g0 = g;
+      g1 = g + 1;
+    }
+  }
+  if (g1 == 0) return;
   strip_x0 = g0 * 8;
   strip_x1 = g1 * 8;
   if (cam->angle != table_angle){
@@ -487,26 +505,47 @@ void render_view_strip(struct Camera* cam, struct ViewExtras* extras, int g0, in
   unsigned frac_y = cam->y & 0xFFFF;
   g_seen[(map_y0 * MAP_W + map_x0) & (MAP_CELLS - 1)] = 1;
 
-  for (int x = strip_x0; x < strip_x1; ++x){
-    cast_column(cam, x, map_x0, map_y0, frac_x, frac_y);
+  for (int g = g0; g < g1; ++g){
+    if (!own[g]) continue;
+    for (int x = g * 8; x < g * 8 + 8; ++x){
+      cast_column(cam, x, map_x0, map_y0, frac_x, frac_y);
+    }
   }
-  /* A floor/ceiling row pair k is hidden in a column when k < height / 2. */
+  /* A floor/ceiling row pair k is hidden in a column when k < height / 2;
+   * in groups another process renders, every pair counts as hidden. */
   for (int g = g0; g < g1; ++g){
     int skip = VIEW_HALF_H;
-    for (int x = g * 8; x < g * 8 + 8; ++x){
-      int half = columns[x].height >> 1;
-      if (half < skip) skip = half;
+    if (own[g]){
+      for (int x = g * 8; x < g * 8 + 8; ++x){
+        int half = columns[x].height >> 1;
+        if (half < skip) skip = half;
+      }
     }
     flat_skip[g] = skip;
   }
   draw_flats(cam);
-  for (int x = strip_x0; x < strip_x1; ++x){
-    draw_column(x);
+  for (int g = g0; g < g1; ++g){
+    if (!own[g]) continue;
+    for (int x = g * 8; x < g * 8 + 8; ++x){
+      draw_column(x);
+    }
   }
   draw_billboards(cam);
   draw_staff(extras);
   if (extras->shade_shift >= 0){
-    shade_strip(g_view, g0, g1, extras->shade_and, extras->shade_or, extras->shade_shift);
+    for (int g = g0; g < g1; ++g){
+      if (own[g]){
+        shade_strip(g_view, g, g + 1, extras->shade_and, extras->shade_or, extras->shade_shift);
+      }
+    }
+  }
+}
+
+/* Copy the column groups rendered by the last render_view_groups() call to
+ * the pixel framebuffer. */
+void render_blit_own(void){
+  if (strip_x1 > strip_x0){
+    blit_groups(g_pixel_fb, g_view, own, strip_x0 >> 3, strip_x1 >> 3);
   }
 }
 
@@ -573,7 +612,7 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
   unsigned char* spans = sprite_spans + b->frame * (SPR_SIZE * 2);
 
   for (int x = x0; x < x1; ++x, u += step){
-    if (depth >= columns[x].depth) continue;
+    if (!own[x >> 3] || depth >= columns[x].depth) continue;
     int tc = u >> 16;
     if (tc >= SPR_SIZE) break;
     int span_top = spans[tc * 2];
@@ -608,11 +647,11 @@ static void draw_particles(struct Camera* cam, int dir_x, int dir_y){
     int sx = VIEW_W / 2 + fixmul(lateral, inv);
     int sy = VIEW_HALF_H + fixmul(FIX_HALF - p->z, inv);
     if (sx < strip_x0 || sx >= strip_x1 || sy < 0 || sy >= VIEW_H) continue;
-    if (depth >= columns[sx].depth) continue;
+    if (!own[sx >> 3] || depth >= columns[sx].depth) continue;
     int color = p->color;
     if (p->life < 8) color = (color >> 1) & 0x0777;
     *view_at(sx, sy) = color;
-    if (depth < 0x28000 && sx + 1 < strip_x1 && sy + 1 < VIEW_H){
+    if (depth < 0x28000 && sx + 1 < strip_x1 && own[(sx + 1) >> 3] && sy + 1 < VIEW_H){
       /* closer sparks are 2x2 (the neighbors may sit in another chunk) */
       *view_at(sx + 1, sy) = color;
       *view_at(sx, sy + 1) = color;

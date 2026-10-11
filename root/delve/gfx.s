@@ -86,6 +86,82 @@ blit_strip_same_half:
   bnz  blit_strip_band
   ret
 
+# Copy the column groups g in [g0, g1) with own[g] != 0 from the back buffer
+# to the framebuffer. The copy is blit_strip's, still 32 rows at a time
+# across all the groups, so a band's five framebuffer pages stay in the TLB
+# while every owned group's slice of the band is copied; copying group by
+# group instead would walk all 30 framebuffer pages once per group.
+# Inputs:  r1 = framebuffer pixel (0, 0), r2 = back buffer,
+#          r3 = own: one byte per column group (nonzero = copy it),
+#          r4 = g0, r5 = g1 (0 <= g0 < g1 <= 40).
+# Outputs: none. Clobbers r1-r19.
+  .global blit_groups
+blit_groups:
+  sub  r5, r5, r4              # groups in the range
+  add  r3, r3, r4              # &own[g0]
+  lsl  r6, r4, 4               # g0 * 16: the range's first framebuffer byte in a row
+  add  r1, r1, r6
+  movi r7, 1536
+  mov  r6, r0
+blit_groups_g0:                # r6 = g0 * 1536 (no multiply instruction)
+  cmp  r4, r0
+  bz   blit_groups_g0_done
+  add  r6, r6, r7
+  add  r4, r4, -1
+  jmp  blit_groups_g0
+blit_groups_g0_done:
+  add  r2, r2, r6              # group g0's chunk in the top half
+  movi r12, 624                # framebuffer row stride minus the 16 bytes stored
+  movi r14, 20464              # 32 rows down minus one chunk right: 32 * 640 - 16
+  movi r15, 1024               # from a chunk slice's end to the next chunk's slice
+  movi r13, 6                  # 32-row bands left
+  movi r16, 3                  # bands left in this half
+blit_groups_band:
+  mov  r8, r5                  # groups left in this band
+  mov  r6, r1                  # framebuffer: band's top row, group g0
+  mov  r7, r2                  # back buffer: this band's slice of group g0
+  mov  r9, r3                  # own cursor
+blit_groups_group:
+  lba  r10, [r9], 1
+  cmp  r10, r0
+  bz   blit_groups_skip
+  movi r19, 32                 # rows left in the slice
+blit_groups_row:
+  lwa  r10, [r7], 4
+  lwa  r11, [r7], 4
+  lwa  r17, [r7], 4
+  lwa  r18, [r7], 4
+  swa  r10, [r6], 4
+  swa  r11, [r6], 4
+  swa  r17, [r6], 4
+  swa  r18, [r6], 4
+  add  r6, r6, r12
+  add  r19, r19, -1
+  bnz  blit_groups_row
+  sub  r6, r6, r14             # the next group's top row in this band
+  add  r7, r7, r15             # the same slice of the next group
+  jmp  blit_groups_next
+blit_groups_skip:
+  add  r6, r6, 16              # the next group's columns
+  add  r7, r7, 1536            # the same slice of the next group
+blit_groups_next:
+  add  r8, r8, -1
+  bnz  blit_groups_group
+  # next band: 32 framebuffer rows on; in the back buffer the next 32-row
+  # slice of each chunk, or after three bands the bottom half's first slice
+  movi r6, 20480
+  add  r1, r1, r6
+  add  r2, r2, 512
+  add  r16, r16, -1
+  bnz  blit_groups_same_half
+  movi r6, 59904               # HALF_SKIP: rows 96.. of the same chunks
+  add  r2, r2, r6
+  movi r16, 3
+blit_groups_same_half:
+  add  r13, r13, -1
+  bnz  blit_groups_band
+  ret
+
 # Copy `words` 32-bit words (generic memcpy for word-aligned buffers).
 # Inputs:  r1 = destination, r2 = source, r3 = word count (> 0).
 # Outputs: none. Clobbers r1-r4.

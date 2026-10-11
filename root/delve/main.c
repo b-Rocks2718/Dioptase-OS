@@ -105,6 +105,9 @@ static bool demo;              /* attract mode: the autopilot plays behind the t
 static bool autopilot;         /* the autopilot drives the player (demo or '\\' key) */
 static bool god_mode;          /* cheat: no damage */
 static unsigned game_seed;
+/* The dungeon seed from the command line (`delve seed=N`), or 0 for a new
+ * random dungeon every game. */
+static unsigned fixed_seed;
 static bool show_map;
 static bool show_fps;
 static int fade;               /* light levels removed from the whole view */
@@ -319,7 +322,8 @@ static void reset_stats(void){
 
 /* Start a real game at depth 1 with a new random dungeon seed. */
 static void new_game(void){
-  game_seed = rng_next() ^ (get_vga_frame_counter() * 2654435761u);
+  game_seed = fixed_seed != 0 ? fixed_seed
+                              : rng_next() ^ (get_vga_frame_counter() * 2654435761u);
   demo = false;
   god_mode = false;
   autopilot = false;
@@ -1122,12 +1126,14 @@ static void place_text(int fps){
   }
   hud_text();
   if (show_fps){
-    /* frame rate, billboards queued / visible, lights, render processes */
+    /* frame rate, billboards queued / visible, lights, render processes,
+     * and the game process's share of the 40 column groups */
     char line[40];
     char num[12];
     int n = 0;
-    int values[5] = {fps, g_debug_bills, g_debug_visible, g_light_count, parallel_workers() + 1};
-    for (int i = 0; i < 5; ++i){
+    int values[6] = {fps, g_debug_bills, g_debug_visible, g_light_count, parallel_workers() + 1,
+                     parallel_game_groups()};
+    for (int i = 0; i < 6; ++i){
       format_int(num, values[i]);
       for (int k = 0; num[k]; ++k) line[n++] = num[k];
       line[n++] = ' ';
@@ -1262,13 +1268,26 @@ static void render_frame(void){
   }
 }
 
+/* Read `seed=N` (decimal) from the command line: every game then descends
+ * through the same dungeon, for sharing a run or for repeatable tests. */
+static void parse_args(int argc, char** argv){
+  for (int i = 1; i < argc; ++i){
+    char* a = argv[i];
+    if (a[0] == 's' && a[1] == 'e' && a[2] == 'e' && a[3] == 'd' && a[4] == '='){
+      int pos = 5;
+      fixed_seed = (unsigned)parse_int(a, &pos);
+    }
+  }
+}
+
 /* Set up display, renderer, sound, and scores, then run the frame loop:
  * catch up on elapsed 60 Hz ticks, render and show the view, then update the
  * tile overlays, crosshair, and status bar. */
-int main(void){
+int main(int argc, char** argv){
   /* the render workers run at high priority; so must we, or a worker that
    * lands on our core would preempt the strip we render ourselves */
   request_priority(DIOPTASE_PRIORITY_HIGH);
+  parse_args(argc, argv);
   g_view = (unsigned short*)g_view_words;
   world_init();
   hud_init();
@@ -1277,6 +1296,8 @@ int main(void){
   render_init();
   audio_start();
   parallel_start();
+  /* after the forks, so the children start unpinned and pin themselves */
+  pin_core(CORE_GAME);
   scores_load();
   title_init();
 

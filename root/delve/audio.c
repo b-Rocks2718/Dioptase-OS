@@ -451,6 +451,7 @@ static void synth_main(int fd){
     }
   }
   request_priority(DIOPTASE_PRIORITY_HIGH);
+  pin_core(CORE_AUDIO);
   build_wavetables();
   unsigned last_alive = get_vga_frame_counter();
   int pending = 0;            /* bytes of out_buf not yet accepted */

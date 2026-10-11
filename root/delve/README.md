@@ -20,7 +20,8 @@ make run EMU_VGA=yes
 ```
 
 then type `delve` at the shell prompt. `make run` builds every program under
-`root/`, including this one, into `root/sbin/`.
+`root/`, including this one, into `root/sbin/`. `delve seed=N` descends
+through the same dungeon in every game, for sharing a run with a friend.
 
 ## How to play
 
@@ -120,9 +121,19 @@ page-cache pages across `fork`; the file is unlinked right after mapping, and
 the kernel writes nothing back until the last mapping goes away). Each process
 then copies its own strip to the framebuffer, whose mapping the workers
 inherit. Workers wait by spinning on a frame counter in that shared page —
-blocking pipe reads were tried first and lost to wake-up latency. The first
-game also measures both modes and falls back to a single process if parallel
-turns out slower (for example with fewer cores).
+blocking pipe reads were tried first and lost to wake-up latency.
+
+Three things made this scale. Frames are *pipelined*: the game process renders
+its strip and goes back to its own work (game logic, text, the status bar)
+while the workers finish theirs, instead of all three waiting on each other.
+The game process's strip *adapts* every frame — it takes a column group from
+the workers when it had to wait for them and gives one back when they waited
+for it. And every busy process is *pinned* to its own core with `pin_core()`
+(the synthesizer and the system share the fourth), because two render
+processes sharing a core serialize the frame. Together they took the view from
+about 22 to about 45 frames per second. The first game also measures both
+modes and falls back to a single process if parallel turns out slower (for
+example with fewer cores).
 
 **Sound.** `audio_start()` forks a synthesizer process that owns the PCM
 device: eight voices (wavetables and an LFSR noise channel), a four-channel
