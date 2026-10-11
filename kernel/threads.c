@@ -79,6 +79,21 @@ struct SignalDelivery {
 };
 
 // Select one pending signal for delivery or report that the thread must exit.
+// The caller runs for the current live TCB in kernel mode at the final user
+// return boundary, with interrupts disabled and no lock held. That TCB cannot
+// run on another core at the same time. The saved user frame and address space
+// remain installed; this helper neither switches modes nor changes MMU state.
+//
+// This runs on every final return to user mode, including after each TLB
+// miss, so an empty pending bitmap is detected without state_lock (the lock
+// was about 40% of a TLB miss's cost). Reading it unlocked is safe because,
+// while this thread is live, other cores only ever set its pending bits, under
+// state_lock, and only this thread clears them. The one-word load observes the
+// bitmap either before or after any concurrent sender's update (the memory
+// model is sequentially consistent), so reading zero is equivalent to taking
+// the lock just before that sender did: its bit stays pending for this
+// thread's next final user return, at the latest the next PIT tick while it
+// runs in user mode. A nonzero bitmap takes the lock as before.
 static bool has_unhandled_signal(struct TCB* child,
     struct SignalDelivery* delivery) {
   struct ChildDescriptor* descriptor = child->parent_promise;
@@ -86,10 +101,15 @@ static bool has_unhandled_signal(struct TCB* child,
     return false;
   }
 
-  clh_lock_acquire(&descriptor->state_lock);
-  bool terminate = false;
+  // The mask belongs to this thread alone, so it needs no lock either.
   assert((child->signal_mask & ((1u << MAX_MASKABLE_SIGNAL) - 1)) == child->signal_mask,
     "child signal mask has bits set beyond MAX_MASKABLE_SIGNAL.\n");
+  if (__atomic_load_n((int*)&child->pending_signals) == 0){
+    return false;
+  }
+
+  clh_lock_acquire(&descriptor->state_lock);
+  bool terminate = false;
 
   unsigned current_signals = child->pending_signals & (~child->signal_mask);
   
@@ -515,9 +535,11 @@ void finish_current_signal_handler(void) {
 // - Default action or SIGNAL_KILL: stop() publishes exit and this function
 //   never returns.
 //
-// Ordering: ChildDescriptor.state_lock serializes the pending bitmap with
-// cross-core senders. The current TCB exclusively owns its mask, handler table,
-// and in_signal_handler state under the sequentially-consistent memory model.
+// Ordering: an atomic empty-bitmap read can defer a later concurrent send to
+// the next final return; otherwise ChildDescriptor.state_lock serializes
+// selection and consumption with cross-core senders. The current TCB exclusively
+// owns its mask, handler table, and in_signal_handler state under the
+// sequentially-consistent memory model.
 void process_pending_signals_before_user_return(void) {
   assert(get_cr0() == USER_RETURNABLE_PSR_DEPTH,
     "signal return: final user return requires PSR depth 1.\n");
