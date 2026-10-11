@@ -517,6 +517,11 @@ void handle_command(void){
         sem_close(start_gate);
         wait_child(pid);
 
+        // A program that turned on raw keyboard mode may have crashed or
+        // been killed without turning it off, which would leave the line
+        // editor reading two-byte key records. Leaving raw mode is harmless
+        // when it is already off, so always ask for it before the next prompt.
+        puts(TERMINAL_RAW_KEYBOARD_OFF);
         if (foreground_set == 0){
           // Clearing the foreground slot returns whether that child used a
           // direct display trap. Queue recovery through the terminal pipe so

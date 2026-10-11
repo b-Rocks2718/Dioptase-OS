@@ -46,6 +46,39 @@
   `KEY_RIGHT`, `KEY_UP`, and `KEY_DOWN` byte values.
 - Other raw keycodes are ignored.
 
+### Raw keyboard mode
+
+Programs that need to know how long keys are held (games) can ask the terminal
+to stop translating keys with the Dioptase-private DEC-style mode `68`:
+`ESC [ ? 68 h` turns raw mode on and `ESC [ ? 68 l` turns it off
+(`TERMINAL_RAW_KEYBOARD_ON` / `TERMINAL_RAW_KEYBOARD_OFF` in
+`root/crt/terminal.h`). The mode takes effect when the terminal processes the
+sequence; key events already forwarded stay in the input pipe as they were.
+
+While raw mode is on, every keyboard event, presses and releases alike, is
+written to `STDOUT` as a two-byte record:
+
+| Byte | Meaning |
+| --- | --- |
+| `0` | Keycode as returned by `getkey()` without the release bit (see `../../docs/mem_map.md`; names in `root/crt/ps2.h`) |
+| `1` | `1` (`TERMINAL_RAW_RELEASE`) for a release, `0` for a press |
+
+No Shift or Ctrl translation is applied; programs see the modifier keys as
+records of their own. The terminal still tracks modifier state, and Ctrl-C is
+the one exception: it is not forwarded but turns raw mode off and then behaves
+as in cooked mode (it terminates the foreground child, or writes `0x03` if
+there is none). Turning raw mode off first means a killed program cannot leave
+the keyboard raw, and the releases that follow the Ctrl-C are dropped as
+cooked input instead of reaching the shell. A program that handles
+`SIGNAL_TERMINATE` and keeps running must turn raw mode on again.
+
+Raw mode is also turned off by the shell after every foreground program exits
+(see `shell.md`) and by foreground display recovery. Key records the terminal
+forwarded before it processed the request to leave raw mode stay in the input
+pipe. A program that leaves raw mode before exiting should read and discard
+its input for a moment afterwards, so stray records do not reach the shell's
+line editor (which would see a printable keycode as typed text).
+
 ### Cursor and scrolling behavior
 
 - A newline moves the cursor to column `0` of the next visible row.
@@ -111,6 +144,8 @@ supports the following final bytes:
 | `ESC [ a ; b m` | Apply up to two SGR codes in order | Example: `ESC [ 0 ; 32 m` resets then sets green |
 | `ESC [ ? 25 l` | Hide cursor | |
 | `ESC [ ? 25 h` | Show cursor | |
+| `ESC [ ? 68 h` | Enter raw keyboard mode | Dioptase-private; see "Raw keyboard mode" |
+| `ESC [ ? 68 l` | Leave raw keyboard mode | Dioptase-private |
 
 ### Foreground display recovery
 
@@ -124,6 +159,11 @@ Recovery restores the terminal's established startup state:
 - reload the built-in text tiles
 - set tile scale and both tile scroll registers to `0`
 - hide every sprite by moving it to `HIDDEN_SPRITE_COORD`
+- clear the user-visible part of the pixel framebuffer (pixels `0..75775`,
+  mapped by the terminal with `get_pixel_fb()`) to black, because text tiles
+  are transparent where their pixels are `0xFXXX` and a program's last frame
+  would otherwise show through
+- turn raw keyboard mode off
 - reset circular-scroll state and clear the visible framebuffer
 - home and show the cursor
 - reset saved-cursor, delayed-wrap, blink, and text-color state
@@ -180,7 +220,8 @@ inverse video are ignored.
 - Only CSI sequences beginning with `ESC [` are recognized.
 - The parser supports at most `2` arguments per sequence.
 - Each numeric argument may contain at most `2` decimal digits.
-- `?` is only meaningful as the first argument for `CSI ?25h` and `CSI ?25l`.
+- `?` is only meaningful as the first argument for `CSI ?25h`, `CSI ?25l`,
+  `CSI ?68h`, and `CSI ?68l`.
 - Rows and columns for `H` and `f` are `1`-based and clamped into the visible
   `80x60` screen.
 - Counts for `A`, `B`, `C`, `D`, `L`, and `M` are also clamped to the visible

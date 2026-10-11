@@ -53,6 +53,15 @@ char terminal_buf[TERMINAL_BUF_SIZE];
 bool input_shift_held = false;
 bool input_ctrl_held = false;
 
+// Raw keyboard mode (CSI ? 68 h / l, docs/terminal.md): forward every key
+// event to the foreground program as a two-byte record instead of
+// translating presses into characters.
+bool raw_keyboard = false;
+
+// The terminal's mapping of the pixel framebuffer, used only to blank the
+// layer under the tiles during display recovery (programs may draw there).
+volatile int* PIXEL_FB = NULL;
+
 static void put_terminal_char(char c);
 
 // Return the minimum signed integer without overflowing its negation logic.
@@ -158,8 +167,39 @@ static void handle_ctrl_key(short key){
   }
 }
 
+// Raw keyboard mode: forward one event as a two-byte record (keycode, then
+// TERMINAL_RAW_RELEASE or 0). Modifier state is still tracked, both so the
+// cooked translation is right when raw mode ends with Shift held and so Ctrl-C
+// keeps working. Ctrl-C is not forwarded: it ends raw mode and then acts as
+// in cooked mode (terminate the foreground program, or write 0x03 if there is
+// none). Ending raw mode first means a killed program cannot leave the
+// keyboard raw, and the key releases that follow are dropped as cooked input
+// instead of reaching the shell as records.
+static void forward_raw_keyboard_event(short key){
+  bool release = (key & 0xFF00) != 0;
+  int code = key & 0xFF;
+  if (code == KEY_LEFT_CTRL || code == KEY_RIGHT_CTRL){
+    input_ctrl_held = !release;
+  } else if (code == KEY_LEFT_SHIFT || code == KEY_RIGHT_SHIFT){
+    input_shift_held = !release;
+  }
+  if (!release && input_ctrl_held && code == 'c'){
+    raw_keyboard = false;
+    handle_ctrl_key((short)code);
+    return;
+  }
+  char record[TERMINAL_RAW_RECORD_BYTES];
+  record[0] = (char)code;
+  record[1] = release ? TERMINAL_RAW_RELEASE : 0;
+  write(STDOUT, record, TERMINAL_RAW_RECORD_BYTES);
+}
+
 // Consume one keyboard event and update terminal input state.
 static void handle_keyboard_event(short key){
+  if (raw_keyboard){
+    forward_raw_keyboard_event(key);
+    return;
+  }
   if (key & 0xFF00){
     key = key & 0xFF;
     if (key == KEY_LEFT_SHIFT || key == KEY_RIGHT_SHIFT){
@@ -337,9 +377,18 @@ static void cursor_home(void){
 // Postconditions:
 // - Tile scale and both scroll registers match terminal startup state.
 // - The built-in text tiles are loaded and every sprite is hidden.
+// - The user-mapped part of the pixel framebuffer is black, so a program's
+//   last frame cannot show through transparent tiles later.
+// - Raw keyboard mode is off.
 // - The visible framebuffer, cursor, scrolling, color, saved cursor, wrapping,
 //   and blink state match a freshly cleared terminal.
 static void reset_display_state(void){
+  raw_keyboard = false;
+  if (PIXEL_FB != NULL){
+    for (int i = 0; i < PIXEL_FB_USER_PIXELS / 2; ++i){
+      PIXEL_FB[i] = 0;
+    }
+  }
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
@@ -811,33 +860,37 @@ static bool handle_escape_sequence(char c){
       break;
     }
     case 'l': {
-      // hide the cursor
+      // DEC private mode reset: ?25 hides the cursor, ?68 ends raw keyboard
+      // mode (key presses are translated into characters again)
       if (arg_count < 2){
         break;
       }
       if (escape_args[0][0] != '?'){
         break;
       }
-      if (parse_escape_arg(escape_args[1], escape_arg_lens[1]) != 25){
-        break;
+      int mode = parse_escape_arg(escape_args[1], escape_arg_lens[1]);
+      if (mode == 25){
+        cursor_visible = false;
+      } else if (mode == TERMINAL_RAW_KEYBOARD_CSI_ARG){
+        raw_keyboard = false;
       }
-
-      cursor_visible = false;
       break;
     }
     case 'h': {
-      // show the cursor
+      // DEC private mode set: ?25 shows the cursor, ?68 starts raw keyboard
+      // mode (every key event goes to the program as a two-byte record)
       if (arg_count < 2){
         break;
       }
       if (escape_args[0][0] != '?'){
         break;
       }
-      if (parse_escape_arg(escape_args[1], escape_arg_lens[1]) != 25){
-        break;
+      int mode = parse_escape_arg(escape_args[1], escape_arg_lens[1]);
+      if (mode == 25){
+        cursor_visible = true;
+      } else if (mode == TERMINAL_RAW_KEYBOARD_CSI_ARG){
+        raw_keyboard = true;
       }
-
-      cursor_visible = true;
       break;
     }
     case 'm': {
@@ -893,6 +946,10 @@ void render_bytes(int n){
 int main(void){
   clear_screen();
   TILE_FB = get_tile_fb();
+  volatile short* pixel_fb = get_pixel_fb();
+  if ((int)pixel_fb != -1){
+    PIXEL_FB = (volatile int*)pixel_fb;
+  }
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);

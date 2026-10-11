@@ -1,0 +1,8 @@
+***PASS pixel framebuffer mapping succeeds: got 1 expected 1
+***PASS load past the user window kills the child: got -1 expected -1
+***PASS repeated getter reuses pointer: got 1 expected 1
+***PASS first pixel reads back: got 291 expected 291
+***PASS second page's first pixel reads back: got 1110 expected 1110
+***PASS last mapped pixel reads back: got 1929 expected 1929
+***PASS alias child exit status: got 42 expected 42
+***PASS parent sees the child's pixel: got 2748 expected 2748

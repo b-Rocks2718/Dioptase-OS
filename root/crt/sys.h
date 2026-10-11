@@ -120,6 +120,14 @@ int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 // Map the spritemap MMIO into this process. Each cell is a device register.
 volatile short* get_spritemap(void);
 
+// Map the 320x240 pixel framebuffer (the layer drawn under the tiles; 0x0BGR
+// pixels, row-major) into this process. Only pixels 0..75775 are mapped (rows
+// 0..235 and the first 256 pixels of row 236): the framebuffer's last 2,048
+// bytes share a page with device registers, so they stay kernel-only. Returns
+// (short*)-1 if no virtual range is available.
+#define PIXEL_FB_USER_PIXELS 75776
+volatile short* get_pixel_fb(void);
+
 int signal_child(int child, int signal);
 
 int request_priority(int priority);
