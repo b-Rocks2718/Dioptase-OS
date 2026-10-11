@@ -26,10 +26,14 @@ static int muted = 0;
 static int last_phase = -1;
 static int gameover_saved = 0;
 static int gameover_new_best = 0;
+static int cursor_shown = 0;
+static int cursor_x = -1;
+static int cursor_y = -1;
 
-/* Wait until the VGA frame counter advances past the given value. */
+/* Wait for the next VGA frame, sleeping so the terminal can forward keys. */
 static void wait_frame(unsigned last) {
   while (get_vga_frame_counter() == last) {
+    sleep(1);
   }
 }
 
@@ -186,23 +190,48 @@ int main(int argc, char** argv) {
     if (input.quit) break;
     if (game.phase == PHASE_PLAY) {
       if (last_phase != PHASE_PLAY) {
-        /* Returning from a menu: rebuild the arena from scratch. */
-        render_init();
+        /* Returning from a menu: repaint meadow without rebuilding art. */
+        render_restore_arena();
+        render_hide_cursor();
+        cursor_shown = 0;
       }
       render_frame(&game, muted);
-      render_hide_cursor();
     } else if (game.phase == PHASE_TITLE) {
       if (last_phase != PHASE_TITLE) render_title(&game, &scores);
-      render_cursor(input.mouse_x, input.mouse_y);
+      if (!cursor_shown || input.mouse_x != cursor_x ||
+          input.mouse_y != cursor_y) {
+        render_cursor(input.mouse_x, input.mouse_y);
+        cursor_shown = 1;
+        cursor_x = input.mouse_x;
+        cursor_y = input.mouse_y;
+      }
     } else if (game.phase == PHASE_HELP) {
       if (last_phase != PHASE_HELP) render_help();
-      render_cursor(input.mouse_x, input.mouse_y);
+      if (!cursor_shown || input.mouse_x != cursor_x ||
+          input.mouse_y != cursor_y) {
+        render_cursor(input.mouse_x, input.mouse_y);
+        cursor_shown = 1;
+        cursor_x = input.mouse_x;
+        cursor_y = input.mouse_y;
+      }
     } else if (game.phase == PHASE_PAUSE) {
       if (last_phase != PHASE_PAUSE) render_pause();
-      render_cursor(input.mouse_x, input.mouse_y);
+      if (!cursor_shown || input.mouse_x != cursor_x ||
+          input.mouse_y != cursor_y) {
+        render_cursor(input.mouse_x, input.mouse_y);
+        cursor_shown = 1;
+        cursor_x = input.mouse_x;
+        cursor_y = input.mouse_y;
+      }
     } else if (game.phase == PHASE_LEVELUP) {
       if (last_phase != PHASE_LEVELUP) render_levelup(&game);
-      render_cursor(input.mouse_x, input.mouse_y);
+      if (!cursor_shown || input.mouse_x != cursor_x ||
+          input.mouse_y != cursor_y) {
+        render_cursor(input.mouse_x, input.mouse_y);
+        cursor_shown = 1;
+        cursor_x = input.mouse_x;
+        cursor_y = input.mouse_y;
+      }
     } else if (game.phase == PHASE_GAMEOVER) {
       if (last_phase != PHASE_GAMEOVER) {
         gameover_new_best = save_record(&scores, game.score,
@@ -210,7 +239,13 @@ int main(int argc, char** argv) {
         gameover_saved = 1;
         render_gameover(&game, &scores, gameover_new_best);
       }
-      render_cursor(input.mouse_x, input.mouse_y);
+      if (!cursor_shown || input.mouse_x != cursor_x ||
+          input.mouse_y != cursor_y) {
+        render_cursor(input.mouse_x, input.mouse_y);
+        cursor_shown = 1;
+        cursor_x = input.mouse_x;
+        cursor_y = input.mouse_y;
+      }
     }
     if (game.phase != PHASE_GAMEOVER) gameover_saved = 0;
     last_phase = game.phase;

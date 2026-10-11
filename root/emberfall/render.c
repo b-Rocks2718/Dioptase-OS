@@ -7,7 +7,6 @@
 
 #define TRANSPARENT_TILE 128
 #define TILE_PIXELS 64
-#define TRANSPARENT_PX 0xF000
 
 #define BG_W 320
 #define BG_H 236
@@ -220,7 +219,8 @@ static void art_eyes(short* art, int side, int y, int lx, int rx) {
 static void init_art(void) {
   /* Warden: deep blue robe, warm face, ember staff. */
   art_clear(art_player, 144);
-  art_circle(art_player, 12, 6, 7, 5, 0xA32);
+  art_circle(art_player, 12, 6, 7, 5, 0x410);
+  art_circle(art_player, 12, 6, 7, 4, 0xA32);
   art_circle(art_player, 12, 6, 6, 3, 0xF9B);
   art_eyes(art_player, 12, 5, 4, 6);
   art_px(art_player, 12, 9, 2, 0x00F);
@@ -232,7 +232,8 @@ static void init_art(void) {
   art_px(art_player, 12, 9, 8, 0x641);
   /* Slime: green blob with highlight. */
   art_clear(art_slime, 144);
-  art_circle(art_slime, 12, 6, 7, 5, 0x3C3);
+  art_circle(art_slime, 12, 6, 7, 5, 0x1A1);
+  art_circle(art_slime, 12, 6, 7, 4, 0x3C3);
   art_circle(art_slime, 12, 4, 5, 2, 0x7F6);
   art_eyes(art_slime, 12, 6, 4, 6);
   /* Bat: purple body with wide wings. */
@@ -246,11 +247,13 @@ static void init_art(void) {
       x++;
     }
   }
+  art_circle(art_bat, 12, 6, 6, 4, 0x516);
   art_circle(art_bat, 12, 6, 6, 3, 0xC2E);
   art_eyes(art_bat, 12, 5, 5, 6);
   /* Skeleton: pale skull with dark sockets. */
   art_clear(art_skeleton, 144);
-  art_circle(art_skeleton, 12, 6, 6, 5, 0xDDD);
+  art_circle(art_skeleton, 12, 6, 6, 5, 0x888);
+  art_circle(art_skeleton, 12, 6, 6, 4, 0xDDD);
   art_circle(art_skeleton, 12, 4, 5, 1, 0x111);
   art_circle(art_skeleton, 12, 8, 5, 1, 0x111);
   art_px(art_skeleton, 12, 5, 8, 0x111);
@@ -258,13 +261,15 @@ static void init_art(void) {
   art_px(art_skeleton, 12, 7, 8, 0x111);
   /* Orc: moss skin with tusks. */
   art_clear(art_orc, 144);
-  art_circle(art_orc, 12, 6, 6, 5, 0x4A2);
+  art_circle(art_orc, 12, 6, 6, 5, 0x241);
+  art_circle(art_orc, 12, 6, 6, 4, 0x4A2);
   art_eyes(art_orc, 12, 5, 4, 6);
   art_px(art_orc, 12, 4, 8, 0xFFF);
   art_px(art_orc, 12, 7, 8, 0xFFF);
   art_circle(art_orc, 12, 6, 3, 2, 0x241);
   /* Wraith: cyan shroud fading downward. */
   art_clear(art_wraith, 144);
+  art_circle(art_wraith, 12, 6, 5, 5, 0x396);
   art_circle(art_wraith, 12, 6, 5, 4, 0x7BE);
   {
     int x = 3;
@@ -277,7 +282,8 @@ static void init_art(void) {
   art_eyes(art_wraith, 12, 4, 4, 6);
   /* Golem: gray rock with ember cracks. */
   art_clear(art_golem, 256);
-  art_circle(art_golem, 16, 8, 8, 7, 0x888);
+  art_circle(art_golem, 16, 8, 8, 7, 0x555);
+  art_circle(art_golem, 16, 8, 8, 6, 0x888);
   art_circle(art_golem, 16, 6, 6, 2, 0xAAA);
   art_px(art_golem, 16, 7, 8, 0xF40);
   art_px(art_golem, 16, 8, 9, 0xF40);
@@ -285,11 +291,16 @@ static void init_art(void) {
   art_eyes(art_golem, 16, 6, 5, 9);
   /* Boss: horned shadow with burning eyes. */
   art_clear(art_boss, 576);
-  art_circle(art_boss, 24, 12, 12, 10, 0x419);
+  art_circle(art_boss, 24, 12, 12, 10, 0x208);
+  art_circle(art_boss, 24, 12, 12, 9, 0x419);
   art_circle(art_boss, 24, 12, 12, 7, 0x61B);
   art_px(art_boss, 24, 4, 4, 0xDDD);
+  art_px(art_boss, 24, 5, 4, 0xDDD);
+  art_px(art_boss, 24, 4, 5, 0xDDD);
   art_px(art_boss, 24, 5, 5, 0xDDD);
   art_px(art_boss, 24, 19, 4, 0xDDD);
+  art_px(art_boss, 24, 18, 4, 0xDDD);
+  art_px(art_boss, 24, 19, 5, 0xDDD);
   art_px(art_boss, 24, 18, 5, 0xDDD);
   art_circle(art_boss, 24, 9, 10, 2, 0xF00);
   art_circle(art_boss, 24, 15, 10, 2, 0xF00);
@@ -402,6 +413,35 @@ static void init_bg(void) {
       s++;
     }
   }
+  /* Arena walls: a stone ring just outside the 10 px play margin. */
+  {
+    int x = 0;
+    while (x < 320) {
+      int y = 0;
+      while (y < 6) {
+        short c = ((x + y) & 3) == 0 ? 0x999 : 0x777;
+        if (y == 5) c = 0x555;
+        bg[y * 320 + x] = c;
+        bg[(235 - y) * 320 + x] = c;
+        y++;
+      }
+      x++;
+    }
+    {
+      int y = 6;
+      while (y < 230) {
+        int xx = 0;
+        while (xx < 6) {
+          short c = ((xx + y) & 3) == 0 ? 0x999 : 0x777;
+          if (xx == 5) c = 0x555;
+          bg[y * 320 + xx] = c;
+          bg[y * 320 + 319 - xx] = c;
+          xx++;
+        }
+        y++;
+      }
+    }
+  }
 }
 
 /* Copy the whole meadow into the pixel framebuffer. */
@@ -413,9 +453,9 @@ static void blit_bg_full(void) {
   }
 }
 
-/* Restore one background rectangle, clipped to the arena. */
+/* Restore one background rectangle with row pointers, no multiplies. */
 static void blit_bg_rect(int x, int y, int w, int h) {
-  int yy = y;
+  int row = 0;
   if (x < 0) {
     w += x;
     x = 0;
@@ -427,30 +467,43 @@ static void blit_bg_rect(int x, int y, int w, int h) {
   if (x + w > 320) w = 320 - x;
   if (y + h > 236) h = 236 - y;
   if (w <= 0 || h <= 0) return;
-  while (yy < y + h) {
-    int xx = x;
-    while (xx < x + w) {
-      PIXEL[yy * 320 + xx] = bg[yy * 320 + xx];
-      xx++;
+  while (row < h) {
+    volatile short* dst = PIXEL + (y + row) * 320 + x;
+    short* src = bg + (y + row) * 320 + x;
+    int col = 0;
+    while (col < w) {
+      dst[col] = src[col];
+      col++;
     }
-    yy++;
+    row++;
   }
 }
 
-/* Draw square art with transparency, shake, and clipping. */
+/* Draw square art with hoisted clipping so the inner loop skips bounds. */
 static void blit_art(int x, int y, short* art, int side, int flash) {
+  int ax0 = 0;
+  int ay0 = 0;
+  int ax1 = side;
+  int ay1 = side;
   int ay = 0;
+  short fill = 0xFFF;
   x += shake_x;
   y += shake_y;
-  while (ay < side) {
-    int ax = 0;
-    while (ax < side) {
-      short px = art[ay * side + ax];
-      int dx = x + ax;
-      int dy = y + ay;
-      if (px != TRANSPARENT_PX && dx >= 0 && dx < 320 && dy >= 0 && dy < 236) {
-        if (flash) px = 0xFFF;
-        PIXEL[dy * 320 + dx] = px;
+  if (x < 0) ax0 = -x;
+  if (y < 0) ay0 = -y;
+  if (x + ax1 > 320) ax1 = 320 - x;
+  if (y + ay1 > 236) ay1 = 236 - y;
+  if (ax0 >= ax1 || ay0 >= ay1) return;
+  ay = ay0;
+  while (ay < ay1) {
+    volatile short* dst = PIXEL + (y + ay) * 320 + x + ax0;
+    short* src = art + ay * side + ax0;
+    int ax = ax0;
+    while (ax < ax1) {
+      short px = src[ax - ax0];
+      if (px != TRANSPARENT_PX) {
+        if (flash) px = fill;
+        dst[ax - ax0] = px;
       }
       ax++;
     }
@@ -553,6 +606,13 @@ void render_init(void) {
   render_hide_cursor();
   init_art();
   init_bg();
+  blit_bg_full();
+  clear_old();
+  render_clear_tiles();
+}
+
+/* Repaint the meadow and forget dirty boxes after a menu overlay. */
+void render_restore_arena(void) {
   blit_bg_full();
   clear_old();
   render_clear_tiles();
@@ -676,14 +736,14 @@ static void draw_entities(struct Game* game) {
     if (game->particles[i].active) {
       int x = game->particles[i].x >> 8;
       int y = game->particles[i].y >> 8;
-      int fade = game->particles[i].life * 3 / 4;
-      if (fade > 0) {
+      /* Young sparks draw 2x2 and shrink to one pixel as they fade. */
+      if (game->particles[i].life * 2 > game->particles[i].max_life) {
         blit_px(x, y, game->particles[i].color);
         blit_px(x + 1, y, game->particles[i].color);
-        if (game->particles[i].max_life > 14) {
-          blit_px(x, y + 1, game->particles[i].color);
-          blit_px(x + 1, y + 1, game->particles[i].color);
-        }
+        blit_px(x, y + 1, game->particles[i].color);
+        blit_px(x + 1, y + 1, game->particles[i].color);
+      } else {
+        blit_px(x, y, game->particles[i].color);
       }
       old_part_active[i] = 1;
       old_part_x[i] = x;
@@ -702,24 +762,30 @@ static void draw_bar(int x, int y, int w, int filled, int color) {
   }
 }
 
-/* Two-row HUD plus a bottom hints line. */
+/* Two-row HUD plus boss bar, streak, and a bottom hints line. */
 static void draw_hud(struct Game* game, int muted) {
   int sec = game_seconds(game);
   int mm = sec / 60;
   int ss = sec - mm * 60;
   int hp_fill = 0;
   int xp_fill = 0;
+  int hp_color = 0x1C;
+  int low_hp = 0;
   if (game->player.max_hp > 0) {
     hp_fill = 20 * game->player.hp / game->player.max_hp;
+    low_hp = game->player.hp * 10 < game->player.max_hp * 3;
   }
   if (game->player.xp_next > 0) {
     xp_fill = 20 * game->player.xp / game->player.xp_next;
   }
+  /* Blink the HP bar red when below 30 percent. */
+  if (low_hp && (game->tick & 8) != 0) hp_color = 0xE9;
+  else if (low_hp) hp_color = 0x1C;
   render_text(1, 0, "HP", 0xFF);
-  render_number(4, 0, game->player.hp, 3, 0xFF);
+  render_number(4, 0, game->player.hp, 3, low_hp ? 0xE9 : 0xFF);
   render_text(7, 0, "/", 0x92);
   render_number(8, 0, game->player.max_hp, 3, 0x92);
-  draw_bar(12, 0, 20, hp_fill, 0x1C);
+  draw_bar(12, 0, 20, hp_fill, hp_color);
   render_text(33, 0, "LV", 0xFF);
   render_number(35, 0, game->player.level, 2, 0xFD);
   render_text(38, 0, "TIME", 0xFF);
@@ -740,6 +806,41 @@ static void draw_hud(struct Game* game, int muted) {
   render_number(38, 1, game->best, 6, 0xFD);
   if (muted) render_text(50, 1, "[M]UTED", 0xE9);
   else render_text(50, 1, "[M]usic on", 0x92);
+  /* Recent chains show their multiplier at the right of row one. */
+  if (game->streak >= 3 && game->tick - game->last_kill_tick <= 45) {
+    render_text(63, 1, "STREAK x", 0xFC);
+    render_number(72, 1, game->streak, 2, 0xFC);
+  } else {
+    render_text(63, 1, "          ", 0xFF);
+  }
+  /* A live boss earns a wide bar on row two. */
+  {
+    int b = 0;
+    int boss_hp = -1;
+    int boss_max = 1;
+    while (b < 48) {
+      if (game->enemies[b].active &&
+          game->enemies[b].kind == ENEMY_BOSS) {
+        boss_hp = game->enemies[b].hp;
+        boss_max = game->enemies[b].max_hp;
+        break;
+      }
+      b++;
+    }
+    if (boss_hp >= 0) {
+      int fill = 0;
+      if (boss_max > 0) fill = 30 * boss_hp / boss_max;
+      render_text(1, 2, "BOSS", 0xE9);
+      draw_bar(6, 2, 30, fill, 0xE9);
+      render_number(37, 2, boss_hp, 4, 0xFF);
+    } else {
+      int c = 1;
+      while (c < 42) {
+        put_tile(c, 2, TRANSPARENT_TILE, 0);
+        c++;
+      }
+    }
+  }
   render_text(1, 59, "WASD/arrows move  P pause  M music  Q quit", 0x92);
 }
 
@@ -809,12 +910,14 @@ void render_title(struct Game* game, struct HighScores* hs) {
   while (i < 5) {
     int mm = hs->time_sec[i] / 60;
     int ss = hs->time_sec[i] - mm * 60;
-    render_number(28, 19 + i, hs->score[i], 6, 0xFF);
-    render_number(36, 19 + i, mm, 2, 0x92);
-    render_text(38, 19 + i, ":", 0x92);
-    if (ss < 10) render_text(39, 19 + i, "0", 0x92);
-    render_number(40, 19 + i, ss, ss < 10 ? 1 : 2, 0x92);
-    render_number(44, 19 + i, hs->kills[i], 4, 0x92);
+    render_number(27, 19 + i, hs->score[i], 6, 0xFF);
+    render_number(34, 19 + i, mm, 2, 0x92);
+    render_text(36, 19 + i, ":", 0x92);
+    if (ss < 10) render_text(37, 19 + i, "0", 0x92);
+    render_number(38, 19 + i, ss, ss < 10 ? 1 : 2, 0x92);
+    render_number(41, 19 + i, hs->kills[i], 4, 0x92);
+    render_text(46, 19 + i, "Lv", 0x49);
+    render_number(48, 19 + i, hs->level[i], 2, 0x92);
     i++;
   }
   render_text(28, 30, "WASD/arrows: move", 0x92);
@@ -955,12 +1058,14 @@ void render_gameover(struct Game* game, struct HighScores* hs, int new_best) {
   while (i < 5) {
     int m2 = hs->time_sec[i] / 60;
     int s2 = hs->time_sec[i] - m2 * 60;
-    render_number(28, 25 + i, hs->score[i], 6, 0xFF);
-    render_number(36, 25 + i, m2, 2, 0x92);
-    render_text(38, 25 + i, ":", 0x92);
-    if (s2 < 10) render_text(39, 25 + i, "0", 0x92);
-    render_number(40, 25 + i, s2, s2 < 10 ? 1 : 2, 0x92);
-    render_number(44, 25 + i, hs->kills[i], 4, 0x92);
+    render_number(27, 25 + i, hs->score[i], 6, 0xFF);
+    render_number(34, 25 + i, m2, 2, 0x92);
+    render_text(36, 25 + i, ":", 0x92);
+    if (s2 < 10) render_text(37, 25 + i, "0", 0x92);
+    render_number(38, 25 + i, s2, s2 < 10 ? 1 : 2, 0x92);
+    render_number(41, 25 + i, hs->kills[i], 4, 0x92);
+    render_text(46, 25 + i, "Lv", 0x49);
+    render_number(48, 25 + i, hs->level[i], 2, 0x92);
     i++;
   }
   draw_box(28, 44, 24, 3, 0x1C);

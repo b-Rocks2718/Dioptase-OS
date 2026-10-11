@@ -18,6 +18,11 @@
 #define FIXED_SHIFT 8
 #define FIXED_ONE 256
 
+/* Transparent art marker as signed short so short comparisons match.
+ * Plain 0xF000 is int 61440 while (short)0xF000 is -4096; an uncast
+ * define never equals a short pixel and leaks black boxes on screen. */
+#define TRANSPARENT_PX ((short)0xF000)
+
 /* Bounded pools live inside struct Game so no malloc is needed. */
 #define MAX_ENEMIES 48
 #define MAX_PROJECTILES 64
@@ -202,6 +207,8 @@ struct Game {
   int best;
   int sound;
   int shake_timer;
+  int streak;
+  int last_kill_tick;
 };
 
 /* Start a run with a seed and the saved best score. */

@@ -51,6 +51,20 @@ def main():
     for _ in range(24):
         x, y = rng.randrange(16, 304), rng.randrange(16, 220)
         rect(px, x, y, 2, 2, bgr12(0x888))
+    for x in range(W):
+        for y in range(6):
+            c = bgr12(0x999 if (x + y) % 4 == 0 else 0x777)
+            if y == 5:
+                c = bgr12(0x555)
+            px[y][x] = c
+            px[H - 1 - y][x] = c
+    for y in range(6, H - 6):
+        for xx in range(6):
+            c = bgr12(0x999 if (xx + y) % 4 == 0 else 0x777)
+            if xx == 5:
+                c = bgr12(0x555)
+            px[y][xx] = c
+            px[y][W - 1 - xx] = c
     # Gems.
     for gx, gy in [(60, 60), (120, 180), (200, 90), (260, 160), (90, 120)]:
         c = bgr12(0x5BF)

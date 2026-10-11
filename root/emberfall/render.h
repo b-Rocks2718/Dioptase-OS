@@ -20,6 +20,9 @@ struct HighScores {
 /* Map display windows, set scales, load tiles, build art and background. */
 void render_init(void);
 
+/* Repaint the meadow and forget dirty boxes after a menu overlay. */
+void render_restore_arena(void);
+
 /* Draw one gameplay frame: arena entities plus HUD. */
 void render_frame(struct Game* game, int muted);
 

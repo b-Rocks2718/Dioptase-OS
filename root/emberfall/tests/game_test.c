@@ -187,12 +187,125 @@ static void test_upgrades_bounded(void) {
   printf("upgrade text ok\n");
 }
 
+static void plant_enemy(int slot, int kind, int dx_px, int dy_px, int hp) {
+  game.enemies[slot].active = 1;
+  game.enemies[slot].kind = kind;
+  game.enemies[slot].x = game.player.x + dx_px * 256;
+  game.enemies[slot].y = game.player.y + dy_px * 256;
+  game.enemies[slot].hp = hp;
+  game.enemies[slot].max_hp = hp;
+  game.enemies[slot].speed = 0;
+  game.enemies[slot].damage = 0;
+  game.enemies[slot].slow_timer = 0;
+  game.enemies[slot].hit_timer = 0;
+}
+
+static int count_kind(int kind) {
+  int n = 0;
+  int i = 0;
+  while (i < 64) {
+    if (game.projectiles[i].active && game.projectiles[i].kind == kind) n++;
+    i++;
+  }
+  return n;
+}
+
+static void test_transparency_compare(void) {
+  short px = TRANSPARENT_PX;
+  short black = 0x000;
+  assert(px == TRANSPARENT_PX);
+  assert(black != TRANSPARENT_PX);
+  printf("transparency compare ok\n");
+}
+
+static void test_spell_spread(void) {
+  struct GameInput in;
+  int i;
+  int vy0 = 0;
+  int vy1 = 0;
+  int vy2 = 0;
+  int found = 0;
+  start_run();
+  game.player.spell_level[SPELL_EMBER] = 5;
+  plant_enemy(0, ENEMY_SLIME, 40, 0, 5000);
+  in = blank_input();
+  i = 0;
+  while (i < 10) {
+    game_tick(&game, in);
+    i++;
+  }
+  assert(count_kind(SPELL_EMBER) == 3);
+  i = 0;
+  while (i < 64) {
+    if (game.projectiles[i].active &&
+        game.projectiles[i].kind == SPELL_EMBER) {
+      if (found == 0) vy0 = game.projectiles[i].vy;
+      else if (found == 1) vy1 = game.projectiles[i].vy;
+      else if (found == 2) vy2 = game.projectiles[i].vy;
+      found++;
+    }
+    i++;
+  }
+  assert(found == 3);
+  assert(vy0 != vy1 && vy0 != vy2 && vy1 != vy2);
+  printf("spell spread ok\n");
+}
+
+static void test_fireball_second_target(void) {
+  struct GameInput in;
+  int i;
+  start_run();
+  game.player.spell_level[SPELL_EMBER] = 0;
+  game.player.spell_level[SPELL_FIREBALL] = 4;
+  plant_enemy(0, ENEMY_SLIME, 60, 0, 5000);
+  plant_enemy(1, ENEMY_SLIME, -60, 0, 5000);
+  in = blank_input();
+  i = 0;
+  while (i < 10) {
+    game_tick(&game, in);
+    i++;
+  }
+  assert(count_kind(SPELL_FIREBALL) == 2);
+  printf("fireball second target ok\n");
+}
+
+static void test_separation_streak(void) {
+  struct GameInput in;
+  int i;
+  start_run();
+  plant_enemy(0, ENEMY_SLIME, 0, 0, 5000);
+  plant_enemy(1, ENEMY_SLIME, 0, 0, 5000);
+  /* Speeds stay zero so only separation moves them. */
+  in = blank_input();
+  game_tick(&game, in);
+  assert(game.enemies[0].x != game.enemies[1].x);
+  /* Splash both with one fireball for a same-tick chain. */
+  start_run();
+  game.player.spell_level[SPELL_EMBER] = 0;
+  game.player.spell_level[SPELL_FIREBALL] = 1;
+  plant_enemy(0, ENEMY_SLIME, 6, 0, 1);
+  plant_enemy(1, ENEMY_SLIME, 7, 0, 1);
+  in = blank_input();
+  i = 0;
+  while (i < 40 && game.kills < 2) {
+    game_tick(&game, in);
+    i++;
+  }
+  assert(game.kills == 2);
+  assert(game.streak == 2);
+  printf("separation/streak ok\n");
+}
+
 int main(void) {
   test_move_clamp();
   test_spells_fire();
   test_kill_xp_levelup();
   test_pause_help_gameover();
   test_upgrades_bounded();
+  test_transparency_compare();
+  test_spell_spread();
+  test_fireball_second_target();
+  test_separation_streak();
   printf("ALL EMBERFALL HOST TESTS PASS\n");
   return 0;
 }

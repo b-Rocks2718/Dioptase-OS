@@ -346,8 +346,8 @@ static int nearest_enemy(struct Game* game, int x, int y, int max_d2) {
   return best;
 }
 
-/* Fire one bolt-like projectile toward a target with fixed speed. */
-static void fire_at(struct Game* game, int kind, int tx, int ty, int speed,
+/* Fire one bolt-like projectile toward a target, returning its slot. */
+static int fire_at(struct Game* game, int kind, int tx, int ty, int speed,
     int damage, int pierce, int life) {
   int i = free_projectile(game);
   int dx = 0;
@@ -356,7 +356,7 @@ static void fire_at(struct Game* game, int kind, int tx, int ty, int speed,
   int ady = 0;
   int vx = 0;
   int vy = 0;
-  if (i < 0) return;
+  if (i < 0) return -1;
   dx = tx - game->player.x;
   dy = ty - game->player.y;
   adx = abs_int(dx);
@@ -380,6 +380,7 @@ static void fire_at(struct Game* game, int kind, int tx, int ty, int speed,
   game->projectiles[i].damage = damage;
   game->projectiles[i].pierce = pierce;
   game->projectiles[i].life = life;
+  return i;
 }
 
 /* Ember Bolt: fast single bolts, more at higher levels. */
@@ -392,15 +393,37 @@ static void fire_ember(struct Game* game, int level, int pct) {
   dmg = (10 + (level - 1) * 4) * pct / 100;
   while (n < count) {
     int t = nearest_enemy(game, game->player.x, game->player.y, 40000);
+    int slot = -1;
     if (t < 0) return;
-    fire_at(game, SPELL_EMBER, game->enemies[t].x, game->enemies[t].y,
+    slot = fire_at(game, SPELL_EMBER, game->enemies[t].x, game->enemies[t].y,
       1280, dmg, 0, 90);
-    /* Spread extra bolts by nudging the aim point. */
-    if (n == 1) game->projectiles[63].vy += 128;
-    if (n == 2) game->projectiles[63].vy -= 256;
+    /* Fan extra bolts so each level visibly adds streams. */
+    if (slot >= 0) {
+      if (n == 1) game->projectiles[slot].vy += 160;
+      if (n == 2) game->projectiles[slot].vy -= 160;
+    }
     n++;
   }
   game->sound |= SOUND_SHOOT;
+}
+
+/* Nearest live enemy excluding one slot, within max_d2, or -1. */
+static int nearest_enemy_except(struct Game* game, int x, int y, int max_d2,
+    int skip) {
+  int best = -1;
+  int best_d2 = max_d2 + 1;
+  int i = 0;
+  while (i < 48) {
+    if (i != skip && game->enemies[i].active) {
+      int d2 = dist2_fixed(x, y, game->enemies[i].x, game->enemies[i].y);
+      if (d2 <= max_d2 && d2 < best_d2) {
+        best_d2 = d2;
+        best = i;
+      }
+    }
+    i++;
+  }
+  return best;
 }
 
 /* Fireball: slow heavy orb with a splash on impact. */
@@ -411,8 +434,9 @@ static void fire_fireball(struct Game* game, int level, int pct) {
   fire_at(game, SPELL_FIREBALL, game->enemies[t].x, game->enemies[t].y,
     768, dmg, 0, 120);
   if (level >= 4) {
-    int t2 = nearest_enemy(game, game->player.x, game->player.y, 40000);
-    if (t2 >= 0 && t2 != t) {
+    int t2 = nearest_enemy_except(game, game->player.x, game->player.y,
+      40000, t);
+    if (t2 >= 0) {
       fire_at(game, SPELL_FIREBALL, game->enemies[t2].x, game->enemies[t2].y,
         768, dmg, 0, 120);
     }
@@ -429,9 +453,16 @@ static void fire_frost(struct Game* game, int level, int pct) {
   else if (level >= 3) count = 3;
   while (n < count) {
     int t = nearest_enemy(game, game->player.x, game->player.y, 32400);
+    int slot = -1;
     if (t < 0) return;
-    fire_at(game, SPELL_FROST, game->enemies[t].x, game->enemies[t].y,
+    slot = fire_at(game, SPELL_FROST, game->enemies[t].x, game->enemies[t].y,
       1024, dmg, 0, 80);
+    /* Fan shards so higher levels spray instead of stacking. */
+    if (slot >= 0) {
+      if (n == 1) game->projectiles[slot].vy += 160;
+      else if (n == 2) game->projectiles[slot].vy -= 160;
+      else if (n == 3) game->projectiles[slot].vx += 160;
+    }
     n++;
   }
   game->sound |= SOUND_SHOOT;
@@ -625,6 +656,58 @@ static void update_enemies(struct Game* game) {
     }
     i++;
   }
+  /* Gentle pairwise separation so the horde spreads instead of stacking. */
+  {
+    int a = 0;
+    while (a < 48) {
+      if (game->enemies[a].active) {
+        int b = a + 1;
+        while (b < 48) {
+          if (game->enemies[b].active) {
+            int dx = game->enemies[a].x - game->enemies[b].x;
+            int dy = game->enemies[a].y - game->enemies[b].y;
+            int adx = abs_int(dx) >> 8;
+            int ady = abs_int(dy) >> 8;
+            if (adx < 8 && ady < 8) {
+              int push = 32;
+              if (adx + ady == 0) {
+                /* Exactly stacked: split along x. */
+                game->enemies[a].x += push;
+                game->enemies[b].x -= push;
+              } else if (adx > ady) {
+                if (dx > 0) {
+                  game->enemies[a].x += push;
+                  game->enemies[b].x -= push;
+                } else {
+                  game->enemies[a].x -= push;
+                  game->enemies[b].x += push;
+                }
+              } else {
+                if (dy > 0) {
+                  game->enemies[a].y += push;
+                  game->enemies[b].y -= push;
+                } else {
+                  game->enemies[a].y -= push;
+                  game->enemies[b].y += push;
+                }
+              }
+            }
+          }
+          b++;
+        }
+      }
+      a++;
+    }
+  }
+}
+
+/* Record a kill: streak bonus for chains within one second. */
+static void register_kill(struct Game* game, int kind) {
+  if (game->tick - game->last_kill_tick <= 30) game->streak++;
+  else game->streak = 1;
+  game->last_kill_tick = game->tick;
+  game->kills++;
+  game->score += enemy_score(kind) + (game->streak - 1) * 5;
 }
 
 /* Damage one enemy, returning true when the blow killed it. */
@@ -633,8 +716,7 @@ static int damage_enemy(struct Game* game, int i, int dmg) {
   game->enemies[i].hit_timer = 4;
   if (game->enemies[i].hp > 0) return 0;
   game->enemies[i].active = 0;
-  game->kills++;
-  game->score += enemy_score(game->enemies[i].kind);
+  register_kill(game, game->enemies[i].kind);
   drop_gem(game, game->enemies[i].x, game->enemies[i].y,
     enemy_xp(game->enemies[i].kind));
   if (game->enemies[i].kind == ENEMY_BOSS) {
@@ -728,8 +810,7 @@ static void update_projectiles(struct Game* game) {
       if (game->enemies[e].active && game->enemies[e].hp <= 0) {
         int kind = game->enemies[e].kind;
         game->enemies[e].active = 0;
-        game->kills++;
-        game->score += enemy_score(kind);
+        register_kill(game, kind);
         drop_gem(game, game->enemies[e].x, game->enemies[e].y, enemy_xp(kind));
         burst(game, game->enemies[e].x, game->enemies[e].y, 6, 384, 12, 0xFF0);
       }
@@ -934,6 +1015,8 @@ static void start_run(struct Game* game) {
   game->kills = 0;
   game->score = 0;
   game->shake_timer = 0;
+  game->streak = 0;
+  game->last_kill_tick = -1000;
 }
 
 /* Start on the title screen with a seed and saved best. */
