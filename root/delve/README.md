@@ -1,0 +1,220 @@
+# DELVE — Into the Dioptase Deep
+
+A real-time, first-person dungeon crawler for the Dioptase computer: textured
+3D corridors, flickering torchlight, monsters, spells you aim with the mouse,
+procedurally generated levels, a boss, a full soundtrack, and a high-score table
+saved to disk. Everything — code, art, music — is generated or written for
+this machine; the game runs as an ordinary user program on Dioptase-OS.
+
+| | |
+| --- | --- |
+| ![Title screen over the attract-mode demo, a cracked wall glowing behind the logo](../../docs/delve/title.png) | ![A fireball lights up a corridor](../../docs/delve/fireball.png) |
+| ![The Warden waits at the end of a mossy corridor](../../docs/delve/warden.png) | ![A floating eye fires a bolt beside a seam of dioptase crystals](../../docs/delve/eye.png) |
+
+## Running it
+
+From `Dioptase-OS/`:
+
+```sh
+make run EMU_VGA=yes
+```
+
+then type `delve` at the shell prompt. `make run` builds every program under
+`root/`, including this one, into `root/sbin/`. `delve seed=N` descends
+through the same dungeon in every game, for sharing a run with a friend, and
+`delve sens=N` (1 to 9, default 5) sets the mouse-look speed.
+
+## How to play
+
+You are a crystal-hunter descending through the eight depths of an ancient
+mine. On each depth:
+
+1. Gather the green **dioptase crystals** (score).
+2. Find the **rune key**.
+3. Carry it to the **sealed door** (the iron door with the gold lock) and
+   step through the swirling **portal** behind it to descend.
+
+On depth 8 the key is carried by **the Warden**. Defeat it, break the seal,
+and take the **Heart of Dioptase** to win.
+
+| Keys | Action |
+| --- | --- |
+| `W` `S` / up, down | walk forward / back |
+| `A` `D` | sidestep left / right |
+| mouse | turn (mouse look) |
+| `Q` `E` / left, right | turn with the keys too (tap to fine-tune, hold to spin) |
+| `Shift` | run |
+| left button / `Space` | spark (6 mana) |
+| right button / `F` | fireball (30 mana) |
+| `,` `.` | mouse-look speed down / up |
+| `S` (title screen) | settings: mouse speed, and practice runs from any depth |
+| `M` or `Tab` | automap |
+| `P` | pause (`X` from the pause panel gives up) |
+| `H` (title screen) | how to play |
+| `X` (title screen) | quit to the shell |
+
+**Settings and practice.** `S` on the title screen opens the settings: the
+mouse-look speed (saved in `/delve.cfg`), and a practice run from any depth.
+A practice run starts with the crystals, and the crystal powers, a run would
+typically have gathered by that depth (eleven per depth), and its score is not
+entered in the high-score table.
+
+Spells fly straight through the crosshair at the center of the view. The
+mouse is not grabbed (the emulator cannot hold the host cursor under WSLg),
+so for a big turn either sweep across the window or hold a turn key.
+
+**Two spells, one pool of mana.** Mana comes back only once you stop casting
+for a moment, about six points a second, so a fight is a burst of spells and
+then a breather (or a blue potion, worth 50; each crystal you pick up also
+gives 3).
+
+- A **spark** is cheap, quick, and nearly instant, but weak: two damage.
+  It is the answer to bats (one spark) and to eyes that keep their distance,
+  but **wraiths shrug sparks off**, taking half damage.
+- A **fireball** costs five sparks' worth and flies slowly enough for a bat
+  to flutter out of its way, but its blast hurts everything within a cell
+  and a half, **stuns** whatever it hurts for most of a second, lights up the
+  corridor, and shatters cracked walls. A direct hit kills a wraith outright.
+  Stand back: a blast within about a cell of you **burns you too**.
+
+Crystals are power as well as score: at 10, 25, 40, 60, and 85 crystals your
+sparks, health, mana pool, fireballs, and finally health and mana flow grow
+stronger for the rest of the run. Some walls are cracked, with light seeping
+through — a fireball shatters them and opens a hidden vault.
+Monsters wake when you come near: slimes (often in packs) and bats bite,
+floating eyes spit bolts you can sidestep, and wraiths hit hard. Hold a
+spell key or mouse button to keep casting as fast as your mana allows.
+Ctrl-C quits at any time.
+
+Cheats, for exploring the deep levels quickly: `Shift+G` toggles invulnerable
+mode, `=` takes the portal immediately, `\` hands the controls to the
+autopilot, `` ` `` shows the frame rate (followed by billboards queued and
+visible, active lights, and how many processes render the view), and `[`
+switches between parallel and single-process rendering.
+
+**Held keys.** Normally the terminal forwards only key *presses*, translated
+into characters. DELVE switches it into raw keyboard mode with
+`set_keyboard_raw(1)` (see `docs/terminal.md`), where every press and release
+arrives as a two-byte record, so the game knows exactly which keys are down:
+you walk while `W` is held, and turning speeds up the longer you hold it.
+Ctrl-C still works (the terminal leaves raw mode and ends the game), and the
+shell switches raw mode off again after any program exits.
+
+## How it works
+
+**Three display layers.** The 3D view is 320x192 pixels in the top of the
+pixel framebuffer (shown at 2x, so it fills 640x384 screen pixels), which
+DELVE maps with `get_pixel_fb()`. The status bar is drawn into the pixel rows
+below it, and only redrawn when something on it changes. Text — messages,
+menus, the numbers on the status bar — lives in the tile layer above the
+pixels, as tiles made from the OS's own 8x8 font with a drop shadow, so it
+costs nothing per frame and never flickers. Big headings and the title logo
+are tiles too: each is rendered once into a block of spare tiles (the logo's
+glint repaints just the columns it crosses). The crosshair is a hardware
+sprite, and the staff is drawn into the view itself so it is clipped and
+tinted with the scene.
+
+**A TLB-shaped back buffer.** The view is rendered into a back buffer split at
+the horizon into two halves, each made of 40 chunks of 8x96 pixels stored
+row by row. A wall or sprite column touches one chunk per half, floor casting
+fills one 8-pixel column group at a time, and the copy to the framebuffer
+moves 16-byte chunk rows. That matters because the TLB has 16 entries and a
+miss costs several hundred kernel instructions: the first layout tried, with
+32-row bands, made every tall wall column touch six pages and ran at a third
+of the speed.
+
+**Raycasting.** One DDA ray per screen column finds walls and Wolfenstein-style
+sliding doors (thin panels on a cell's center plane). Ray directions step
+incrementally across the view and their reciprocals come from a table, so a
+new camera angle every frame costs little. Wall textures are 128x128 with
+64x64 and 32x32 mip levels, picked per column by wall height, so close walls
+stay sharp and distant ones do not shimmer. Floors
+and ceilings use row-based floor casting (texture coordinates step linearly
+along each screen row). Billboards (monsters,
+items, torches, spells) are depth-sorted and clipped against a per-column
+z-buffer. Everything is lit through 16 shade tables over a 256-color palette:
+distance fog plus point lights (torches, spells, crystals, the portal) that
+light walls per column and floors per 8-pixel run.
+
+**No multiply instruction.** The ISA has no hardware multiply, so the hot paths
+use a quarter-square table multiplier (`umul16`), a shift/subtract divider,
+and incremental arithmetic; the per-pixel loops are hand-written assembly in
+`gfx.s`. Texture data is page-aligned so a wall column never straddles two
+pages and each 4 KiB flat or sprite frame costs one TLB entry.
+
+**Three cores.** The view is split into three strips of column groups. Two
+forked worker processes render two of them while the game process renders the
+third, all into a back buffer that lives in a shared file mapping (Dioptase-OS
+has no anonymous shared memory, but `MMAP_SHARED` file mappings alias the same
+page-cache pages across `fork`; the file is unlinked right after mapping, and
+the kernel writes nothing back until the last mapping goes away). Each process
+then copies its own strip to the framebuffer, whose mapping the workers
+inherit. Workers wait by spinning on a frame counter in that shared page —
+blocking pipe reads were tried first and lost to wake-up latency.
+
+Three things made this scale. Frames are *pipelined*: the game process renders
+its strip and goes back to its own work (game logic, text, the status bar)
+while the workers finish theirs, instead of all three waiting on each other.
+The game process's strip *adapts* every frame — it takes a column group from
+the workers when it had to wait for them and gives one back when they waited
+for it. And every busy process is *pinned* to its own core with `pin_core()`
+(the synthesizer and the system share the fourth), because two render
+processes sharing a core serialize the frame. Together they took the view from
+about 22 to about 45 frames per second. The first game also measures both
+modes and falls back to a single process if parallel turns out slower (for
+example with fewer cores).
+
+**Sound.** `audio_start()` forks a synthesizer process that owns the PCM
+device. The game sends it one-byte commands through a pipe; a heartbeat and a
+`SIGNAL_TERMINATE` handler make sure it never outlives the game.
+
+The music is a sample-playback tracker. Twenty-one instruments — chord pads,
+strings, choir, flute, cello, horn, harp, celesta, electric piano, music box,
+bass, and a drum kit with timpani and a gong — are synthesized at build time
+by `tools/music.py` (additive, FM, and plucked-string synthesis) and stored as
+8-bit mu-law samples in `music.dat`, which the synthesizer maps at startup.
+Each depth has its own piece, and the title, the Warden, victory, and death
+have theirs (`tools/songs.py`): eleven pieces in all, the depth themes one and
+a half to two and a half minutes long before they loop. A song is an order
+list of patterns of note events on eight channels; each note plays a sample at
+a 16.16 step for its pitch under an attack/decay/sustain/release envelope, and
+a note that cuts another hands it to a tail voice that fades it out instead of
+clicking. The mix runs through a small reverb (two damped feedback combs into
+an allpass, `reverb_mix` in `gfx.s`) for the cavern's space. Mixing needs no
+multiplies: a table holds every mu-law code at each of 64 levels. The sound
+effects are a separate four-voice wavetable synthesizer with pitch and volume
+sweeps. Changing songs fades the old one out.
+
+The synthesizer keeps about 100 ms queued in the device and adds more if it
+ever finds the ring nearly empty (a busy host can stall the emulator), so
+music does not break up; on the seeded benchmark it costs about 3 million
+instructions a second on the core it shares with the terminal.
+
+**Attract mode.** Behind the title screen an autopilot plays the game: it
+breadth-first searches toward potions, keys, crystals, the seal, and
+unexplored space, and turns to fire at monsters in line with it.
+
+**Persistence.** High scores live in `/delve.hi` on the root filesystem;
+`make run` copies the image back into `root/`, so they survive between runs.
+
+## Files
+
+| File | Contents |
+| --- | --- |
+| `delve.h` | shared constants, types, and the screen and back-buffer layout |
+| `main.c` | display setup, main loop, input, player, game states, high scores |
+| `render.c` | raycaster, floor casting, lighting, billboards, particles |
+| `world.c` | level generator, doors, monsters and AI, items, projectiles |
+| `hud.c` | status bar, tile-layer text and banners, back-buffer addressing |
+| `audio.c` | synthesizer process: music tracker, effects, reverb, command protocol |
+| `autopilot.c` | the computer player for the attract mode |
+| `parallel.c` | worker processes that render strips of the view |
+| `gfx.s` | hand-written inner loops and arithmetic helpers |
+| `assets.s` | generated palette, shade tables, textures, sprites, fonts, song tables |
+| `music.dat`, `music_data.h` | generated instrument samples and the music tables' sizes |
+| `tools/gen_assets.py` | the generator for `assets.s`, `music.dat`, and `music_data.h` (`make assets`; needs numpy) |
+| `tools/music.py` | instrument synthesis, the song compiler, and a Python model of the music engine |
+| `tools/songs.py` | the eleven pieces of music |
+
+`python3 tools/gen_assets.py assets.s --preview <dir>` also writes PNG contact
+sheets of the palette, textures, and sprites.
