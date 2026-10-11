@@ -435,22 +435,65 @@ def ceiling_beams(rng=RNG):
     return out
 
 
-SPR = 32  # billboard sprite size
+SPR_DESIGN = 32  # billboard sprites are laid out on a 32x32 design grid
+SPR_SCALE = 2    # and rasterized this many times finer
+SPR = SPR_DESIGN * SPR_SCALE  # billboard sprite size in texels
 
 
 class Canvas:
-    """A 32x32 sprite canvas of palette indices (0 = transparent)."""
+    """A billboard sprite: SPR x SPR palette indices (0 = transparent).
+
+    Shapes are placed in design units (0..32) and rasterized SPR_SCALE times
+    finer. Analytic fills walk the fine pixels with pixels() and draw them with
+    put(), so curves and shading gain real detail; set() fills a whole design
+    pixel, for features that are meant to stay chunky (eyes, rivets)."""
 
     def __init__(self):
         self.px = np.zeros((SPR, SPR), dtype=np.int64)
 
     def set(self, x, y, ramp, shade):
+        """Fill design pixel (x, y) (rounded) with one color."""
         x, y = int(round(x)), int(round(y))
-        if 0 <= x < SPR and 0 <= y < SPR:
-            self.px[y, x] = idx(ramp, max(1, min(15, shade)))
+        v = idx(ramp, max(1, min(15, shade)))
+        for fy in range(y * SPR_SCALE, (y + 1) * SPR_SCALE):
+            for fx in range(x * SPR_SCALE, (x + 1) * SPR_SCALE):
+                if 0 <= fx < SPR and 0 <= fy < SPR:
+                    self.px[fy, fx] = v
+
+    @staticmethod
+    def fine(x, y):
+        """The fine pixel whose center is design point (x + 0.5, y + 0.5)."""
+        return int(round((x + 0.5) * SPR_SCALE - 0.5)), int(round((y + 0.5) * SPR_SCALE - 0.5))
+
+    def put(self, x, y, ramp, shade):
+        """Draw the single fine pixel at design coordinates (x, y), as yielded
+        by pixels() (so x + 0.5, y + 0.5 is its center)."""
+        fx, fy = self.fine(x, y)
+        if 0 <= fx < SPR and 0 <= fy < SPR:
+            self.px[fy, fx] = idx(ramp, max(1, min(15, shade)))
+
+    def at(self, x, y):
+        """Palette index of the fine pixel at design coordinates (x, y)."""
+        fx, fy = self.fine(x, y)
+        return self.px[fy, fx] if 0 <= fx < SPR and 0 <= fy < SPR else 0
+
+    @staticmethod
+    def parity(x, y):
+        """Checkerboard parity of the fine pixel at (x, y), for dithering."""
+        fx, fy = Canvas.fine(x, y)
+        return (fx + fy) % 2
+
+    @staticmethod
+    def pixels(x0=0, y0=0, x1=SPR_DESIGN, y1=SPR_DESIGN):
+        """Yield the design coordinates (x, y) of every fine pixel whose
+        center lies in the design rectangle [x0, x1) x [y0, y1); x + 0.5 and
+        y + 0.5 are the pixel's center, as in a loop over design pixels."""
+        for fy in range(int(np.floor(y0 * SPR_SCALE)), int(np.ceil(y1 * SPR_SCALE))):
+            for fx in range(int(np.floor(x0 * SPR_SCALE)), int(np.ceil(x1 * SPR_SCALE))):
+                yield (fx + 0.5) / SPR_SCALE - 0.5, (fy + 0.5) / SPR_SCALE - 0.5
 
     def outline(self, ramp=GRAY, shade=1):
-        """Add a dark one-pixel outline around opaque pixels."""
+        """Add a dark one-texel outline around opaque texels."""
         src = self.px.copy()
         for y in range(SPR):
             for x in range(SPR):
@@ -468,21 +511,18 @@ def shaded_blob(c, cx, cy, rx, ry, ramp, base=8, light=(-0.55, -0.65), spec=True
     """Fill an ellipse with sphere-like shading lit from `light`."""
     lx, ly = light
     lz = np.sqrt(max(0.0, 1 - lx * lx - ly * ly))
-    for y in range(SPR):
-        for x in range(SPR):
-            nx = (x + 0.5 - cx) / rx
-            ny = (y + 0.5 - cy) / ry
-            if squash_bottom and ny > 0:
-                ny *= 1.0
-            d = nx * nx + ny * ny
-            if d > 1.0:
-                continue
-            nz = np.sqrt(1 - d)
-            diff = max(0.0, nx * lx + ny * ly + nz * lz)
-            shade = base - 4 + diff * 8
-            if spec and diff > 0.93:
-                shade = 15
-            c.set(x, y, ramp, shade)
+    for x, y in c.pixels(cx - rx - 1, cy - ry - 1, cx + rx + 1, cy + ry + 1):
+        nx = (x + 0.5 - cx) / rx
+        ny = (y + 0.5 - cy) / ry
+        d = nx * nx + ny * ny
+        if d > 1.0:
+            continue
+        nz = np.sqrt(1 - d)
+        diff = max(0.0, nx * lx + ny * ly + nz * lz)
+        shade = base - 4 + diff * 8
+        if spec and diff > 0.93:
+            shade = 15
+        c.put(x, y, ramp, shade)
 
 
 def sprite_slime(phase):
@@ -517,14 +557,17 @@ def sprite_bat(phase):
     c = Canvas()
     flap = [-5, 0, 5, 0][phase % 4]
     shaded_blob(c, 16, 16, 4.5, 5.5, PURPLE, base=6)
-    for side in (-1, 1):
-        for i in range(12):
-            x = 16 + side * (4 + i)
-            tip = flap * (i / 11.0)
-            top = 13 + tip - (3 if i < 6 else 1) * np.sin(i / 11.0 * np.pi)
-            bottom = 18 + tip * 0.8 - (i % 4 == 3) * 2
-            for y in range(int(top), int(bottom)):
-                c.set(x, y, PURPLE, 5 + (y == int(top)) * 3)
+    for x, y in c.pixels(0, 0, SPR_DESIGN, SPR_DESIGN):
+        # distance along a wing from the body, in design pixels
+        i = abs(x + 0.5 - 16) - 3.5
+        if not 0 <= i < 12:
+            continue
+        tip = flap * (i / 11.0)
+        top = 13 + tip - (3 - 2 * np.clip((i - 5) / 1.5, 0, 1)) * np.sin(i / 11.0 * np.pi)
+        bottom = 18 + tip * 0.8 - (int(i) % 4 == 3) * 2 * np.sin((i % 1) * np.pi)
+        if top <= y + 0.5 < bottom:
+            vein = abs(((i + 1.5) % 4) - 2) < 0.25
+            c.put(x, y, PURPLE, 5 + (y + 0.5 - top < 0.8) * 3 - vein * 2)
     for ex in (14, 18):
         c.set(ex, 14, RED, 14)
     c.set(15, 18, GRAY, 15)
@@ -544,25 +587,25 @@ def sprite_eye(phase):
     rng = np.random.default_rng(99)
     for _ in range(6):
         a = rng.uniform(0, 2 * np.pi)
-        for r in np.linspace(7, 10.5, 6):
-            c.set(16 + np.cos(a) * r, 15 + np.sin(a) * r, RED, 8)
-            a += rng.uniform(-0.25, 0.25)
+        for r in np.linspace(7, 10.5, 12):
+            c.put(16 + np.cos(a) * r - 0.5, 15 + np.sin(a) * r - 0.5, RED, 8)
+            a += rng.uniform(-0.125, 0.125)
     look = [(0, 0), (-3, 1), (3, 1), (0, 0), (0, 0)][phase % 5]
     ix, iy = 16 + look[0], 15 + look[1]
     iris_ramp = FIRE if phase == 4 else RED
-    for y in range(SPR):
-        for x in range(SPR):
-            d = np.hypot(x + 0.5 - ix, y + 0.5 - iy)
-            if d < 5.5:
-                c.set(x, y, iris_ramp, 6 + (5.5 - d) * 1.4)
-            if d < 2.5:
-                c.set(x, y, GRAY, 1)
+    for x, y in c.pixels(ix - 6, iy - 6, ix + 6, iy + 6):
+        d = np.hypot(x + 0.5 - ix, y + 0.5 - iy)
+        if d < 5.5:
+            # radial streaks in the iris
+            streak = np.sin(np.arctan2(y + 0.5 - iy, x + 0.5 - ix) * 9) * 0.8
+            c.put(x, y, iris_ramp, 6 + (5.5 - d) * 1.4 + streak)
+        if d < 2.5:
+            c.put(x, y, GRAY, 1)
     c.set(ix - 2, iy - 3, GRAY, 15)
     if phase == 3:
-        for y in range(5, 25):
-            for x in range(6, 27):
-                if c.px[y, x] and abs(y - 15) > 2:
-                    c.set(x, y, BONE, 6 if y < 15 else 5)
+        for x, y in c.pixels(6, 5, 27, 25):
+            if c.at(x, y) and abs(y + 0.5 - 15.5) > 2.5:
+                c.put(x, y, BONE, 6 if y < 15 else 5)
     # tentacles below
     for t, x0 in enumerate((10, 16, 22)):
         for i in range(6):
@@ -575,16 +618,15 @@ def sprite_eye(phase):
 def sprite_wraith(phase):
     """Translucent-looking wraith with a waving hem (phase 0..3)."""
     c = Canvas()
-    for y in range(4, 31):
-        half = 4 + min(y - 4, 10) * 0.8
-        for x in range(SPR):
-            dx = x + 0.5 - 16
-            wave = np.sin(x * 0.7 + phase * 1.5) * 2
-            if abs(dx) < half and y < 28 + wave:
-                shade = 11 - abs(dx) / half * 5 + (y < 10) * 2
-                if (x + y) % 2 == 0 and y > 20:
-                    shade -= 2
-                c.set(x, y, ICE, shade)
+    for x, y in c.pixels(0, 4, SPR_DESIGN, 31):
+        half = 4 + min(y + 0.5 - 4.5, 10) * 0.8
+        dx = x + 0.5 - 16
+        wave = np.sin(x * 0.7 + phase * 1.5) * 2
+        if abs(dx) < half and y < 28 + wave:
+            shade = 11 - abs(dx) / half * 5 + (y < 10) * 2
+            if Canvas.parity(x, y) == 0 and y > 20:
+                shade -= 2
+            c.put(x, y, ICE, shade)
     for ex in (13, 19):
         for dy in range(3):
             c.set(ex, 10 + dy, BLUE, 2)
@@ -607,15 +649,14 @@ def sprite_crystal(phase):
     c = Canvas()
     shards = [(16, 30, 4.5, 15, 0.0), (11, 30, 3.0, 9, -0.35), (21, 30, 3.0, 10, 0.3)]
     for (bx, by, w, h, lean) in shards:
-        for y in range(int(by - h), by):
-            t = (by - y) / h
+        for x, y in c.pixels(0, by - h, SPR_DESIGN, by):
+            t = (by - (y + 0.5)) / h
             half = w * (1.0 if t < 0.75 else (1 - t) / 0.25)
-            cx = bx + lean * (by - y)
-            for x in range(SPR):
-                dx = x + 0.5 - cx
-                if abs(dx) <= half:
-                    facet = 12 if dx < -half * 0.3 else (7 if dx > half * 0.3 else 10)
-                    c.set(x, y, GEM, facet)
+            cx = bx + lean * (by - (y + 0.5))
+            dx = x + 0.5 - cx
+            if abs(dx) <= half:
+                facet = 12 if dx < -half * 0.3 else (7 if dx > half * 0.3 else 10)
+                c.put(x, y, GEM, facet)
     glint_y = 30 - (phase % 4) * 4 - 3
     for d in range(-1, 2):
         c.set(16 + d, glint_y, GRAY, 15)
@@ -642,11 +683,10 @@ def sprite_potion(ramp):
 
 def sprite_key():
     c = Canvas()
-    for y in range(SPR):
-        for x in range(SPR):
-            d = np.hypot(x + 0.5 - 10, y + 0.5 - 22)
-            if 2.2 < d < 5.2:
-                c.set(x, y, GOLD, 12 - (y > 22) * 4)
+    for x, y in c.pixels(4, 16, 16, 28):
+        d = np.hypot(x + 0.5 - 10, y + 0.5 - 22)
+        if 2.2 < d < 5.2:
+            c.put(x, y, GOLD, 12 - (y + 0.5 > 22) * 4 + (abs(d - 3.7) < 0.5) * 2)
     for x in range(14, 27):
         c.set(x, 21, GOLD, 13)
         c.set(x, 22, GOLD, 9)
@@ -660,32 +700,30 @@ def sprite_key():
 def sprite_portal(phase):
     """Swirling green descent portal (phase 0..3 rotates the arms)."""
     c = Canvas()
-    for y in range(SPR):
-        for x in range(SPR):
-            dx = x + 0.5 - 16
-            dy = (y + 0.5 - 16) * 1.0
-            r = np.hypot(dx, dy)
-            if r > 15:
-                continue
-            a = np.arctan2(dy, dx)
-            swirl = np.sin(a * 3 + r * 0.55 - phase * np.pi / 2)
-            shade = 4 + (15 - r) * 0.45 + swirl * 3
-            if r < 3:
-                shade = 15
-            c.set(x, y, GEM if swirl > -0.2 else ICE, shade)
+    for x, y in c.pixels():
+        dx = x + 0.5 - 16
+        dy = (y + 0.5 - 16) * 1.0
+        r = np.hypot(dx, dy)
+        if r > 15:
+            continue
+        a = np.arctan2(dy, dx)
+        swirl = np.sin(a * 3 + r * 0.55 - phase * np.pi / 2)
+        shade = 4 + (15 - r) * 0.45 + swirl * 3
+        if r < 3:
+            shade = 15
+        c.put(x, y, GEM if swirl > -0.2 else ICE, shade)
     return c.px
 
 
 def sprite_orb(ramp, radius=6.0):
     """Glowing spell orb: bright core fading to a soft rim."""
     c = Canvas()
-    for y in range(SPR):
-        for x in range(SPR):
-            r = np.hypot(x + 0.5 - 16, y + 0.5 - 16)
-            if r < radius:
-                c.set(x, y, ramp, 15 - (r / radius) * 7)
-            elif r < radius + 2.5 and (x + y) % 2 == 0:
-                c.set(x, y, ramp, 6)
+    for x, y in c.pixels():
+        r = np.hypot(x + 0.5 - 16, y + 0.5 - 16)
+        if r < radius:
+            c.put(x, y, ramp, 15 - (r / radius) * 7)
+        elif r < radius + 2.5 and Canvas.parity(x, y) == 0:
+            c.put(x, y, ramp, 6)
     return c.px
 
 
@@ -694,11 +732,15 @@ def sprite_puff(phase, ramp):
     c = Canvas()
     rng = np.random.default_rng(7 + phase)
     radius = 4 + phase * 3.5
-    for _ in range(90):
+    for _ in range(260):
         a = rng.uniform(0, 2 * np.pi)
         r = rng.uniform(0, radius)
         shade = 15 - (r / radius) * 6 - phase * 2
-        c.set(16 + np.cos(a) * r, 16 + np.sin(a) * r, ramp, shade)
+        x, y = 16 + np.cos(a) * r - 0.5, 16 + np.sin(a) * r - 0.5
+        c.put(x, y, ramp, shade)
+        if r < radius * 0.45:
+            # the hot middle of the burst is denser
+            c.put(x + 0.5, y, ramp, shade - 1)
     return c.px
 
 
@@ -853,20 +895,21 @@ def sprite_torch(phase):
     # flame: stacked shrinking blobs swaying with the phase
     sway = [0.0, 0.8, 0.0, -0.8][phase % 4]
     height = 12 + rng.integers(-1, 2)
-    for y in range(17 - height, 18):
-        t = (17 - y) / height
+    for x, y in c.pixels(0, 17 - height, SPR_DESIGN, 18):
+        t = (17.5 - (y + 0.5)) / height
+        if t < 0 or t > 1:
+            continue
         half = 3.6 * (1 - t) ** 0.7 + 0.4
         cx = 16 + sway * t * 2 + np.sin(t * 6 + phase) * 0.6
-        for x in range(SPR):
-            dx = abs(x + 0.5 - cx)
-            if dx <= half:
-                core = 1 - dx / half
-                if t < 0.45 and core > 0.45:
-                    c.set(x, y, GOLD, 13 + core * 2)
-                elif core > 0.25:
-                    c.set(x, y, FIRE, 10 + core * 4 - t * 3)
-                else:
-                    c.set(x, y, RED, 9 - t * 3)
+        dx = abs(x + 0.5 - cx)
+        if dx <= half:
+            core = 1 - dx / half
+            if t < 0.45 and core > 0.45:
+                c.put(x, y, GOLD, 13 + core * 2)
+            elif core > 0.25:
+                c.put(x, y, FIRE, 10 + core * 4 - t * 3)
+            else:
+                c.put(x, y, RED, 9 - t * 3)
     return c.px
 
 
@@ -877,35 +920,33 @@ def sprite_warden(phase):
     # spikes
     for k in range(10):
         a = k * 2 * np.pi / 10 + 0.3
-        for r in np.linspace(9, 15.5, 14):
+        for r in np.linspace(9, 15.5, 28):
             w = (15.5 - r) / 6.5 * 1.6
-            for o in np.linspace(-w, w, 4):
+            for o in np.linspace(-w, w, 8):
                 x = 16 + np.cos(a) * r - np.sin(a) * o
                 y = 15 + np.sin(a) * r + np.cos(a) * o
-                c.set(x, y, GEM, 6 + (r < 12) * 3 - (o > 0) * 2)
+                c.put(x - 0.5, y - 0.5, GEM, 6 + (r < 12) * 3 - (o > 0) * 2)
     # faceted shell
     shaded_blob(c, 16, 15, 10.5, 10.5, GEM, base=8, spec=False)
-    for y in range(SPR):
-        for x in range(SPR):
-            dx, dy = x + 0.5 - 16, y + 0.5 - 15
-            if dx * dx + dy * dy < 110 and (abs(dx + dy) < 0.6 or abs(dx - dy) < 0.6):
-                c.set(x, y, GEM, 4)
+    for x, y in c.pixels(5, 4, 27, 26):
+        dx, dy = x + 0.5 - 16, y + 0.5 - 15
+        if dx * dx + dy * dy < 110 and (abs(dx + dy) < 0.4 or abs(dx - dy) < 0.4):
+            c.put(x, y, GEM, 4)
     # eye
     look = [(-1.5, 0), (1.5, 0.5), (0, 0)][phase % 3]
-    for y in range(SPR):
-        for x in range(SPR):
-            dx, dy = x + 0.5 - 16, y + 0.5 - 15
-            if (dx / 7.0) ** 2 + (dy / 5.0) ** 2 <= 1.0:
-                c.set(x, y, BONE, 12 - abs(dy) * 0.8)
-            ix, iy = dx - look[0], dy - look[1]
-            d = np.hypot(ix, iy)
-            if d < 3.6:
-                if phase == 2:
-                    c.set(x, y, GOLD if d < 2 else FIRE, 15 - d)
-                else:
-                    c.set(x, y, RED, 11 - d * 1.5)
-            if d < 1.4 and phase != 2:
-                c.set(x, y, GRAY, 1)
+    for x, y in c.pixels(8, 9, 24, 21):
+        dx, dy = x + 0.5 - 16, y + 0.5 - 15
+        if (dx / 7.0) ** 2 + (dy / 5.0) ** 2 <= 1.0:
+            c.put(x, y, BONE, 12 - abs(dy) * 0.8)
+        ix, iy = dx - look[0], dy - look[1]
+        d = np.hypot(ix, iy)
+        if d < 3.6:
+            if phase == 2:
+                c.put(x, y, GOLD if d < 2 else FIRE, 15 - d)
+            else:
+                c.put(x, y, RED, 11 - d * 1.5 + np.sin(np.arctan2(iy, ix) * 7) * 0.7)
+        if d < 1.4 and phase != 2:
+            c.put(x, y, GRAY, 1)
     c.set(14, 12, GRAY, 15)
     c.outline(DEEP, 1)
     return c.px
@@ -941,19 +982,21 @@ def sprite_mushrooms():
         for y in range(top, base):
             c.set(cx, y, BONE, 11)
             c.set(cx + 1, y, BONE, 8)
-        for y in range(int(top - r), top + 1):
-            for x in range(int(cx - r - 1), int(cx + r + 2)):
-                dx = (x + 0.5 - cx - 0.5) / r
-                dy = (y + 0.5 - top) / r
-                if dx * dx + dy * dy <= 1.0 and dy <= 0.2:
-                    shade = 15 - (dx + 1) * 2 - (dy + 1) * 2
-                    c.set(x, y, ramp, shade)
+        for x, y in c.pixels(cx - r - 1, top - r, cx + r + 2, top + 1):
+            dx = (x + 0.5 - cx - 0.5) / r
+            dy = (y + 0.5 - top) / r
+            if dx * dx + dy * dy <= 1.0 and dy <= 0.2:
+                shade = 15 - (dx + 1) * 2 - (dy + 1) * 2
+                # pale spots on the cap
+                if ((x * 1.7 + y * 2.3) % 3.1) < 0.45 and dy < -0.25:
+                    shade = 15
+                c.put(x, y, ramp, shade)
         c.set(cx - 1, int(top - r * 0.5), GRAY, 15)
     c.outline(DEEP, 2)
     return c.px
 
 
-SPRITES = []  # (name, 32x32 row-major palette indices)
+SPRITES = []  # (name, SPR x SPR row-major palette indices)
 
 
 def build_sprites():

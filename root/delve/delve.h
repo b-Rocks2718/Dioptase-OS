@@ -153,8 +153,9 @@ struct Door {
 #define TEX_CRACKED 8          /* breakable wall hiding a vault */
 
 /* ---- Billboard sprites (assets.s order) ---- */
-#define SPR_SIZE 32
-#define SPR_BYTES 1024
+#define SPR_SIZE 64
+#define SPR_SHIFT 6              /* log2(SPR_SIZE) */
+#define SPR_BYTES 4096
 #define SPR_SLIME 0        /* 4 frames */
 #define SPR_BAT 4          /* 4 frames */
 #define SPR_EYE 8          /* 5 frames: 0-2 look, 3 blink, 4 charge */
@@ -412,8 +413,8 @@ extern unsigned char flat_textures[16384];
 #define FLAT_FLOOR_MOSS 2
 #define FLAT_CEILING_ROCK 3
 extern int sin_table[4096];
-extern unsigned char sprite_texels[57344];
-extern unsigned char sprite_spans[3584];
+extern unsigned char sprite_texels[229376];   /* SPR_COUNT sprites, column-major */
+extern unsigned char sprite_spans[7168];      /* per sprite column: opaque [top, bottom) */
 extern unsigned note_incs[128];               /* phase step per MIDI note at 25 kHz */
 extern int song_table[16];                    /* per song: row samples, rows, loop, offset */
 extern unsigned char song_data[1408];         /* 4 bytes (lead, arp, bass, drums) per row */

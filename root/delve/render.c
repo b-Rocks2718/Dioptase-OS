@@ -593,7 +593,7 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
   int x0 = left < strip_x0 ? strip_x0 : left;
   int x1 = right > strip_x1 ? strip_x1 : right;
   if (x1 <= x0) return;
-  /* step exceeds 16 bits for sprites under 32 pixels, so no umul16 here */
+  /* step exceeds 16 bits for sprites up to SPR_SIZE pixels tall, so no umul16 here */
   int u = step * (x0 - left);
 
   int level;
@@ -619,8 +619,8 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
     int span_bottom = spans[tc * 2 + 1];
     if (span_bottom == 0) continue;
     /* screen rows covered by the column's opaque texels */
-    int y0 = top + (umul16(span_top, size_px) >> 5);
-    int y1 = top + ((umul16(span_bottom, size_px) + 31) >> 5);
+    int y0 = top + (umul16(span_top, size_px) >> SPR_SHIFT);
+    int y1 = top + ((umul16(span_bottom, size_px) + SPR_SIZE - 1) >> SPR_SHIFT);
     int v = span_top << 16;
     if (y0 < 0){
       v += step * (-y0);

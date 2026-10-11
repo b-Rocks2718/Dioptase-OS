@@ -479,7 +479,7 @@ flats_row_done:
 
 # Draw one column of a billboard sprite; palette index 0 is transparent.
 # Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
-#          r3 = sprite texel column (32 bytes), r4 = texel position (16.16),
+#          r3 = sprite texel column (SPR_SIZE = 64 bytes), r4 = texel position (16.16),
 #          r5 = step per pixel (16.16), r6 = shade table,
 #          r7 = rows before the column crosses into the bottom half.
 # Outputs: none. Clobbers r1, r2, r4, r7-r9.
