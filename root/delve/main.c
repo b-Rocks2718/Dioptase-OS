@@ -858,14 +858,12 @@ static void place_cursor(void){
 static unsigned hud_bg[6400];
 static bool hud_bg_ready;
 
-/* Draw the background panel into hud_bg: dark stone with a gold and teal
- * rule along the top and dividers between the three sections. */
+/* Draw the background panel into hud_bg: dark stone with a gold rule over a
+ * bronze one along the top. */
 static void hud_background(void){
   fill_rect(SURF_HUD, 0, 0, HUD_W, HUD_H, 0x0211);
   fill_rect(SURF_HUD, 0, 0, HUD_W, 1, 0x027C);
   fill_rect(SURF_HUD, 0, 1, HUD_W, 1, 0x0136);
-  fill_rect(SURF_HUD, 138, 5, 1, 31, 0x0136);
-  fill_rect(SURF_HUD, 243, 5, 1, 31, 0x0136);
   copy_words(hud_bg, g_hud, HUD_PIXELS / 2);
   hud_bg_ready = true;
 }
@@ -927,7 +925,11 @@ static void hud_redraw(void){
   if (!hud_bg_ready) hud_background();
   copy_words(g_hud, hud_bg, HUD_PIXELS / 2);
   hud_touch();
+  /* these screens write their own lines of text across the whole panel */
   if (state == STATE_TITLE || state == STATE_HELP || state == STATE_NAME) return;
+  /* dividers between the stat bars, the counters, and the minimap */
+  fill_rect(SURF_HUD, 138, 5, 1, 31, 0x0136);
+  fill_rect(SURF_HUD, 243, 5, 1, 31, 0x0136);
   draw_bar(HP_BAR_Y, g_stats.hp, g_stats.max_hp, 0x022E, 0x0215);
   draw_bar(MP_BAR_Y, g_stats.mp, MAX_MP, 0x0E73, 0x0522);
   /* a little gem beside the crystal count */
