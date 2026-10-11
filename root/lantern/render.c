@@ -30,6 +30,11 @@ static int last_y;
 static int last_angle;
 static int have_walls;
 static int hud_mode;
+/* What the center ray hit, and the nearest billboard covering the crosshair. */
+static int look_cell;
+static int look_dist;
+static int focus_kind;
+static int focus_dist;
 
 /* Quarter-wave sine, 0 through 90 degrees, in 8.8. Index 64 is 256. */
 static int quarter_sin[65] = {
@@ -103,21 +108,21 @@ static void init_textures(void) {
   int x;
   for (y = 0; y < 16; y++) {
     for (x = 0; x < 16; x++) {
-      int stone = 0x777;
-      int brick = 0x943;
-      int metal = 0x89A;
-      int door = 0x742;
-      int gate = 0x211;
+      int stone = 0xAAA;
+      int brick = 0xC64;
+      int metal = 0xBBB;
+      int door = 0xA74;
+      int gate = 0x414;
       int n = (x * 17 + y * 13) ^ (x << 3);
       int offset = ((y >> 3) & 1) << 2;
-      if ((n & 7) == 0) stone = 0x333;
-      else if ((n & 7) == 1) stone = 0x777;
-      if ((y & 7) == 0 || ((x + offset) & 7) == 0) brick = 0x321;
-      if ((y % 5) == 0) metal = 0x456;
-      if ((x & 7) == 2 && (y % 5) == 2) metal = 0xCDE;
-      if ((x & 3) == 0) door = 0x321;
-      if (y >= 7 && y <= 9 && x >= 3 && x <= 12) door = 0x888;
-      if ((x & 3) == 0) gate = 0x538;
+      if ((n & 7) == 0) stone = 0x666;
+      else if ((n & 7) == 1) stone = 0xDDD;
+      if ((y & 7) == 0 || ((x + offset) & 7) == 0) brick = 0x421;
+      if ((y % 5) == 0) metal = 0x666;
+      if ((x & 7) == 2 && (y % 5) == 2) metal = 0xEEE;
+      if ((x & 3) == 0) door = 0x421;
+      if (y >= 6 && y <= 9 && x >= 2 && x <= 13) door = 0xEE4;
+      if ((x & 3) == 0 || (y & 3) == 0) gate = 0xF3F;
       base_tex[y * 16 + x] = (short)stone;
       base_tex[256 + y * 16 + x] = (short)brick;
       base_tex[512 + y * 16 + x] = (short)metal;
@@ -135,60 +140,124 @@ static void init_textures(void) {
   }
 }
 
-/* Ceiling is dark blue, brighter overhead. Floor is dark brown, not yellow. */
+/* Ceiling is dark blue, brighter overhead. Floor is brown, darker at the horizon.
+ * Each row is one flat color, so turning does not rewrite the floor or ceiling. */
 static void init_gradients(void) {
   int y;
+  int span = VIEW_H / 2;
   for (y = 0; y < VIEW_H; y++) {
-    if (y < VIEW_H / 2) {
-      int d = (VIEW_H / 2 - 1) - y;
-      int level = d / 8;
-      int b;
-      int g;
-      if (level > 7) level = 7;
-      b = 1 + level;
-      g = level / 3;
+    if (y < span) {
+      int d = (span - 1) - y;
+      int b = 2 + (d * 7) / span;
+      int g = (d * 2) / span;
       ceil_row[y] = (short)((g << 4) | b);
     } else {
-      int d = y - VIEW_H / 2;
-      int level = d / 8;
-      int r;
-      int g;
-      if (level > 7) level = 7;
-      r = 3 + level;
-      g = 2 + level / 3;
+      int d = y - span;
+      int r = 2 + (d * 7) / span;
+      int g = 1 + (d * 3) / span;
+      if (r > 11) r = 11;
+      if (g > 6) g = 6;
       floor_row[y] = (short)((r << 8) | (g << 4) | 1);
     }
   }
 }
 
-/* Paint a 16x16 billboard. Pixels outside the shape stay transparent. */
-static void paint_art(int kind) {
+/* 16x16 silhouettes. '.' is transparent. D is the dark outline. */
+static char* sentry_rows[16] = {
+  "................",
+  "......DDDD......",
+  ".....DRRRRD.....",
+  "....DRRRRRRD....",
+  "...DRRWWRRWWD...",
+  "...DRRWWRRWWD...",
+  "....DRRDDDRD....",
+  ".....DRRRRD.....",
+  "....DRRRRRRD....",
+  "...DRRRRRRRRD...",
+  "....DRR..RRD....",
+  "....DR....RD....",
+  "....DR....RD....",
+  "....DD....DD....",
+  "................",
+  "................"
+};
+
+static char* core_rows[16] = {
+  "................",
+  "................",
+  ".......OO.......",
+  ".....OOOOOO.....",
+  "....OOOWWOOO....",
+  "...OOOWWWWWOO...",
+  "...OOOWWWWWOO...",
+  "....OOOWWOOO....",
+  ".....OOOOOO.....",
+  ".......OO.......",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................"
+};
+
+static char* health_rows[16] = {
+  "................",
+  "................",
+  "......DDDD......",
+  ".....DGGGGD.....",
+  ".....DGGGGD.....",
+  "..DDDDGGGGDDDD..",
+  "..DGGGGGGGGGGD..",
+  "..DGGGGGGGGGGD..",
+  "..DDDDGGGGDDDD..",
+  ".....DGGGGD.....",
+  ".....DGGGGD.....",
+  "......DDDD......",
+  "................",
+  "................",
+  "................",
+  "................"
+};
+
+static char* crystal_rows[16] = {
+  "................",
+  "................",
+  ".......CC.......",
+  "......CWWC......",
+  ".....CWWWWC.....",
+  "....CWWWWWWC....",
+  "...CWWWWWWWWC...",
+  "....CWWWWWWC....",
+  ".....CWWWWC.....",
+  "......CWWC......",
+  ".......CC.......",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................"
+};
+
+/* Map one silhouette letter to a 12-bit 0x0BGR color. Anything else is clear. */
+static short art_color(char ch) {
+  if (ch == 'R') return (short)0xE22;
+  if (ch == 'O') return (short)0xC3C;
+  if (ch == 'G') return (short)0x2E4;
+  if (ch == 'C') return (short)0x2EE;
+  if (ch == 'W') return (short)0xEEE;
+  if (ch == 'D') return (short)0x111;
+  return (short)0xF000;
+}
+
+/* Copy one 16x16 silhouette into the billboard table. */
+static void paint_rows(int kind, char** rows) {
   int y;
-  int x;
   short* dst = sprite_art + kind * 256;
   for (y = 0; y < 16; y++) {
+    int x;
     for (x = 0; x < 16; x++) {
-      int dx = x - 8;
-      int dy = y - 8;
-      int d2 = dx * dx + dy * dy;
-      short color = (short)0xF000;
-      if (kind == KIND_SENTRY) {
-        if (d2 < 36) color = (short)0x611;
-        if (d2 < 10) color = (short)0xD22;
-        if (y > 11 && x > 5 && x < 10) color = (short)0x321;
-        if (d2 < 3 && y < 9) color = (short)0xEEE;
-      } else if (kind == KIND_CORE) {
-        if (d2 < 40) color = (short)0x808;
-        if (d2 < 16) color = (short)0xD4D;
-        if (d2 < 4) color = (short)0xFEE;
-      } else if (kind == KIND_HEALTH) {
-        if (d2 < 42) color = (short)0x131;
-        if ((x >= 6 && x <= 9) || (y >= 6 && y <= 9)) color = (short)0x2E2;
-      } else if (d2 < 48 && (x + y) > 6 && (x + y) < 24 && (y + 8) > x && x + 8 > y) {
-        color = (short)0x0DD;
-        if (d2 < 8) color = (short)0x8FF;
-      }
-      dst[y * 16 + x] = color;
+      dst[y * 16 + x] = art_color(rows[y][x]);
     }
   }
 }
@@ -247,7 +316,7 @@ static void paint_muzzle(void) {
 
 /* Cast one column into the wall buffer and record its perpendicular depth. */
 static void cast_column(int col) {
-  int ang = wrap_angle(player_angle + (col - VIEW_CENTER));
+  int ang = wrap_angle(player_angle + (col - VIEW_CENTER) * COL_STEP);
   int dir_x = sin_fp(ang + ANGLE_RIGHT);
   int dir_y = sin_fp(ang);
   int adx = dir_x < 0 ? -dir_x : dir_x;
@@ -312,11 +381,15 @@ static void cast_column(int col) {
   if (along < 1) along = 1;
   if (along > 16000) along = 16000;
   /* Euclidean distance bows the walls. Multiply by cos of the column offset. */
-  rel = col - VIEW_CENTER;
+  rel = (col - VIEW_CENTER) * COL_STEP;
   if (rel < 0) rel = -rel;
   perp = (along * sin_fp(rel + ANGLE_RIGHT)) >> 8;
   if (perp < 1) perp = 1;
   col_perp[col] = perp;
+  if (col == VIEW_CENTER) {
+    look_cell = hit_cell;
+    look_dist = perp;
+  }
 
   if (hit_cell == CELL_BRICK) tex = 1;
   else if (hit_cell == CELL_METAL) tex = 2;
@@ -386,16 +459,17 @@ static void shift_walls(int delta) {
 static void rebuild_walls(void) {
   int delta = player_angle - last_angle;
   int moved = player_x != last_x || player_y != last_y || world_dirty || !have_walls;
+  int cols;
   int col;
   if (delta > 512) delta -= ANGLE_FULL;
   if (delta < -512) delta += ANGLE_FULL;
-  if (moved || delta <= -VIEW_W || delta >= VIEW_W) {
-    for (col = 0; col < VIEW_W; col++) {
-      if ((col & 31) == 0) audio_pump();
-      cast_column(col);
-    }
-  } else if (delta != 0) {
-    shift_walls(delta);
+  /* A pure turn slides by whole columns only when the step matches COL_STEP. */
+  cols = (delta % COL_STEP) == 0 ? delta / COL_STEP : VIEW_W;
+  if (moved || cols <= -VIEW_W || cols >= VIEW_W) {
+    for (col = 0; col < VIEW_W; col++) cast_column(col);
+  } else if (cols != 0) {
+    shift_walls(cols);
+    cast_column(VIEW_CENTER);
   }
   last_x = player_x;
   last_y = player_y;
@@ -436,6 +510,35 @@ static void blit_sprite(int kind, int left, int top, int size, int depth, int hu
   }
 }
 
+/* Place one billboard. Returns 0 when it is behind the camera or only a speck. */
+static int project_sprite(int wx, int wy, int kind, int* left, int* top, int* size, int* depth) {
+  int dx = wx - player_x;
+  int dy = wy - player_y;
+  int rel_r = (dx * lantern_right_x + dy * lantern_right_y) >> 8;
+  int rel_f = (dx * lantern_dir_x + dy * lantern_dir_y) >> 8;
+  int num = (PROJECTION * 3) / 4;
+  int sprite_h;
+  int wall;
+  int scol;
+  if (kind == KIND_HEALTH) num = PROJECTION / 2;
+  if (kind == KIND_CORE || kind == KIND_CRYSTAL) num = (PROJECTION * 5) / 6;
+  if (rel_f < 24 || rel_f > 5000) return 0;
+  sprite_h = num / rel_f;
+  if (sprite_h < 6) return 0;
+  if (sprite_h > VIEW_H - 8) sprite_h = VIEW_H - 8;
+  wall = PROJECTION / rel_f;
+  scol = VIEW_CENTER + (rel_r * 163) / (rel_f * COL_STEP);
+  *left = scol - sprite_h / 2;
+  *top = VIEW_H / 2 + wall / 2 - sprite_h;
+  *size = sprite_h;
+  *depth = rel_f;
+  if (rel_f < focus_dist && scol <= VIEW_CENTER + sprite_h / 4 && scol >= VIEW_CENTER - sprite_h / 4) {
+    focus_kind = kind;
+    focus_dist = rel_f;
+  }
+  return 1;
+}
+
 /* Project actors and the exit crystal, far sprites first. */
 static void draw_sprites(void) {
   int order[17];
@@ -447,60 +550,43 @@ static void draw_sprites(void) {
   int hurtv[17];
   int n = 0;
   int i;
-  int fx = lantern_dir_x;
-  int fy = lantern_dir_y;
-  int rx = lantern_right_x;
-  int ry = lantern_right_y;
 
+  focus_kind = -1;
+  focus_dist = 100000;
   for (i = 0; i < actor_count; i++) {
     struct Actor* actor = &actors[i];
-    int dx;
-    int dy;
-    int rel_r;
-    int rel_f;
-    int wall;
-    int sprite_h;
-    int scol;
+    int left;
+    int top;
+    int size;
+    int depth;
     if (!actor->alive) continue;
-    dx = actor->x - player_x;
-    dy = actor->y - player_y;
-    rel_r = (dx * rx + dy * ry) >> 8;
-    rel_f = (dx * fx + dy * fy) >> 8;
-    if (rel_f < 24 || rel_f > 5000) continue;
-    wall = PROJECTION / rel_f;
-    sprite_h = (PROJECTION * 2) / 3 / rel_f;
-    if (sprite_h < 2) continue;
-    if (sprite_h > 90) sprite_h = 90;
-    scol = VIEW_CENTER + (rel_r * 163) / rel_f;
+    if (!project_sprite(actor->x, actor->y, actor->kind, &left, &top, &size, &depth)) continue;
     order[n] = n;
-    depthv[n] = rel_f;
+    depthv[n] = depth;
     kindv[n] = actor->kind;
-    sizev[n] = sprite_h;
-    leftv[n] = scol - sprite_h / 2;
-    topv[n] = VIEW_H / 2 + wall / 2 - sprite_h;
+    sizev[n] = size;
+    leftv[n] = left;
+    topv[n] = top;
     hurtv[n] = actor->hurt;
     n++;
   }
 
-  {
-    int dx = ((exit_x << 8) + 128) - player_x;
-    int dy = ((exit_y << 8) + 128) - player_y;
-    int rel_r = (dx * rx + dy * ry) >> 8;
-    int rel_f = (dx * fx + dy * fy) >> 8;
-    if (rel_f >= 24 && rel_f <= 5000 && n < MAX_ACTORS + 1) {
-      int wall = PROJECTION / rel_f;
-      int sprite_h = (PROJECTION * 2) / 3 / rel_f;
-      if (sprite_h >= 2) {
-        if (sprite_h > 90) sprite_h = 90;
-        order[n] = n;
-        depthv[n] = rel_f;
-        kindv[n] = KIND_CRYSTAL;
-        sizev[n] = sprite_h;
-        leftv[n] = VIEW_CENTER + (rel_r * 163) / rel_f - sprite_h / 2;
-        topv[n] = VIEW_H / 2 + wall / 2 - sprite_h;
-        hurtv[n] = 0;
-        n++;
-      }
+  if (n < MAX_ACTORS + 1) {
+    int left;
+    int top;
+    int size;
+    int depth;
+    int wx = (exit_x << 8) + 128;
+    int wy = (exit_y << 8) + 128;
+    if (project_sprite(wx, wy, KIND_CRYSTAL, &left, &top, &size, &depth)) {
+      order[n] = n;
+      depthv[n] = depth;
+      kindv[n] = KIND_CRYSTAL;
+      sizev[n] = size;
+      leftv[n] = left;
+      topv[n] = top;
+      hurtv[n] = 0;
+      n++;
     }
   }
 
@@ -519,7 +605,7 @@ static void draw_sprites(void) {
   }
 }
 
-/* A small map in the corner of the pixel view. */
+/* The whole vault in the corner. One cell is one view pixel, and it fits at 80 wide. */
 static void draw_minimap(void) {
   int ox = VIEW_W - MAP_W - 4;
   int oy = 6;
@@ -534,10 +620,10 @@ static void draw_minimap(void) {
       if (cell == CELL_FLOOR || cell == CELL_EXIT) color = (short)0x222;
       else if (cell == CELL_BRICK) color = (short)0x622;
       else if (cell == CELL_METAL) color = (short)0x667;
-      else if (cell == CELL_DOOR) color = (short)0x852;
-      else if (cell == CELL_GATE) color = (short)0x537;
+      else if (cell == CELL_DOOR) color = (short)0xEE4;
+      else if (cell == CELL_GATE) color = (short)0xF2F;
       else if (cell == CELL_STONE) color = (short)0x444;
-      if (cell == CELL_EXIT) color = (short)0x0CC;
+      if (cell == CELL_EXIT) color = (short)0x2FF;
       view[(oy + y) * VIEW_W + ox + x] = color;
     }
   }
@@ -574,7 +660,6 @@ static void flush_view(void) {
   int y;
   int x;
   for (y = 0; y < VIEW_H; y++) {
-    if ((y & 15) == 0) audio_pump();
     for (x = 0; x < VIEW_W; x++) {
       int si = y * VIEW_W + x;
       short color = view[si];
@@ -634,13 +719,11 @@ static void draw_row(int row, char* text, int color) {
   }
 }
 
-/* Status line, and the title card when the mode changes. */
+/* Objective, the thing in front of the player, and the control strip. */
 static void present_hud(int state) {
   char line[80];
   int n = 0;
-  int color = hurt_timer > 0 ? 0xE0 : 0xFC;
-  int facing = ((player_angle + 128) >> 8) & 3;
-  char face = 'E';
+  int goal_color = 0xFF;
   int x;
 
   if (lantern_bench) return;
@@ -648,39 +731,64 @@ static void present_hud(int state) {
     for (x = 0; x < TILE_ROW_WIDTH * TILE_COL_HEIGHT; x++) tiles[x] = 255;
     hud_mode = state;
     if (state == STATE_TITLE) {
-      draw_row(8, "LANTERN", 0xFC);
-      draw_row(10, "Three cores seal the vault. Shatter them.", 0xFC);
-      draw_row(12, "Then walk through the gate.", 0xFC);
-      draw_row(46, "WASD moves. Mouse looks. Hold right button to walk.", 0xB8);
-      draw_row(48, "Left button or F fires. E opens. M map. Q quits.", 0xB8);
-      draw_row(50, "Press space or click to enter.", 0xFF);
+      draw_row(16, "LANTERN", 0xFF);
+      draw_row(19, "Destroy the 3 purple cores.", 0xE3);
+      draw_row(21, "Then walk to the cyan crystal.", 0x1F);
+      draw_row(24, "Red figures attack. Green crosses heal.", 0xFF);
+      draw_row(40, "WASD moves. Arrows or the mouse turn.", 0xFF);
+      draw_row(42, "Click or F shoots. E opens. Q quits.", 0xFF);
+      draw_row(45, "Hold the right mouse button to walk.", 0xFF);
+      draw_row(50, "Press SPACE or click to begin.", 0xFC);
+      draw_row(58, "WASD move   Arrows turn   Mouse looks   Click or F shoots   E opens   Q quits", 0xFF);
     }
   }
   if (state == STATE_TITLE) return;
 
+  if (state == STATE_DEAD) {
+    hud_text(line, &n, "You died. Press R to try again.");
+    goal_color = 0xE0;
+  } else if (state == STATE_WON) {
+    hud_text(line, &n, "You escaped. Press R to play again.");
+    goal_color = 0x1F;
+  } else if (state == STATE_PAUSE) {
+    hud_text(line, &n, "Paused. Press P to continue.");
+  } else if (cores_left <= 0) {
+    hud_text(line, &n, "The gate is open. Reach the cyan crystal.");
+    goal_color = 0x1F;
+  } else {
+    hud_text(line, &n, "Destroy ");
+    hud_int(line, &n, cores_left);
+    hud_text(line, &n, " purple cores, then the cyan crystal.");
+    goal_color = 0xE3;
+  }
+  if (hurt_timer > 0) goal_color = 0xE0;
+  line[n] = 0;
+  draw_row(0, line, goal_color);
+
+  n = 0;
   hud_text(line, &n, "HP ");
   hud_int(line, &n, player_hp);
-  hud_text(line, &n, "   Cores ");
-  hud_int(line, &n, cores_total - cores_left);
-  hud_text(line, &n, "/");
-  hud_int(line, &n, cores_total);
-  hud_text(line, &n, "   ");
-  if (facing == 1) face = 'S';
-  else if (facing == 2) face = 'W';
-  else if (facing == 3) face = 'N';
-  line[n++] = face;
-  line[n] = 0;
-  draw_row(0, line, color);
-
-  if (state == STATE_PAUSE) {
-    draw_row(1, "Paused", 0xFF);
-  } else if (lantern_time < message_until && message[0] != 0) {
-    draw_row(1, message, color);
-  } else if (state == STATE_DEAD || state == STATE_WON) {
-    draw_row(1, message, color);
+  if (state == STATE_PLAY && lantern_time < message_until && message[0] != 0) {
+    hud_text(line, &n, "  ");
+    hud_text(line, &n, message);
+  } else if (state == STATE_PLAY && look_cell == CELL_DOOR && look_dist < 900) {
+    hud_text(line, &n, "  Press E to open the door.");
+  } else if (state == STATE_PLAY && look_cell == CELL_GATE && look_dist < 900 && cores_left > 0) {
+    hud_text(line, &n, "  Purple cores seal this gate.");
+  } else if (state == STATE_PLAY && focus_kind == KIND_SENTRY) {
+    hud_text(line, &n, "  Shoot the red figure. Click or F.");
+  } else if (state == STATE_PLAY && focus_kind == KIND_CORE) {
+    hud_text(line, &n, "  Shoot the purple core. Click or F.");
+  } else if (state == STATE_PLAY && focus_kind == KIND_HEALTH) {
+    hud_text(line, &n, "  Walk into the green cross to heal.");
+  } else if (state == STATE_PLAY && focus_kind == KIND_CRYSTAL && cores_left <= 0) {
+    hud_text(line, &n, "  Walk into the cyan crystal.");
   } else {
-    draw_row(1, "F fires   E opens   M map   R resets   Q quits", 0xB8);
+    hud_text(line, &n, "   you white  enemy red  core purple  exit cyan");
   }
+  line[n] = 0;
+  draw_row(1, line, hurt_timer > 0 ? 0xE0 : 0xFF);
+  draw_row(58, "WASD move   Arrows turn   Mouse looks   Click or F shoots   E opens   Q quits", 0xFF);
 }
 
 /* Flicker only the lantern flame. Repainting the whole sprite would be a thousand MMIO stores. */
@@ -704,8 +812,8 @@ static void place_hardware_sprites(void) {
     bob = phase < 4 ? phase * 2 : (8 - phase) * 2;
   }
   pulse_lantern((int)(lantern_time >> 2));
-  set_sprite_coords(SPRITE_LANTERN, 590, (unsigned)(428 + bob));
-  if (shot_flash > 0) set_sprite_coords(SPRITE_MUZZLE, 540, 400);
+  set_sprite_coords(SPRITE_LANTERN, 280, (unsigned)(200 + bob / 2));
+  if (shot_flash > 0) set_sprite_coords(SPRITE_MUZZLE, 248, 188);
   else set_sprite_coords(SPRITE_MUZZLE, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
 }
 
@@ -724,21 +832,22 @@ int render_init(volatile short* pixel_fb, volatile short* tile_fb, volatile shor
   init_trig();
   init_textures();
   init_gradients();
-  paint_art(KIND_SENTRY);
-  paint_art(KIND_CORE);
-  paint_art(KIND_HEALTH);
-  paint_art(KIND_CRYSTAL);
+  paint_rows(KIND_SENTRY, sentry_rows);
+  paint_rows(KIND_CORE, core_rows);
+  paint_rows(KIND_HEALTH, health_rows);
+  paint_rows(KIND_CRYSTAL, crystal_rows);
   clear_sprite(SPRITE_MUZZLE);
   clear_sprite(SPRITE_CROSS);
   clear_sprite(SPRITE_LANTERN);
   paint_crosshair();
   paint_muzzle();
   paint_lantern_sprite(0);
-  set_sprite_scale(SPRITE_MUZZLE, 0);
-  set_sprite_scale(SPRITE_CROSS, 0);
-  set_sprite_scale(SPRITE_LANTERN, 0);
-  set_sprite_coords(SPRITE_CROSS, 304, 224);
-  set_sprite_coords(SPRITE_LANTERN, 590, 428);
+  set_sprite_scale(SPRITE_MUZZLE, 1);
+  set_sprite_scale(SPRITE_CROSS, 1);
+  set_sprite_scale(SPRITE_LANTERN, 1);
+  /* Scale 1 draws a 64px sprite at twice the stored coordinate (docs/mem_map.md). */
+  set_sprite_coords(SPRITE_CROSS, 144, 104);
+  set_sprite_coords(SPRITE_LANTERN, 280, 200);
   set_sprite_coords(SPRITE_MUZZLE, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
   render_sync_facing();
   have_walls = 0;
@@ -776,25 +885,45 @@ unsigned view_checksum(void) {
   return sum;
 }
 
-void view_preview(void) {
+/* One view pixel as a letter: R red figure, P purple core, G green cross, C crystal. */
+static char preview_glyph(int color) {
+  int r = (color >> 8) & 15;
+  int g = (color >> 4) & 15;
+  int b = color & 15;
+  int lum = r * 2 + g + b;
+  if (r >= 12 && g >= 12 && b >= 12) return 'W';
+  if (r >= 9 && r > g + 3 && r > b + 2) return 'R';
+  if (g >= 9 && g > r + 3 && g > b + 2) return 'G';
+  if (b >= 8 && g >= 8 && b + g > r * 2 + 4) return 'C';
+  if (r >= 8 && b >= 8 && r + b > g * 2 + 4) return 'P';
+  if (lum >= 36) return '#';
+  if (lum >= 22) return 'O';
+  if (lum >= 12) return ':';
+  if (lum >= 5) return '.';
+  return ' ';
+}
+
+/* Print `w` by `h` view pixels starting at (x0, y0), one character per pixel. */
+void view_preview_box(int x0, int y0, int w, int h) {
   int y;
-  for (y = 0; y < VIEW_H; y += 6) {
-    char line[42];
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x0 + w > VIEW_W) w = VIEW_W - x0;
+  if (y0 + h > VIEW_H) h = VIEW_H - y0;
+  for (y = y0; y < y0 + h; y++) {
+    char line[96];
     int x;
     int n = 0;
-    for (x = 0; x < VIEW_W; x += 4) {
-      int color = view[y * VIEW_W + x] & 0xFFF;
-      int lum = ((color >> 8) & 15) * 2 + ((color >> 4) & 15) + (color & 15);
-      char glyph = ' ';
-      if (lum >= 48) glyph = '#';
-      else if (lum >= 36) glyph = 'O';
-      else if (lum >= 24) glyph = 'o';
-      else if (lum >= 14) glyph = ':';
-      else if (lum >= 6) glyph = '.';
-      line[n++] = glyph;
+    for (x = x0; x < x0 + w; x++) {
+      line[n++] = preview_glyph(view[y * VIEW_W + x] & 0xFFF);
     }
     line[n++] = '\n';
     line[n] = 0;
     puts(line);
   }
+}
+
+/* Print every pixel of the composed view. */
+void view_preview(void) {
+  view_preview_box(0, 0, VIEW_W, VIEW_H);
 }

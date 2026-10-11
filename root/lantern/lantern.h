@@ -2,17 +2,20 @@
 #define LANTERN_H
 
 /*
- * Shared state for the lantern vault. The pixel view is the top-left 160x120
- * of the 320-wide framebuffer at pixel scale 1, which hardware shows at 4x
- * (docs/mem_map.md). World positions are 8.8 fixed point: 256 is one map cell.
+ * Shared state for the lantern vault. The pixel view is the top-left 80x60
+ * of the 320-wide framebuffer at pixel scale 2, which hardware shows at 8x
+ * (docs/mem_map.md). Each column covers two angle units, so the field of view
+ * matches a 160-wide view without writing four times as many pixels.
+ * World positions are 8.8 fixed point: 256 is one map cell.
  * Angles wrap at 1024, with 0 facing +x and positive angles turning toward +y.
  */
 
-#define VIEW_W 160
-#define VIEW_H 120
-#define VIEW_CENTER 80
+#define VIEW_W 80
+#define VIEW_H 60
+#define VIEW_CENTER 40
+#define COL_STEP 2
 #define PIXEL_STRIDE 320
-#define PIXEL_SCALE_4X 1
+#define PIXEL_SCALE_PLAY 2
 
 #define MAP_W 32
 #define MAP_H 24
@@ -121,7 +124,10 @@ void render_hide_sprites(void);
 /* Sum the composed view so a headless bench can check that the picture changes. */
 unsigned view_checksum(void);
 
-/* Print a coarse ASCII picture of the composed view. */
+/* Print a color-letter picture of one rectangle of the composed view. */
+void view_preview_box(int x0, int y0, int w, int h);
+
+/* Print the whole composed view as color letters. */
 void view_preview(void);
 
 /* Claim the audio device and start the drone. Failure leaves the game silent. */

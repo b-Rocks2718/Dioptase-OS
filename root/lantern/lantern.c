@@ -1,11 +1,11 @@
 /*
  * Lantern: a first-person walk through a sealed vault.
  *
- * The picture is a 160x120 raycast in the pixel framebuffer at scale 1, so
- * each pixel is 4 screen pixels (docs/mem_map.md). The tile layer is cleared
- * to the transparent tile except for the HUD. WASD comes from raw key events
- * on stdin, including releases, so movement is held rather than tapped.
- * Mouse look uses getmouse(); the right button walks forward.
+ * The picture is an 80x60 raycast in the pixel framebuffer at scale 2, so
+ * each pixel is 8 screen pixels (docs/mem_map.md). The tile layer carries the
+ * goal and the controls. WASD comes from raw key events on stdin, including
+ * releases, so movement is held rather than tapped. Mouse look uses
+ * getmouse(); the right button walks forward.
  *
  * From the shell, with VGA on: lantern
  * Headless timing: lantern bench
@@ -150,7 +150,7 @@ static int startup(int bench) {
     return -1;
   }
   load_text_tiles();
-  set_pixel_scale(PIXEL_SCALE_4X);
+  set_pixel_scale(PIXEL_SCALE_PLAY);
   if (render_init(pixel_fb, tile_fb, sprite_fb) != 0) {
     puts("lantern: the view buffer could not be allocated\n");
     return -1;
@@ -182,26 +182,54 @@ static void shutdown(void) {
   }
 }
 
-/* Rotate and step a few frames, then print a checksum and an ASCII view. */
+/* Stand on a floor cell, face `angle`, and print the center of the picture. */
+static void shoot_frame(int x, int y, int angle, char* label) {
+  player_x = (x << 8) + 128;
+  player_y = (y << 8) + 128;
+  player_angle = angle;
+  world_dirty = 1;
+  lantern_time += 1;
+  render_frame(STATE_PLAY, 0);
+  puts(label);
+  view_preview_box(12, 6, 56, 48);
+}
+
+/* Picture each actor up close, then time even turns and forward steps. */
 static int run_bench(void) {
   unsigned start;
   int i;
-  int args[2];
+  int args[3];
   if (startup(1) != 0) return 1;
+  shoot_frame(13, 12, 0, "***sentry\n");
+  shoot_frame(13, 6, 768, "***core\n");
+  shoot_frame(8, 13, 512, "***health\n");
+  cells[12][27] = CELL_FLOOR;
+  cells[13][27] = CELL_FLOOR;
+  world_dirty = 1;
+  shoot_frame(27, 12, 0, "***crystal\n");
+
+  player_x = (2 << 8) + 128;
+  player_y = (12 << 8) + 128;
+  player_angle = 0;
+  world_dirty = 1;
+  render_frame(STATE_PLAY, 0);
   start = get_current_jiffies();
-  for (i = 0; i < 8; i++) {
-    player_angle = (player_angle + 5) & (ANGLE_FULL - 1);
-    lantern_time += 1;
-    render_frame(STATE_PLAY, 0);
-  }
-  for (i = 0; i < 4; i++) {
-    player_x += 40;
+  for (i = 0; i < 20; i++) {
+    player_angle = (player_angle + 4) & (ANGLE_FULL - 1);
     lantern_time += 1;
     render_frame(STATE_PLAY, 0);
   }
   args[0] = (int)(get_current_jiffies() - start);
-  args[1] = (int)view_checksum();
-  printf("***lantern bench jiffies=%u checksum=%u\n", args);
+  start = get_current_jiffies();
+  for (i = 0; i < 20; i++) {
+    player_x += 12;
+    lantern_time += 1;
+    render_frame(STATE_PLAY, 0);
+  }
+  args[1] = (int)(get_current_jiffies() - start);
+  args[2] = (int)view_checksum();
+  printf("***lantern bench turn_jiffies=%u move_jiffies=%u checksum=%u\n", args);
+  puts("***hall\n");
   view_preview();
   shutdown();
   return 0;
@@ -229,8 +257,10 @@ static int run_game(void) {
     mouse_dx = 0;
     if (held_turn_left) turn -= 12 * dt;
     if (held_turn_right) turn += 12 * dt;
-    if (turn > 120) turn = 120;
-    if (turn < -120) turn = -120;
+    if (turn > 80) turn = 80;
+    if (turn < -80) turn = -80;
+    /* Column reuse only slides when the turn is a multiple of COL_STEP. */
+    turn &= ~1;
     forward = held_forward || mouse_right;
 
     if (state == STATE_TITLE) {
@@ -238,7 +268,6 @@ static int run_game(void) {
         state = STATE_PLAY;
         player_angle = 0;
         world_dirty = 1;
-        set_message("Three cores seal the gate.", 160);
       } else {
         player_angle = (player_angle + dt * 2) & (ANGLE_FULL - 1);
       }

@@ -154,7 +154,7 @@ static void open_gates(void) {
     }
   }
   world_dirty = 1;
-  set_message("The gate opens.", 180);
+  set_message("The gate is open. Walk to the cyan crystal.", 180);
   sfx_play(SFX_CORE);
 }
 
@@ -173,10 +173,10 @@ static void hurt_actor(struct Actor* actor) {
     if (cores_left <= 0) {
       open_gates();
     } else if (cores_left == 1) {
-      set_message("A core shatters. One remains.", 150);
+      set_message("A purple core shatters. One remains.", 150);
       sfx_play(SFX_CORE);
     } else {
-      set_message("A core shatters.", 120);
+      set_message("A purple core shatters.", 120);
       sfx_play(SFX_CORE);
     }
     return;
@@ -256,10 +256,11 @@ static void try_use(void) {
   }
 
   if (best_x < 0) {
+    set_message("Face a door, then press E.", 70);
     return;
   }
   if (cells[best_y][best_x] == CELL_GATE) {
-    set_message("The cores still seal this gate.", 120);
+    set_message("Purple cores seal this gate.", 120);
     return;
   }
   cells[best_y][best_x] = CELL_FLOOR;
@@ -314,7 +315,7 @@ static void update_sentry(struct Actor* actor, int dt) {
     hurt_timer = 10;
     actor->cooldown = 22;
     sfx_play(SFX_HURT);
-    set_message("The sentry strikes.", 50);
+    set_message("The red figure strikes.", 50);
   }
 }
 
@@ -335,7 +336,7 @@ static void touch_pickups(void) {
       player_hp += 35;
       if (player_hp > 100) player_hp = 100;
       sfx_play(SFX_PICKUP);
-      set_message("The lantern steadies.", 90);
+      set_message("The green cross steadies you.", 90);
     }
   }
 }
@@ -484,7 +485,7 @@ int update_world(int dt, int forward, int back, int left, int right, int turn, i
         hurt_timer = 10;
         actor->cooldown = 28;
         sfx_play(SFX_HURT);
-        set_message("The core burns.", 50);
+        set_message("The purple core burns.", 50);
       }
     }
   }
@@ -494,13 +495,13 @@ int update_world(int dt, int forward, int back, int left, int right, int turn, i
   if (player_hp <= 0) {
     player_hp = 0;
     sfx_play(SFX_DIE);
-    set_message("The lantern goes out. R tries again.", 240);
+    set_message("You died. Press R to try again.", 240);
     return STATE_DEAD;
   }
 
   if ((player_x >> 8) == exit_x && (player_y >> 8) == exit_y && cores_left <= 0) {
     sfx_play(SFX_WIN);
-    set_message("The vault lets you leave. R plays again.", 240);
+    set_message("You escaped. Press R to play again.", 240);
     return STATE_WON;
   }
   return STATE_PLAY;
