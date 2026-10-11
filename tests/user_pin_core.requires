@@ -1,0 +1,3 @@
+# The test pins to cores 1 and 2.
+NUM_CORES!=1
+NUM_CORES!=2

@@ -76,6 +76,8 @@ enum TrapCode {
   // Map the 320x240 pixel framebuffer (the layer under the tiles) into the
   // caller, like the tile and sprite getters.
   TRAP_GET_PIXEL_FB = 62,
+  // Pin the calling thread to one core, or let it run anywhere again.
+  TRAP_PIN_CORE = 63,
 };
 
 #define SEEK_SET 0

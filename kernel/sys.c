@@ -1985,6 +1985,39 @@ int handle_request_priority(int priority){
   return 0;
 }
 
+// block() continuation for handle_pin_core(): queue the switched-out thread
+// by its new affinity (scheduler_wake_thread sends a thread pinned to
+// another core to that core's pinned queue).
+static void requeue_by_affinity(void* tcb){
+  scheduler_wake_thread((struct TCB*)tcb);
+}
+
+// Pin the calling thread to `core`, or with -1 let it run on any core again,
+// and return the core it runs on when the call returns, or -1 for a core
+// number outside [0, CONFIG.num_cores).
+//
+// A thread pinned to another core is switched out and queued there before
+// this returns: block() runs requeue_by_affinity() on the idle thread once
+// this thread's context is saved, and the target core's scheduler moves it
+// from that core's pinned queue to its local ready queue (scheduler.c). The
+// affinity stays in effect across blocking, preemption, and rebalancing,
+// which all respect core_affinity, and is inherited by fork().
+int handle_pin_core(int core){
+  if (core != -1 && (core < 0 || (unsigned)core >= CONFIG.num_cores)){
+    return -1;
+  }
+
+  unsigned was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  tcb->core_affinity = core == -1 ? ANY_CORE : (enum CoreAffinity)core;
+  if (core != -1 && (unsigned)core != get_core_id()){
+    block(was, requeue_by_affinity, tcb, true);
+  } else {
+    interrupts_restore(was);
+  }
+  return (int)get_core_id();
+}
+
 // Install or clear one user signal handler in the current process.
 int handle_register_handler(int signal, void* handler){ 
   struct TCB* me = get_current_tcb();
@@ -2250,6 +2283,9 @@ int trap_handler(unsigned code,
     }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);
+    }
+    case TRAP_PIN_CORE: {
+      return handle_pin_core(arg1);
     }
     case TRAP_REQUEST_PRIORITY: {
       return handle_request_priority(arg1);

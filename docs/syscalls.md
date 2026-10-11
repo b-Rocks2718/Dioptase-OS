@@ -121,6 +121,7 @@ All other failures report `0` until their handlers are converted.
 | `32` | `yield()` | none | Voluntarily yields the CPU and returns `0`. |
 | `47` | `signal_child(child_desc, signal)` | `child_desc`, `signal` | Records `signal` for the specified live child. Returns `0`, or `-1` for an invalid child descriptor, exited child, or signal outside `0..31`. |
 | `49` | `request_priority(priority)` | `priority` | Requests a static scheduler priority for the current thread. Returns `0` and updates the thread when `priority` is valid, or `-1` for an invalid priority. |
+| `63` | `pin_core(core)` | `core` | Pins the current thread to core `core` and moves it there before returning, or with `core == -1` lets it run on any core again. Returns the core the thread runs on when the call returns, or `-1` if `core` is neither `-1` nor a core of this machine (`0` to the core count minus one). |
 | `50` | `set_foreground_child(child_desc)` | `child_desc` | Sets the single terminal foreground child to the caller's live child descriptor and returns `0`, or clears it when `child_desc == -1`. Clearing returns `1` if that foreground child used a direct display trap and otherwise returns `0`. An invalid or already-exited descriptor passed while setting returns `-1`. |
 | `51` | `signal_foreground(signal)` | `signal` | Records `signal` for the current foreground child. Returns `0`, or `-1` if no live foreground child is set or `signal` is outside `0..31`. |
 | `52` | `register_handler(signal, handler)` | `signal`, `handler` | Registers a four-byte-aligned executable user entry point for signals `0..30`. Returns `0`, or `-1` for an invalid signal, `SIGNAL_KILL`, a misaligned address, or an address outside executable user memory. |
@@ -134,6 +135,13 @@ checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
 does not reset the caller's current MLFQ level or remaining quantum; those
 dynamic scheduler fields continue to follow the scheduler rules documented in
 `scheduling.md`.
+
+`pin_core()` sets the same core affinity that kernel threads get from
+`core_pin()`: the thread is then scheduled only on that core, through
+preemption, blocking, wakeups, and queue rebalancing. A child created by
+`fork()` inherits its parent's affinity. Like priorities, pins are honored
+without any permission check. Programs that run several busy processes at
+once (DELVE's render workers) use it to keep them on separate cores.
 
 `signal_child()` replaces the former `kill()` wrapper, and
 `signal_foreground(signal)` replaces `kill_foreground()`. The foreground form

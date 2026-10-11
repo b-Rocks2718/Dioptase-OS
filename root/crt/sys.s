@@ -2008,6 +2008,42 @@ request_priority.errno_done:
 
   ret
 
+  .global pin_core
+# Marshal arguments and issue the pin core system-call wrapper.
+pin_core:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  mov  r2, r1
+  movi r1, 63
+  trap
+  cmp  r2, r0
+  bz   pin_core.errno_done
+  sw   r2, [errno]
+pin_core.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
   .global set_foreground_child
 # Marshal arguments and issue the set foreground child system-call wrapper.
 set_foreground_child:
