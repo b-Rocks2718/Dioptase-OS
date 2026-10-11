@@ -32,6 +32,7 @@ volatile short* g_tilemap;
 volatile short* g_tile_fb;
 volatile short* g_spritemap;
 unsigned g_view_words[7680];
+unsigned short* g_view;
 unsigned g_frame;
 
 /* Ticks a grid step or a quarter turn takes. */
@@ -325,6 +326,7 @@ static void new_game(void){
   fade = LIGHT_LEVELS;
   show_message("FIND THE RUNE KEY");
   audio_music(MUSIC_DUNGEON);
+  parallel_autotune_begin();
 }
 
 /* Start (or restart) the attract-mode demo behind the title screen: a fresh
@@ -572,6 +574,8 @@ static void handle_key(int key){
         state_t = 0;
       } else if (key == '`'){
         show_fps = !show_fps;
+      } else if (key == '['){
+        parallel_toggle();
       } else if (key == 'G'){
         /* cheat (shift+G): invulnerable */
         god_mode = !god_mode;
@@ -587,6 +591,9 @@ static void handle_key(int key){
     case STATE_PAUSE:
       if (key == 'x' || key == 'X'){
         title_init();
+      } else if (key == '['){
+        /* render-mode A/B on a frozen scene */
+        parallel_toggle();
       } else {
         state = STATE_PLAY;
       }
@@ -1057,8 +1064,8 @@ static void render_frame(void){
     view.y += (rng_range(9) - 4) << 10;
   }
   set_light_offset(-fade);
-  world_draw(g_frame);
-  render_view(&view);
+  world_draw(g_frame, view.x, view.y);
+  parallel_render(&view);
   if (state == STATE_PLAY && g_stats.hurt > 0){
     tint_view(g_view, 0x0FF0, 0x0008 + (g_stats.hurt >> 1));
   }
@@ -1080,9 +1087,15 @@ static void render_frame(void){
 /* Set up display, renderer, sound, and scores, then run the frame loop:
  * catch up on elapsed 60 Hz ticks, render, blit, and update the overlays. */
 int main(void){
+  /* the render workers run at high priority; so must we, or a worker that
+   * lands on our core would preempt the strip we render ourselves */
+  request_priority(DIOPTASE_PRIORITY_HIGH);
+  g_view = (unsigned short*)g_view_words;
+  world_init();
   display_init();
   render_init();
   audio_start();
+  parallel_start();
   scores_load();
   title_init();
 
@@ -1111,7 +1124,9 @@ int main(void){
       int x = draw_text_shadow(SURF_VIEW, 2, 89, format_int(fps_text, fps), 0x00FF);
       x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_bills), 0x0FF0);
       x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_debug_visible), 0x0F0F);
-      draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_light_count), 0x0FFF);
+      x = draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, g_light_count), 0x0FFF);
+      /* processes rendering the view (1 alone, 3 with both workers) */
+      draw_text_shadow(SURF_VIEW, x + 4, 89, format_int(fps_text, parallel_workers() + 1), 0x0F80);
     }
     blit_view(g_tilemap, g_view);
     place_overlays();
@@ -1119,6 +1134,7 @@ int main(void){
     audio_heartbeat();
     audio_mute_sfx(demo);
   }
+  parallel_stop();
   audio_stop();
   return 0;
 }

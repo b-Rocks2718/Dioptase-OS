@@ -139,9 +139,19 @@ static void build_ray_tables(int angle){
 /* Light levels added to everything (negative during fades). */
 static int light_offset;
 
+/* Screen columns this process renders: [strip_x0, strip_x1). With parallel
+ * rendering each process draws one tile-aligned strip of the view. */
+static int strip_x0;
+static int strip_x1 = VIEW_W;
+
 /* Shift every light level by `levels` (negative darkens; used for fades). */
 void set_light_offset(int levels){
   light_offset = levels;
+}
+
+/* The current light offset (published to render workers). */
+int get_light_offset(void){
+  return light_offset;
 }
 
 /* Light level for a surface at perpendicular distance `dist` (16.16): the
@@ -206,16 +216,19 @@ static void select_lights(struct Camera* cam){
 
 /* Set each floor row's starting texture coordinates and light, then cast. */
 static void draw_flats(struct Camera* cam){
+  int g0 = strip_x0 >> 3;
+  int g1 = strip_x1 >> 3;
   for (int k = 0; k < VIEW_HALF_H; ++k){
     struct FlatRow* row = &flat_rows[k];
-    row->u = cam->x + row_u0[k];
-    row->v = cam->y + row_v0[k];
+    /* start the row at the strip's first column */
+    row->u = cam->x + row_u0[k] + row_du[k] * strip_x0;
+    row->v = cam->y + row_v0[k] + row_dv[k] * strip_x0;
     row->du = row_du[k];
     row->dv = row_dv[k];
     row->level = row_level[k] + light_offset;
   }
-  draw_flats_asm(flat_rows, g_view, floor_tex, ceil_tex, active_lights,
-                 active_light_count, flat_skip);
+  draw_flats_asm(flat_rows, g_view + g0 * VIEW_COL_GROUP_SHORTS, floor_tex, ceil_tex,
+                 active_lights, active_light_count, flat_skip + g0, g1 - g0);
 }
 
 /* Extra light levels at world point (x, y) from this frame's point lights.
@@ -378,10 +391,18 @@ static void cast_column(struct Camera* cam, int x, int map_x0, int map_y0,
   col_level[x] = level;
 }
 
-/* Render the scene seen by `cam` into g_view in three passes: cast every
- * column's ray (z-buffer, automap), cast the floor and ceiling except runs
- * the walls will cover, then draw walls, billboards, and particles. */
+/* Render the whole view (single-process rendering). */
 void render_view(struct Camera* cam){
+  render_view_strip(cam, 0, VIEW_TILE_COLS);
+}
+
+/* Render tile columns [g0, g1) of the scene seen by `cam` into g_view in
+ * three passes: cast every column's ray (z-buffer, automap), cast the floor
+ * and ceiling except runs the walls will cover, then draw walls, billboards,
+ * and particles, all clipped to the strip. */
+void render_view_strip(struct Camera* cam, int g0, int g1){
+  strip_x0 = g0 * 8;
+  strip_x1 = g1 * 8;
   if (cam->angle != g_table_angle){
     build_ray_tables(cam->angle);
   }
@@ -394,11 +415,11 @@ void render_view(struct Camera* cam){
   unsigned frac_y = cam->y & 0xFFFF;
   g_seen[(map_y0 * MAP_W + map_x0) & (MAP_CELLS - 1)] = 1;
 
-  for (int x = 0; x < VIEW_W; ++x){
+  for (int x = strip_x0; x < strip_x1; ++x){
     cast_column(cam, x, map_x0, map_y0, frac_x, frac_y);
   }
   /* A floor/ceiling row pair k is hidden in a column when k < height / 2. */
-  for (int g = 0; g < VIEW_TILE_COLS; ++g){
+  for (int g = g0; g < g1; ++g){
     int skip = VIEW_HALF_H;
     for (int x = g * 8; x < g * 8 + 8; ++x){
       int half = col_height[x] >> 1;
@@ -407,7 +428,7 @@ void render_view(struct Camera* cam){
     flat_skip[g] = skip;
   }
   draw_flats(cam);
-  for (int x = 0; x < VIEW_W; ++x){
+  for (int x = strip_x0; x < strip_x1; ++x){
     draw_column(x);
   }
   draw_billboards(cam);
@@ -451,11 +472,12 @@ static void draw_billboard(struct Camera* cam, struct Billboard* b,
   int top = bottom - size_px;
   int left = center_x - (size_px >> 1);
   int right = left + size_px;
-  if (right <= 0 || left >= VIEW_W || bottom <= 0 || top >= VIEW_H) return;
+  if (right <= strip_x0 || left >= strip_x1 || bottom <= 0 || top >= VIEW_H) return;
 
   int step = udiv32(SPR_SIZE << 16, size_px);     /* texels per pixel */
-  int x0 = left < 0 ? 0 : left;
-  int x1 = right > VIEW_W ? VIEW_W : right;
+  int x0 = left < strip_x0 ? strip_x0 : left;
+  int x1 = right > strip_x1 ? strip_x1 : right;
+  if (x1 <= x0) return;
   /* step exceeds 16 bits for sprites under 32 pixels, so no umul16 here */
   int u = step * (x0 - left);
 
@@ -509,13 +531,13 @@ static void draw_particles(struct Camera* cam, int dir_x, int dir_y){
     int inv = udiv32(PROJ_K << 16, depth);
     int sx = VIEW_W / 2 + fixmul(lateral, inv);
     int sy = VIEW_HALF_H + fixmul(FIX_HALF - p->z, inv);
-    if (sx < 0 || sx >= VIEW_W || sy < 0 || sy >= VIEW_H) continue;
+    if (sx < strip_x0 || sx >= strip_x1 || sy < 0 || sy >= VIEW_H) continue;
     if (depth >= g_zbuffer[sx]) continue;
     int color = p->color;
     if (p->life < 8) color = (color >> 1) & 0x0777;
     unsigned short* px = g_view + (sx >> 3) * VIEW_COL_GROUP_SHORTS + (sx & 7) + sy * VIEW_ROW_SHORTS;
     *px = color;
-    if (depth < 0x18000 && sx + 1 < VIEW_W && sy + 1 < VIEW_H){
+    if (depth < 0x18000 && sx + 1 < strip_x1 && sy + 1 < VIEW_H){
       /* close sparks are 2x2; (sx + 1) may cross into the next tile column */
       unsigned short* right = g_view + ((sx + 1) >> 3) * VIEW_COL_GROUP_SHORTS + ((sx + 1) & 7) + sy * VIEW_ROW_SHORTS;
       right[0] = color;

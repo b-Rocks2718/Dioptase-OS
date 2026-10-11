@@ -360,7 +360,8 @@ void mix_add(int* acc, int count, short* table, unsigned phase, unsigned inc);
 void tint_view(unsigned short* view, int and_mask, int or_mask);
 void draw_flats_asm(struct FlatRow* rows, unsigned short* view,
                     unsigned char* floor_tex, unsigned char* ceil_tex,
-                    struct FlatLight* lights, int light_count, int* skip);
+                    struct FlatLight* lights, int light_count, int* skip,
+                    int columns);
 
 /* ---- assets.s ---- */
 extern unsigned short shade_tables[4096];
@@ -387,10 +388,12 @@ extern unsigned char font_big_spans[192];
 extern volatile short* g_tilemap;
 extern volatile short* g_tile_fb;
 extern volatile short* g_spritemap;
-/* The view and status-bar buffers are copied with word loads/stores, so they
- * are declared as word arrays (bcc only 2-aligns short arrays). */
+/* The back buffer for the 3D view. It points at g_view_words, or at the
+ * shared mapping when parallel rendering is running (parallel.c). Buffers
+ * copied with word loads/stores are declared as word arrays because bcc only
+ * 2-aligns short arrays. */
 extern unsigned g_view_words[7680];
-#define g_view ((unsigned short*)g_view_words)
+extern unsigned short* g_view;
 extern unsigned g_frame;            /* VGA frames since start (60 Hz) */
 
 /* ---- render.c ---- */
@@ -400,6 +403,8 @@ int fixmul(int a, int b);
 void render_init(void);
 void render_view(struct Camera* cam);
 void set_light_offset(int levels);
+int get_light_offset(void);
+void render_view_strip(struct Camera* cam, int g0, int g1);
 extern struct Billboard g_bills[MAX_BILLBOARDS];
 extern int g_bill_count;
 extern int g_debug_bills;
@@ -422,7 +427,7 @@ void hud_upload(void);
 
 /* ---- world.c ---- */
 extern unsigned char g_map[MAP_CELLS];
-extern unsigned char g_seen[MAP_CELLS];
+extern unsigned char* g_seen;          /* explored cells; may live in shared memory */
 extern struct Door g_doors[MAX_DOORS];
 extern int g_door_count;
 extern struct Monster g_monsters[MAX_MONSTERS];
@@ -441,9 +446,10 @@ bool cell_solid(int cx, int cy);
 struct Door* door_at(int cx, int cy);
 bool door_open(int cx, int cy);
 struct Monster* monster_at(int cx, int cy);
+void world_init(void);
 void world_generate(int depth, unsigned seed, int* sx, int* sy, int* sdir);
 void world_tick(int pcx, int pcy, int px, int py, bool player_moved);
-void world_draw(int frame);
+void world_draw(int frame, int cam_x, int cam_y);
 void spawn_shot(int kind, int x, int y, int vx, int vy, bool from_player);
 void spawn_effect(int kind, int x, int y, int z);
 void spawn_burst(int x, int y, int z, int count, int color, int speed);
@@ -451,6 +457,14 @@ extern struct Particle g_particles[MAX_PARTICLES];
 int world_monsters_left(void);
 int world_flow(int cx, int cy);
 bool world_boss(int* hp, int* max_hp);
+
+/* ---- parallel.c ---- */
+void parallel_start(void);
+void parallel_render(struct Camera* cam);
+void parallel_stop(void);
+int parallel_workers(void);
+void parallel_toggle(void);
+void parallel_autotune_begin(void);
 
 /* ---- autopilot.c ---- */
 int autopilot_decide(int cx, int cy, int facing, bool has_key, int mp);

@@ -10,7 +10,8 @@
  */
 
 unsigned char g_map[MAP_CELLS];
-unsigned char g_seen[MAP_CELLS];       /* cells the player has seen (automap) */
+static unsigned char seen_local[MAP_CELLS];
+unsigned char* g_seen;                 /* cells the player has seen (automap) */
 static unsigned char occupant[MAP_CELLS]; /* monster index + 1, 0 = none */
 static unsigned char flow[MAP_CELLS];  /* BFS steps to the player, 255 = none */
 static bool map_changed;               /* a wall fell: rebuild the flow field */
@@ -34,6 +35,12 @@ struct PlayerStats g_stats;
 /* Base wall texture and the floor/ceiling for the current level. */
 int g_floor_flat;
 int g_ceiling_flat;
+
+/* Point g_seen at process-local storage (parallel_start() may move it into
+ * shared memory later). Call once before generating a level. */
+void world_init(void){
+  g_seen = seen_local;
+}
 
 /* ---- Random numbers (xorshift32) ---- */
 static unsigned rng_state = 0x1234567;
@@ -761,10 +768,17 @@ static void update_particles(void){
   }
 }
 
-/* Add a point light for this frame (one level per half cell of radius);
- * extra lights beyond MAX_LIGHTS are dropped. */
+/* Camera position for this frame's light culling (set by world_draw). */
+static int view_x;
+static int view_y;
+
+/* Add a point light for this frame (one level per half cell of radius).
+ * Lights too far from the camera to reach anything visible are skipped, and
+ * extras beyond MAX_LIGHTS are dropped, so world_draw adds the brief,
+ * dramatic lights (spells, blasts) before the steady ones. */
 static void add_light(int x, int y, int radius){
   if (g_light_count >= MAX_LIGHTS) return;
+  if (approx_dist(x - view_x, y - view_y) > radius + 0x70000) return;
   struct Light* l = &g_lights[g_light_count++];
   l->x = x;
   l->y = y;
@@ -1207,8 +1221,33 @@ void world_tick(int pcx, int pcy, int px, int py, bool player_moved){
   }
 }
 
+/* Queue projectiles and effects (and their lights) for this frame. */
+static void draw_effects_and_shots(void){
+  for (int i = 0; i < MAX_SHOTS; ++i){
+    struct Projectile* p = &g_shots[i];
+    if (!p->active) continue;
+    int sprite = p->kind == SHOT_FIRE ? SPR_ORB_FIRE : (p->kind == SHOT_SPARK ? SPR_ORB_SPARK : SPR_ORB_ENEMY);
+    struct Billboard* b = add_billboard(p->x, p->y, FIX_HALF - 0x2000, p->kind == SHOT_FIRE ? 22000 : 16000, sprite);
+    if (b) b->flags = BB_FULLBRIGHT;
+  }
+  for (int i = 0; i < MAX_EFFECTS; ++i){
+    struct Effect* e = &g_effects[i];
+    if (!e->active) continue;
+    int base = SPR_PUFF_GEM;
+    if (e->kind == EFFECT_FIRE_PUFF) base = SPR_PUFF_FIRE;
+    else if (e->kind == EFFECT_SPARK_PUFF) base = SPR_PUFF_SPARK;
+    else if (e->kind == EFFECT_PINK_PUFF) base = SPR_PUFF_PINK;
+    struct Billboard* b = add_billboard(e->x, e->y, e->z - 0x3000 - e->t * 0x200, 30000 + e->t * 1500, base + (e->t >> 2));
+    if (b) b->flags = BB_FULLBRIGHT;
+    if (e->kind == EFFECT_FIRE_PUFF && e->t < 8) add_light(e->x, e->y, 0x40000 - e->t * 0x6000);
+  }
+}
+
 /* Queue billboards and lights for everything visible this frame. */
-void world_draw(int frame){
+void world_draw(int frame, int cam_x, int cam_y){
+  view_x = cam_x;
+  view_y = cam_y;
+  draw_effects_and_shots();
   for (int i = 0; i < prop_count; ++i){
     struct Prop* p = &props[i];
     /* offset from the cell center so props do not hide items placed later */
@@ -1288,24 +1327,6 @@ void world_draw(int frame){
       if (b) b->light = 2;
       add_light(m->x, m->y, m->attack_t > 0 ? 0x30000 : 0x20000);
     }
-  }
-  for (int i = 0; i < MAX_SHOTS; ++i){
-    struct Projectile* p = &g_shots[i];
-    if (!p->active) continue;
-    int sprite = p->kind == SHOT_FIRE ? SPR_ORB_FIRE : (p->kind == SHOT_SPARK ? SPR_ORB_SPARK : SPR_ORB_ENEMY);
-    struct Billboard* b = add_billboard(p->x, p->y, FIX_HALF - 0x2000, p->kind == SHOT_FIRE ? 22000 : 16000, sprite);
-    if (b) b->flags = BB_FULLBRIGHT;
-  }
-  for (int i = 0; i < MAX_EFFECTS; ++i){
-    struct Effect* e = &g_effects[i];
-    if (!e->active) continue;
-    int base = SPR_PUFF_GEM;
-    if (e->kind == EFFECT_FIRE_PUFF) base = SPR_PUFF_FIRE;
-    else if (e->kind == EFFECT_SPARK_PUFF) base = SPR_PUFF_SPARK;
-    else if (e->kind == EFFECT_PINK_PUFF) base = SPR_PUFF_PINK;
-    struct Billboard* b = add_billboard(e->x, e->y, e->z - 0x3000 - e->t * 0x200, 30000 + e->t * 1500, base + (e->t >> 2));
-    if (b) b->flags = BB_FULLBRIGHT;
-    if (e->kind == EFFECT_FIRE_PUFF && e->t < 8) add_light(e->x, e->y, 0x40000 - e->t * 0x6000);
   }
   (void)frame;
 }

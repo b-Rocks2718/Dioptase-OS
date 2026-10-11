@@ -54,7 +54,9 @@ bolts you can sidestep, and wraiths hit hard. Ctrl-C quits at any time.
 
 Cheats, for exploring the deep levels quickly: `Shift+G` toggles invulnerable
 mode, `=` takes the portal immediately, `\` hands the controls to the
-autopilot, and `` ` `` shows the frame rate.
+autopilot, `` ` `` shows the frame rate (followed by billboards queued and
+visible, active lights, and how many processes render the view), and `[`
+switches between parallel and single-process rendering.
 
 Why steps instead of smooth walking? The terminal forwards key *presses* to the
 foreground program but never key releases, so a program run from the shell
@@ -91,6 +93,18 @@ and incremental arithmetic; the per-pixel loops are hand-written assembly in
 because walking whole rows touches eight pages per row and thrashes the
 16-entry TLB.
 
+**Three cores.** The view is split into three tile-aligned strips. Two
+forked worker processes render two of them while the game process renders the
+third, all into a back buffer that lives in a shared file mapping (Dioptase-OS
+has no anonymous shared memory, but `MMAP_SHARED` file mappings alias the same
+page-cache pages across `fork`; the file is unlinked right after mapping, and
+the kernel writes nothing back until the last mapping goes away). Workers wait
+by spinning on a frame counter in that shared page — blocking pipe reads were
+tried first and lost to wake-up latency. With the default four emulated cores
+this renders about 25-30% faster; the first game also measures both modes and
+falls back to a single process if parallel turns out slower (for example with
+fewer cores).
+
 **Sound.** `audio_start()` forks a synthesizer process that owns the PCM
 device: eight voices (wavetables and an LFSR noise channel), a four-channel
 tracker for the music, and pitch-swept segment programs for the effects. The
@@ -115,6 +129,7 @@ unexplored space, and turns to fire at monsters in line with it.
 | `hud.c` | fonts, text, status bar upload |
 | `audio.c` | synthesizer process and its command protocol |
 | `autopilot.c` | the computer player for the attract mode |
+| `parallel.c` | worker processes that render strips of the view |
 | `gfx.s` | hand-written inner loops and arithmetic helpers |
 | `assets.s` | generated palette, shade tables, textures, sprites, fonts, music |
 | `tools/gen_assets.py` | the generator for `assets.s` (`make assets`; needs numpy) |

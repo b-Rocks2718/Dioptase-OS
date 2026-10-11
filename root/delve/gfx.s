@@ -204,7 +204,9 @@ udiv32_next:
 #          r2 = back buffer (view pixel (0, 0)).
 #          r3 = floor texture, r4 = ceiling texture (64x64, row-major).
 #          r5 = FlatLight records (x, y, radius words), r6 = their count.
-#          r7 = 20 skip thresholds, one word per tile column.
+#          r7 = skip thresholds, one word per tile column drawn.
+#          r8 = number of tile columns to draw (the view's strip width / 8;
+#               r2 points at the strip's first tile column).
 # Outputs: none. Clobbers r1-r19; preserves r20-r27 (saved on the stack).
 #
 # Register map: r1 rows, r2 group base, r3/r4 textures, r5 lights, r6 light
@@ -223,7 +225,7 @@ draw_flats_asm:
   push r26
   push r27
   movi r24, 0xFC0              # mask for (v >> 4): texel row * 64
-  movi r25, 20                 # tile columns
+  mov  r25, r8                 # tile columns to draw
   adpc r26, shade_tables
 flats_group:
   mov  r8, r1                  # FlatRow cursor
