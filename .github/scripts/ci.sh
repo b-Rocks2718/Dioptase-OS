@@ -37,23 +37,19 @@ cargo build --release --manifest-path "$EMULATOR_DIR/Cargo.toml"
 make -C "$COMPILER_DIR" release
 make -C "$REPO_DIR" clean
 
-shopt -s nullglob
-baselines=("$REPO_DIR"/tests/*.ok "$REPO_DIR"/tests/*.panic)
-declare -A seen_tests=()
+# Check the same tests as `make test`: every test with a .ok or .panic
+# baseline, minus those its configuration does not support, the long
+# profiling workloads, and the demo game tests (see TEST_CHECK_NAMES in the
+# Makefile).
 test_targets=()
-
-for baseline in "${baselines[@]}"; do
-  filename="${baseline##*/}"
-  test_name="${filename%.*}"
-
-  if [ -z "${seen_tests[$test_name]+present}" ]; then
-    seen_tests[$test_name]=1
+while IFS= read -r test_name; do
+  if [ -n "$test_name" ]; then
     test_targets+=("$test_name.fail")
   fi
-done
+done < <(make -s -C "$REPO_DIR" --no-print-directory print-test-check-names)
 
 if [ "${#test_targets[@]}" -eq 0 ]; then
-  echo "OS CI: no .ok or .panic baselines were found under '$REPO_DIR/tests'." >&2
+  echo "OS CI: 'make print-test-check-names' listed no tests under '$REPO_DIR/tests'." >&2
   exit 1
 fi
 

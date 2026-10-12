@@ -182,6 +182,12 @@ TEST_CHECK_NAMES := $(filter-out $(UNSUPPORTED_TEST_NAMES),$(ALL_TEST_CHECK_NAME
 # slow for the aggregate suite (user_mandelbrot takes ~10 minutes).
 PROFILING_WORKLOAD_TEST_NAMES := user_mandelbrot
 TEST_CHECK_NAMES := $(filter-out $(PROFILING_WORKLOAD_TEST_NAMES),$(TEST_CHECK_NAMES))
+# Tests of the user-mode demo games boot each game's own self-check. They
+# exercise application code rather than the kernel and are slow on shared
+# runners, so the aggregate suite and CI leave them out; run one with
+# `make <name>.summary-test`.
+DEMO_TEST_NAMES := lumen starfall_guest emberfall_guest emberfall_e2e
+TEST_CHECK_NAMES := $(filter-out $(DEMO_TEST_NAMES),$(TEST_CHECK_NAMES))
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
@@ -291,7 +297,7 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
-  kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
+  kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test print-test-check-names test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s FORCE
 # Keep generated assembly outputs for inspection.
@@ -306,6 +312,11 @@ all: kernel.bin root-sbin
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
 test: $(if $(TEST_CHECK_SUMMARY_TARGETS),$(TEST_CHECK_SUMMARY_TARGETS),test-no-ok)
+
+# Print the tests the aggregate suite checks, one per line. CI runs exactly
+# these, so `make test` and CI cannot drift apart.
+print-test-check-names:
+	@printf '%s\n' $(TEST_CHECK_NAMES)
 
 test-no-ok:
 	@echo "No tests with .ok or .panic baselines were found under tests/."
