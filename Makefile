@@ -47,6 +47,17 @@ BCC_OPT ?= -opt
 PYTHON3 ?= python3
 DEPGEN ?= gcc
 
+# Output-checked test goals always run without VGA or host audio: a VGA kernel
+# waits for a Q keypress at shutdown, so every test would hang until its
+# timeout, and CI runners have no display or audio device. Bare test names
+# (`make snake`) still follow EMU_VGA, since they exist to watch a run.
+TEST_CHECK_GOAL_PATTERNS := test ext threads datastructs heap %.test %.summary-test %.fail
+ifneq ($(filter $(TEST_CHECK_GOAL_PATTERNS),$(MAKECMDGOALS)),)
+override EMU_VGA := no
+override EMU_AUDIO := no
+override EMU_AUDIO_FAST := no
+endif
+
 EMU_VGA_STRIPPED := $(strip $(EMU_VGA))
 EMU_AUDIO_STRIPPED := $(strip $(EMU_AUDIO))
 EMU_AUDIO_FAST_STRIPPED := $(strip $(EMU_AUDIO_FAST))
@@ -205,7 +216,10 @@ DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 # Generated kernel/test assembly depends on configuration flags passed to bcc.
 # Keep one stamp outside the generated assembly dependency files so switching
 # HEAP_DEBUG, OS_RELEASE, or BCC_OPT cannot silently reuse assembly built with
-# the opposite setting.
+# the opposite setting. The BIOS and kernel images also take USE_VGA,
+# USE_AUDIO, and NUM_CORES as assembler defines; recording them here rebuilds
+# the assembly those images link, so `make run` and `make test` never reuse
+# an image built for the other configuration.
 $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	@tmp="$@.tmp"; \
 	{ \
@@ -213,6 +227,9 @@ $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	  echo "OS_RELEASE=$(OS_RELEASE_STRIPPED)"; \
 	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
 	  echo "BCC_OPT=$(BCC_OPT)"; \
+	  echo "USE_VGA=$(USE_VGA_DEFINE)"; \
+	  echo "USE_AUDIO=$(USE_AUDIO_DEFINE)"; \
+	  echo "NUM_CORES=$(strip $(NUM_CORES))"; \
 	} > "$$tmp"; \
 	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
 	  mv "$$tmp" "$@"; \
