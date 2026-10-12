@@ -18,8 +18,8 @@ tests/*.dir/test/init
 root/hello/bmake
 root/snake/init
 # DELVE high scores and settings, copied back from the guest filesystem by `make run`
-root/delve.hi
-root/delve.cfg
+root/delve/delve.hi
+root/delve/delve.cfg
 # Starfall's best score, written by the game and copied back by `make run`
 root/starfall/record.txt
 tests/starfall_guest.dir/sbin/starfall

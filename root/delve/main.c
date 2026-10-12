@@ -126,8 +126,11 @@ static unsigned fixed_seed;
 static int settings_line;
 static int practice_depth = 2;
 static bool practice;
-/* Settings that persist across runs, in SETTINGS_FILE as "sens N". */
-#define SETTINGS_FILE "/delve.cfg"
+/* Settings that persist across runs, in SETTINGS_FILE as "sens N". Both save
+ * files live in the game's own directory, which the root filesystem always
+ * has because it holds DELVE's sources. */
+#define SETTINGS_FILE "/delve/delve.cfg"
+#define SCORE_FILE "/delve/delve.hi"
 /* Crystals a practice run starts with per depth already "played": about
  * what a run gathers on one depth, so the crystal powers of a run that
  * reached that depth come with it. */
@@ -151,7 +154,7 @@ static int pending_code = -1;
 static char message[40];
 static int message_t;
 
-/* High score table (persisted in /delve.hi as "NAME SCORE DEPTH" lines). */
+/* High score table (persisted in SCORE_FILE as "NAME SCORE DEPTH" lines). */
 #define SCORE_SLOTS 5
 static char score_names[SCORE_SLOTS][4];
 static int score_values[SCORE_SLOTS];
@@ -237,7 +240,7 @@ static int parse_int(char* s, int* pos){
 /* Load the table, keeping the defaults if the file is absent. */
 static void scores_load(void){
   scores_default();
-  int fd = open_existing("/delve.hi");
+  int fd = open_existing(SCORE_FILE);
   if (fd < 0) return;
   static char buf[256];
   int n = read(fd, buf, 255);
@@ -259,9 +262,9 @@ static void scores_load(void){
   }
 }
 
-/* Rewrite /delve.hi from the in-memory table (one line per entry). */
+/* Rewrite SCORE_FILE from the in-memory table (one line per entry). */
 static void scores_save(void){
-  int fd = open("/delve.hi");
+  int fd = open(SCORE_FILE);
   if (fd < 0) return;
   truncate(fd, 0);
   seek(fd, 0, SEEK_SET);

@@ -55,7 +55,7 @@ and take the **Heart of Dioptase** to win.
 | `X` (title screen) | quit to the shell |
 
 **Settings and practice.** `S` on the title screen opens the settings: the
-mouse-look speed (saved in `/delve.cfg`), and a practice run from any depth.
+mouse-look speed (saved in `/delve/delve.cfg`), and a practice run from any depth.
 A practice run starts with the crystals, and the crystal powers, a run would
 typically have gathered by that depth (eleven per depth), and its score is not
 entered in the high-score table.
@@ -195,7 +195,7 @@ instructions a second on the core it shares with the terminal.
 breadth-first searches toward potions, keys, crystals, the seal, and
 unexplored space, and turns to fire at monsters in line with it.
 
-**Persistence.** High scores live in `/delve.hi` on the root filesystem;
+**Persistence.** High scores live in `/delve/delve.hi` on the root filesystem;
 `make run` copies the image back into `root/`, so they survive between runs.
 
 ## Files
