@@ -54,9 +54,9 @@ unsigned g_frame;
  * across the whole window turns about 180 degrees. There is no pointer grab
  * (the emulator cannot hold the host cursor under WSLg), so motion stops at
  * the window edge; the turn keys still work for big turns. */
-#define MOUSE_SENS_LEVELS 9
-#define MOUSE_SENS_DEFAULT 5       /* 1-based */
-static int mouse_sens_eighths[MOUSE_SENS_LEVELS] = { 8, 12, 16, 20, 26, 32, 40, 52, 64 };
+#define MOUSE_SENS_LEVELS 18
+#define MOUSE_SENS_DEFAULT 12       /* 1-based */
+static int mouse_sens_eighths[18] = { 8, 12, 16, 20, 26, 32, 40, 52, 64, 80, 96, 116, 136, 160, 184, 210, 240, 270 };
 
 /* Spell timings (ticks) and speeds (cells per tick, 16.16); costs and the
  * rest of the spell rules are in delve.h. */
