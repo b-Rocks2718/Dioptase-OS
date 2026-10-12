@@ -211,11 +211,24 @@ void local_queue_add(void* tcb){
 // Count the runnable threads already admitted to this core's local ready queues.
 // schedule_next_thread() uses this to decide when the local queue set is too small
 // and should pull more work from the global admission queue.
+// Called in kernel mode by this core's non-migrating idle thread. Individual
+// size reads remain sequentially consistent; their sum is a scheduling hint,
+// not an atomic snapshot. Queue ownership and interrupt state are unchanged.
+//
+// The buckets are walked with pointers rather than indexed as
+// [priority][level]: sizeof(struct Queue) is not a power of two, so indexing
+// would cost a software multiply per bucket, and this runs on every
+// scheduling pass. Rows and their buckets are walked separately so every
+// pointer stays within its own C array.
 static unsigned local_ready_queue_size(struct PerCore* core) {
   unsigned total = 0;
-  for (int priority = LOW_PRIORITY; priority <= HIGH_PRIORITY; priority++) {
-    for (int level = LEVEL_ZERO; level <= LEVEL_TWO; level++) {
-      total += __atomic_load_n(&core->ready_queue[priority][level].size);
+  struct Queue (*row)[MLFQ_LEVELS] = core->ready_queue;
+  struct Queue (*rows_end)[MLFQ_LEVELS] = row + PRIORITY_LEVELS;
+  for (; row != rows_end; ++row) {
+    struct Queue* bucket = *row;
+    struct Queue* end = bucket + MLFQ_LEVELS;
+    for (; bucket != end; ++bucket) {
+      total += __atomic_load_n(&bucket->size);
     }
   }
   return total;
@@ -324,10 +337,15 @@ void scheduler_wake_thread_from_interrupt(struct TCB* tcb) {
   queue_add(&get_per_core()->deferred_interrupt_wake_queue, tcb);
 }
 
-// MLFQ removes from the highest non-empty level first
+// Remove from the highest nonempty MLFQ level first, preserving FIFO per level.
+// Kernel callers own this core's local queues and keep interrupts disabled
+// through removal, preventing reentrant mutation. The returned TCB is detached
+// from its queue; other levels and CPU state are unchanged. The levels are
+// walked with a pointer for the same reason as local_ready_queue_size().
 static struct TCB* mlfq_remove(struct Queue* mlfq) {
-  for (int i = 0; i < MLFQ_LEVELS; i++) {
-    struct TCB* tcb = queue_remove(&mlfq[i]);
+  struct Queue* end = mlfq + MLFQ_LEVELS;
+  for (struct Queue* level = mlfq; level != end; ++level) {
+    struct TCB* tcb = queue_remove(level);
     if (tcb != NULL) return tcb;
   }
   return NULL;

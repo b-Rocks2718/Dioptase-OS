@@ -8,7 +8,7 @@
 # emulator config
 NUM_CORES ?= 4
 SCHEDULER ?= free # emulator scheduler, determines when cores run. free, rr, or random
-EMU_VGA ?= no # whether to build with VGA support and emulate a VGA device
+EMU_VGA ?= yes # whether to build with VGA support and emulate a VGA device
 EMU_AUDIO ?= $(EMU_VGA) # whether to emulate host audio playback for the MMIO audio device
 EMU_AUDIO_FAST ?= $(EMU_AUDIO) # whether to consume MMIO audio from wall-clock time for host playback
 TRACE_INTS ?= no # print a line for every interrupt delivery
@@ -46,6 +46,17 @@ BCC_OPT ?= -opt
 
 PYTHON3 ?= python3
 DEPGEN ?= gcc
+
+# Output-checked test goals always run without VGA or host audio: a VGA kernel
+# waits for a Q keypress at shutdown, so every test would hang until its
+# timeout, and CI runners have no display or audio device. Bare test names
+# (`make snake`) still follow EMU_VGA, since they exist to watch a run.
+TEST_CHECK_GOAL_PATTERNS := test ext threads datastructs heap %.test %.summary-test %.fail
+ifneq ($(filter $(TEST_CHECK_GOAL_PATTERNS),$(MAKECMDGOALS)),)
+override EMU_VGA := no
+override EMU_AUDIO := no
+override EMU_AUDIO_FAST := no
+endif
 
 EMU_VGA_STRIPPED := $(strip $(EMU_VGA))
 EMU_AUDIO_STRIPPED := $(strip $(EMU_AUDIO))
@@ -171,6 +182,12 @@ TEST_CHECK_NAMES := $(filter-out $(UNSUPPORTED_TEST_NAMES),$(ALL_TEST_CHECK_NAME
 # slow for the aggregate suite (user_mandelbrot takes ~10 minutes).
 PROFILING_WORKLOAD_TEST_NAMES := user_mandelbrot
 TEST_CHECK_NAMES := $(filter-out $(PROFILING_WORKLOAD_TEST_NAMES),$(TEST_CHECK_NAMES))
+# Tests of the user-mode demo games boot each game's own self-check. They
+# exercise application code rather than the kernel and are slow on shared
+# runners, so the aggregate suite and CI leave them out; run one with
+# `make <name>.summary-test`.
+DEMO_TEST_NAMES := lumen starfall_guest emberfall_guest emberfall_e2e
+TEST_CHECK_NAMES := $(filter-out $(DEMO_TEST_NAMES),$(TEST_CHECK_NAMES))
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
 PERSISTENT_TEST_NAMES := $(filter snake user_snake,$(TEST_NAMES))
@@ -205,7 +222,10 @@ DEPFILES := $(TEST_C_DEPS) $(BIOS_C_DEPS) $(KERNEL_C_DEPS)
 # Generated kernel/test assembly depends on configuration flags passed to bcc.
 # Keep one stamp outside the generated assembly dependency files so switching
 # HEAP_DEBUG, OS_RELEASE, or BCC_OPT cannot silently reuse assembly built with
-# the opposite setting.
+# the opposite setting. The BIOS and kernel images also take USE_VGA,
+# USE_AUDIO, and NUM_CORES as assembler defines; recording them here rebuilds
+# the assembly those images link, so `make run` and `make test` never reuse
+# an image built for the other configuration.
 $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	@tmp="$@.tmp"; \
 	{ \
@@ -213,6 +233,9 @@ $(KERNEL_TEST_CONFIG_STAMP): FORCE | $(BUILD_DIR)
 	  echo "OS_RELEASE=$(OS_RELEASE_STRIPPED)"; \
 	  echo "KERNEL_TEST_BCC_DEFINES=$(KERNEL_TEST_BCC_DEFINES)"; \
 	  echo "BCC_OPT=$(BCC_OPT)"; \
+	  echo "USE_VGA=$(USE_VGA_DEFINE)"; \
+	  echo "USE_AUDIO=$(USE_AUDIO_DEFINE)"; \
+	  echo "NUM_CORES=$(strip $(NUM_CORES))"; \
 	} > "$$tmp"; \
 	if [ ! -f "$@" ] || ! cmp -s "$$tmp" "$@"; then \
 	  mv "$$tmp" "$@"; \
@@ -274,7 +297,7 @@ endef
 
 # Treat config.s files as phony so config define changes always rebuild images.
 .PHONY: all bios.hex bios.labels $(BIN_TARGETS) $(HEX_TARGETS) $(LABEL_TARGETS) $(TEST_SBIN_TARGETS) \
-  kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
+  kernel.bin kernel.hex kernel.labels root-sbin run $(TEST_NAMES) test print-test-check-names test-no-ok persistent persistent-no-tests ext ext-no-ok threads threads-no-ok \
   datastructs datastructs-no-ok heap heap-no-ok clean bios/config.s \
   kernel/config.s kernel/mbr.s FORCE
 # Keep generated assembly outputs for inspection.
@@ -289,6 +312,11 @@ all: kernel.bin root-sbin
 
 # Aggregate baseline-checked summary targets so `make -j` can run them in parallel.
 test: $(if $(TEST_CHECK_SUMMARY_TARGETS),$(TEST_CHECK_SUMMARY_TARGETS),test-no-ok)
+
+# Print the tests the aggregate suite checks, one per line. CI runs exactly
+# these, so `make test` and CI cannot drift apart.
+print-test-check-names:
+	@printf '%s\n' $(TEST_CHECK_NAMES)
 
 test-no-ok:
 	@echo "No tests with .ok or .panic baselines were found under tests/."

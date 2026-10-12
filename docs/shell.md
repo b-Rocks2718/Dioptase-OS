@@ -212,10 +212,13 @@ program.
   parent installs the foreground descriptor before releasing that gate, so the
   program cannot use a direct display trap before the kernel can attribute it
   to the foreground job.
-- After the child exits, the parent clears the foreground slot. If the kernel
-  reports that the child used direct display traps, the shell writes the
-  terminal-private `ESC [ 67 J` recovery command before printing the next
-  prompt.
+- After the child exits, the shell writes `ESC [ ? 68 l` so a program that
+  crashed or was killed in raw keyboard mode (`terminal.md`) cannot leave the
+  line editor reading key records. The terminal ignores the request when raw
+  mode is already off.
+- The parent then clears the foreground slot. If the kernel reports that the
+  child used direct display traps, the shell writes the terminal-private
+  `ESC [ 67 J` recovery command before printing the next prompt.
 
 Consequences:
 

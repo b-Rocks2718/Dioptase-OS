@@ -52,3 +52,13 @@ if none is pending. `mouse.h` provides decoders: `MOUSE_BUTTONS()` and the
 `MOUSE_BUTTON_*` bits, plus the sign-extending `MOUSE_DX()`, `MOUSE_DY()`, and
 `MOUSE_WHEEL()`. Motion is relative with +DY pointing down. Button bits are
 state, so detect a press by comparing with the previous event's buttons.
+
+## Raw keyboard input
+
+`set_keyboard_raw(enabled)` (declared in `sys.h`, implemented in `keyboard.c`)
+switches the terminal between cooked characters and raw two-byte key records
+on `STDIN` and returns once the switch has taken effect, discarding input
+from before it. It is not a trap: it uses the terminal's in-band raw-mode and
+keyboard-sync requests (`terminal.md`), so it only works for a program whose
+`STDIN` and `STDOUT` are the terminal's pipes, as they are for programs the
+shell starts. The record format and constants are in `terminal.h`.

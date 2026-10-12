@@ -38,6 +38,15 @@ unsigned getkey(void);
 // Non-blocking. Decode the word with the macros in mouse.h.
 int getmouse(void);
 
+// Ask the terminal for raw (1) or cooked (0) keyboard input on STDIN and wait
+// until it has switched; input from before the switch is discarded. Raw input
+// is two-byte records: the guest keycode, then TERMINAL_RAW_RELEASE (1) for a
+// release or 0 for a press (root/crt/terminal.h). Not a trap: implemented in
+// keyboard.c with the terminal's in-band requests (docs/terminal.md). Returns
+// 0, or -1 (errno EINVAL for a bad mode) when no terminal answered, for
+// example when STDIN is not the terminal's input pipe.
+int set_keyboard_raw(int enabled);
+
 void set_tile_scale(unsigned scale);
 
 void set_vscroll(unsigned value);
@@ -120,9 +129,30 @@ int load_text_tiles_colored(unsigned fg_color, unsigned bg_color);
 // Map the spritemap MMIO into this process. Each cell is a device register.
 volatile short* get_spritemap(void);
 
+// Map the 320x240 pixel framebuffer (the layer drawn under the tiles; 0x0BGR
+// pixels, row-major) into this process. Only pixels 0..75775 are mapped (rows
+// 0..235 and the first 256 pixels of row 236): the framebuffer's last 2,048
+// bytes share a page with device registers, so they stay kernel-only. Returns
+// the same pointer on repeat calls, or (short*)-1 if no virtual range is
+// available.
+#define PIXEL_FB_USER_PIXELS 75776
+volatile short* get_pixel_fb(void);
+
+// Write the pixel-scale register and return 0. Hardware displays each pixel
+// at 2**(n+1) screen pixels (docs/mem_map.md), so 0 fills the 640x480 screen
+// from the 320x240 buffer and 1 shows its top-left 160x120 at 4x. The
+// terminal restores 0 after a foreground program that changed it exits.
+int set_pixel_scale(unsigned scale);
+
 int signal_child(int child, int signal);
 
 int request_priority(int priority);
+
+// Pin the calling thread to `core`, moving it there before returning, or
+// with -1 let it run on any core again. Returns the core the thread runs on
+// when the call returns, or -1 if `core` is not a core of this machine. A
+// forked child inherits the pin.
+int pin_core(int core);
 
 int set_foreground_child(int child);
 

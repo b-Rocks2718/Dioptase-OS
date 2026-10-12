@@ -1439,13 +1439,21 @@ int handle_wait_child(int child_desc){
 }
 
 // Make (pid, vme_list) the TCB's address space and install it in hardware.
-// Caller is the current TCB in kernel mode.
+// Caller is the current TCB in kernel mode. Interrupts stay disabled from the
+// TCB update through the PID change, the TLB clear, and the owner record: a
+// context switch saves the hardware PID register into tcb->pid, so a
+// preemption in between would rewind tcb->pid, and this core's record must
+// describe the TLB it actually holds.
 static void install_address_space(struct TCB* tcb, unsigned pid,
     struct VME* vme_list){
+  unsigned was = interrupts_disable();
   tcb->pid = pid;
   tcb->vme_list = vme_list;
+  vmem_new_tlb_generation(tcb);
   set_pid(pid);
   tlb_flush();
+  vmem_tlb_adopt(tcb);
+  interrupts_restore(was);
 }
 
 // Destroy an address space that is not installed in hardware. The TCB only
@@ -1868,9 +1876,11 @@ static void claim_foreground_display(void){
   blocking_lock_release(&foreground_child_lock);
 }
 
-// Map one display MMIO window (tilemap, tile framebuffer, or spritemap) into
-// the caller and record a foreground display claim. Returns the user address,
-// or -1 if the caller's virtual address space has no room.
+// Map one display MMIO window (tilemap, tile framebuffer, spritemap, or the
+// user-visible part of the pixel framebuffer) into the caller and record a
+// foreground display claim. `size` is rounded up to whole pages, so every
+// window must end where rounding exposes no device registers. Returns the user
+// address, or -1 if the caller's virtual address space has no room.
 static int map_display_window(unsigned size, unsigned paddr){
   void* mapping = mmap_physmem(size, paddr, MMAP_READ | MMAP_WRITE | MMAP_USER);
   if (mapping == NULL){
@@ -1973,6 +1983,39 @@ int handle_request_priority(int priority){
   interrupts_restore(was);
 
   return 0;
+}
+
+// block() continuation for handle_pin_core(): queue the switched-out thread
+// by its new affinity (scheduler_wake_thread sends a thread pinned to
+// another core to that core's pinned queue).
+static void requeue_by_affinity(void* tcb){
+  scheduler_wake_thread((struct TCB*)tcb);
+}
+
+// Pin the calling thread to `core`, or with -1 let it run on any core again,
+// and return the core it runs on when the call returns, or -1 for a core
+// number outside [0, CONFIG.num_cores).
+//
+// A thread pinned to another core is switched out and queued there before
+// this returns: block() runs requeue_by_affinity() on the idle thread once
+// this thread's context is saved, and the target core's scheduler moves it
+// from that core's pinned queue to its local ready queue (scheduler.c). The
+// affinity stays in effect across blocking, preemption, and rebalancing,
+// which all respect core_affinity, and is inherited by fork().
+int handle_pin_core(int core){
+  if (core != -1 && (core < 0 || (unsigned)core >= CONFIG.num_cores)){
+    return -1;
+  }
+
+  unsigned was = interrupts_disable();
+  struct TCB* tcb = get_current_tcb();
+  tcb->core_affinity = core == -1 ? ANY_CORE : (enum CoreAffinity)core;
+  if (core != -1 && (unsigned)core != get_core_id()){
+    block(was, requeue_by_affinity, tcb, true);
+  } else {
+    interrupts_restore(was);
+  }
+  return (int)get_core_id();
 }
 
 // Install or clear one user signal handler in the current process.
@@ -2233,8 +2276,21 @@ int trap_handler(unsigned code,
     case TRAP_GET_SPRITEMAP: {
       return map_display_window(SPRITEMAP_SIZE, (unsigned)SPRITEMAP);
     }
+    case TRAP_GET_PIXEL_FB: {
+      // Whole framebuffer pages only: the rounded tail page holds device
+      // registers (see PIXEL_FB_USER_SIZE in vga.h).
+      return map_display_window(PIXEL_FB_USER_SIZE, (unsigned)PIXEL_FB);
+    }
+    case TRAP_SET_PIXEL_SCALE: {
+      claim_foreground_display();
+      console_set_pixel_scale(arg1);
+      return 0;
+    }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);
+    }
+    case TRAP_PIN_CORE: {
+      return handle_pin_core(arg1);
     }
     case TRAP_REQUEST_PRIORITY: {
       return handle_request_priority(arg1);

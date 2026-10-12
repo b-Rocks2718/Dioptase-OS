@@ -73,6 +73,13 @@ enum TrapCode {
   TRAP_AUDIO_WRITE = 59,
   TRAP_AUDIO_BUFFERED = 60,
   TRAP_AUDIO_CLOSE = 61,
+  // Map the 320x240 pixel framebuffer (the layer under the tiles) into the
+  // caller, like the tile and sprite getters.
+  TRAP_GET_PIXEL_FB = 62,
+  // Write the pixel-layer scale register.
+  TRAP_SET_PIXEL_SCALE = 63,
+  // Pin the calling thread to one core, or let it run anywhere again.
+  TRAP_PIN_CORE = 64,
 };
 
 #define SEEK_SET 0

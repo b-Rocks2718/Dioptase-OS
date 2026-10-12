@@ -86,6 +86,16 @@ return_to_kernel:
   # the kernel continuation saved by jump_to_user(), not to the user trap site.
   add sp, sp, 12
 
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
   pop ra
   pop bp
 
@@ -100,9 +110,22 @@ jump_to_user:
   mov  imr, r10
   # interrupts will be restored on rfe
 
-  # save bp and ra for when the user program exits
+  # Save the kernel caller's bp, ra, and callee-saved registers. User code
+  # may clobber every register, and return_to_kernel restores these when the
+  # user context ends (exit, a fatal fault, or sigreturn from a handler that
+  # jump_to_user started), so this returns to its C caller like any call.
+  # r28 is reserved as a future TLS base (docs/abi.md) and is kept as well.
   push bp
   push ra
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
 
   # set up user stack
   crmv sp, r2

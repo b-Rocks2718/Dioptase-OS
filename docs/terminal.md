@@ -6,6 +6,8 @@
 - The terminal reads shell/program output from `STDIN` and renders those bytes.
 - The terminal reads raw keyboard events with `getkey()` and writes translated
   input bytes to `STDOUT`, which `/sbin/init` connects to the shell's `STDIN`.
+- In raw keyboard mode it instead writes every key press and release as a
+  two-byte record (see "Raw keyboard mode").
 - The visible screen is `80` columns by `60` rows.
 - Each character cell is one `8x8` tile.
 - The low byte of each tile framebuffer entry is the tile index.
@@ -45,6 +47,54 @@
 - Arrow keys are forwarded using the existing Dioptase `KEY_LEFT`,
   `KEY_RIGHT`, `KEY_UP`, and `KEY_DOWN` byte values.
 - Other raw keycodes are ignored.
+
+### Raw keyboard mode
+
+Programs that need to know how long keys are held (games) can ask the terminal
+to stop translating keys with the Dioptase-private DEC-style mode `68`:
+`ESC [ ? 68 h` turns raw mode on and `ESC [ ? 68 l` turns it off
+(`TERMINAL_RAW_KEYBOARD_ON` / `TERMINAL_RAW_KEYBOARD_OFF` in
+`root/crt/terminal.h`). The mode takes effect when the terminal processes the
+sequence; key events already forwarded stay in the input pipe as they were.
+
+While raw mode is on, every keyboard event, presses and releases alike, is
+written to `STDOUT` as a two-byte record:
+
+| Byte | Meaning |
+| --- | --- |
+| `0` | Keycode as returned by `getkey()` without the release bit (see `../../docs/mem_map.md`; names in `root/crt/ps2.h`) |
+| `1` | `1` (`TERMINAL_RAW_RELEASE`) for a release, `0` for a press |
+
+No Shift or Ctrl translation is applied; programs see the modifier keys as
+records of their own. If the input pipe has no room for a whole record, the
+terminal drops that event instead of blocking, so a program that stops reading
+cannot stall Ctrl-C. The terminal still tracks modifier state, and Ctrl-C is
+the one exception: it is not forwarded but turns raw mode off and then behaves
+as in cooked mode (it terminates the foreground child, or writes `0x03` if
+there is none). Turning raw mode off first means a killed program cannot leave
+the keyboard raw, and the releases that follow the Ctrl-C are dropped as
+cooked input instead of reaching the shell. A program that handles
+`SIGNAL_TERMINATE` and keeps running must turn raw mode on again.
+
+Raw mode is also turned off by the shell after every foreground program exits
+(see `shell.md`) and by foreground display recovery.
+
+#### Keyboard sync
+
+`ESC [ 68 n` (`TERMINAL_KEYBOARD_SYNC`) asks the terminal to write two `0xFF`
+bytes to the input pipe when it processes the request. Because the terminal
+handles program output in order and writes key input to the same pipe, the
+reply marks the point in the input stream where every request written before
+the query, such as a raw-mode change, had taken effect: input before the reply
+may be in the old form, input after it is in the new one. `0xFF` is neither a
+guest keycode nor a cooked input byte, and the second byte of a raw record is
+`0` or `1`, so the reply cannot be confused with input or straddle a record.
+
+`set_keyboard_raw(enabled)` in the crt (`root/crt/keyboard.c`) is the usual
+way to use both: it writes the mode request and the sync request, then reads
+and discards input up to and including the reply. It returns `0` once the
+switch has taken effect, or `-1` when no terminal answers (`STDIN` or
+`STDOUT` is not a pipe, or no reply within one second).
 
 ### Cursor and scrolling behavior
 
@@ -111,6 +161,9 @@ supports the following final bytes:
 | `ESC [ a ; b m` | Apply up to two SGR codes in order | Example: `ESC [ 0 ; 32 m` resets then sets green |
 | `ESC [ ? 25 l` | Hide cursor | |
 | `ESC [ ? 25 h` | Show cursor | |
+| `ESC [ ? 68 h` | Enter raw keyboard mode | Dioptase-private; see "Raw keyboard mode" |
+| `ESC [ ? 68 l` | Leave raw keyboard mode | Dioptase-private |
+| `ESC [ 68 n` | Keyboard sync: write two `0xFF` bytes to the input pipe | Dioptase-private; see "Keyboard sync" |
 
 ### Foreground display recovery
 
@@ -122,8 +175,13 @@ processes recovery before rendering that prompt.
 Recovery restores the terminal's established startup state:
 
 - reload the built-in text tiles
-- set tile scale and both tile scroll registers to `0`
+- set tile scale, pixel scale, and both tile scroll registers to `0`
 - hide every sprite by moving it to `HIDDEN_SPRITE_COORD`
+- clear the user-visible part of the pixel framebuffer (pixels `0..75775`,
+  mapped by the terminal with `get_pixel_fb()`) to black, because text tiles
+  are transparent where their pixels are `0xFXXX` and a program's last frame
+  would otherwise show through
+- turn raw keyboard mode off
 - reset circular-scroll state and clear the visible framebuffer
 - home and show the cursor
 - reset saved-cursor, delayed-wrap, blink, and text-color state
@@ -180,7 +238,8 @@ inverse video are ignored.
 - Only CSI sequences beginning with `ESC [` are recognized.
 - The parser supports at most `2` arguments per sequence.
 - Each numeric argument may contain at most `2` decimal digits.
-- `?` is only meaningful as the first argument for `CSI ?25h` and `CSI ?25l`.
+- `?` is only meaningful as the first argument for `CSI ?25h`, `CSI ?25l`,
+  `CSI ?68h`, and `CSI ?68l`.
 - Rows and columns for `H` and `f` are `1`-based and clamped into the visible
   `80x60` screen.
 - Counts for `A`, `B`, `C`, `D`, `L`, and `M` are also clamped to the visible

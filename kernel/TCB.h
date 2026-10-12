@@ -96,10 +96,24 @@ struct TCB {
 
   struct VME* vme_list;
 
+  // Version of this address space's translations, for skipping the TLB flush
+  // on context switches (see vmem_tlb_switch_needs_flush in vmem.c). A fresh,
+  // never-reused value from vmem_new_tlb_generation() is stored whenever pid
+  // gets a new page directory (thread creation, fork, exec) and before any
+  // translation is removed or narrowed (munmap, permission changes), so a
+  // core that recorded (pid, tlb_generation) earlier can tell whether the
+  // entries it still holds for this pid are current. Written by the thread
+  // that owns the address space (or by its creator before it is runnable);
+  // read by the scheduler of whichever core switches to the thread.
+  unsigned tlb_generation;
+
   // Cross-core senders and the current thread's final user-return path
   // serialize this bitmap through parent_promise->state_lock while child_tcb
-  // is live. The scheduler must not consume pending signals: a runnable TCB
-  // may still have a suspended kernel continuation that owns resources.
+  // is live. Senders only set bits and only this thread clears them, so the
+  // final user-return path may test the bitmap for zero without the lock
+  // (has_unhandled_signal). The scheduler must not consume pending signals: a
+  // runnable TCB may still have a suspended kernel continuation that owns
+  // resources.
   unsigned pending_signals;
 
   // A set bit defers the corresponding maskable signal; it does not discard a

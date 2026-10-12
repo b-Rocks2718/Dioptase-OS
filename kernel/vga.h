@@ -22,6 +22,16 @@
 #define FB_WIDTH 320
 #define FB_HEIGHT 240
 
+// The part of the pixel framebuffer a user mapping may expose. The framebuffer
+// is 320x240 16-bit pixels at 0x7FC0000..0x7FE57FF (docs/mem_map.md); its 37
+// whole pages are 0x7FC0000..0x7FE4FFF, pixels 0..75775. The final 2,048
+// framebuffer bytes share page 0x7FE5000 with the PS/2, UART, PIT, SD DMA,
+// audio, and sprite/scroll registers, and mappings are page-granular, so
+// mapping that page would hand user code device control (an SD DMA into
+// kernel memory, a reprogrammed PIT). Pixels 256..319 of row 236 and rows
+// 237..239 therefore stay kernel-only.
+#define PIXEL_FB_USER_SIZE 0x25000
+
 #define TRANSPARENT 255
 
 // Display MMIO from docs/mem_map.md. Each pointer is a fixed device address.

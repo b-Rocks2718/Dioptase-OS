@@ -279,6 +279,16 @@ misaligned_pc_exc_handler_:
 return_to_kernel:
   add sp, sp, 92 # 4 + 19 = 23 regs, 23 * 4 = 92
 
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
   pop ra
   pop bp
 

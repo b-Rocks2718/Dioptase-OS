@@ -1,0 +1,7 @@
+***PASS reject core -2: got -1 expected -1
+***PASS reject core 1000: got -1 expected -1
+***PASS pin to core 2: got 2 expected 2
+***PASS woken on the pinned core: got 2 expected 2
+***PASS pin to core 1: got 1 expected 1
+***PASS child inherits the pin: got 1 expected 1
+***PASS parent still on core 1: got 1 expected 1

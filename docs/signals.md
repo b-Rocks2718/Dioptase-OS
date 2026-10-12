@@ -64,7 +64,12 @@ The mask itself is changed only by the running thread; cross-core senders
 update the pending bitmap while holding the target child descriptor's state
 lock. Locks and the
 sequentially-consistent architecture memory model provide the required
-atomicity and ordering.
+atomicity and ordering. Because senders only set pending bits and only the
+target thread clears them, each final transition first reads the bitmap
+without the lock and takes it only when a bit is set: an empty read is
+equivalent to a locked check ordered just before any concurrent send, whose
+bit stays pending for the next final transition. (Every user TLB miss ends in
+such a transition, so the lock-free empty case matters for performance.)
 
 `SIGNAL_KILL` always terminates the target. While a handler is active, maskable
 signals remain pending, but any pending nonmaskable signal terminates the

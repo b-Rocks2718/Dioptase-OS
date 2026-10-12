@@ -127,6 +127,7 @@ All other failures report `0` until their handlers are converted.
 | `53` | `sigreturn(rc)` | `rc` | From a signal handler, completes that handler and resumes the suspended user context. A valid call does not return to the wrapper. Outside a handler it returns `-1`. |
 | `54` | `mask_signal(signal)` | `signal` | Masks a signal in `0..15`, retaining any pending instance. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
 | `55` | `unmask_signal(signal)` | `signal` | Unmasks a signal in `0..15`. The operation is idempotent and returns `0`; invalid or nonmaskable signals return `-1`. |
+| `64` | `pin_core(core)` | `core` | Pins the current thread to core `core` and moves it there before returning, or with `core == -1` lets it run on any core again. Returns the core the thread runs on when the call returns, or `-1` if `core` is neither `-1` nor a core of this machine (`0` to the core count minus one). |
 
 `request_priority()` currently honors all valid requests without any permission
 checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
@@ -134,6 +135,13 @@ checks. Valid user priority values are `DIOPTASE_PRIORITY_LOW = 0`,
 does not reset the caller's current MLFQ level or remaining quantum; those
 dynamic scheduler fields continue to follow the scheduler rules documented in
 `scheduling.md`.
+
+`pin_core()` sets the same core affinity that kernel threads get from
+`core_pin()`: the thread is then scheduled only on that core, through
+preemption, blocking, wakeups, and queue rebalancing. A child created by
+`fork()` inherits its parent's affinity. Like priorities, pins are honored
+without any permission check. Programs that run several busy processes at
+once (DELVE's render workers) use it to keep them on separate cores.
 
 `signal_child()` replaces the former `kill()` wrapper, and
 `signal_foreground(signal)` replaces `kill_foreground()`. The foreground form
@@ -150,7 +158,8 @@ Signal numbers, delivery order, masking, handler arguments, and synchronous
 fault behavior are specified in `signals.md`.
 
 Each foreground child descriptor records whether its live child used a direct
-display trap. The display traps are codes `4..10`, `36`, `37`, and `43..46`;
+display trap. The display traps are codes `4..10`, `36`, `37`, `43..46`, `62`,
+and `63`;
 invalid sprite-number requests do not set the claim. Calls made by the terminal,
 shell, or a background child do not set the foreground descriptor's claim.
 `set_text_color()` is console output state and does not count as a direct
@@ -375,8 +384,10 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `44` | `set_sprite_coords(sprite_num, x, y)` | `sprite_num`, `x`, `y` | Writes one sprite coordinate pair and returns `0`, or returns `-1` for an invalid sprite number. |
 | `45` | `load_text_tiles_colored(fg_color, bg_color)` | `fg_color`, `bg_color` | Loads the built-in text tileset with explicit colors, clears the display, and returns `0`. |
 | `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. |
+| `62` | `get_pixel_fb()` | none | Maps the user-visible part of the pixel framebuffer (pixels `0..75775`, see below) into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. |
+| `63` | `set_pixel_scale(scale)` | `scale` | Writes the pixel-scale register and returns `0`. Hardware displays each pixel at `2**(scale+1)` screen pixels (`../../docs/mem_map.md`). |
 
-The three display mapping getters are idempotent within one process: repeating
+The four display mapping getters are idempotent within one process: repeating
 an exact getter returns the same pointer and does not reserve another virtual
 range. A child inherits an existing display mapping at the same virtual
 address. Parent and child mappings alias the same live physical/MMIO pages,
@@ -387,3 +398,13 @@ ranges and formats defined in `../../docs/mem_map.md`. Access to rounded
 trailing bytes without a documented device meaning is unspecified. These
 direct mappings are borrowed and are never returned to the physical-page
 allocator during process teardown.
+
+`get_pixel_fb()` maps only the framebuffer's 37 whole pages, `0x7FC0000` through
+`0x7FE4FFF`: pixels `0..75775` in row-major order (rows `0..235` and pixels
+`0..255` of row `236`; `PIXEL_FB_USER_PIXELS` in `root/crt/sys.h`). The last
+2,048 framebuffer bytes share page `0x7FE5000` with the PS/2, UART, PIT, SD
+DMA, audio, and sprite-control registers, and mapping that page would give user
+code control of those devices, so the rest of row `236` and rows `237..239` are
+not reachable from user mode. The pixel layer is drawn under the tile layer
+(tile pixels `0xFXXX` are transparent); its format and scale
+register are described in `../../docs/mem_map.md`.
