@@ -110,6 +110,8 @@ static struct Camera camera;
 static bool running = true;
 static int state = STATE_TITLE;
 static int state_t;            /* ticks spent in the current state */
+/* The victory fireworks chime for their first 6 bursts (16 ticks apart). */
+#define VICTORY_CHIME_TICKS 96
 static bool demo;              /* attract mode: the autopilot plays behind the title */
 static bool autopilot;         /* the autopilot drives the player (demo or '\\' key) */
 static bool god_mode;          /* cheat: no damage */
@@ -1384,16 +1386,27 @@ static void tick(void){
       /* crystal fireworks bloom in front of the hero */
       camera.angle = (camera.angle + 3) & ANGLE_MASK;
       if ((state_t & 15) == 0){
-        /* the hero may be standing in the Heart's one-cell alcove, so the
-         * bursts start inside the camera's own cell, just ahead of it */
+        /* Bursts start near eye level and arc up and back down through the
+         * middle of the view. They go 0.75 cells ahead when that point is
+         * open, but the hero may be standing in the Heart's one-cell alcove,
+         * so facing its wall they start inside the camera's own cell. */
         static int colors[4] = {0x0BFA, 0x02DF, 0x0FE8, 0x0B5F};
         int ux = icos(camera.angle);
         int uy = isin(camera.angle);
         int side = (rng_range(5) - 2) * 0x1000;
-        int x = camera.x + fixmul(ux, 0x6000) - fixmul(uy, side);
-        int y = camera.y + fixmul(uy, 0x6000) + fixmul(ux, side);
-        spawn_burst(x, y, 0xA000 + rng_range(0x3000), 14, colors[rng_range(4)], 0x0900);
-        sfx(SFX_CRYSTAL);
+        int ahead = 0xC000;
+        int x = camera.x + fixmul(ux, ahead) - fixmul(uy, side);
+        int y = camera.y + fixmul(uy, ahead) + fixmul(ux, side);
+        if (cell_solid(x >> 16, y >> 16)){
+          ahead = 0x6000;
+          x = camera.x + fixmul(ux, ahead) - fixmul(uy, side);
+          y = camera.y + fixmul(uy, ahead) + fixmul(ux, side);
+        }
+        spawn_burst(x, y, FIX_HALF - 0x1000 + rng_range(0x2000), 14,
+                    colors[rng_range(4)], 0x0900);
+        /* chime with the opening bursts only; the fireworks continue
+         * silently so the victory theme is not drowned out */
+        if (state_t < VICTORY_CHIME_TICKS) sfx(SFX_CRYSTAL);
       }
       world_tick(player.cx, player.cy, camera.x, camera.y, false);
       break;

@@ -568,6 +568,8 @@ void world_draw(int frame, int cam_x, int cam_y);
 void spawn_shot(int kind, int x, int y, int vx, int vy, bool from_player);
 void spawn_effect(int kind, int x, int y, int z);
 void spawn_burst(int x, int y, int z, int count, int color, int speed);
+/* Whether cell (cx, cy) blocks movement (walls, closed doors, off-map). */
+bool cell_solid(int cx, int cy);
 extern struct Particle g_particles[MAX_PARTICLES];
 int world_monsters_left(void);
 bool world_line_clear(int x0, int y0, int x1, int y1);
