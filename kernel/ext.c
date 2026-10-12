@@ -682,6 +682,16 @@ struct Node* node_find(struct Node* dir, char* name){
       if (old_parent != parent) {
         ext2_release_owned_node(old_parent, old_parent_owned);
       }
+    } else if (!node_is_symlink(dir)) {
+      // A regular file (or any other non-directory, non-symlink inode) has a
+      // component after it, so the path cannot resolve. Without this check
+      // the file's data would be read as a symlink target.
+      ext2_free_pending_path(path);
+      if (parent != dir) {
+        ext2_release_owned_node(parent, parent_owned);
+      }
+      ext2_release_owned_node(dir, dir_owned);
+      return NULL;
     } else {
       struct Node* old_parent = parent;
       bool old_parent_owned = parent_owned;
