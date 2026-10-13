@@ -6,23 +6,21 @@
 
 /*
  * Graphical cockpit instrument panel (rows 192..231 of the pixel framebuffer),
- * live topographic radar, artificial horizon, tile-layer shadowed text, metallic
- * SKYFORGE title banner, and hardware aiming/lock-on sprites.
+ * live topographic radar, artificial horizon, tile-layer shadowed text,
+ * persistent mission objective & compass tracker, metallic SKYFORGE title
+ * banner, and hardware aiming/lock-on/waypoint sprites.
  */
 
 unsigned g_hud_words[6400];
 #define g_hud ((unsigned short*)g_hud_words)
 
-/* Immediate-mode tile framebuffer double-entry buffers (40x29 = 1160 shorts = 580 words). */
 static unsigned text_want[580];
 static unsigned text_shown[580];
 
-/* Big logo banner tile geometry */
 #define LOGO_TILE0 128
 #define LOGO_COLS 24
 #define LOGO_ROWS 3
 
-/* Metallic emerald-to-cyan-to-gold vertical color ramp for the SKYFORGE logo. */
 static unsigned short logo_ramp[24] = {
   0x0FF8, 0x0EF6, 0x0DF4, 0x0CF3, 0x0BF2, 0x0AF2, 0x09E2, 0x08D2,
   0x0EDC, 0x0DDA, 0x0CD8, 0x0BD6, 0x0AD5, 0x09C4, 0x08B3, 0x07A2,
@@ -51,7 +49,7 @@ char* fmt_int(char* buf, int v){
 /* Build the 3x-scaled metallic SKYFORGE logo into tiles LOGO_TILE0..LOGO_TILE0+71. */
 static void init_logo_tiles(void){
   char* title = "SKYFORGE";
-  unsigned char mask[4608]; /* 192 * 24 pixels */
+  unsigned char mask[4608];
   for (int i = 0; i < 4608; ++i) mask[i] = 0;
 
   for (int ch = 0; ch < 8; ++ch){
@@ -64,7 +62,6 @@ static void init_logo_tiles(void){
         if (!(row_bits & (0x80 >> gx))) continue;
         int px = base_x + gx * 3;
         int py = gy * 3;
-        /* Drop shadow and dark outline */
         for (int dy = -1; dy <= 3; ++dy){
           for (int dx = -1; dx <= 3; ++dx){
             int mx = px + dx;
@@ -75,7 +72,6 @@ static void init_logo_tiles(void){
             }
           }
         }
-        /* Main 3x3 scaled pixel block */
         for (int dy = 0; dy < 3; ++dy){
           for (int dx = 0; dx < 3; ++dx){
             int mx = px + dx;
@@ -109,15 +105,14 @@ static void init_logo_tiles(void){
   }
 }
 
-/* Initialize hardware sprites 0 (aiming reticle) and 1 (target lock box). */
+/* Initialize hardware sprites 0 (reticle), 1 (lock-on diamond), and 2 (waypoint). */
 static void init_sprites(void){
-  /* Clear all 16 hardware sprites offscreen first */
   for (int s = 0; s < NUM_SPRITES; ++s){
     set_sprite_scale(s, 0);
     set_sprite_coords(s, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
   }
 
-  /* Sprite 0: 32x32 Futuristic Starfighter Aiming Reticle */
+  /* Sprite 0: 32x32 Starfighter Aiming Reticle */
   volatile short* sp0 = g_spritemap + SPRITE_RETICLE * SPRITE_SHORTS;
   for (int y = 0; y < 32; ++y){
     for (int x = 0; x < 32; ++x){
@@ -127,11 +122,11 @@ static void init_sprites(void){
       if (dx < 0) dx = -dx;
       if (dy < 0) dy = -dy;
       if (dx == 0 && dy == 0){
-        col = 0x0FFF; /* Center dot */
+        col = 0x0FFF;
       } else if ((dy == 0 && dx >= 4 && dx <= 10) || (dx == 0 && dy >= 4 && dy <= 10)){
-        col = 0x0FF2; /* Inner crosshairs */
+        col = 0x0FF2;
       } else if ((dx == 12 && dy >= 8 && dy <= 12) || (dy == 12 && dx >= 8 && dx <= 12)){
-        col = 0x08F4; /* Corner brackets */
+        col = 0x08F4;
       }
       sp0[y * 32 + x] = (short)col;
     }
@@ -147,11 +142,27 @@ static void init_sprites(void){
       if (dx < 0) dx = -dx;
       if (dy < 0) dy = -dy;
       if (dx + dy == 14 || dx + dy == 15){
-        col = 0x024F; /* Red/orange diamond lock ring */
+        col = 0x024F;
       } else if ((x == 2 || x == 29) && (y >= 14 && y <= 18)){
         col = 0x04FF;
       }
       sp1[y * 32 + x] = (short)col;
+    }
+  }
+
+  /* Sprite 2: 32x32 Objective Waypoint Chevron Marker */
+  volatile short* sp2 = g_spritemap + SPRITE_WAYPOINT * SPRITE_SHORTS;
+  for (int y = 0; y < 32; ++y){
+    for (int x = 0; x < 32; ++x){
+      unsigned short col = TRANSPARENT_12BIT;
+      int dx = x - 16;
+      if (dx < 0) dx = -dx;
+      if (y >= 4 && y <= 14 && (dx == y - 4 || dx == y - 3)){
+        col = 0x06FF;
+      } else if (y >= 18 && y <= 26 && dx <= 2){
+        col = 0x09F3;
+      }
+      sp2[y * 32 + x] = (short)col;
     }
   }
 }
@@ -181,7 +192,7 @@ void hud_init(void){
         } else if (bits & (0x80 >> x)){
           c = 0xC000;
         } else if (x > 0 && (above & (0x80 >> (x - 1)))){
-          c = 0x0000; /* Crisp black drop shadow */
+          c = 0x0000;
         }
         tile[y * 8 + x] = (short)c;
       }
@@ -194,7 +205,6 @@ void hud_init(void){
   for (int i = 0; i < TILE_FB_STRIDE * 60; ++i){
     g_tile_fb[i] = TILE_CLEAR;
   }
-  /* Cover pixel rows 232..239 (tile row 29 at scale 1) with an opaque bezel */
   for (int col = 0; col < TEXT_COLS; ++col){
     g_tile_fb[TEXT_BORDER_ROW * TILE_FB_STRIDE + col] = TILE_BORDER;
   }
@@ -285,12 +295,11 @@ static void hud_rect(int x, int y, int w, int h, unsigned short col){
 
 /* Render the 320x40 graphical cockpit instrument deck and upload to rows 192..231. */
 void hud_draw_panel(void){
-  /* 1. Beveled dark metallic cockpit chassis */
   hud_rect(0, 0, HUD_W, HUD_H, 0x0221);
   hud_rect(0, 0, HUD_W, 2, 0x08B4);
   hud_rect(0, 2, HUD_W, 1, 0x0453);
 
-  /* 2. Left Pod (x = 6..41, y = 4..37): 34x34 Live Topographic Minimap Radar */
+  /* Left Pod (x = 5..40, y = 3..38): 32x32 Live Topographic Minimap Radar */
   hud_rect(5, 3, 36, 36, 0x0684);
   unsigned short* pal = &biome_palettes[(g_biome & 7) << 8];
   for (int ry = 0; ry < 32; ++ry){
@@ -302,20 +311,19 @@ void hud_draw_panel(void){
       dst_row[rx] = pal[cell >> 8];
     }
   }
-  /* Draw entity blips on the radar */
   for (int i = 0; i < MAX_ENTITIES; ++i){
     struct Entity* e = &g_entities[i];
     if (!e->active) continue;
     int rx = 7 + (((e->x >> FIX_SHIFT) & MAP_MASK) >> 2);
     int ry = 5 + (((e->y >> FIX_SHIFT) & MAP_MASK) >> 2);
     unsigned short blip = 0x04FF;
-    if (e->kind >= ENT_SCOUT && e->kind <= ENT_STEALTH) blip = 0x024F;
+    if (e->kind == ENT_GENERATOR || e->kind == ENT_PORTAL) blip = 0x09F3;
+    else if (e->kind >= ENT_SCOUT && e->kind <= ENT_STEALTH) blip = 0x024F;
     else if (e->kind == ENT_BOSS) blip = 0x0F3F;
     else if (e->kind == ENT_RING || e->kind == ENT_GATE) blip = 0x04FF;
     else continue;
     g_hud[ry * HUD_W + rx] = blip;
   }
-  /* Draw player blip and heading tick on radar */
   int px = 7 + (((g_player.x >> FIX_SHIFT) & MAP_MASK) >> 2);
   int py = 5 + (((g_player.y >> FIX_SHIFT) & MAP_MASK) >> 2);
   g_hud[py * HUD_W + px] = 0x0FFF;
@@ -325,7 +333,7 @@ void hud_draw_panel(void){
     g_hud[hy * HUD_W + hx] = 0x0FF2;
   }
 
-  /* 3. Artificial Horizon / Attitude Indicator (x = 46..79, y = 4..37) */
+  /* Artificial Horizon / Attitude Indicator (x = 45..78, y = 3..38) */
   hud_rect(45, 3, 34, 36, 0x0575);
   int adi_pitch = g_player.pitch >> 2;
   for (int ry = 0; ry < 32; ++ry){
@@ -340,29 +348,26 @@ void hud_draw_panel(void){
     }
   }
 
-  /* 4. Center Tactical Console & Graphical Bars (x = 84..235) */
+  /* Center Tactical Console & Graphical Bars (x = 84..235) */
   hud_rect(84, 4, 152, 34, 0x0110);
-  /* Shield bar on tile row 25 (HUD y = 8..14) */
   int sh_w = (g_player.hp * 84) / g_player.max_hp;
   if (sh_w < 0) sh_w = 0;
   if (sh_w > 84) sh_w = 84;
   hud_rect(134, 8, 92, 6, 0x0333);
   hud_rect(135, 9, sh_w, 4, (g_player.hp > 30) ? 0x09F3 : 0x024F);
 
-  /* Energy / Afterburner bar on tile row 26 (HUD y = 16..22) */
   int en_w = (g_player.energy * 84) / 100;
   if (en_w < 0) en_w = 0;
   if (en_w > 84) en_w = 84;
   hud_rect(134, 16, 92, 6, 0x0333);
   hud_rect(135, 17, en_w, 4, 0x02DF);
 
-  /* Seismic Bomb icons on tile row 27 (HUD y = 24..30) */
   for (int b = 0; b < g_player.bombs && b < 6; ++b){
     hud_rect(135 + b * 12, 24, 9, 6, 0x048F);
     hud_rect(137 + b * 12, 25, 5, 4, 0x0FFF);
   }
 
-  /* 5. Right Pod (x = 240..314): Altimeter & Speedometer / Forge Swatch */
+  /* Right Pod (x = 240..314): Altimeter & Throttle */
   hud_rect(240, 4, 74, 34, 0x0110);
   int alt_cells = g_player.z >> FIX_SHIFT;
   int alt_h = (alt_cells * 28) / (MAX_HEIGHT + 18);
@@ -374,15 +379,15 @@ void hud_draw_panel(void){
   copy_words((void*)(g_pixel_fb + HUD_Y * FB_W), g_hud_words, HUD_WORDS);
 }
 
-/* Update hardware sprite coordinates for the aiming reticle and target lock box. */
+/* Update hardware sprite coordinates for reticle, lock-on diamond, and waypoint. */
 void hud_update_sprites(void){
   if (g_state != STATE_PLAY){
     set_sprite_coords(SPRITE_RETICLE, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
     set_sprite_coords(SPRITE_LOCK_BOX, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
+    set_sprite_coords(SPRITE_WAYPOINT, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
     return;
   }
 
-  /* Screen is 640x480 (pixel layer at 2x). Viewport center is (320, 192). */
   int ret_x = 320 + (g_player.aim_x << 1) - 16;
   int ret_y = 192 + (g_player.aim_y << 1) - 16;
   set_sprite_coords(SPRITE_RETICLE, (unsigned)ret_x, (unsigned)ret_y);
@@ -391,6 +396,15 @@ void hud_update_sprites(void){
     set_sprite_coords(SPRITE_LOCK_BOX, (unsigned)ret_x, (unsigned)ret_y);
   } else {
     set_sprite_coords(SPRITE_LOCK_BOX, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
+  }
+
+  if (g_player.nav_target >= 0 && g_entities[g_player.nav_target].active && g_mode != MODE_FORGE){
+    int wx = 320 + (g_player.nav_bearing << 2) - 16;
+    if (wx < 24) wx = 24;
+    if (wx > 584) wx = 584;
+    set_sprite_coords(SPRITE_WAYPOINT, (unsigned)wx, 38);
+  } else {
+    set_sprite_coords(SPRITE_WAYPOINT, SPRITE_OFFSCREEN, SPRITE_OFFSCREEN);
   }
 }
 
@@ -401,7 +415,6 @@ void hud_hide_sprites(void){
   }
 }
 
-/* Names of the 5 sectors and 7 Terrain Forge tools (all bounded to fit HUD). */
 static char* sector_names[5] = {
   "SECTOR 1: EMERALD BASIN",
   "SECTOR 2: OBSIDIAN CALDERA",
@@ -459,14 +472,15 @@ void hud_draw_overlays(int menu_cursor){
     tile_panel_box(2, 2, 36, 20, 0x04);
     tile_text_centered(3, "SKYFORGE FLIGHT & SCULPTOR MANUAL", 0xFC);
     tile_text_centered(4, "CREATED BY GEMINI-4-ARGON", 0x7F);
-    tile_text(4, 6,  "WASD / ARROWS : PITCH & BANK TURN", 0xFF);
-    tile_text(4, 8,  "MOUSE / CLICK : AIM RETICLE & FIRE", 0xFF);
-    tile_text(4, 10, "SPACE / LMB   : TWIN PLASMA CANNONS", 0x9F);
-    tile_text(4, 12, "F / RMB       : SEISMIC CRATER BOMB", 0xFC);
-    tile_text(4, 14, "E / SHIFT     : BARREL ROLL / BOOST", 0x7F);
-    tile_text(4, 16, "V: COCKPIT CAM  D: AI WINGMAN PILOT", 0xDF);
-    tile_text(4, 18, "FORGE: 1-7 TOOL  B: BIOME  O/L: SAVE", 0x9F);
-    tile_text_centered(20, "PRESS ENTER, SPACE, OR H TO RETURN", 0xFC);
+    tile_text(4, 6,  "MISSION: DESTROY 3 SHIELD TOWERS,", 0x9F);
+    tile_text(4, 7,  "DEFEAT GUARDIAN, ENTER PORTAL!", 0x9F);
+    tile_text(4, 9,  "WASD / ARROWS : PITCH & BANK TURN", 0xFF);
+    tile_text(4, 11, "MOUSE / CLICK : AIM RETICLE & FIRE", 0xFF);
+    tile_text(4, 13, "SPACE / LMB   : TWIN PLASMA CANNONS", 0x7F);
+    tile_text(4, 15, "F / RMB       : SEISMIC CRATER BOMB", 0xFC);
+    tile_text(4, 17, "E: BARREL ROLL  T: 3D TERRAIN FORGE", 0xDF);
+    tile_text(4, 19, "D: AI WINGMAN   N: NEXT SECTOR", 0x9F);
+    tile_text_centered(21, "PRESS ENTER, SPACE, OR H TO RETURN", 0xFC);
   } else if (g_state == STATE_PAUSE){
     tile_panel_box(10, 8, 20, 8, 0x04);
     tile_text_centered(9,  "=== MISSION PAUSED ===", 0xFC);
@@ -495,11 +509,25 @@ void hud_draw_overlays(int menu_cursor){
     tile_text(24, 11, fmt_int(num, g_player.score), 0xFC);
     tile_text_centered(14, "ENTER: RETRY   Q: HOME MENU", 0xFF);
   } else {
-    /* Active Gameplay HUD Header (Rows 0..2) */
+    /* Active Gameplay HUD Header: Row 0 = Sector + Compass, Row 1 = Persistent Objective */
     if (g_mode == MODE_CAMPAIGN){
       tile_text(1, 0, sector_names[g_sector - 1], 0x9F);
-      tile_text(29, 0, "FOES:", 0xFC);
-      tile_text(35, 0, fmt_int(num, world_enemies_remaining()), 0xFF);
+      if (g_player.nav_bearing < -20){
+        tile_text(27, 0, "<< TURN LEFT", 0xFC);
+      } else if (g_player.nav_bearing > 20){
+        tile_text(26, 0, "TURN RIGHT >>", 0xFC);
+      } else {
+        tile_text(26, 0, "[TARGET AHEAD]", 0x9F);
+      }
+
+      if (g_player.sector_phase == PHASE_TOWERS){
+        tile_text(1, 1, "OBJ: DESTROY SHIELD TOWERS LEFT:", 0xFC);
+        tile_text(34, 1, fmt_int(num, g_player.towers_left), 0xFF);
+      } else if (g_player.sector_phase == PHASE_GUARDIAN){
+        tile_text_centered(1, "OBJ: DEFEAT THE SECTOR GUARDIAN!", 0xFC);
+      } else {
+        tile_text_centered(1, "OBJ: FLY INTO THE EMERALD PORTAL!", 0x9F);
+      }
     } else if (g_mode == MODE_RACE){
       tile_text(1, 0, "CANYON GRAND PRIX", 0xFC);
       tile_text(20, 0, "GATE:", 0x9F);
@@ -507,18 +535,20 @@ void hud_draw_overlays(int menu_cursor){
       tile_text(28, 0, "/24", 0x9F);
       tile_text(33, 0, "T:", 0x7F);
       tile_text(35, 0, fmt_int(num, g_player.race_ticks / 60), 0xFF);
+      tile_text_centered(1, "OBJ: FLY THROUGH GREEN NEON GATES!", 0x9F);
     } else {
       tile_text(1, 0, "TERRAIN FORGE", 0xFC);
       tile_text(16, 0, tool_names[g_player.forge_tool], 0x9F);
       tile_text(31, 0, "RAD:", 0x7F);
       tile_text(36, 0, fmt_int(num, g_player.forge_radius), 0xFF);
-      tile_text_centered(22, "[LMB/SPC] SCULPT [1-7] TOOL [B] BIOME", 0xDF);
+      tile_text_centered(1, "WASD:MOVE Q/E:TURN LMB:SCULPT T:FLY", 0x7F);
+      tile_text_centered(22, "[1-7] TOOL  [B] BIOME  [O/L] SAVE/LOAD", 0xDF);
     }
 
-    if (g_autopilot){
-      tile_text_centered(1, "[AI WINGMAN ACTIVE - PRESS D FOR MANUAL]", 0x7F);
-    } else if (g_banner_timer > 0){
-      tile_text_centered(2, g_banner_msg, 0xFC);
+    if (g_banner_timer > 0){
+      tile_text_centered(2, g_banner_msg, 0xFF);
+    } else if (g_autopilot){
+      tile_text_centered(2, "[AI WINGMAN ON - PRESS D FOR MANUAL]", 0x7F);
     }
   }
 

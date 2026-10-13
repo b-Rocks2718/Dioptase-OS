@@ -49,8 +49,13 @@ $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 $(BUILD_DIR)/%.s: %.c skyforge.h Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
+$(BUILD_DIR)/audio.s: music_data.h
+
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
+
+assets:
+	python3 tools/gen_assets.py assets.s
 
 # The bcc flags the generated assembly was built with. make compares only
 # timestamps, so assembly from an earlier build with other flags (say, without

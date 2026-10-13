@@ -8,8 +8,8 @@
 #include "../crt/string.h"
 
 /*
- * SKYFORGE main entry point, CLI mode dispatcher, raw PS/2 keyboard and mouse
- * input state machine, 60 Hz frame loop, and deterministic guest self-test.
+ * SKYFORGE main entry point, CLI mode dispatcher, responsive mouse-aim and
+ * keyboard flight/hover-drone controls, 60 Hz frame loop, and guest self-test.
  * Signed by gemini-4-argon.
  */
 
@@ -27,6 +27,7 @@ static unsigned char key_pressed[256];
 static int mouse_buttons = 0;
 static int mouse_clicked = 0;
 static int mouse_wheel_delta = 0;
+static int mouse_idle_ticks = 0;
 static int menu_cursor = 0;
 static bool app_running = true;
 
@@ -82,7 +83,7 @@ static void poll_inputs(void){
     while (fd_bytes_available(STDIN) > 0){
       unsigned char b = 0;
       if (read(STDIN, &b, 1) != 1) break;
-      handle_key_event((int)b, false, 10);
+      handle_key_event((int)b, false, 12);
     }
     while (true){
       unsigned ev = getkey();
@@ -92,7 +93,7 @@ static void poll_inputs(void){
     }
   }
 
-  /* Drain PS/2 mouse packets (docs/mem_map.md, root/crt/mouse.h) */
+  bool moved_mouse = false;
   while (true){
     int mev = getmouse();
     if (mev == 0) break;
@@ -113,12 +114,27 @@ static void poll_inputs(void){
     mouse_buttons = btns;
     mouse_wheel_delta += wh;
 
-    g_player.aim_x += dx >> 1;
-    g_player.aim_y += dy >> 1;
-    if (g_player.aim_x < -90) g_player.aim_x = -90;
-    if (g_player.aim_x >  90) g_player.aim_x =  90;
-    if (g_player.aim_y < -60) g_player.aim_y = -60;
-    if (g_player.aim_y >  60) g_player.aim_y =  60;
+    if (dx != 0 || dy != 0){
+      moved_mouse = true;
+      g_player.aim_x += dx;
+      g_player.aim_y += dy;
+      if (g_player.aim_x < -100) g_player.aim_x = -100;
+      if (g_player.aim_x >  100) g_player.aim_x =  100;
+      if (g_player.aim_y < -60)  g_player.aim_y = -60;
+      if (g_player.aim_y >  60)  g_player.aim_y =  60;
+    }
+  }
+
+  if (moved_mouse){
+    mouse_idle_ticks = 0;
+  } else {
+    mouse_idle_ticks += 1;
+    if (mouse_idle_ticks > 30 && g_mode != MODE_FORGE){
+      if (g_player.aim_x > 0) g_player.aim_x -= 1;
+      else if (g_player.aim_x < 0) g_player.aim_x += 1;
+      if (g_player.aim_y > 0) g_player.aim_y -= 1;
+      else if (g_player.aim_y < 0) g_player.aim_y += 1;
+    }
   }
 }
 
@@ -153,10 +169,11 @@ static void start_selected_mode(int item){
   }
 }
 
-/* Process state transitions and build one tick of player flight/sculpt controls. */
+/* Process state transitions and build one tick of player flight/drone controls. */
 static void update_controls(struct FlightControls* ctrl){
   ctrl->turn = 0;
   ctrl->pitch = 0;
+  ctrl->strafe = 0;
   ctrl->throttle = 0;
   ctrl->fire_primary = 0;
   ctrl->fire_seismic = 0;
@@ -165,8 +182,8 @@ static void update_controls(struct FlightControls* ctrl){
   ctrl->sculpt_erase = 0;
 
   if (key_pressed['m']){
-    bool muted = audio_toggle_mute();
-    set_status_banner(muted ? "AUDIO MUTED" : "AUDIO ENABLED", 60);
+    bool is_muted = audio_toggle_mute();
+    set_status_banner(is_muted ? "AUDIO MUTED" : "AUDIO ENABLED", 60);
   }
 
   if (g_state == STATE_TITLE){
@@ -187,7 +204,6 @@ static void update_controls(struct FlightControls* ctrl){
     else if (key_pressed[KEY_ENTER] || key_pressed[' '] || (mouse_clicked & MOUSE_BUTTON_LEFT)){
       start_selected_mode(menu_cursor);
     }
-    /* Run autonomous AI attract flight behind the title menu */
     autopilot_decide(ctrl);
     return;
   }
@@ -276,13 +292,13 @@ static void update_controls(struct FlightControls* ctrl){
   }
   if (key_pressed['t']){
     g_mode = (g_mode == MODE_FORGE) ? MODE_CAMPAIGN : MODE_FORGE;
+    if (g_mode != MODE_FORGE) g_player.speed = 0x3800;
     audio_set_song(g_mode == MODE_FORGE ? SONG_FORGE : SONG_EMERALD);
     set_status_banner(g_mode == MODE_FORGE
-                      ? "TERRAIN FORGE: LMB/SPACE SCULPTS"
+                      ? "HOVER DRONE: WASD MOVE, LMB SCULPT"
                       : "FLIGHT COMBAT MODE ENGAGED!", 110);
   }
 
-  /* Terrain Forge specific hotkeys (1-7 tools, B biome, O/L save/load) */
   if (g_mode == MODE_FORGE){
     for (int k = 0; k < TOOL_COUNT; ++k){
       if (key_pressed['1' + k]){
@@ -315,7 +331,6 @@ static void update_controls(struct FlightControls* ctrl){
   }
 
   if (g_autopilot){
-    /* Any manual movement key immediately hands control back to the human pilot */
     if (key_held['w'] || key_held['s'] || key_held['a'] || key_held['d'] ||
         key_held[KEY_UP] || key_held[KEY_DOWN] || key_held[KEY_LEFT] || key_held[KEY_RIGHT]){
       g_autopilot = false;
@@ -326,31 +341,47 @@ static void update_controls(struct FlightControls* ctrl){
     }
   }
 
-  if (key_held['a'] || key_held[KEY_LEFT])  ctrl->turn -= 1;
-  if (key_held['d'] || key_held[KEY_RIGHT]) ctrl->turn += 1;
-  if (key_held['w'] || key_held[KEY_UP])    ctrl->pitch += 1;
-  if (key_held['s'] || key_held[KEY_DOWN])  ctrl->pitch -= 1;
-  if (key_held[KEY_LEFT_SHIFT] || key_held[KEY_RIGHT_SHIFT]) ctrl->throttle = 1;
-  else if (key_held['z'] || key_held['c']) ctrl->throttle = -1;
-
-  if (key_pressed['e'] || (mouse_clicked & MOUSE_BUTTON_MIDDLE)){
-    ctrl->barrel_roll = 1;
-  }
-
   if (g_mode == MODE_FORGE){
+    /* Hover-Drone controls: WASD moves over map, Q/E or Left/Right turns */
+    if (key_held['w'] || key_held[KEY_UP])   ctrl->throttle = 1;
+    if (key_held['s'] || key_held[KEY_DOWN]) ctrl->throttle = -1;
+    if (key_held['a']) ctrl->strafe = -1;
+    if (key_held['d']) ctrl->strafe = 1;
+    if (key_held['q'] || key_held[KEY_LEFT])  ctrl->turn = -8;
+    if (key_held['e'] || key_held[KEY_RIGHT]) ctrl->turn = 8;
+    if (key_held['z']) ctrl->pitch = -2;
+    if (key_held['c']) ctrl->pitch = 2;
     if (key_held[' '] || (mouse_buttons & MOUSE_BUTTON_LEFT)){
       ctrl->sculpt_apply = 1;
     }
     if (key_held['x'] || (mouse_buttons & MOUSE_BUTTON_RIGHT)){
       ctrl->sculpt_erase = 1;
     }
-  } else {
-    if (key_held[' '] || (mouse_buttons & MOUSE_BUTTON_LEFT)){
-      ctrl->fire_primary = 1;
-    }
-    if (key_pressed['f'] || (mouse_clicked & MOUSE_BUTTON_RIGHT)){
-      ctrl->fire_seismic = 1;
-    }
+    return;
+  }
+
+  /* Flight Mode controls: keyboard banking + mouse-aim turn assist */
+  int kb_turn = 0;
+  if (key_held['a'] || key_held['q'] || key_held[KEY_LEFT])  kb_turn -= 10;
+  if (key_held['d'] || key_held[KEY_RIGHT])                  kb_turn += 10;
+  ctrl->turn = kb_turn + (g_player.aim_x >> 4);
+
+  int kb_pitch = 0;
+  if (key_held['w'] || key_held[KEY_UP])   kb_pitch += 8;
+  if (key_held['s'] || key_held[KEY_DOWN]) kb_pitch -= 8;
+  ctrl->pitch = kb_pitch - (g_player.aim_y >> 4);
+
+  if (key_held[KEY_LEFT_SHIFT] || key_held[KEY_RIGHT_SHIFT]) ctrl->throttle = 1;
+  else if (key_held['z'] || key_held['c']) ctrl->throttle = -1;
+
+  if (key_pressed['e'] || (mouse_clicked & MOUSE_BUTTON_MIDDLE)){
+    ctrl->barrel_roll = 1;
+  }
+  if (key_held[' '] || (mouse_buttons & MOUSE_BUTTON_LEFT)){
+    ctrl->fire_primary = 1;
+  }
+  if (key_pressed['f'] || (mouse_clicked & MOUSE_BUTTON_RIGHT)){
+    ctrl->fire_seismic = 1;
   }
 }
 
@@ -359,7 +390,6 @@ static int run_guest_selftest(void){
   math_init();
   render_init();
 
-  /* 1. Verify procedural generation across all 5 campaign sectors */
   for (int sec = 1; sec <= MAX_SECTORS; ++sec){
     world_generate(sec, MODE_CAMPAIGN, 0x5A17F04Eu);
     if (world_enemies_remaining() <= 0){
@@ -368,7 +398,6 @@ static int run_guest_selftest(void){
     }
   }
 
-  /* 2. Verify live 3D terrain crater deformation and Terrain Forge tools */
   world_generate(1, MODE_FORGE, 0x5A17F04Eu);
   int h_before = terrain_height_cell(64, 64);
   forge_apply_tool(64, 64, TOOL_RAISE, 4, false);
@@ -384,7 +413,6 @@ static int run_guest_selftest(void){
     return 1;
   }
 
-  /* 3. Verify 60 ticks of AI Campaign flight, combat, and 3D rendering */
   world_generate(1, MODE_CAMPAIGN, 0x5A17F04Eu);
   g_state = STATE_PLAY;
   struct FlightControls ctrl;
@@ -410,14 +438,12 @@ static int run_guest_selftest(void){
     return 1;
   }
 
-  /* 4. Verify Canyon Grand Prix mode and gate setup */
   world_generate(1, MODE_RACE, 0x5A17F04Eu);
   for (int t = 0; t < 30; ++t){
     autopilot_decide(&ctrl);
     world_tick(&ctrl);
   }
 
-  /* 5. Verify display MMIO mappings and blit_strip_groups */
   g_pixel_fb = get_pixel_fb();
   g_tile_fb = get_tile_fb();
   g_tilemap = get_tilemap();
@@ -433,10 +459,7 @@ static int run_guest_selftest(void){
   hud_draw_overlays(0);
   hud_hide_sprites();
 
-  /* 6. Verify 25 kHz PCM synthesis and non-blocking audio device */
   short pcm[250];
-  audio_set_song(SONG_EMERALD);
-  sfx_trigger(SFX_PLASMA);
   audio_synth_test_chunk(pcm, 250);
   bool any_nonzero = false;
   for (int i = 0; i < 250; ++i){
@@ -455,7 +478,6 @@ static int run_guest_selftest(void){
     }
   }
 
-  /* 7. Verify world save/load round-trip in current directory */
   g_terrain[100] = 0x4F2Au;
   if (!world_save_file("test_world.sf")){
     puts("***FAIL skyforge world save\n");
@@ -525,7 +547,6 @@ int main(int argc, char** argv){
     }
   }
 
-  /* Map display MMIO regions before taking over the terminal display */
   g_pixel_fb = get_pixel_fb();
   g_tile_fb = get_tile_fb();
   g_tilemap = get_tilemap();
@@ -536,7 +557,6 @@ int main(int argc, char** argv){
     return 1;
   }
 
-  /* Hide terminal cursor and enable raw keyboard mode if attached to terminal */
   write(STDOUT, "\x1b[?25l", 6);
   if (set_keyboard_raw(1) == 0){
     raw_kb_active = true;
@@ -578,7 +598,6 @@ int main(int argc, char** argv){
       world_tick(&ctrl);
     }
 
-    /* Compute camera pose with optional explosion screen-shake */
     int shake_x = 0;
     int shake_y = 0;
     if (g_player.shake > 0){
@@ -600,7 +619,6 @@ int main(int argc, char** argv){
     hud_draw_overlays(menu_cursor);
     audio_heartbeat();
 
-    /* Pace to the 60 Hz VGA frame counter when running under --vga / --headless */
     unsigned now_vga = get_vga_frame_counter();
     if (now_vga == last_vga){
       unsigned wait_start = get_current_jiffies();

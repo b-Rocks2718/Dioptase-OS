@@ -1,66 +1,73 @@
 # SKYFORGE user-mode assembly fast paths (docs/ISA.md, docs/abi.md).
 #
-# All routines are user-mode leaf functions adhering to the Dioptase ABI:
-# arguments arrive in r1-r8, return value in r1, caller-saved registers r1-r19
-# may be clobbered, and callee-saved registers r20-r27 are preserved.
+# Full 320x192 single-pixel backbuffer layout:
+# Two halves of 96 rows split at the horizon. Each half consists of 40 chunks
+# of 8x96 pixels (one per 8-pixel column group), row-major with 16-byte rows,
+# so pixel (x, y) is at byte offset:
+#   (y >= 96) * 61440 + (x >> 3) * 1536 + (y % 96) * 16 + (x & 7) * 2.
+# Stepping down a column is a 16-byte stride that jumps HALF_SKIP (59,904)
+# bytes when crossing row 96, keeping each column walk in two 4 KiB TLB pages.
 
   .text
   .align 4
 
-# Copy column-groups [g0, g1) from the chunked 3D backbuffer to the 320x192
+# Copy column-groups [g0, g1) of the 320x192 view from the backbuffer to the
 # pixel framebuffer in 32-row bands so both buffers stay inside the 16-entry TLB.
-# Each group is 8 double-columns (32 bytes per row) x 192 rows (6,144 bytes).
-# Inputs:  r1 = pixel framebuffer base (from get_pixel_fb),
-#          r2 = backbuffer base (g_view_words, 4-byte aligned),
-#          r3 = g0, r4 = g1 (0 <= g0 < g1 <= 20).
-# Outputs: none. Clobbers r1-r19.
+# Inputs:  r1 = framebuffer base, r2 = backbuffer base, r3 = g0, r4 = g1 (0 <= g0 < g1 <= 40).
+# Outputs: none. Clobbers r1-r16.
   .global blit_strip_groups
 blit_strip_groups:
-  sub  r4, r4, r3              # number of groups in [g0, g1)
-  lsl  r5, r3, 5               # g0 * 32: byte offset of group g0 in a framebuffer row
-  add  r1, r1, r5
-  lsl  r5, r3, 12              # g0 * 4096
-  lsl  r6, r3, 11              # g0 * 2048
-  add  r5, r5, r6              # g0 * 6144: byte offset of group g0 in backbuffer
-  add  r2, r2, r5
-  movi r14, 20448              # 32 * 640 - 32: step from group bottom to next group top
-  movi r15, 5120               # 6144 - 1024: step to same band of next group
-  movi r16, 20480              # 32 * 640: one 32-row band in framebuffer
-  movi r13, 6                  # 6 bands of 32 rows = 192 rows
-blit_band_loop:
-  mov  r5, r4                  # groups remaining in this band
-  mov  r6, r1                  # framebuffer pointer for group g0 in this band
-  mov  r7, r2                  # backbuffer pointer for group g0 in this band
-blit_group_loop:
-  movi r8, 32                  # 32 rows per band
-blit_row_loop:
-  lwa  r9,  [r7], 4
+  sub  r4, r4, r3
+  lsl  r6, r3, 4
+  add  r1, r1, r6
+  movi r5, 1536
+  mov  r6, r0
+blit_strip_g0:
+  cmp  r3, r0
+  bz   blit_strip_g0_done
+  add  r6, r6, r5
+  add  r3, r3, -1
+  jmp  blit_strip_g0
+blit_strip_g0_done:
+  add  r2, r2, r6
+  movi r12, 624
+  movi r14, 20464
+  movi r15, 1024
+  movi r13, 6
+  movi r16, 3
+blit_strip_band:
+  mov  r5, r4
+  mov  r6, r1
+  mov  r7, r2
+blit_strip_chunk:
+  movi r8, 32
+blit_strip_row:
+  lwa  r9, [r7], 4
   lwa  r10, [r7], 4
   lwa  r11, [r7], 4
-  lwa  r12, [r7], 4
-  lwa  r17, [r7], 4
-  lwa  r18, [r7], 4
-  lwa  r19, [r7], 4
-  lwa  r3,  [r7], 4
-  swa  r9,  [r6], 4
+  lwa  r3, [r7], 4
+  swa  r9, [r6], 4
   swa  r10, [r6], 4
   swa  r11, [r6], 4
-  swa  r12, [r6], 4
-  swa  r17, [r6], 4
-  swa  r18, [r6], 4
-  swa  r19, [r6], 4
-  swa  r3,  [r6], 4
-  add  r6, r6, 608             # advance to next framebuffer row (640 - 32)
+  swa  r3, [r6], 4
+  add  r6, r6, r12
   add  r8, r8, -1
-  bnz  blit_row_loop
-  sub  r6, r6, r14             # advance framebuffer pointer to top of next group
-  add  r7, r7, r15             # advance backbuffer pointer to same band of next group
+  bnz  blit_strip_row
+  sub  r6, r6, r14
+  add  r7, r7, r15
   add  r5, r5, -1
-  bnz  blit_group_loop
-  add  r1, r1, r16             # advance framebuffer base by 32 rows
-  add  r2, r2, 1024            # advance backbuffer base by 32 group rows (1024 bytes)
+  bnz  blit_strip_chunk
+  movi r5, 20480
+  add  r1, r1, r5
+  add  r2, r2, 512
+  add  r16, r16, -1
+  bnz  blit_strip_same_half
+  movi r5, 59904
+  add  r2, r2, r5
+  movi r16, 3
+blit_strip_same_half:
   add  r13, r13, -1
-  bnz  blit_band_loop
+  bnz  blit_strip_band
   ret
 
 # Copy `words` 32-bit words from `src` to `dst`.
@@ -92,51 +99,314 @@ fill_words_loop:
 fill_words_done:
   ret
 
-# Multiply two 16-bit unsigned integers using shift-and-add with early exit.
+# Draw one textured and shaded vertical terrain/cliff span down a view column.
+# Inputs:  r1 = first destination pixel (short*), r2 = pixel count (> 0),
+#          r3 = 64-byte texture column, r4 = texpos (16.16), r5 = texstep (16.16),
+#          r6 = shade table (256 halfwords), r7 = rows left in top half (HALF_LEFT(y)).
+# Outputs: none. Clobbers r1, r2, r4, r7-r9.
+  .global draw_voxel_span
+draw_voxel_span:
+  movi r9, 59904
+draw_voxel_loop:
+  lsr  r8, r4, 16
+  and  r8, r8, 63
+  add  r8, r3, r8
+  lba  r8, [r8]
+  lsl  r8, r8, 1
+  add  r8, r6, r8
+  lda  r8, [r8]
+  sda  r8, [r1], 16
+  add  r4, r4, r5
+  add  r7, r7, -1
+  bz   draw_voxel_half
+draw_voxel_next:
+  add  r2, r2, -1
+  bnz  draw_voxel_loop
+  ret
+draw_voxel_half:
+  add  r1, r1, r9
+  movi r7, 96
+  jmp  draw_voxel_next
+
+# Draw one column of a 64x64 billboard sprite; palette index 0 is transparent.
+# Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
+#          r3 = 64-byte sprite texel column, r4 = texpos (16.16),
+#          r5 = texstep (16.16), r6 = shade table, r7 = HALF_LEFT(y).
+# Outputs: none. Clobbers r1, r2, r4, r7-r9.
+  .global draw_sprite_col
+draw_sprite_col:
+  movi r9, 59904
+draw_sprite_col_loop:
+  lsr  r8, r4, 16
+  and  r8, r8, 63
+  add  r8, r3, r8
+  lba  r8, [r8]
+  cmp  r8, r0
+  bz   draw_sprite_col_skip
+  lsl  r8, r8, 1
+  add  r8, r6, r8
+  lda  r8, [r8]
+  sda  r8, [r1]
+draw_sprite_col_skip:
+  add  r1, r1, 16
+  add  r4, r4, r5
+  add  r7, r7, -1
+  bz   draw_sprite_col_half
+draw_sprite_col_next:
+  add  r2, r2, -1
+  bnz  draw_sprite_col_loop
+  ret
+draw_sprite_col_half:
+  add  r1, r1, r9
+  movi r7, 96
+  jmp  draw_sprite_col_next
+
+# Draw one column of a 12-bit foreground image (the player starfighter); pixel 0 is transparent.
+# Inputs:  r1 = first destination pixel, r2 = pixel count (> 0),
+#          r3 = first source pixel (column-major halfwords), r4 = HALF_LEFT(y).
+# Outputs: none. Clobbers r1-r4, r8, r9.
+  .global draw_image_col
+draw_image_col:
+  movi r9, 59904
+draw_image_col_loop:
+  lda  r8, [r3], 2
+  cmp  r8, r0
+  bz   draw_image_col_skip
+  sda  r8, [r1]
+draw_image_col_skip:
+  add  r1, r1, 16
+  add  r4, r4, -1
+  bz   draw_image_col_half
+draw_image_col_next:
+  add  r2, r2, -1
+  bnz  draw_image_col_loop
+  ret
+draw_image_col_half:
+  add  r1, r1, r9
+  movi r4, 96
+  jmp  draw_image_col_next
+
+# Unsigned 16 x 16 -> 32 bit multiply by quarter squares (qsq_center in assets.s).
 # Inputs:  r1 = a (0..65535), r2 = b (0..65535).
-# Outputs: r1 = a * b. Clobbers r1-r4.
+# Outputs: r1 = a * b. Clobbers r1-r12.
   .global umul16
 umul16:
-  mov  r3, r1
-  mov  r1, r0
-  cmp  r2, r0
-  bz   umul16_done
-umul16_loop:
-  and  r4, r2, 1
-  bz   umul16_skip
-  add  r1, r1, r3
-umul16_skip:
-  lsl  r3, r3, 1
-  lsr  r2, r2, 1
-  bnz  umul16_loop
-umul16_done:
+  adpc r9, qsq_center
+  and  r3, r1, 0xFF
+  lsr  r4, r1, 8
+  and  r5, r2, 0xFF
+  lsr  r6, r2, 8
+  add  r7, r3, r5
+  sub  r8, r3, r5
+  lsl  r7, r7, 1
+  lsl  r8, r8, 1
+  add  r7, r9, r7
+  add  r8, r9, r8
+  lda  r7, [r7]
+  lda  r8, [r8]
+  sub  r10, r7, r8
+  add  r7, r4, r5
+  sub  r8, r4, r5
+  lsl  r7, r7, 1
+  lsl  r8, r8, 1
+  add  r7, r9, r7
+  add  r8, r9, r8
+  lda  r7, [r7]
+  lda  r8, [r8]
+  sub  r11, r7, r8
+  add  r7, r3, r6
+  sub  r8, r3, r6
+  lsl  r7, r7, 1
+  lsl  r8, r8, 1
+  add  r7, r9, r7
+  add  r8, r9, r8
+  lda  r7, [r7]
+  lda  r8, [r8]
+  sub  r12, r7, r8
+  add  r11, r11, r12
+  add  r7, r4, r6
+  sub  r8, r4, r6
+  lsl  r7, r7, 1
+  lsl  r8, r8, 1
+  add  r7, r9, r7
+  add  r8, r9, r8
+  lda  r7, [r7]
+  lda  r8, [r8]
+  sub  r12, r7, r8
+  lsl  r12, r12, 16
+  lsl  r11, r11, 8
+  add  r1, r12, r11
+  add  r1, r1, r10
   ret
 
-# Divide 32-bit unsigned integer `n` by `d` using binary restoring division.
-# Inputs:  r1 = numerator n, r2 = denominator d (> 0).
+# Unsigned 32 / 32 division skipping leading zero bytes.
+# Inputs:  r1 = dividend n, r2 = divisor d (nonzero).
 # Outputs: r1 = n / d. Clobbers r1-r6.
   .global udiv32
 udiv32:
   cmp  r2, r0
   bz   udiv32_zero
-  mov  r3, r1                  # numerator shift register
-  mov  r1, r0                  # quotient
-  mov  r4, r0                  # remainder
+  mov  r3, r0
+  mov  r4, r0
   movi r5, 32
+udiv32_skip:
+  lsr  r6, r1, 24
+  bnz  udiv32_loop
+  lsl  r1, r1, 8
+  add  r5, r5, -8
+  bnz  udiv32_skip
+  mov  r1, r0
+  ret
 udiv32_loop:
-  lsl  r4, r4, 1
-  lsr  r6, r3, 31
-  or   r4, r4, r6
-  lsl  r3, r3, 1
   lsl  r1, r1, 1
+  addc r4, r4, r4
+  lsl  r3, r3, 1
   cmp  r4, r2
   bb   udiv32_next
   sub  r4, r4, r2
-  or   r1, r1, 1
+  add  r3, r3, 1
 udiv32_next:
   add  r5, r5, -1
   bnz  udiv32_loop
+  mov  r1, r3
   ret
 udiv32_zero:
   mov  r1, r0
   ret
+
+# Add one wavetable SFX voice into the audio mix accumulator.
+# Inputs:  r1 = int accumulator, r2 = sample count (> 0),
+#          r3 = wavetable (64 signed halfwords), r4 = phase, r5 = phase step.
+# Outputs: none. Clobbers r1, r2, r4, r6-r8.
+  .global mix_add
+mix_add:
+  lsr  r6, r4, 26
+  lsl  r6, r6, 1
+  add  r6, r3, r6
+  lda  r7, [r6]
+  sxtd r7, r7
+  lwa  r8, [r1]
+  add  r8, r8, r7
+  swa  r8, [r1], 4
+  add  r4, r4, r5
+  add  r2, r2, -1
+  bnz  mix_add
+  ret
+
+# Add one mu-law sampled music voice into the audio mix accumulator.
+# Inputs:  r1 = int accumulator, r2 = sample count (> 0),
+#          r3 = mu-law sample bytes, r4 = pos (16.16), r5 = step (16.16),
+#          r6 = end (length << 16), r7 = loop_len << 16 (0 = one-shot),
+#          r8 = volume row (256 signed halfwords).
+# Outputs: r1 = updated position (or r6 if one-shot ended). Clobbers r2, r4, r9, r10.
+  .global mix_sample
+mix_sample:
+mix_sample_loop:
+  lsr  r9, r4, 16
+  add  r9, r3, r9
+  lba  r9, [r9]
+  lsl  r9, r9, 1
+  add  r9, r8, r9
+  lda  r9, [r9]
+  sxtd r9, r9
+  lwa  r10, [r1]
+  add  r10, r10, r9
+  swa  r10, [r1], 4
+  add  r4, r4, r5
+  cmp  r4, r6
+  bae  mix_sample_wrap
+mix_sample_next:
+  add  r2, r2, -1
+  bnz  mix_sample_loop
+  mov  r1, r4
+  ret
+mix_sample_wrap:
+  cmp  r7, r0
+  bz   mix_sample_done
+  sub  r4, r4, r7
+  cmp  r4, r6
+  bae  mix_sample_wrap
+  jmp  mix_sample_next
+mix_sample_done:
+  mov  r1, r6
+  ret
+
+# Apply two damped feedback comb filters and an allpass diffuser to the audio mix.
+# Inputs:  r1 = int mix, r2 = short output, r3 = sample count (> 0), r4 = struct Reverb*.
+# Outputs: none. Clobbers r1-r3, r5-r19.
+  .global reverb_mix
+reverb_mix:
+  lwa  r5, [r4, 8]
+  lwa  r6, [r4, 4]
+  lwa  r7, [r4, 20]
+  lwa  r8, [r4, 16]
+  lwa  r9, [r4, 32]
+  lwa  r10, [r4, 28]
+  lwa  r11, [r4, 36]
+  lwa  r12, [r4, 40]
+  movi r18, 32767
+  movi r19, -32768
+reverb_loop:
+  lwa  r13, [r1], 4
+  lwa  r14, [r5]
+  sub  r16, r14, r11
+  asr  r16, r16, 2
+  add  r11, r11, r16
+  asr  r16, r13, 1
+  asr  r17, r11, 1
+  add  r16, r16, r17
+  asr  r17, r11, 4
+  add  r16, r16, r17
+  swa  r16, [r5], 4
+  cmp  r5, r6
+  bnz  reverb_comb1_ok
+  lwa  r5, [r4, 0]
+reverb_comb1_ok:
+  lwa  r15, [r7]
+  sub  r16, r15, r12
+  asr  r16, r16, 2
+  add  r12, r12, r16
+  asr  r16, r13, 1
+  asr  r17, r12, 1
+  add  r16, r16, r17
+  asr  r17, r12, 4
+  add  r16, r16, r17
+  swa  r16, [r7], 4
+  cmp  r7, r8
+  bnz  reverb_comb2_ok
+  lwa  r7, [r4, 12]
+reverb_comb2_ok:
+  add  r14, r14, r15
+  asr  r14, r14, 1
+  lwa  r15, [r9]
+  asr  r16, r14, 1
+  sub  r15, r15, r16
+  asr  r16, r15, 1
+  add  r16, r14, r16
+  swa  r16, [r9], 4
+  cmp  r9, r10
+  bnz  reverb_allpass_ok
+  lwa  r9, [r4, 24]
+reverb_allpass_ok:
+  asr  r15, r15, 2
+  add  r13, r13, r15
+  cmp  r13, r18
+  bg   reverb_high
+  cmp  r13, r19
+  bl   reverb_low
+reverb_store:
+  sda  r13, [r2], 2
+  add  r3, r3, -1
+  bnz  reverb_loop
+  swa  r5, [r4, 8]
+  swa  r7, [r4, 20]
+  swa  r9, [r4, 32]
+  swa  r11, [r4, 36]
+  swa  r12, [r4, 40]
+  ret
+reverb_high:
+  mov  r13, r18
+  jmp  reverb_store
+reverb_low:
+  mov  r13, r19
+  jmp  reverb_store

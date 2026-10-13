@@ -5,7 +5,15 @@
  * 8x8 bitmap font used by the tile layer and scaled title banners.
  */
 
+#ifdef SKYFORGE_HOST_TEST
 int sin_lut[1024];
+unsigned short shade_tables[4096];
+unsigned char terrain_textures[32768];
+unsigned char sprite_texels[114688];
+unsigned char sprite_spans[3584];
+unsigned short ship_images[19200];
+unsigned char ship_spans[800];
+#endif
 unsigned short biome_palettes[1280];
 unsigned short sky_gradients[160];
 
@@ -317,6 +325,7 @@ static unsigned short make_biome_color(int b, int h, int light){
 
 /* Initialize the 1024-entry sine LUT, 5 biome palettes, and 5 sky gradients. */
 void math_init(void){
+#ifdef SKYFORGE_HOST_TEST
   /* Populate quadrant 0 (0..256) by interpolating sin_quad65 */
   for (int i = 0; i <= 256; ++i){
     int idx = i >> 2;
@@ -331,6 +340,11 @@ void math_init(void){
   for (int i = 0; i < 512; ++i){
     sin_lut[512 + i] = -sin_lut[i];
   }
+  for (int i = 0; i < 4096; ++i) shade_tables[i] = (unsigned short)(i & 0x0FFF);
+  for (int i = 0; i < 32768; ++i) terrain_textures[i] = (unsigned char)((i & 63) + 16);
+#else
+  (void)sin_quad65;
+#endif
 
   /* Populate biome palettes: index = (light << 6) | height */
   for (int b = 0; b < BIOME_COUNT; ++b){

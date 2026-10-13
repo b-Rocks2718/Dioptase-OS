@@ -1,88 +1,46 @@
 #include "skyforge.h"
 
 /*
- * 3D Voxel-Space terrain and water renderer, banking sky and sun synthesizer,
- * per-column mountain-ridge occlusion buffer, 3D world object rasterizer, and
- * 3D polygonal Aether-Interceptor starfighter renderer.
+ * Full 320x192 single-pixel 3D Voxel-Space terrain renderer with bilinear
+ * height interpolation, 64x64 procedural surface & cliff texturing, 16-level
+ * distance & sun-slope shading, 64x64 depth-sorted billboard sprites, and
+ * 5-frame banked 80x48 Aether-Interceptor rendering.
  */
 
-/* Per-frame projected screen row (0..VIEW_H) for each depth step and height. */
-static unsigned char frame_y_lut[3072]; /* VOXEL_STEPS (48) * 64 */
+/* Per-column mountain silhouette top row at 16 depth buckets (320 * 16). */
+static unsigned char occl_top[5120];
 
-/* Per-frame 32-bit pixel-pair palette across 4 distance fog bands (4 * 256). */
-static unsigned frame_pal_words[1024];
-
-/* Per-column mountain silhouette top row at 16 depth buckets (160 * 16). */
-static unsigned char occl_top[2560];
-
-/* Precomputed ray distance (in 8.8 cells) and height projection scale for
- * each of the 48 voxel raymarching steps. */
+/* Raymarching distance (in 8.8 cells) and height projection scale for 48 steps. */
 static int step_dist_q8[48];
 static int step_scale[48];
 
-/* Initialize raymarching distance and perspective scale tables. */
-void render_init(void){
-  int dist_q8 = 384; /* Start 1.5 cells in front of camera */
-  for (int s = 0; s < VOXEL_STEPS; ++s){
-    step_dist_q8[s] = dist_q8;
-    /* Perspective scale: 170 * 256 / dist_q8 */
-    step_scale[s] = (170 * 256) / dist_q8;
-    if (s < 16){
-      dist_q8 += 160; /* 0.625 cells per step near camera */
-    } else if (s < 32){
-      dist_q8 += 256; /* 1.0 cell per step mid-range */
-    } else {
-      dist_q8 += 384; /* 1.5 cells per step far range */
-    }
+/* Address of single pixel (x, y) in the TLB-shaped 320x192 backbuffer. */
+static unsigned short* view_at(int x, int y){
+  int g = x >> 3;
+  unsigned short* p = g_view + (g << 9) + (g << 8) + (x & 7);
+  if (y >= VIEW_HALF_H){
+    return p + HALF_SHORTS + ((y - VIEW_HALF_H) << 3);
   }
+  return p + (y << 3);
 }
 
-/* Plot one 32-bit pixel pair at double-column `cx` (0..159) and row `y` (0..191). */
-static void put_pair(int cx, int y, unsigned pair){
-  if ((unsigned)cx >= VIEW_COLS || (unsigned)y >= VIEW_H) return;
-  g_view_words[VIEW_WORD_INDEX(cx, y)] = pair;
+/* Plot one 12-bit pixel at (x, y) in the 320x192 backbuffer. */
+static void put_px(int x, int y, unsigned short col){
+  if ((unsigned)x >= VIEW_W || (unsigned)y >= VIEW_H) return;
+  *view_at(x, y) = col;
 }
 
-/* Plot a depth-tested 32-bit pixel pair that respects mountain ridge occlusion. */
-static void put_pair_occl(int cx, int y, int bucket, unsigned pair){
-  if ((unsigned)cx >= VIEW_COLS || (unsigned)y >= VIEW_H) return;
-  if (bucket < 0) bucket = 0;
-  if (bucket >= OCCL_BUCKETS) bucket = OCCL_BUCKETS - 1;
-  if (y < (int)occl_top[(cx << 4) | bucket]){
-    g_view_words[VIEW_WORD_INDEX(cx, y)] = pair;
-  }
-}
-
-/* Draw a filled depth-tested rectangle in double-column coordinates. */
-static void fill_rect_occl(int cx0, int y0, int cx1, int y1, int bucket, unsigned pair){
-  if (cx0 < 0) cx0 = 0;
-  if (y0 < 0) y0 = 0;
-  if (cx1 >= VIEW_COLS) cx1 = VIEW_COLS - 1;
-  if (y1 >= VIEW_H) y1 = VIEW_H - 1;
-  if (cx0 > cx1 || y0 > y1) return;
-  if (bucket < 0) bucket = 0;
-  if (bucket >= OCCL_BUCKETS) bucket = OCCL_BUCKETS - 1;
-  for (int cx = cx0; cx <= cx1; ++cx){
-    int max_y = (int)occl_top[(cx << 4) | bucket];
-    int end_y = y1 < max_y - 1 ? y1 : max_y - 1;
-    int base = (((cx >> 3) << 10) + ((cx >> 3) << 9)) + (cx & 7);
-    for (int y = y0; y <= end_y; ++y){
-      g_view_words[base + (y << 3)] = pair;
-    }
-  }
-}
-
-/* Draw a 2D line in double-column view coordinates (cx: 0..159, y: 0..191). */
-static void draw_line_pair(int x0, int y0, int x1, int y1, unsigned pair){
+/* Draw a 2D line in single-pixel 320x192 view coordinates. */
+static void draw_line_px(int x0, int y0, int x1, int y1, unsigned short col){
   int dx = x1 - x0;
   int dy = y1 - y0;
   int sx = dx >= 0 ? 1 : -1;
   int sy = dy >= 0 ? 1 : -1;
   if (dx < 0) dx = -dx;
   if (dy < 0) dy = -dy;
-  int err = (dx > dy ? dx : -dy) / 2;
-  for (int steps = 0; steps < 256; ++steps){
-    put_pair(x0, y0, pair);
+  int err = (dx > dy ? dx : -dy) >> 1;
+  for (int steps = 0; steps < 384; ++steps){
+    put_px(x0, y0, col);
     if (x0 == x1 && y0 == y1) break;
     int e2 = err;
     if (e2 > -dx){ err -= dy; x0 += sx; }
@@ -90,80 +48,98 @@ static void draw_line_pair(int x0, int y0, int x1, int y1, unsigned pair){
   }
 }
 
-/* Fill a flat-bottom or general triangle in double-column view coordinates. */
-static void fill_tri_pair(int x0, int y0, int x1, int y1, int x2, int y2, unsigned pair){
-  /* Sort vertices by Y: y0 <= y1 <= y2 */
-  if (y0 > y1){ int t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; }
-  if (y1 > y2){ int t = x1; x1 = x2; x2 = t; t = y1; y1 = y2; y2 = t; }
-  if (y0 > y1){ int t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; }
-  if (y0 == y2) return;
-
-  int total_h = y2 - y0;
-  for (int y = y0; y <= y2; ++y){
-    if (y < 0 || y >= VIEW_H) continue;
-    bool second_half = (y > y1) || (y1 == y0);
-    int seg_h = second_half ? (y2 - y1) : (y1 - y0);
-    if (seg_h == 0) continue;
-    int xa = x0 + ((x2 - x0) * (y - y0)) / total_h;
-    int xb = second_half
-             ? (x1 + ((x2 - x1) * (y - y1)) / seg_h)
-             : (x0 + ((x1 - x0) * (y - y0)) / seg_h);
-    if (xa > xb){ int t = xa; xa = xb; xb = t; }
-    if (xa < 0) xa = 0;
-    if (xb >= VIEW_COLS) xb = VIEW_COLS - 1;
-    for (int cx = xa; cx <= xb; ++cx){
-      g_view_words[VIEW_WORD_INDEX(cx, y)] = pair;
+#ifdef SKYFORGE_HOST_TEST
+/* Host C equivalents of gfx.s span drawers for deterministic host unit tests. */
+void draw_voxel_span(unsigned short* dst, int count, unsigned char* texcol,
+                     int texpos, int texstep, unsigned short* shade, int half_left){
+  for (int i = 0; i < count; ++i){
+    int t = (texpos >> 16) & 63;
+    *dst = shade[texcol[t]];
+    dst += 8;
+    texpos += texstep;
+    half_left -= 1;
+    if (half_left == 0){
+      dst += 29952; /* HALF_SKIP / 2 shorts */
+      half_left = 96;
     }
   }
 }
 
-/* Prepare the per-frame height projection LUT and distance-fogged biome palette. */
-static void prepare_frame_tables(struct Camera* cam){
-  int cam_h = cam->z >> FIX_SHIFT;
-  int horizon_y = (VIEW_H >> 1) + 4 + cam->pitch;
-  if (horizon_y < 16) horizon_y = 16;
-  if (horizon_y > VIEW_H - 16) horizon_y = VIEW_H - 16;
+void draw_sprite_col(unsigned short* dst, int count, unsigned char* texcol,
+                     int texpos, int texstep, unsigned short* shade, int half_left){
+  for (int i = 0; i < count; ++i){
+    int t = (texpos >> 16) & 63;
+    unsigned char idx = texcol[t];
+    if (idx != 0) *dst = shade[idx];
+    dst += 8;
+    texpos += texstep;
+    half_left -= 1;
+    if (half_left == 0){
+      dst += 29952;
+      half_left = 96;
+    }
+  }
+}
 
+void draw_image_col(unsigned short* dst, int count, unsigned short* src, int half_left){
+  for (int i = 0; i < count; ++i){
+    unsigned short c = *src++;
+    if (c != 0) *dst = c;
+    dst += 8;
+    half_left -= 1;
+    if (half_left == 0){
+      dst += 29952;
+      half_left = 96;
+    }
+  }
+}
+#endif
+
+/* Initialize raymarching distance and perspective scale tables. */
+void render_init(void){
+  int dist_q8 = 320; /* Start 1.25 cells in front of camera */
   for (int s = 0; s < VOXEL_STEPS; ++s){
-    int scale = step_scale[s];
-    unsigned char* row_lut = &frame_y_lut[s << 6];
-    for (int h = 0; h < 64; ++h){
-      int y = horizon_y + (((cam_h - h) * scale) >> 3);
-      if (y < 0) y = 0;
-      if (y > VIEW_H) y = VIEW_H;
-      row_lut[h] = (unsigned char)y;
-    }
-  }
-
-  int b = cam->biome;
-  if (b < 0 || b >= BIOME_COUNT) b = 0;
-  unsigned short fog_col = sky_gradients[(b << 5) + 30];
-  unsigned short* base_pal = &biome_palettes[b << 8];
-  int wave_phase = (g_frame >> 2) & 3;
-
-  for (int band = 0; band < 4; ++band){
-    int fog_level = band * 2; /* 0, 2, 4, 6 */
-    unsigned* dst = &frame_pal_words[band << 8];
-    for (int idx = 0; idx < 256; ++idx){
-      int h = idx & 0x3F;
-      int light = (idx >> 6) & 3;
-      unsigned short col = base_pal[idx];
-      /* Animate water/lava shimmer in real time */
-      if (h <= WATER_LEVEL && ((h + light + wave_phase) & 3) == 0){
-        col = base_pal[(2 << 6) | h];
-      }
-      unsigned short shaded = (light == 3 && band < 3)
-                              ? col
-                              : shade_color12(col, fog_col, fog_level);
-      dst[idx] = pack_pair(shaded);
+    step_dist_q8[s] = dist_q8;
+    step_scale[s] = (180 * 256) / dist_q8;
+    if (s < 18){
+      dist_q8 += 128; /* 0.50 cells per step near camera for smooth foreground */
+    } else if (s < 34){
+      dist_q8 += 224; /* 0.875 cells per step mid-range */
+    } else {
+      dist_q8 += 352; /* 1.375 cells per step far range */
     }
   }
 }
 
-/* Project a 3D world point (wx, wy, wz) into view coordinates (out_cx, out_y, out_step).
- * Returns true if the point lies in front of the near clip plane. */
+/* Select the 64x64 procedural terrain texture (0..7) for biome, height, and light. */
+static int select_terrain_tex(int biome, int h, int light){
+  if (light == 3 && h > WATER_LEVEL){
+    return (biome == BIOME_OBSIDIAN || biome == BIOME_LEVIATHAN) ? TEX_LAVA : TEX_CRYSTAL;
+  }
+  if (h <= WATER_LEVEL){
+    if (biome == BIOME_OBSIDIAN || biome == BIOME_LEVIATHAN) return TEX_LAVA;
+    if (biome == BIOME_CYBER) return TEX_CYBER;
+    return TEX_WATER;
+  }
+  if (biome == BIOME_CYBER){
+    return (h > 34) ? TEX_CRYSTAL : TEX_CYBER;
+  }
+  if (biome == BIOME_OBSIDIAN || biome == BIOME_LEVIATHAN){
+    return (h <= 14) ? TEX_LAVA : ((h >= 36) ? TEX_CRYSTAL : TEX_ROCK);
+  }
+  if (biome == BIOME_CRYO){
+    return (h >= 24) ? TEX_SNOW : TEX_ROCK;
+  }
+  if (h <= WATER_LEVEL + 3) return TEX_SAND;
+  if (h <= 28) return TEX_GRASS;
+  if (h <= 46) return TEX_ROCK;
+  return TEX_SNOW;
+}
+
+/* Project a 3D world point (wx, wy, wz) into single-pixel view coordinates
+ * (out_x: 0..319, out_y: 0..191, out_step: 0..47, out_scale). */
 static bool project_point3d(struct Camera* cam, int wx, int wy, int wz,
-                            int* out_cx, int* out_y, int* out_step){
+                            int* out_x, int* out_y, int* out_step, int* out_scale){
   int dx = wx - cam->x;
   int dy = wy - cam->y;
   int half_map = 64 << FIX_SHIFT;
@@ -179,405 +155,511 @@ static bool project_point3d(struct Camera* cam, int wx, int wy, int wz,
   int right_y = dir_x;
 
   int fwd = fixmul(dx, dir_x) + fixmul(dy, dir_y);
-  if (fwd < (2 << FIX_SHIFT) || fwd > (54 << FIX_SHIFT)) return false;
+  if (fwd < (2 << FIX_SHIFT) || fwd > (50 << FIX_SHIFT)) return false;
   int side = fixmul(dx, right_x) + fixmul(dy, right_y);
 
   int dist_q8 = fwd >> 8;
   if (dist_q8 < 256) dist_q8 = 256;
 
-  int cx = (VIEW_COLS >> 1) + (((side >> 8) * 96) / dist_q8);
+  int sx = (VIEW_W >> 1) + (((side >> 8) * 192) / dist_q8);
   int horizon_y = (VIEW_H >> 1) + 4 + cam->pitch;
-  int roll_off = ((cx - (VIEW_COLS >> 1)) * cam->roll) >> 6;
-  int scale = (170 * 256) / dist_q8;
-  int dh = (cam->z - wz) >> FIX_SHIFT;
-  int y = horizon_y + ((dh * scale) >> 3) + roll_off;
+  int roll_off = ((sx - (VIEW_W >> 1)) * cam->roll) >> 7;
+  int scale = (180 * 256) / dist_q8;
+  int dh_q8 = (cam->z - wz) >> 8;
+  int sy = horizon_y + (((dh_q8 * scale) >> 11)) + roll_off;
 
-  /* Map distance to approximate ray step (0..47) */
-  int step = (dist_q8 - 384) / 240;
+  int step = (dist_q8 - 320) / 210;
   if (step < 0) step = 0;
   if (step >= VOXEL_STEPS) step = VOXEL_STEPS - 1;
 
-  *out_cx = cx;
-  *out_y = y;
+  *out_x = sx;
+  *out_y = sy;
   *out_step = step;
+  *out_scale = scale;
   return true;
 }
 
-/* Draw the 3D Terrain Forge brush ring projected onto the terrain heightmap. */
+/* Render a 64x64 billboard sprite centered at (cx, cy) with pixel size `size_px`,
+ * occluded per column against the mountain silhouette at `bucket`. */
+static void draw_billboard_sprite(int cx, int cy, int size_px, int spr_frame,
+                                  int shade_level, int bucket){
+  if (size_px < 2) return;
+  if (size_px > 160) size_px = 160;
+  if (spr_frame < 0 || spr_frame >= SPR_COUNT) return;
+  if (bucket < 0) bucket = 0;
+  if (bucket >= OCCL_BUCKETS) bucket = OCCL_BUCKETS - 1;
+  if (shade_level < 0) shade_level = 0;
+  if (shade_level >= LIGHT_LEVELS) shade_level = LIGHT_LEVELS - 1;
+
+  int half = size_px >> 1;
+  int x0 = cx - half;
+  int x1 = x0 + size_px;
+  int top0 = cy - half;
+  int bot0 = top0 + size_px;
+  if (x1 <= 0 || x0 >= VIEW_W || bot0 <= 0 || top0 >= VIEW_H) return;
+
+  int tex_step = (SPR_SIZE << 16) / size_px;
+  int start_x = x0 < 0 ? 0 : x0;
+  int end_x = x1 > VIEW_W ? VIEW_W : x1;
+  unsigned char* spr_base = sprite_texels + (spr_frame << 12);
+  unsigned char* spans = sprite_spans + (spr_frame << 7);
+  unsigned short* shade = shade_tables + (shade_level << 8);
+
+  for (int x = start_x; x < end_x; ++x){
+    int tx = ((x - x0) * tex_step) >> 16;
+    if ((unsigned)tx >= SPR_SIZE) continue;
+    int sp_top = spans[tx << 1];
+    int sp_bot = spans[(tx << 1) + 1];
+    if (sp_bot <= sp_top) continue;
+
+    int col_top = top0 + ((sp_top * size_px) >> 6);
+    int col_bot = top0 + ((sp_bot * size_px) >> 6);
+    int max_y = (int)occl_top[(x << 4) | bucket];
+    if (col_bot > max_y) col_bot = max_y;
+    if (col_bot > VIEW_H) col_bot = VIEW_H;
+
+    int ty_pos = sp_top << 16;
+    if (col_top < 0){
+      ty_pos += (-col_top) * tex_step;
+      col_top = 0;
+    }
+    if (col_bot <= col_top) continue;
+
+    draw_sprite_col(view_at(x, col_top), col_bot - col_top,
+                    spr_base + (tx << 6), ty_pos, tex_step,
+                    shade, HALF_LEFT(col_top));
+  }
+}
+
+/* Draw the 3D Terrain Forge brush circle projected onto the terrain surface. */
 static void draw_forge_cursor_ring(struct Camera* cam){
   int cx0 = g_player.forge_cursor_x;
   int cy0 = g_player.forge_cursor_y;
   int rad = g_player.forge_radius;
-  unsigned ring_col = pack_pair((g_frame & 4) ? 0x0FF2 : 0x02FF);
+  unsigned short ring_col = (g_frame & 4) ? 0x0FF2 : 0x02FF;
 
-  for (int a = 0; a < ANGLE_COUNT; a += 64){
+  int prev_sx = -1, prev_sy = -1;
+  for (int a = 0; a <= ANGLE_COUNT; a += 64){
     int wx = ((cx0 << FIX_SHIFT) + FIX_HALF) + (icos(a) * rad);
     int wy = ((cy0 << FIX_SHIFT) + FIX_HALF) + (isin(a) * rad);
     int wz = terrain_height_at(wx, wy) + (1 << FIX_SHIFT);
-    int scx = 0, sy = 0, sstep = 0;
-    if (project_point3d(cam, wx, wy, wz, &scx, &sy, &sstep)){
-      fill_rect_occl(scx - 1, sy - 2, scx + 1, sy + 1, sstep >> 2, ring_col);
+    int sx = 0, sy = 0, sstep = 0, sscale = 0;
+    if (project_point3d(cam, wx, wy, wz, &sx, &sy, &sstep, &sscale)){
+      if (prev_sx >= 0){
+        draw_line_px(prev_sx, prev_sy, sx, sy, ring_col);
+        draw_line_px(prev_sx, prev_sy + 1, sx, sy + 1, 0x0FFF);
+      }
+      prev_sx = sx;
+      prev_sy = sy;
+    } else {
+      prev_sx = -1;
     }
   }
 }
 
-/* Draw one 3D entity (ring, gate, arch, spire, beacon, enemy, or boss). */
+/* Draw one 3D entity using its 64x64 pixel-art billboard sprite and effects. */
 static void draw_entity_3d(struct Camera* cam, struct Entity* e){
-  int cx = 0, cy = 0, step = 0;
-  if (!project_point3d(cam, e->x, e->y, e->z, &cx, &cy, &step)) return;
-  if (cx < -24 || cx >= VIEW_COLS + 24 || cy < -32 || cy >= VIEW_H + 32) return;
+  int sx = 0, sy = 0, step = 0, scale = 0;
+  if (!project_point3d(cam, e->x, e->y, e->z, &sx, &sy, &step, &scale)) return;
 
   int bucket = step >> 2;
-  int scale = step_scale[step];
-  int rad_x = (scale * 3) >> 4;
-  int rad_y = (scale * 6) >> 4;
-  if (rad_x < 2) rad_x = 2;
-  if (rad_y < 4) rad_y = 4;
+  int shade_lvl = LIGHT_FULL - (step >> 2);
+  if (e->flash > 0) shade_lvl = LIGHT_LEVELS - 1;
+  int anim = (int)(g_frame >> 2);
 
-  if (e->kind == ENT_RING || e->kind == ENT_GATE){
-    /* 3D Octagonal Power Ring / Grand Prix Gate */
-    bool is_next_gate = (e->kind == ENT_GATE && e->phase == g_player.next_gate);
-    unsigned short c_outer = (e->kind == ENT_RING)
-                             ? ((g_frame & 4) ? 0x02DF : 0x04FF)
-                             : (is_next_gate ? ((g_frame & 2) ? 0x04F2 : 0x0FF4) : 0x0862);
-    unsigned short c_inner = 0x0FFF;
-    unsigned p_outer = pack_pair(c_outer);
-    unsigned p_inner = pack_pair(c_inner);
-    int rx = rad_x + 2;
-    int ry = rad_y + 4;
-    /* Top and bottom horizontal bars */
-    fill_rect_occl(cx - (rx >> 1), cy - ry, cx + (rx >> 1), cy - ry + 2, bucket, p_outer);
-    fill_rect_occl(cx - (rx >> 1), cy + ry - 2, cx + (rx >> 1), cy + ry, bucket, p_outer);
-    /* Left and right vertical pillars */
-    fill_rect_occl(cx - rx, cy - (ry >> 1), cx - rx + 1, cy + (ry >> 1), bucket, p_outer);
-    fill_rect_occl(cx + rx - 1, cy - (ry >> 1), cx + rx, cy + (ry >> 1), bucket, p_outer);
-    /* Diagonal corner struts */
-    fill_rect_occl(cx - rx + 1, cy - ry + 2, cx - (rx >> 1), cy - (ry >> 1), bucket, p_inner);
-    fill_rect_occl(cx + (rx >> 1), cy - ry + 2, cx + rx - 1, cy - (ry >> 1), bucket, p_inner);
-    fill_rect_occl(cx - rx + 1, cy + (ry >> 1), cx - (rx >> 1), cy + ry - 2, bucket, p_inner);
-    fill_rect_occl(cx + (rx >> 1), cy + (ry >> 1), cx + rx - 1, cy + ry - 2, bucket, p_inner);
+  int spr = SPR_SCOUT;
+  int size_px = (scale * 5) >> 2;
+
+  if (e->kind == ENT_RING){
+    spr = SPR_RING + (anim & 3);
+    size_px = (scale * 7) >> 2;
+    shade_lvl = LIGHT_FULL + 1;
+  } else if (e->kind == ENT_GATE){
+    bool is_next = (e->phase == g_player.next_gate);
+    spr = is_next ? (SPR_GATE_ACTIVE + (anim & 1)) : SPR_GATE_NEXT;
+    size_px = (scale * 8) >> 2;
+    shade_lvl = is_next ? (LIGHT_FULL + 2) : LIGHT_FULL;
   } else if (e->kind == ENT_ARCH){
-    /* Massive 3D Canyon Stone Arch spanning the river */
-    int rx = (rad_x * 5) >> 1;
-    int ry = (rad_y * 5) >> 1;
-    unsigned p_stone = pack_pair(0x0678);
-    unsigned p_rune = pack_pair(0x0AF4);
-    fill_rect_occl(cx - rx, cy - ry, cx - rx + (rad_x >> 1) + 1, cy + ry, bucket, p_stone);
-    fill_rect_occl(cx + rx - (rad_x >> 1) - 1, cy - ry, cx + rx, cy + ry, bucket, p_stone);
-    fill_rect_occl(cx - rx, cy - ry, cx + rx, cy - ry + (rad_y >> 1) + 1, bucket, p_stone);
-    fill_rect_occl(cx - (rx >> 1), cy - ry + 1, cx + (rx >> 1), cy - ry + 2, bucket, p_rune);
-  } else if (e->kind == ENT_SPIRE || e->kind == ENT_BEACON){
-    /* Glowing Crystal Spire or Rescue Beacon */
-    unsigned p_col = pack_pair(e->kind == ENT_BEACON ? 0x0FF2 : 0x09F3);
-    unsigned p_core = pack_pair(0x0FFF);
-    fill_rect_occl(cx - (rad_x >> 1), cy - rad_y, cx + (rad_x >> 1), cy + rad_y, bucket, p_col);
-    fill_rect_occl(cx, cy - rad_y - 4, cx, cy + rad_y, bucket, p_core);
+    spr = SPR_ARCH;
+    size_px = scale * 3;
+  } else if (e->kind == ENT_GENERATOR){
+    spr = SPR_GENERATOR + (anim & 1);
+    size_px = (scale * 7) >> 2;
+    shade_lvl = LIGHT_FULL + 1;
+    /* Draw a tall glowing energy beacon beam rising into the sky so the
+     * player can spot Shield Towers from anywhere down the canyon! */
+    if (sx >= 1 && sx < VIEW_W - 1){
+      int beam_top = sy - size_px * 2;
+      if (beam_top < 0) beam_top = 0;
+      int max_y = (int)occl_top[(sx << 4) | bucket];
+      int beam_bot = sy < max_y ? sy : max_y;
+      for (int by = beam_top; by < beam_bot; ++by){
+        put_px(sx - 1, by, 0x09F3);
+        put_px(sx,     by, 0x0FFF);
+        put_px(sx + 1, by, 0x09F3);
+      }
+    }
+  } else if (e->kind == ENT_PORTAL){
+    spr = SPR_PORTAL + (anim & 3);
+    size_px = (scale * 9) >> 2;
+    shade_lvl = LIGHT_LEVELS - 1;
+    /* Vertical emerald portal beacon pillar */
+    if (sx >= 1 && sx < VIEW_W - 1){
+      for (int by = 0; by < sy && by < (int)occl_top[(sx << 4) | bucket]; ++by){
+        put_px(sx, by, (by & 2) ? 0x0BF4 : 0x0FFF);
+      }
+    }
+  } else if (e->kind == ENT_SCOUT){
+    spr = SPR_SCOUT + (anim & 1);
+    size_px = (scale * 5) >> 2;
+  } else if (e->kind == ENT_INTERCEPTOR){
+    spr = SPR_INTERCEPTOR + (anim & 1);
+    size_px = (scale * 5) >> 2;
+  } else if (e->kind == ENT_STEALTH){
+    spr = SPR_STEALTH + (anim & 1);
+    size_px = (scale * 5) >> 2;
+  } else if (e->kind == ENT_TURRET){
+    spr = SPR_TURRET;
+    size_px = (scale * 5) >> 2;
+  } else if (e->kind == ENT_RIVAL){
+    spr = SPR_INTERCEPTOR + (anim & 1);
+    size_px = (scale * 5) >> 2;
+    shade_lvl = LIGHT_FULL + 2;
+  } else if (e->kind == ENT_EXPLOSION){
+    spr = SPR_EXPLODE + (e->phase & 1);
+    size_px = (scale * 6) >> 2;
+    shade_lvl = LIGHT_LEVELS - 1;
   } else if (e->kind == ENT_BOSS){
-    /* Colossal Leviathan Dreadnought Boss with 4 orbiting shield pylons */
-    int bx = rad_x * 3;
-    int by = rad_y * 2;
-    unsigned p_hull = pack_pair(e->flash ? 0x0FFF : 0x0437);
-    unsigned p_trim = pack_pair(0x035F);
-    unsigned p_core = pack_pair((g_frame & 2) ? 0x02FF : 0x044F);
-    /* Main armored dreadnought wings and central citadel */
-    fill_rect_occl(cx - bx, cy - (by >> 2), cx + bx, cy + (by >> 2), bucket, p_hull);
-    fill_rect_occl(cx - (bx >> 1), cy - by, cx + (bx >> 1), cy + by, bucket, p_hull);
-    fill_rect_occl(cx - bx, cy, cx + bx, cy + 1, bucket, p_trim);
-    fill_rect_occl(cx - (bx >> 2), cy - (by >> 1), cx + (bx >> 2), cy + (by >> 1), bucket, p_core);
-    /* 4 Shield Generator Pylons */
+    spr = SPR_BOSS + (anim & 1);
+    size_px = scale * 3;
+    /* Draw orbiting shield generator pylons around the Boss */
     for (int g = 0; g < 4; ++g){
       if (!(e->shield_gen & (1 << g))) continue;
       int ang = ((int)g_frame << 3) + (g << 8);
-      int px = cx + ((icos(ang) * (bx + 4)) >> FIX_SHIFT);
-      int py = cy + ((isin(ang) * (by + 2)) >> FIX_SHIFT);
-      fill_rect_occl(px - 2, py - 4, px + 2, py + 4, bucket, pack_pair(0x0FF3));
+      int px = sx + ((icos(ang) * (size_px >> 1)) >> FIX_SHIFT);
+      int py = sy + ((isin(ang) * (size_px >> 2)) >> FIX_SHIFT);
+      draw_billboard_sprite(px, py, size_px >> 2, SPR_GENERATOR + (anim & 1),
+                            LIGHT_FULL + 2, bucket);
     }
-    /* Boss overhead health bar */
-    int bar_w = 24;
-    int fill_w = (e->hp * bar_w) / e->max_hp;
-    fill_rect_occl(cx - 12, cy - by - 6, cx + 12, cy - by - 4, bucket, pack_pair(0x0222));
-    if (fill_w > 0){
-      fill_rect_occl(cx - 12, cy - by - 6, cx - 12 + fill_w, cy - by - 4, bucket, pack_pair(0x024F));
-    }
-  } else {
-    /* Enemy Fighter / Interceptor / Stealth / Turret / Rival */
-    unsigned short hull_c = 0x034C;
-    unsigned short wing_c = 0x0228;
-    if (e->kind == ENT_INTERCEPTOR){ hull_c = 0x026F; wing_c = 0x013A; }
-    else if (e->kind == ENT_STEALTH){ hull_c = 0x0B38; wing_c = 0x0615; }
-    else if (e->kind == ENT_TURRET){ hull_c = 0x0677; wing_c = 0x039B; }
-    else if (e->kind == ENT_RIVAL){ hull_c = 0x03DF; wing_c = 0x018C; }
-    if (e->flash > 0){ hull_c = 0x0FFF; wing_c = 0x0FFF; }
+  }
 
-    /* Swept wings, central fuselage, and glowing engine core */
-    fill_rect_occl(cx - rad_x - 2, cy - 1, cx + rad_x + 2, cy + 2, bucket, pack_pair(wing_c));
-    fill_rect_occl(cx - (rad_x >> 1), cy - (rad_y >> 1), cx + (rad_x >> 1), cy + (rad_y >> 1), bucket, pack_pair(hull_c));
-    fill_rect_occl(cx, cy - 1, cx, cy + 1, bucket, pack_pair(0x04FF));
+  draw_billboard_sprite(sx, sy, size_px, spr, shade_lvl, bucket);
+
+  /* Draw overhead health bar for damaged or locked-on targets and the Boss */
+  bool is_locked = (g_player.lock_target >= 0 && &g_entities[g_player.lock_target] == e);
+  if ((e->kind == ENT_BOSS || is_locked || e->hp < e->max_hp) &&
+      (e->kind == ENT_GENERATOR || (e->kind >= ENT_SCOUT && e->kind <= ENT_BOSS)) &&
+      e->max_hp > 0 && sy - (size_px >> 1) - 5 >= 4){
+    int bar_w = (e->kind == ENT_BOSS) ? 48 : 20;
+    int fill_w = (e->hp * bar_w) / e->max_hp;
+    int bx0 = sx - (bar_w >> 1);
+    int by0 = sy - (size_px >> 1) - 5;
+    unsigned short bar_col = (e->kind == ENT_GENERATOR) ? 0x0FF2 : 0x024F;
+    for (int dx = 0; dx < bar_w; ++dx){
+      int px = bx0 + dx;
+      if ((unsigned)px < VIEW_W && by0 < (int)occl_top[(px << 4) | bucket]){
+        unsigned short c = (dx < fill_w) ? bar_col : 0x0222;
+        put_px(px, by0, c);
+        put_px(px, by0 + 1, c);
+      }
+    }
   }
 }
 
-/* Rotate a 2D point (px, py) around the origin by 10-bit angle `ang`. */
-static void rot2d(int px, int py, int ang, int* ox, int* oy){
-  int c = icos(ang);
-  int s = isin(ang);
-  *ox = (px * c - py * s) >> FIX_SHIFT;
-  *oy = (px * s + py * c) >> FIX_SHIFT;
-}
-
-/* Render the player's 3D polygonal Aether-Interceptor (or 1st-person cockpit). */
+/* Render the player's 80x48 banked Aether-Interceptor (or 1st-person cockpit). */
 static void draw_player_starfighter(void){
+  int aim_px = (VIEW_W >> 1) + g_player.aim_x;
+  int aim_py = (VIEW_H >> 1) + g_player.aim_y;
+
   if (g_player.cockpit_view){
-    /* 1st-person armored cockpit canopy struts and twin nose cannons */
-    unsigned strut = pack_pair(0x0456);
-    unsigned barrel = pack_pair(0x089A);
-    draw_line_pair(0, 180, 36, 130, strut);
-    draw_line_pair(36, 130, 124, 130, strut);
-    draw_line_pair(124, 130, 159, 180, strut);
-    draw_line_pair(18, 191, 32, 160, barrel);
-    draw_line_pair(141, 191, 127, 160, barrel);
+    /* 1st-person armored cockpit canopy frame and twin nose cannons */
+    for (int t = -1; t <= 1; ++t){
+      draw_line_px(0, 184 + t, 68, 126 + t, 0x0567);
+      draw_line_px(68, 126 + t, 252, 126 + t, 0x089A);
+      draw_line_px(252, 126 + t, 319, 184 + t, 0x0567);
+      draw_line_px(32 + t, 191, 62 + t, 154, 0x09BC);
+      draw_line_px(287 + t, 191, 257 + t, 154, 0x09BC);
+    }
+    if (g_player.fire_cooldown >= 3){
+      draw_line_px(62, 154, aim_px - 3, aim_py, 0x0FF2);
+      draw_line_px(257, 154, aim_px + 3, aim_py, 0x0FF2);
+    }
     return;
   }
 
-  /* 3rd-person Chase Cam: 3D Polygonal Arwing Starfighter */
-  int ship_cx = (VIEW_COLS >> 1) + (g_player.roll >> 2);
-  int ship_cy = 154 + (g_player.pitch >> 2);
-  int roll_ang = ((g_player.roll * 6) + g_player.barrel_spin) & ANGLE_MASK;
-
-  int nx = 0, ny = 0;     /* Nose apex */
-  int lwx = 0, lwy = 0;   /* Left outer wingtip */
-  int rwx = 0, rwy = 0;   /* Right outer wingtip */
-  int lix = 0, liy = 0;   /* Left inner wing root */
-  int rix = 0, riy = 0;   /* Right inner wing root */
-  int tx = 0, ty = 0;     /* Center tail */
-  int lfx = 0, lfy = 0;   /* Left vertical stabilizer fin */
-  int rfx = 0, rfy = 0;   /* Right vertical stabilizer fin */
-
-  int nose_lift = -8 - (g_player.pitch >> 2);
-  rot2d(0, nose_lift, roll_ang, &nx, &ny);
-  rot2d(-22, 6, roll_ang, &lwx, &lwy);
-  rot2d(22, 6, roll_ang, &rwx, &rwy);
-  rot2d(-6, 2, roll_ang, &lix, &liy);
-  rot2d(6, 2, roll_ang, &rix, &riy);
-  rot2d(0, 8, roll_ang, &tx, &ty);
-  rot2d(-8, -6, roll_ang, &lfx, &lfy);
-  rot2d(8, -6, roll_ang, &rfx, &rfy);
-
-  unsigned short c_left_wing  = (g_player.hurt_flash > 0) ? 0x044F : 0x0A74;
-  unsigned short c_right_wing = (g_player.hurt_flash > 0) ? 0x044F : 0x0C96;
-  unsigned short c_fuselage   = (g_player.hurt_flash > 0) ? 0x0FFF : 0x0EDF;
-  unsigned short c_fin        = 0x09C2;
-  unsigned short c_canopy     = 0x0FF3;
-
-  /* Swept left and right delta wings */
-  fill_tri_pair(ship_cx + nx, ship_cy + ny,
-                ship_cx + lwx, ship_cy + lwy,
-                ship_cx + lix, ship_cy + liy,
-                pack_pair(c_left_wing));
-  fill_tri_pair(ship_cx + nx, ship_cy + ny,
-                ship_cx + rix, ship_cy + riy,
-                ship_cx + rwx, ship_cy + rwy,
-                pack_pair(c_right_wing));
-
-  /* Central armored fuselage */
-  fill_tri_pair(ship_cx + nx, ship_cy + ny,
-                ship_cx + lix, ship_cy + liy,
-                ship_cx + tx, ship_cy + ty,
-                pack_pair(c_fuselage));
-  fill_tri_pair(ship_cx + nx, ship_cy + ny,
-                ship_cx + tx, ship_cy + ty,
-                ship_cx + rix, ship_cy + riy,
-                pack_pair(c_right_wing));
-
-  /* Twin emerald dioptase dorsal stabilizer fins */
-  fill_tri_pair(ship_cx + lix, ship_cy + liy,
-                ship_cx + lfx, ship_cy + lfy,
-                ship_cx + tx, ship_cy + ty,
-                pack_pair(c_fin));
-  fill_tri_pair(ship_cx + rix, ship_cy + riy,
-                ship_cx + rfx, ship_cy + rfy,
-                ship_cx + tx, ship_cy + ty,
-                pack_pair(c_fin));
-
-  /* Cockpit canopy & glowing twin plasma thruster cores */
-  put_pair(ship_cx + (nx >> 1), ship_cy + (ny >> 1), pack_pair(c_canopy));
-  unsigned short thrust_outer = g_player.boost_active ? 0x04FF : 0x02AF;
-  unsigned short thrust_core  = 0x0FFF;
-  int flame_r = g_player.boost_active ? 4 : 2;
-  for (int dy = -flame_r; dy <= flame_r; ++dy){
-    put_pair(ship_cx + (lix >> 1) - 1, ship_cy + ty + dy, pack_pair(thrust_outer));
-    put_pair(ship_cx + (rix >> 1) + 1, ship_cy + ty + dy, pack_pair(thrust_outer));
-  }
-  put_pair(ship_cx + (lix >> 1) - 1, ship_cy + ty, pack_pair(thrust_core));
-  put_pair(ship_cx + (rix >> 1) + 1, ship_cy + ty, pack_pair(thrust_core));
-
-  /* Wingtip converging plasma beams when cannons fire */
-  if (g_player.fire_cooldown >= 4){
-    int aim_cx = (VIEW_COLS >> 1) + (g_player.aim_x >> 1);
-    int aim_cy = (VIEW_H >> 1) + (g_player.aim_y >> 1);
-    unsigned beam_col = pack_pair((g_player.weapon_level >= 2) ? 0x04FF : 0x0FF2);
-    draw_line_pair(ship_cx + lwx, ship_cy + lwy, aim_cx - 2, aim_cy, beam_col);
-    draw_line_pair(ship_cx + rwx, ship_cy + rwy, aim_cx + 2, aim_cy, beam_col);
-  }
-
-  /* Barrel-roll deflector shield ring */
+  /* Select one of the 5 banked 80x48 starfighter frames (-2..+2) */
+  int eff_roll = g_player.roll;
   if (g_player.barrel_spin > 0){
-    unsigned shield_c = pack_pair((g_frame & 2) ? 0x0FF4 : 0x0AF2);
-    draw_line_pair(ship_cx - 24, ship_cy, ship_cx, ship_cy - 18, shield_c);
-    draw_line_pair(ship_cx, ship_cy - 18, ship_cx + 24, ship_cy, shield_c);
-    draw_line_pair(ship_cx + 24, ship_cy, ship_cx, ship_cy + 16, shield_c);
-    draw_line_pair(ship_cx, ship_cy + 16, ship_cx - 24, ship_cy, shield_c);
+    eff_roll = (isin(g_player.barrel_spin) * 32) >> FIX_SHIFT;
+  }
+  int bank_idx = 2 + (eff_roll / 10);
+  if (bank_idx < 0) bank_idx = 0;
+  if (bank_idx >= SHIP_FRAMES) bank_idx = SHIP_FRAMES - 1;
+
+  int ship_x0 = (VIEW_W - SHIP_W) / 2 + (g_player.roll >> 1) + (g_player.aim_x >> 3);
+  int ship_y0 = 132 + (g_player.pitch >> 2) + (g_player.aim_y >> 3);
+
+  unsigned short* frame_img = ship_images + bank_idx * (SHIP_W * SHIP_H);
+  unsigned char* frame_spans = ship_spans + bank_idx * (SHIP_W * 2);
+
+  for (int c = 0; c < SHIP_W; ++c){
+    int x = ship_x0 + c;
+    if ((unsigned)x >= VIEW_W) continue;
+    int first = frame_spans[c << 1];
+    int last = frame_spans[(c << 1) + 1];
+    if (last <= first) continue;
+    int top = ship_y0 + first;
+    int bot = ship_y0 + last;
+    if (top < 0){
+      first -= top;
+      top = 0;
+    }
+    if (bot > VIEW_H) bot = VIEW_H;
+    if (bot <= top) continue;
+    draw_image_col(view_at(x, top), bot - top,
+                   frame_img + c * SHIP_H + first, HALF_LEFT(top));
+  }
+
+  /* Animated twin afterburner exhaust plumes */
+  int ship_cx = ship_x0 + (SHIP_W >> 1);
+  int thr_y = ship_y0 + 32;
+  int flame_len = g_player.boost_active ? (8 + (g_frame & 3)) : (4 + (g_frame & 1));
+  for (int side = -10; side <= 10; side += 20){
+    int tx = ship_cx + side;
+    for (int dy = 0; dy < flame_len; ++dy){
+      unsigned short fc = (dy < 3) ? 0x0FFF : ((dy < 6) ? 0x04FF : 0x028F);
+      put_px(tx - 1, thr_y + dy, fc);
+      put_px(tx,     thr_y + dy, 0x0FFF);
+      put_px(tx + 1, thr_y + dy, fc);
+    }
+  }
+
+  /* Converging twin/quad wingtip plasma beams when firing */
+  if (g_player.fire_cooldown >= 3){
+    unsigned short bcol = (g_player.weapon_level >= 2) ? 0x04FF : 0x0FF2;
+    int l_wing_x = ship_cx - 32;
+    int r_wing_x = ship_cx + 32;
+    int wing_y = ship_y0 + 28;
+    draw_line_px(l_wing_x, wing_y, aim_px - 2, aim_py, bcol);
+    draw_line_px(l_wing_x + 1, wing_y, aim_px - 1, aim_py, 0x0FFF);
+    draw_line_px(r_wing_x, wing_y, aim_px + 2, aim_py, bcol);
+    draw_line_px(r_wing_x - 1, wing_y, aim_px + 1, aim_py, 0x0FFF);
+  }
+
+  /* Hexagonal deflector shield aura during barrel roll */
+  if (g_player.barrel_spin > 0){
+    unsigned short sc = (g_frame & 2) ? 0x0FF4 : 0x0AF2;
+    int cy = ship_y0 + 24;
+    draw_line_px(ship_cx - 42, cy, ship_cx - 20, cy - 20, sc);
+    draw_line_px(ship_cx - 20, cy - 20, ship_cx + 20, cy - 20, sc);
+    draw_line_px(ship_cx + 20, cy - 20, ship_cx + 42, cy, sc);
+    draw_line_px(ship_cx + 42, cy, ship_cx + 20, cy + 18, sc);
+    draw_line_px(ship_cx + 20, cy + 18, ship_cx - 20, cy + 18, sc);
+    draw_line_px(ship_cx - 20, cy + 18, ship_cx - 42, cy, sc);
   }
 }
 
-/* Render the full 3D Voxel-Space landscape, sky, objects, and player craft. */
+/* Render the full 320x192 single-pixel 3D Voxel-Space scene and billboards. */
 void render_scene(struct Camera* cam){
-  prepare_frame_tables(cam);
-
   int cos_a = icos(cam->angle);
   int sin_a = isin(cam->angle);
   int right_x = -sin_a;
   int right_y = cos_a;
 
+  int cam_z_q8 = cam->z >> 8;
+  int horizon_y = (VIEW_H >> 1) + 4 + cam->pitch;
+  if (horizon_y < 16) horizon_y = 16;
+  if (horizon_y > VIEW_H - 16) horizon_y = VIEW_H - 16;
+
   int sun_angle = (768 - cam->angle) & ANGLE_MASK;
   if (sun_angle > 512) sun_angle -= 1024;
-  int sun_cx = (VIEW_COLS >> 1) + (sun_angle >> 1);
+  int sun_cx = (VIEW_W >> 1) + sun_angle;
   int sun_cy = 34 + (cam->pitch >> 1);
   unsigned short* sky_grad = &sky_gradients[(cam->biome & 7) << 5];
+  int wave_scroll = (int)(g_frame << 1);
 
-  /* 1. March 160 double-columns grouped into 20 TLB-sized column-groups */
-  for (int g = 0; g < VIEW_GROUPS; ++g){
-    unsigned* group_base = &g_view_words[(g << 10) + (g << 9)];
-    for (int c = 0; c < GROUP_COLS; ++c){
-      int cx = (g << 3) | c;
-      int fov_off = cx - (VIEW_COLS >> 1); /* -80..+79 */
-      /* Ray direction for column cx: forward + fov_off/96 * right */
-      int ray_dx = cos_a + ((right_x * fov_off) >> 6);
-      int ray_dy = sin_a + ((right_y * fov_off) >> 6);
+  /* 1. March 320 single-pixel columns across 40 TLB-friendly column-groups */
+  for (int x = 0; x < VIEW_W; ++x){
+    int fov_off = x - (VIEW_W >> 1); /* -160..+159 */
+    int ray_dx = cos_a + ((right_x * fov_off) >> 7);
+    int ray_dy = sin_a + ((right_y * fov_off) >> 7);
+    int roll_off = (fov_off * cam->roll) >> 7;
 
-      int roll_off = (fov_off * cam->roll) >> 6;
-      int y_top = VIEW_H;
-      unsigned* dst = group_base + ((VIEW_H - 1) << 3) + c;
-      unsigned char* col_occl = &occl_top[cx << 4];
+    int y_top = VIEW_H;
+    unsigned char* col_occl = &occl_top[x << 4];
 
-      /* Start 1.5 cells ahead and step incrementally with shifts/adds only */
-      int rx = cam->x + ray_dx + (ray_dx >> 1);
-      int ry = cam->y + ray_dy + (ray_dy >> 1);
-      int step0_x = (ray_dx >> 1) + (ray_dx >> 3); /* 0.625 cells */
-      int step0_y = (ray_dy >> 1) + (ray_dy >> 3);
-      int step1_x = ray_dx;                        /* 1.0 cell */
-      int step1_y = ray_dy;
-      int step2_x = ray_dx + (ray_dx >> 1);        /* 1.5 cells */
-      int step2_y = ray_dy + (ray_dy >> 1);
+    int rx = cam->x + ray_dx + (ray_dx >> 2);
+    int ry = cam->y + ray_dy + (ray_dy >> 2);
+    int step0_x = ray_dx >> 1;                   /* 0.500 cells */
+    int step0_y = ray_dy >> 1;
+    int step1_x = ray_dx - (ray_dx >> 3);        /* 0.875 cells */
+    int step1_y = ray_dy - (ray_dy >> 3);
+    int step2_x = ray_dx + (ray_dx >> 2) + (ray_dx >> 3); /* 1.375 cells */
+    int step2_y = ray_dy + (ray_dy >> 2) + (ray_dy >> 3);
 
-      for (int s = 0; s < VOXEL_STEPS; ++s){
-        int wx = (rx >> FIX_SHIFT) & MAP_MASK;
-        int wy = (ry >> FIX_SHIFT) & MAP_MASK;
-        int idx = (wy << MAP_SHIFT) | wx;
-        unsigned short cell = g_terrain[idx];
-        int h = cell & 0x3F;
-        int col_idx = cell >> 8;
+    for (int s = 0; s < VOXEL_STEPS; ++s){
+      int wx0 = (rx >> FIX_SHIFT) & MAP_MASK;
+      int wy0 = (ry >> FIX_SHIFT) & MAP_MASK;
+      unsigned short cell00 = g_terrain[(wy0 << MAP_SHIFT) | wx0];
+      int h00 = cell00 & 0x3F;
+      int light = (cell00 >> 14) & 3;
 
-        /* Sub-cell bilinear height smoothing and micro-texture detail */
-        if (s < 20){
-          if (ry & 0x8000){
-            int wy2 = (wy + 1) & MAP_MASK;
-            int h2 = g_terrain[(wy2 << MAP_SHIFT) | wx] & 0x3F;
-            h = (h + h2) >> 1;
-          }
-          if ((((rx >> 14) ^ (ry >> 14)) & 1) && (col_idx & 0x3F) > WATER_LEVEL + 1){
-            col_idx = (col_idx & 0xC0) | ((col_idx & 0x3F) - 1);
-          }
-        }
-
-        int y = (int)frame_y_lut[(s << 6) | h] + roll_off;
-        if (y < 0) y = 0;
-        if (y < y_top){
-          unsigned pair = frame_pal_words[((s >> 4) << 8) | col_idx];
-          int count = y_top - y;
-          y_top = y;
-          do {
-            *dst = pair;
-            dst -= 8;
-          } while (--count > 0);
-        }
-        if ((s & 3) == 3){
-          col_occl[s >> 2] = (unsigned char)y_top;
-        }
-        if (s < 16){
-          rx += step0_x;
-          ry += step0_y;
-        } else if (s < 32){
-          rx += step1_x;
-          ry += step1_y;
-        } else {
-          rx += step2_x;
-          ry += step2_y;
-        }
+      /* Smooth bilinear 8.8 height interpolation on near and mid steps */
+      int h_q8 = h00 << 8;
+      if (s < 30){
+        int wx1 = (wx0 + 1) & MAP_MASK;
+        int wy1 = (wy0 + 1) & MAP_MASK;
+        int fx = (rx >> 12) & 15;
+        int fy = (ry >> 12) & 15;
+        int h10 = g_terrain[(wy0 << MAP_SHIFT) | wx1] & 0x3F;
+        int h01 = g_terrain[(wy1 << MAP_SHIFT) | wx0] & 0x3F;
+        int h11 = g_terrain[(wy1 << MAP_SHIFT) | wx1] & 0x3F;
+        int h_top = h00 * (16 - fx) + h10 * fx;
+        int h_bot = h01 * (16 - fx) + h11 * fx;
+        h_q8 = h_top * (16 - fy) + h_bot * fy; /* 16*16 = 256 -> 8.8 fixed point! */
       }
 
-      /* Fill remaining sky rows [0 .. y_top - 1] with banking sky gradient & sun */
-      int sdx = cx - sun_cx;
-      bool near_sun_x = (sdx >= -6 && sdx <= 6);
-      int sdx2 = near_sun_x ? (sdx * sdx) : 64;
-      for (int y = y_top - 1; y >= 0; --y){
-        int sky_band = (y - roll_off - (cam->pitch >> 1)) >> 2;
-        if (sky_band < 0) sky_band = 0;
-        if (sky_band > 31) sky_band = 31;
-        unsigned short scol = sky_grad[sky_band];
+      int scale = step_scale[s];
+      int y = horizon_y + (((cam_z_q8 - h_q8) * scale) >> 11) + roll_off;
+      if (y < 0) y = 0;
+      if (y < y_top){
+        int tex_id = select_terrain_tex(cam->biome, h00, light);
+        int uv_shift = (h00 <= WATER_LEVEL) ? 14 : 13;
+        int tex_u = ((rx >> uv_shift) + (h00 <= WATER_LEVEL ? (wave_scroll >> 2) : 0)) & 63;
+        unsigned char* texcol = terrain_textures + (tex_id << 12) + (tex_u << 6);
 
-        if (near_sun_x){
-          int sdy = (y - sun_cy) >> 1;
-          if (sdy >= -6 && sdy <= 6){
-            int sd2 = sdx2 + sdy * sdy;
-            if (sd2 <= 36){
-              scol = (sd2 <= 12) ? 0x0FFF : 0x06DF;
-            }
-          }
-        } else if (sky_band < 12 && ((((cx << 5) ^ (y << 3) ^ cx ^ y) & 127) == 0)){
-          scol = 0x0EEE; /* High-altitude stars */
-        }
-        *dst = pack_pair(scol);
-        dst -= 8;
+        int shade_lvl = LIGHT_FULL - (s >> 2) + (light == 2 ? 2 : (light == 0 ? -2 : 0));
+        if (light == 3) shade_lvl = LIGHT_LEVELS - 1;
+        if (shade_lvl < 1) shade_lvl = 1;
+        if (shade_lvl >= LIGHT_LEVELS) shade_lvl = LIGHT_LEVELS - 1;
+
+        int tex_v = ((ry >> uv_shift) + (h00 <= WATER_LEVEL ? (wave_scroll >> 1) : 0)) & 63;
+        int tex_pos = tex_v << 16;
+        int tex_step = (h00 <= WATER_LEVEL) ? 0x02000 : ((s < 16) ? 0x06000 : 0x0C000);
+        draw_voxel_span(view_at(x, y), y_top - y, texcol, tex_pos, tex_step,
+                        shade_tables + (shade_lvl << 8), HALF_LEFT(y));
+        y_top = y;
       }
+      if ((s & 3) == 3){
+        col_occl[s >> 2] = (unsigned char)y_top;
+      }
+      if (s < 18){
+        rx += step0_x;
+        ry += step0_y;
+      } else if (s < 34){
+        rx += step1_x;
+        ry += step1_y;
+      } else {
+        rx += step2_x;
+        ry += step2_y;
+      }
+    }
+
+    /* Fill remaining sky rows [0 .. y_top - 1] with banking sky gradient & sun */
+    int sdx = (x - sun_cx) >> 1;
+    bool near_sun_x = (sdx >= -7 && sdx <= 7);
+    int sdx2 = near_sun_x ? (sdx * sdx) : 64;
+    for (int y = 0; y < y_top; ++y){
+      int sky_band = (y - roll_off - (cam->pitch >> 1)) >> 2;
+      if (sky_band < 0) sky_band = 0;
+      if (sky_band > 31) sky_band = 31;
+      unsigned short scol = sky_grad[sky_band];
+
+      if (near_sun_x){
+        int sdy = (y - sun_cy) >> 1;
+        if (sdy >= -7 && sdy <= 7){
+          int sd2 = sdx2 + sdy * sdy;
+          if (sd2 <= 42){
+            scol = (sd2 <= 14) ? 0x0FFF : 0x06DF;
+          }
+        }
+      } else if (sky_band < 12 && ((((x << 5) ^ (y << 3) ^ x ^ y) & 255) == 0)){
+        scol = 0x0EEE;
+      }
+      *view_at(x, y) = scol;
     }
   }
 
-  /* 2. In Terrain Forge mode, project the 3D sculpting brush onto the terrain */
+  /* 2. In Terrain Forge mode, draw the 3D sculpting brush ring on the terrain */
   if (g_mode == MODE_FORGE){
     draw_forge_cursor_ring(cam);
   }
 
-  /* 3. Render 3D world entities (arches, rings, gates, beacons, enemies, boss) */
+  /* 3. Depth-sort active 3D entities back-to-front so nearer objects overlap farther ones */
+  int order[MAX_ENTITIES];
+  int dists[MAX_ENTITIES];
+  int vis_count = 0;
+  int dir_x = icos(cam->angle);
+  int dir_y = isin(cam->angle);
   for (int i = 0; i < MAX_ENTITIES; ++i){
-    if (g_entities[i].active){
-      draw_entity_3d(cam, &g_entities[i]);
+    if (!g_entities[i].active) continue;
+    int dx = g_entities[i].x - cam->x;
+    int dy = g_entities[i].y - cam->y;
+    int half_map = 64 << FIX_SHIFT;
+    int full_map = 128 << FIX_SHIFT;
+    while (dx > half_map) dx -= full_map;
+    while (dx < -half_map) dx += full_map;
+    while (dy > half_map) dy -= full_map;
+    while (dy < -half_map) dy += full_map;
+    int fwd = fixmul(dx, dir_x) + fixmul(dy, dir_y);
+    if (fwd < (2 << FIX_SHIFT) || fwd > (50 << FIX_SHIFT)) continue;
+    order[vis_count] = i;
+    dists[vis_count] = fwd;
+    vis_count += 1;
+  }
+  /* Insertion sort from farthest to nearest */
+  for (int i = 1; i < vis_count; ++i){
+    int k_ord = order[i];
+    int k_dst = dists[i];
+    int j = i - 1;
+    while (j >= 0 && dists[j] < k_dst){
+      order[j + 1] = order[j];
+      dists[j + 1] = dists[j];
+      j -= 1;
     }
+    order[j + 1] = k_ord;
+    dists[j + 1] = k_dst;
+  }
+  for (int i = 0; i < vis_count; ++i){
+    draw_entity_3d(cam, &g_entities[order[i]]);
   }
 
-  /* 4. Render 3D projectiles (plasma bolts, seismic torpedoes, enemy lasers) */
+  /* 4. Render 3D projectiles as glowing 64x64 energy orb billboards */
   for (int i = 0; i < MAX_SHOTS; ++i){
     struct Shot* s = &g_shots[i];
     if (!s->active) continue;
-    int scx = 0, sy = 0, sstep = 0;
-    if (project_point3d(cam, s->x, s->y, s->z, &scx, &sy, &sstep)){
-      int r = (s->kind == SHOT_PLAYER_SEISMIC || s->kind == SHOT_BOSS_ORB) ? 2 : 1;
-      fill_rect_occl(scx - r, sy - (r << 1), scx + r, sy + (r << 1),
-                     sstep >> 2, pack_pair((unsigned short)s->color));
+    int sx = 0, sy = 0, sstep = 0, sscale = 0;
+    if (project_point3d(cam, s->x, s->y, s->z, &sx, &sy, &sstep, &sscale)){
+      int spr = SPR_ORB_PLAYER;
+      int sz = (sscale * 3) >> 2;
+      if (s->kind == SHOT_PLAYER_SEISMIC){
+        spr = SPR_ORB_SEISMIC;
+        sz = (sscale * 5) >> 2;
+      } else if (s->kind >= SHOT_ENEMY_LASER){
+        spr = SPR_ORB_ENEMY;
+        sz = sscale;
+      }
+      draw_billboard_sprite(sx, sy, sz < 4 ? 4 : sz, spr, LIGHT_LEVELS - 1, sstep >> 2);
     }
   }
 
-  /* 5. Render 3D ballistic explosion sparks and debris particles */
+  /* 5. Render 3D explosion sparks and debris particles */
   for (int i = 0; i < MAX_PARTICLES; ++i){
     struct Particle* p = &g_particles[i];
     if (!p->active) continue;
-    int pcx = 0, py = 0, pstep = 0;
-    if (project_point3d(cam, p->x, p->y, p->z, &pcx, &py, &pstep)){
-      put_pair_occl(pcx, py, pstep >> 2, pack_pair(p->color));
-      put_pair_occl(pcx, py + 1, pstep >> 2, pack_pair(p->color));
+    int px = 0, py = 0, pstep = 0, pscale = 0;
+    if (project_point3d(cam, p->x, p->y, p->z, &px, &py, &pstep, &pscale)){
+      int b = pstep >> 2;
+      if ((unsigned)px < VIEW_W - 1 && (unsigned)py < VIEW_H - 1 &&
+          py < (int)occl_top[(px << 4) | b]){
+        put_px(px, py, p->color);
+        put_px(px + 1, py, p->color);
+        put_px(px, py + 1, p->color);
+      }
     }
   }
 
-  /* 6. Render the player's 3D Starfighter / Cockpit in foreground */
+  /* 6. Render the player's 80x48 banked Starfighter / Cockpit in foreground */
   if (g_mode != MODE_FORGE || g_state == STATE_TITLE){
     draw_player_starfighter();
   }

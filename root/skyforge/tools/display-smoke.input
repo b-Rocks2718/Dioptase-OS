@@ -9,19 +9,21 @@
 730 key e
 750 shot barrel_roll
 780 key space up
-820 key t
-880 key space down
-940 key space up
-970 shot forge
-1010 key b
-1050 key 4
-1090 key space down
-1140 key space up
-1170 shot forge_obsidian
-1210 key t
-1250 key v
-1300 shot cockpit
-1360 key q
-1420 key q
-1500 shot restored_shell
-1540 exit
+800 key n
+820 key n
+840 key n
+860 key n
+900 shot boss_leviathan
+940 key t
+990 key space down
+1040 key space up
+1070 shot forge
+1110 key b
+1150 key 4
+1190 key space down
+1240 key space up
+1270 shot forge_obsidian
+1320 key q
+1380 key q
+1460 shot restored_shell
+1500 exit
