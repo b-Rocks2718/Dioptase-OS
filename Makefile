@@ -186,7 +186,7 @@ TEST_CHECK_NAMES := $(filter-out $(PROFILING_WORKLOAD_TEST_NAMES),$(TEST_CHECK_N
 # exercise application code rather than the kernel and are slow on shared
 # runners, so the aggregate suite and CI leave them out; run one with
 # `make <name>.summary-test`.
-DEMO_TEST_NAMES := lumen starfall_guest emberfall_guest emberfall_e2e microrealm_guest
+DEMO_TEST_NAMES := lumen starfall_guest emberfall_guest emberfall_e2e powder_guest microrealm_guest
 TEST_CHECK_NAMES := $(filter-out $(DEMO_TEST_NAMES),$(TEST_CHECK_NAMES))
 TEST_CHECK_SUMMARY_TARGETS := $(addsuffix .summary-test,$(TEST_CHECK_NAMES))
 
