@@ -17,12 +17,12 @@ static int rand_range(int max) {
   return (int)((next_rand() >> 8) % (unsigned)max);
 }
 
-/* Retrieve the cell at tile coordinates (tx, ty) with bounds validation. */
+/* Retrieve the cell at tile coordinates (tx, ty) with bit-shift bounds indexing. */
 struct MapCell* world_get_cell(struct GameWorld* w, int tx, int ty) {
   if (tx < 0 || tx >= MAP_SIZE || ty < 0 || ty >= MAP_SIZE) {
     return NULL;
   }
-  return &w->grid[ty * MAP_SIZE + tx];
+  return &w->grid[(ty << 6) + tx];
 }
 
 /* Check whether a tile allows land units to step onto it. */
@@ -313,7 +313,10 @@ void world_update(struct GameWorld* w) {
     w->day_number++;
   }
 
-  /* Farm crop replenishment */
+  /* Harvest on the world's day clock, including midnight (day_ticks == 0).
+   * Keeping this state in the world preserves restart and independent-world
+   * behavior; a function-static counter would survive world_init().
+   */
   if ((w->day_ticks % 90) == 0) {
     for (int i = 0; i < MAX_BUILDINGS; i++) {
       if (w->buildings[i].active && w->buildings[i].type == BLD_FARM) {
@@ -334,19 +337,26 @@ void world_update(struct GameWorld* w) {
     }
 
     /* Search for nearest hostile creature within firing range */
-    int bx = (b->tile_x * TILE_PX) + (b->width * TILE_PX / 2);
-    int by = (b->tile_y * TILE_PX) + (b->height * TILE_PX / 2);
+    int bx = (b->tile_x << 4) + (b->width << 3);
+    int by = (b->tile_y << 4) + (b->height << 3);
     int max_range = (b->type == BLD_TOWER) ? 96 : 80;
     int nearest_enemy = -1;
     int best_dist_sq = max_range * max_range;
 
-    for (int u = 0; u < MAX_VILLAGERS + MAX_SOLDIERS + MAX_ENEMIES; u++) {
+    for (int u = 0; u < TOTAL_UNITS; u++) {
       struct Unit* enemy = &w->units[u];
       if (!enemy->active || enemy->team != TEAM_ENEMY || enemy->state == STATE_DEAD) continue;
 
       int ex = enemy->x >> FIXED_SHIFT;
       int ey = enemy->y >> FIXED_SHIFT;
-      int dsq = (ex - bx) * (ex - bx) + (ey - by) * (ey - by);
+
+      /* Fast bounding box cull before multiplication */
+      int adx = (ex > bx) ? (ex - bx) : (bx - ex);
+      if (adx > max_range) continue;
+      int ady = (ey > by) ? (ey - by) : (by - ey);
+      if (ady > max_range) continue;
+
+      int dsq = adx * adx + ady * ady;
       if (dsq < best_dist_sq) {
         best_dist_sq = dsq;
         nearest_enemy = u;

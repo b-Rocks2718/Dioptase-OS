@@ -97,3 +97,37 @@ microrealm --demo
 3. **Defense Preparation**: Erect **Guard Towers** near chokepoints and vulnerable approaches before the Dusk bell tolls. Towers fire automatically at any monsters entering their perimeter.
 4. **Barracks & Army**: Once Stone and Gold reserves allow, build a **Barracks** and recruit **Swordsmen** to hold the frontline and **Archers** to provide covering fire.
 5. **Night Defense**: When night falls, group your soldiers near the Castle or towers. Protect your villagers—if your Castle falls, the realm is lost!
+
+
+## Performance checks
+
+The renderer fills clipped rectangles eight pixels at a time, retaining 16-bit
+framebuffer accesses. The audio mixer refills toward 6,000 queued bytes (120 ms
+at 25 kHz) independently of the presentation rate, retaining PCM across partial
+or temporarily blocked writes.
+
+Run the engine and media regressions from `Dioptase-OS`:
+
+```sh
+make microrealm_guest.summary-test microrealm_media_guest.summary-test TEST_RUNS=3
+```
+
+The media guest compiles the actual renderer and synthesizer with deterministic
+device doubles. It checks an eight-frame scene hash, full-range signed decimal
+text, clipping guards, transparent glyphs, failed video mapping, audio refill,
+and PCM preservation across partial writes. The engine guest checks campaign
+reset and midnight harvest timing as well as its existing simulation checks.
+
+For a fixed rendering profile, compile the media guest with
+`OS_BCC_DEFINES='-DOS_RELEASE=1 -DMEDIA_BENCHMARK'`, package its
+`tests/microrealm_media_guest.dir` directory as an ext2 root, and run the full
+emulator with `--profile`, `--profile-start user`, `--profile-stop stop`, and
+`--user-symbols tests/microrealm_media_guest.dir/sbin/build/init.hex`.
+`MEDIA_BENCHMARK` skips the additional edge-case checks; normal test builds
+always enable them. The Makefile tracks flag changes to prevent stale binaries.
+
+On the recovered Gemini source, rectangle filling consumed 6,282,734 dispatched
+instructions for this workload; the completed version consumed 3,123,220
+(50.3% fewer), with the same `10517ae7` frame hash. These are emulator instruction
+counts, not hardware cycles or an FPS claim; the checksum loop itself is excluded
+from this rectangle-filling comparison.

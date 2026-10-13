@@ -356,6 +356,33 @@ static int run_selftest(void) {
     projectiles_update(&world);
   }
 
+  /* A new campaign owns its harvest clock. Resetting after earlier updates
+   * must not inherit a static timer; harvest remains tied to day_ticks,
+   * including the shorter interval from the final daily harvest to midnight.
+   */
+  world_init(&world, 0x4D494352);
+  if (world_place_building(&world, BLD_FARM, 28, 28) < 0) {
+    puts("***FAIL microrealm farm clock test could not place farm at tile (28,28)\n");
+    return 1;
+  }
+  for (int t = 0; t < 89; t++) world_update(&world);
+  if (world.food != 90) {
+    puts("***FAIL microrealm new campaign harvested before day tick 90\n");
+    return 1;
+  }
+  world_update(&world);
+  if (world.food != 94) {
+    puts("***FAIL microrealm farm did not yield four food at day tick 90\n");
+    return 1;
+  }
+  world.day_ticks = 1199;
+  world.phase = PHASE_NIGHT;
+  world_update(&world);
+  if (world.day_ticks != 0 || world.food != 98) {
+    puts("***FAIL microrealm midnight must reset the day clock and harvest four food\n");
+    return 1;
+  }
+
   /* Test persistence */
   world.record.best_days = 5;
   world.record.best_score = 3500;
