@@ -83,6 +83,12 @@ enum WavErrorCode wav_read_header(int fd, struct WavInfo* info, struct WavError*
 #define WAV_STREAM_BUFFER_WORDS 1024
 #define WAV_STREAM_BUFFER_BYTES (WAV_STREAM_BUFFER_WORDS * 4)
 
+// Most bytes one wav_stream_pump() call hands the device: the 16 KiB audio
+// ring (docs/mem_map.md), enough to fill it from empty. The device drains the
+// ring while the pump reads the file, so without this limit a guest that reads
+// slower than real time never sees the ring full and the pump never returns.
+#define WAV_STREAM_PUMP_LIMIT_BYTES 0x4000
+
 // A WAV file being played on the audio device. Fields are private to wav.c.
 struct WavStream {
   int fd;
@@ -97,8 +103,11 @@ struct WavStream {
 // audio. Returns WAV_OK, or an error with the device and file left released.
 enum WavErrorCode wav_stream_open(struct WavStream* stream, char* path, struct WavError* error);
 
-// Queue as much more audio as the device accepts right now. Never waits.
-// Returns 0, or -1 if the file or device failed (playback then stops).
+// Queue as much more audio as the device accepts right now, up to
+// WAV_STREAM_PUMP_LIMIT_BYTES per call. Never waits. If the system cannot read
+// the file as fast as the device plays it, playback has gaps but each call
+// still returns. Returns 0, or -1 if the file or device failed (playback then
+// stops).
 int wav_stream_pump(struct WavStream* stream);
 
 // Number of samples the device has played so far. Divide by WAV_SAMPLE_RATE
