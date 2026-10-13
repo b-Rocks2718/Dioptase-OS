@@ -27,5 +27,7 @@ tests/starfall_guest.dir/sbin/starfall
 root/emberfall/highscores.txt
 tests/emberfall_guest.dir/sbin/emberfall
 tests/emberfall_e2e.dir/sbin/emberfall
+tests/microrealm_guest.dir/sbin/microrealm
+microrealm_save.dat
 # Powderworks guest binary, rebuilt from source by the fixture Makefile
 tests/powder_guest.dir/sbin/powder
