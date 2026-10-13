@@ -31,3 +31,7 @@ tests/microrealm_guest.dir/sbin/microrealm
 microrealm_save.dat
 # Powderworks guest binary, rebuilt from source by the fixture Makefile
 tests/powder_guest.dir/sbin/powder
+# SKYFORGE guest binary and runtime save files
+tests/skyforge_guest.dir/sbin/skyforge
+root/skyforge/scores.sf
+root/skyforge/world.sf

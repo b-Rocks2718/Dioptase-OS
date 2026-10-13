@@ -1,0 +1,27 @@
+# Headless verification script for SKYFORGE through init -> terminal -> shell.
+280 type skyforge
+340 key enter
+560 shot title
+600 key enter
+650 key space down
+670 shot campaign
+710 key f
+730 key e
+750 shot barrel_roll
+780 key space up
+820 key t
+880 key space down
+940 key space up
+970 shot forge
+1010 key b
+1050 key 4
+1090 key space down
+1140 key space up
+1170 shot forge_obsidian
+1210 key t
+1250 key v
+1300 shot cockpit
+1360 key q
+1420 key q
+1500 shot restored_shell
+1540 exit
