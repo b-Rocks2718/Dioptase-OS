@@ -59,9 +59,16 @@ static int palette[PALETTE_COUNT] = {
 
 /* Framebuffer and tilemap mappings, resolved once at startup. */
 static volatile short* PX;
+static volatile int* PXW;
 static volatile short* TFB;
 static volatile short* TMAP;
 static volatile short* SPR;
+
+/* Handwritten row publisher in powder_asm.s; see that file for its contract. */
+void powder_publish_row(volatile int* fb, short* colors, short* prev);
+
+/* Scratch row of colors filled by sim_row_colors for the publisher. */
+static short row_colors[SIM_W];
 
 /* Last color published per cell, so idle cells are not rewritten. */
 static short prev_color[SIM_CELLS];
@@ -157,53 +164,13 @@ static void show_message(char* text, unsigned steps_ahead) {
   hud_dirty = 1;
 }
 
-/* Background color of an empty cell: a deep navy two-tone with rare sparks. */
-static short background_color(int x, int y) {
-  if (((x * 31 + y * 17) & 127) == 0) return 0x334;
-  return ((x ^ y) & 1) != 0 ? 0x300 : 0x200;
-}
-
-/* Framebuffer color of one cell, including fire and lava animation. */
-static short cell_color(int x, int y, int element, int aux) {
-  if (element == EL_EMPTY) return background_color(x, y);
-  if (element == EL_FIRE) {
-    int shade = (int)(((sim_steps >> 1) + (unsigned)(x + y)) & 3);
-    return sim_element_color(element, shade);
-  }
-  if (element == EL_LAVA) {
-    int shade = (((x >> 2) + (int)(sim_steps >> 3)) & 1) != 0 ? 3 : 2;
-    return sim_element_color(element, shade);
-  }
-  if (element == EL_SMOKE) {
-    int shade = aux > 28 ? 3 : (aux > 14 ? 2 : 1);
-    return sim_element_color(element, shade);
-  }
-  if (element == EL_WATER || element == EL_OIL || element == EL_ACID) {
-    int shade = 1 + (int)(((unsigned)(x + y) + sim_steps) & 1);
-    if ((aux & 3) == 3) shade = 3;
-    return sim_element_color(element, shade);
-  }
-  return sim_element_color(element, aux & 3);
-}
-
 /* Publish the simulation to the pixel framebuffer, skipping unchanged cells. */
 static void render_sim(void) {
-  int fb_row = 0;
+  volatile int* fb = PXW;
   for (int y = 0; y < SIM_H; y++) {
-    int base = (y << 7) + (y << 5);
-    for (int x = 0; x < SIM_W; x++) {
-      int i = base + x;
-      short color = cell_color(x, y, sim_cells[i], sim_aux[i]);
-      if (color != prev_color[i]) {
-        prev_color[i] = color;
-        int p = fb_row + (x << 1);
-        PX[p] = color;
-        PX[p + 1] = color;
-        PX[p + 320] = color;
-        PX[p + 321] = color;
-      }
-    }
-    fb_row += 640;
+    sim_row_colors(y, row_colors);
+    powder_publish_row(fb, row_colors, &prev_color[(y << 7) + (y << 5)]);
+    fb += 320;
   }
 }
 
@@ -734,6 +701,7 @@ static unsigned wait_frame(unsigned last) {
 /* Claim every display mapping and put the layers into a known state. */
 static int setup_display(void) {
   PX = get_pixel_fb();
+  PXW = (volatile int*)PX;
   TFB = get_tile_fb();
   TMAP = get_tilemap();
   SPR = get_spritemap();
@@ -840,16 +808,64 @@ static int run_selftest(void) {
   return 0;
 }
 
+/* Timed bench on a fixed scene; results are guest jiffies (3000 per second). */
+static int run_bench(void) {
+  if (setup_display() != 0) return 1;
+  sim_init(20261012u);
+  sim_demo_scene();
+  for (int i = 0; i < 30; i++) {
+    sim_step();
+    render_sim();
+  }
+  unsigned t0 = get_current_jiffies();
+  for (int i = 0; i < 300; i++) sim_step();
+  unsigned sim_jiffies = get_current_jiffies() - t0;
+  t0 = get_current_jiffies();
+  for (int i = 0; i < 300; i++) {
+    sim_step();
+    render_sim();
+  }
+  unsigned both_jiffies = get_current_jiffies() - t0;
+  int args[1];
+  puts("***BENCH powder sim-only jiffies=");
+  args[0] = (int)sim_jiffies;
+  printf("%d\n", args);
+  puts("***BENCH powder sim+render jiffies=");
+  args[0] = (int)both_jiffies;
+  printf("%d\n", args);
+  /* Show the same numbers on screen until Q, for headless screenshots. */
+  raw_mode = set_keyboard_raw(1) == 0;
+  clear_chrome_boxes();
+  draw_text(10, 24, "POWDER BENCH (300 STEPS, JIFFIES AT 3000/S)", COL_TITLE);
+  draw_text(10, 26, "SIM ONLY:", COL_TEXT);
+  draw_unsigned(24, 26, sim_jiffies, 8, COL_GOOD);
+  draw_text(10, 27, "SIM+RENDER:", COL_TEXT);
+  draw_unsigned(24, 27, both_jiffies, 8, COL_GOOD);
+  draw_text(10, 29, "Q TO EXIT", COL_DIM);
+  unsigned frame = get_vga_frame_counter();
+  while (1) {
+    frame = wait_frame(frame);
+    poll_keyboard();
+    if (key_pressed('q') || key_pressed('Q')) break;
+    snapshot_keys();
+  }
+  if (raw_mode) set_keyboard_raw(0);
+  return 0;
+}
+
 /* Entry point: --selftest checks, --demo skips the title, --silent mutes. */
 int main(int argc, char** argv) {
   int selftest = 0;
   int demo = 0;
+  int bench = 0;
   for (int i = 1; i < argc; i++) {
     if (streq(argv[i], "--selftest")) selftest = 1;
     if (streq(argv[i], "--silent")) sound_on = 0;
     if (streq(argv[i], "--demo")) demo = 1;
+    if (streq(argv[i], "--bench")) bench = 1;
   }
   if (selftest) return run_selftest();
+  if (bench) return run_bench();
   if (setup_display() != 0) return 1;
 
   sim_init(get_current_jiffies() | 1u);
@@ -879,7 +895,7 @@ int main(int argc, char** argv) {
     poll_keyboard();
     quit = handle_input();
     if (!paused && state != ST_HELP) {
-      if (frame - stepped_frame >= 2) {
+      if (frame - stepped_frame >= 1) {
         stepped_frame = frame;
         if (state == ST_TITLE || attract) attract_step();
         sim_step();

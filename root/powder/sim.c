@@ -15,6 +15,9 @@ unsigned sim_steps;
 /* Shared xorshift state; the zero seed is remapped so the generator never sticks. */
 static unsigned rng_state = 1;
 
+/* Generation stamped into sim_moved each step, so no clearing pass is needed. */
+static unsigned char move_gen = 1;
+
 /* Display names indexed by element code; BRUSH_ERASE is handled by name lookup. */
 static char* element_names[EL_COUNT] = {
   "VOID", "SAND", "WATER", "OIL", "LAVA", "FIRE", "EMBER",
@@ -72,7 +75,7 @@ static void set_cell(int x, int y, int element, int aux) {
   sim_aux[i] = (unsigned char)aux;
 }
 
-/* Swap two cells by flat index and mark both as moved this step. */
+/* Swap two cells by flat index and stamp both with this step's generation. */
 static void swap_cells(int a, int b) {
   unsigned char t = sim_cells[a];
   sim_cells[a] = sim_cells[b];
@@ -80,8 +83,8 @@ static void swap_cells(int a, int b) {
   t = sim_aux[a];
   sim_aux[a] = sim_aux[b];
   sim_aux[b] = t;
-  sim_moved[a] = 1;
-  sim_moved[b] = 1;
+  sim_moved[a] = move_gen;
+  sim_moved[b] = move_gen;
 }
 
 /* Short display name of an element or brush code (palette order matches). */
@@ -104,6 +107,53 @@ int sim_element_tile_color(int element) {
   if (element == BRUSH_ERASE) return 0xFF;
   if (element < 0 || element >= EL_COUNT) return 0;
   return element_tile_colors[element];
+}
+
+/* Precomputed background colors; the empty-cell pattern never changes. */
+static short bg_colors[SIM_CELLS];
+/* Whether bg_colors has been built yet (built lazily on first render). */
+static int bg_ready = 0;
+
+/* Build the static background pattern once, with the plain formula. */
+static void build_background(void) {
+  for (int y = 0; y < SIM_H; y++) {
+    int base = (y << 7) + (y << 5);
+    for (int x = 0; x < SIM_W; x++) {
+      short color = (short)(((x * 31 + y * 17) & 127) == 0
+                                ? 0x334
+                                : (((x ^ y) & 1) != 0 ? 0x300 : 0x200));
+      bg_colors[base + x] = color;
+    }
+  }
+  bg_ready = 1;
+}
+
+/* Fill one row of framebuffer colors, with background and animation shades. */
+void sim_row_colors(int y, short* out) {
+  if (!bg_ready) build_background();
+  int base = (y << 7) + (y << 5);
+  for (int x = 0; x < SIM_W; x++) {
+    int i = base + x;
+    int t = sim_cells[i];
+    short color;
+    if (t == EL_EMPTY) {
+      color = bg_colors[i];
+    } else if (t == EL_FIRE) {
+      color = element_colors[t][((sim_steps >> 1) + (unsigned)(x + y)) & 3];
+    } else if (t == EL_LAVA) {
+      color = element_colors[t][(((x >> 2) + (int)(sim_steps >> 3)) & 1) != 0 ? 3 : 2];
+    } else if (t == EL_SMOKE) {
+      int aux = sim_aux[i];
+      color = element_colors[t][aux > 28 ? 3 : (aux > 14 ? 2 : 1)];
+    } else if (t == EL_WATER || t == EL_OIL || t == EL_ACID) {
+      int shade = 1 + (int)(((unsigned)(x + y) + sim_steps) & 1);
+      if ((sim_aux[i] & 3) == 3) shade = 3;
+      color = element_colors[t][shade];
+    } else {
+      color = element_colors[t][sim_aux[i] & 3];
+    }
+    out[x] = color;
+  }
 }
 
 /* Build the stone tray: side walls and a two-row floor the powder piles on. */
@@ -188,20 +238,19 @@ static int fall_target_ok(int element) {
   return element == EL_EMPTY || element == EL_SMOKE || element == EL_FIRE;
 }
 
-/* Move the cell at (x, y) down, down-diagonally, in a random diagonal order. */
-static int fall_down(int x, int y) {
-  int i = cell_index(x, y);
-  int below = sim_at(x, y + 1);
-  if (fall_target_ok(below)) {
-    swap_cells(i, i + SIM_W);
+/* Fall from flat index i at column x: straight down, else a random diagonal. */
+static int fall_down_at(int i, int x) {
+  int below = i + SIM_W;
+  if (fall_target_ok(sim_cells[below])) {
+    swap_cells(i, below);
     return 1;
   }
   int dir = (sim_rand() & 1) != 0 ? 1 : -1;
   for (int k = 0; k < 2; k++) {
     int nx = x + dir;
-    if (nx >= 0 && nx < SIM_W && fall_target_ok(sim_at(nx, y + 1)) &&
-        fall_target_ok(sim_at(nx, y))) {
-      swap_cells(i, cell_index(nx, y + 1));
+    if (nx >= 0 && nx < SIM_W && fall_target_ok(sim_cells[below + dir]) &&
+        fall_target_ok(sim_cells[i + dir])) {
+      swap_cells(i, below + dir);
       return 1;
     }
     dir = -dir;
@@ -209,17 +258,19 @@ static int fall_down(int x, int y) {
   return 0;
 }
 
-/* Spread the liquid at (x, y) sideways toward the first open cell. */
-static int flow_sideways(int x, int y, int reach) {
-  int i = cell_index(x, y);
+/* Spread the liquid at flat index i sideways toward the first open cell. */
+static int flow_sideways_at(int i, int x, int reach) {
   int dir = (sim_rand() & 1) != 0 ? 1 : -1;
   for (int k = 0; k < 2; k++) {
-    for (int d = 1; d <= reach; d++) {
-      int nx = x + dir * d;
+    int ni = i;
+    int nx = x;
+    for (int d = 0; d < reach; d++) {
+      ni += dir;
+      nx += dir;
       if (nx < 0 || nx >= SIM_W) break;
-      if (!fall_target_ok(sim_at(nx, y))) break;
-      if (d == reach || fall_target_ok(sim_at(nx, y + 1))) {
-        swap_cells(i, cell_index(nx, y));
+      if (!fall_target_ok(sim_cells[ni])) break;
+      if (d == reach - 1 || fall_target_ok(sim_cells[ni + SIM_W])) {
+        swap_cells(i, ni);
         return 1;
       }
     }
@@ -228,48 +279,51 @@ static int flow_sideways(int x, int y, int reach) {
   return 0;
 }
 
-/* Ignite a flammable cell next to heat with probability 1 in (mask+1). */
-static void try_ignite(int x, int y, int mask) {
-  int t = sim_at(x, y);
+/* Ignite the flammable cell at flat index n with probability 1 in (mask+1). */
+static void try_ignite_at(int n, int mask) {
+  int t = sim_cells[n];
   if (t != EL_WOOD && t != EL_OIL && t != EL_PLANT) return;
   if ((sim_rand() & (unsigned)mask) == 0) {
-    set_cell(x, y, EL_FIRE, 25 + (int)(sim_rand() & 15));
+    sim_cells[n] = EL_FIRE;
+    sim_aux[n] = (unsigned char)(25 + (int)(sim_rand() & 15));
   }
 }
 
 /* Advance falling and flowing cells; scans bottom-up so piles settle in one pass. */
 static void step_fallers(void) {
   for (int y = SIM_H - 2; y >= 0; y--) {
+    int base = (y << 7) + (y << 5);
     int left_first = ((sim_steps + (unsigned)y) & 1) == 0;
     for (int s = 0; s < SIM_W; s++) {
       int x = left_first ? s : SIM_W - 1 - s;
-      int i = cell_index(x, y);
+      int i = base + x;
       int t = sim_cells[i];
-      if (t == EL_EMPTY || sim_moved[i]) continue;
+      if (t == EL_EMPTY || sim_moved[i] == move_gen) continue;
+      if (t == EL_STONE || t == EL_WOOD) continue; /* Statics never fall. */
       if (t == EL_SAND || t == EL_EMBER) {
-        int below = sim_at(x, y + 1);
+        int below = sim_cells[i + SIM_W];
         if (t == EL_SAND &&
             (below == EL_WATER || below == EL_OIL || below == EL_ACID)) {
           swap_cells(i, i + SIM_W); /* Sand sinks through lighter liquids. */
         } else {
-          fall_down(x, y);
+          fall_down_at(i, x);
         }
       } else if (t == EL_WATER || t == EL_ACID) {
-        if (t == EL_WATER && sim_at(x, y + 1) == EL_OIL) {
+        if (t == EL_WATER && sim_cells[i + SIM_W] == EL_OIL) {
           swap_cells(i, i + SIM_W); /* Water sinks under oil, so oil floats. */
-        } else if (!fall_down(x, y)) {
-          flow_sideways(x, y, 3);
+        } else if (!fall_down_at(i, x)) {
+          flow_sideways_at(i, x, 3);
         }
       } else if (t == EL_OIL) {
-        if (!fall_down(x, y)) flow_sideways(x, y, 2);
+        if (!fall_down_at(i, x)) flow_sideways_at(i, x, 2);
       } else if (t == EL_LAVA) {
         /* Lava is thick: it only moves on alternating steps. */
-        if (((x + (int)sim_steps) & 1) == 0 && !fall_down(x, y)) {
-          flow_sideways(x, y, 1);
+        if (((x + (int)sim_steps) & 1) == 0 && !fall_down_at(i, x)) {
+          flow_sideways_at(i, x, 1);
         }
       } else if (t == EL_SNOW) {
         /* Snow falls at half rate, which makes soft, steep piles. */
-        if (((x + y + (int)sim_steps) & 1) == 0) fall_down(x, y);
+        if (((x + y + (int)sim_steps) & 1) == 0) fall_down_at(i, x);
       }
     }
   }
@@ -278,91 +332,132 @@ static void step_fallers(void) {
 /* Advance rising cells and every reaction that needs neighbouring heat. */
 static void step_risers_and_reactions(void) {
   for (int y = 0; y < SIM_H - 1; y++) {
+    int base = (y << 7) + (y << 5);
     for (int x = 0; x < SIM_W; x++) {
-      int i = cell_index(x, y);
+      int i = base + x;
       int t = sim_cells[i];
+      /* Only hot, acidic, growing, and melting cells react in this pass. */
+      if (t == EL_EMPTY || t == EL_SAND || t == EL_WATER || t == EL_OIL ||
+          t == EL_WOOD || t == EL_STONE) {
+        continue;
+      }
       if (t == EL_FIRE) {
         if (sim_aux[i] > 0) sim_aux[i]--;
-        try_ignite(x + 1, y, 15);
-        try_ignite(x - 1, y, 15);
-        try_ignite(x, y + 1, 15);
-        try_ignite(x, y - 1, 15);
+        if (x + 1 < SIM_W) try_ignite_at(i + 1, 15);
+        if (x > 0) try_ignite_at(i - 1, 15);
+        try_ignite_at(i + SIM_W, 15);
+        if (y > 0) try_ignite_at(i - SIM_W, 15);
         if (sim_aux[i] == 0) {
-          if ((sim_rand() & 3) == 0) set_cell(x, y, EL_SMOKE, 30);
-          else set_cell(x, y, EL_EMPTY, 0);
-        } else if (!sim_moved[i]) {
-          /* Flames climb into empty space and shed smoke as they go. */
-          if (sim_at(x, y - 1) == EL_EMPTY && (sim_rand() & 3) == 0) {
-            set_cell(x, y - 1, EL_SMOKE, 25 + (int)(sim_rand() & 15));
+          if ((sim_rand() & 3) == 0) {
+            sim_cells[i] = EL_SMOKE;
+            sim_aux[i] = 30;
+          } else {
+            sim_cells[i] = EL_EMPTY;
+            sim_aux[i] = 0;
           }
-          if (fall_target_ok(sim_at(x, y - 1)) && sim_at(x, y - 1) != EL_EMPTY) {
+        } else if (sim_moved[i] != move_gen && y > 0) {
+          /* Flames climb into empty space and shed smoke as they go. */
+          int above = sim_cells[i - SIM_W];
+          if (above == EL_EMPTY && (sim_rand() & 3) == 0) {
+            sim_cells[i - SIM_W] = EL_SMOKE;
+            sim_aux[i - SIM_W] = (unsigned char)(25 + (int)(sim_rand() & 15));
+            above = EL_SMOKE;
+          }
+          if (above == EL_SMOKE || above == EL_FIRE) {
             swap_cells(i, i - SIM_W);
-          } else if (sim_at(x, y - 1) == EL_EMPTY && (sim_rand() & 1) == 0) {
+          } else if (above == EL_EMPTY && (sim_rand() & 1) == 0) {
             swap_cells(i, i - SIM_W);
           }
         }
       } else if (t == EL_SMOKE) {
         if (sim_aux[i] > 0) sim_aux[i]--;
         if (sim_aux[i] == 0) {
-          set_cell(x, y, EL_EMPTY, 0);
-        } else if (!sim_moved[i]) {
-          if (sim_at(x, y - 1) == EL_EMPTY) {
+          sim_cells[i] = EL_EMPTY;
+          sim_aux[i] = 0;
+        } else if (sim_moved[i] != move_gen && y > 0) {
+          if (sim_cells[i - SIM_W] == EL_EMPTY) {
             swap_cells(i, i - SIM_W);
           } else {
-            flow_sideways(x, y, 1);
+            flow_sideways_at(i, x, 1);
           }
         }
       } else if (t == EL_LAVA) {
         /* Lava quenches to stone in water and lights what it touches. */
-        if (sim_at(x + 1, y) == EL_WATER || sim_at(x - 1, y) == EL_WATER ||
-            sim_at(x, y + 1) == EL_WATER || sim_at(x, y - 1) == EL_WATER) {
-          set_cell(x, y, EL_STONE, 1);
-          if (sim_at(x, y - 1) == EL_EMPTY) {
-            set_cell(x, y - 1, EL_SMOKE, 40); /* The hiss becomes steam. */
+        int wet = sim_cells[i + SIM_W] == EL_WATER ||
+                  (x + 1 < SIM_W && sim_cells[i + 1] == EL_WATER) ||
+                  (x > 0 && sim_cells[i - 1] == EL_WATER) ||
+                  (y > 0 && sim_cells[i - SIM_W] == EL_WATER);
+        if (wet) {
+          sim_cells[i] = EL_STONE;
+          sim_aux[i] = 1;
+          if (y > 0 && sim_cells[i - SIM_W] == EL_EMPTY) {
+            sim_cells[i - SIM_W] = EL_SMOKE; /* The hiss becomes steam. */
+            sim_aux[i - SIM_W] = 40;
           }
         } else {
-          try_ignite(x + 1, y, 31);
-          try_ignite(x - 1, y, 31);
-          try_ignite(x, y + 1, 31);
-          try_ignite(x, y - 1, 31);
+          if (x + 1 < SIM_W) try_ignite_at(i + 1, 31);
+          if (x > 0) try_ignite_at(i - 1, 31);
+          try_ignite_at(i + SIM_W, 31);
+          if (y > 0) try_ignite_at(i - SIM_W, 31);
         }
       } else if (t == EL_EMBER) {
-        try_ignite(x + 1, y, 31);
-        try_ignite(x - 1, y, 31);
-        try_ignite(x, y + 1, 31);
+        if (x + 1 < SIM_W) try_ignite_at(i + 1, 31);
+        if (x > 0) try_ignite_at(i - 1, 31);
+        try_ignite_at(i + SIM_W, 31);
         if (sim_aux[i] > 0) sim_aux[i]--;
-        if (sim_aux[i] == 0) set_cell(x, y, EL_STONE, 0); /* A spent ember is ash. */
+        if (sim_aux[i] == 0) {
+          sim_cells[i] = EL_STONE; /* A spent ember is ash. */
+          sim_aux[i] = 0;
+        }
       } else if (t == EL_ACID) {
         /* Acid eats one neighbouring solid, then spends itself as smoke. */
-        int eaten = 0;
-        if (sim_at(x, y + 1) == EL_SAND || sim_at(x, y + 1) == EL_WOOD ||
-            sim_at(x, y + 1) == EL_PLANT) {
-          eaten = cell_index(x, y + 1);
-        } else if (sim_at(x + 1, y) == EL_STONE || sim_at(x - 1, y) == EL_STONE) {
-          eaten = cell_index(x + (sim_at(x + 1, y) == EL_STONE ? 1 : -1), y);
+        int eaten = -1;
+        int below = sim_cells[i + SIM_W];
+        if (below == EL_SAND || below == EL_WOOD || below == EL_PLANT) {
+          eaten = i + SIM_W;
+        } else if (x + 1 < SIM_W && sim_cells[i + 1] == EL_STONE) {
+          eaten = i + 1;
+        } else if (x > 0 && sim_cells[i - 1] == EL_STONE) {
+          eaten = i - 1;
         }
-        if (eaten != 0 && (sim_rand() & 7) == 0) {
+        if (eaten >= 0 && (sim_rand() & 7) == 0) {
           sim_cells[eaten] = EL_EMPTY;
           sim_aux[eaten] = 0;
-          set_cell(x, y, EL_SMOKE, 20);
+          sim_cells[i] = EL_SMOKE;
+          sim_aux[i] = 20;
         }
       } else if (t == EL_PLANT) {
         /* Vines climb into empty cells while any surrounding cell holds water. */
-        int fed = sim_at(x + 1, y) == EL_WATER || sim_at(x - 1, y) == EL_WATER ||
-                  sim_at(x, y + 1) == EL_WATER || sim_at(x, y - 1) == EL_WATER ||
-                  sim_at(x + 1, y + 1) == EL_WATER || sim_at(x - 1, y + 1) == EL_WATER ||
-                  sim_at(x + 1, y - 1) == EL_WATER || sim_at(x - 1, y - 1) == EL_WATER;
+        int fed = sim_cells[i + SIM_W] == EL_WATER ||
+                  (x + 1 < SIM_W && sim_cells[i + 1] == EL_WATER) ||
+                  (x > 0 && sim_cells[i - 1] == EL_WATER) ||
+                  (y > 0 && sim_cells[i - SIM_W] == EL_WATER) ||
+                  (x + 1 < SIM_W && sim_cells[i + SIM_W + 1] == EL_WATER) ||
+                  (x > 0 && sim_cells[i + SIM_W - 1] == EL_WATER) ||
+                  (y > 0 && x + 1 < SIM_W && sim_cells[i - SIM_W + 1] == EL_WATER) ||
+                  (y > 0 && x > 0 && sim_cells[i - SIM_W - 1] == EL_WATER);
         if (fed && (sim_rand() & 63) == 0) {
-          int dir = (sim_rand() & 1) != 0 ? 1 : -1;
-          if (sim_at(x, y - 1) == EL_EMPTY) set_cell(x, y - 1, EL_PLANT, 0);
-          else if (sim_at(x + dir, y) == EL_EMPTY) set_cell(x + dir, y, EL_PLANT, 0);
+          if (y > 0 && sim_cells[i - SIM_W] == EL_EMPTY) {
+            sim_cells[i - SIM_W] = EL_PLANT;
+            sim_aux[i - SIM_W] = 0;
+          } else {
+            int dir = (sim_rand() & 1) != 0 ? 1 : -1;
+            int nx = x + dir;
+            if (nx >= 0 && nx < SIM_W && sim_cells[i + dir] == EL_EMPTY) {
+              sim_cells[i + dir] = EL_PLANT;
+              sim_aux[i + dir] = 0;
+            }
+          }
         }
       } else if (t == EL_SNOW) {
         /* Snow touching heat melts where it lies. */
-        if (sim_at(x + 1, y) == EL_FIRE || sim_at(x - 1, y) == EL_LAVA ||
-            sim_at(x, y + 1) == EL_LAVA || sim_at(x, y - 1) == EL_FIRE ||
-            sim_at(x, y + 1) == EL_EMBER) {
-          set_cell(x, y, EL_WATER, 1);
+        if ((x + 1 < SIM_W && sim_cells[i + 1] == EL_FIRE) ||
+            (x > 0 && sim_cells[i - 1] == EL_LAVA) ||
+            sim_cells[i + SIM_W] == EL_LAVA ||
+            (y > 0 && sim_cells[i - SIM_W] == EL_FIRE) ||
+            sim_cells[i + SIM_W] == EL_EMBER) {
+          sim_cells[i] = EL_WATER;
+          sim_aux[i] = 1;
         }
       }
     }
@@ -371,7 +466,11 @@ static void step_risers_and_reactions(void) {
 
 /* Advance the whole world by one cellular step. */
 void sim_step(void) {
-  for (int i = 0; i < SIM_CELLS; i++) sim_moved[i] = 0;
+  move_gen++;
+  if (move_gen == 0) {
+    for (int i = 0; i < SIM_CELLS; i++) sim_moved[i] = 0;
+    move_gen = 1;
+  }
   step_fallers();
   step_risers_and_reactions();
   sim_steps++;

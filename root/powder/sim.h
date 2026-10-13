@@ -46,7 +46,7 @@
 extern unsigned char sim_cells[SIM_CELLS];
 /* Per-cell auxiliary byte: lifetime for fire/smoke, heat for lava/ember, growth timer for plant, shade seed otherwise. */
 extern unsigned char sim_aux[SIM_CELLS];
-/* Per-step marker so a moved cell is never moved twice in one step. */
+/* Generation stamps: a cell counts as moved this step when its byte equals the current generation. */
 extern unsigned char sim_moved[SIM_CELLS];
 /* Live cell count per element code, refreshed by sim_recount(). */
 extern int sim_counts[EL_COUNT];
@@ -75,5 +75,7 @@ short sim_element_color(int element, int shade);
 int sim_element_tile_color(int element);
 /* Advance the shared xorshift generator and return its next value. */
 unsigned sim_rand(void);
+/* Fill one row (SIM_W entries) of framebuffer colors for rendering. */
+void sim_row_colors(int y, short* out);
 
 #endif

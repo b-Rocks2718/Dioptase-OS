@@ -52,7 +52,19 @@ rises and thins away.
 
 Options: `powder --demo` skips the title and leaves the attract painter on;
 `powder --silent` never opens the audio device; `powder --selftest` runs the
-deterministic guest check and prints `***PASS powder guest engine`.
+deterministic guest check and prints `***PASS powder guest engine`;
+`powder --bench` times 300 simulation steps (with and without rendering) on
+a fixed scene in guest jiffies and shows the results until Q. On the current
+build the bench reads about 5,200 jiffies for the steps and 9,200 for steps
+plus rendering, against 9,400 and 17,400 for the original build: the hot
+passes walk flat cell indices instead of calling coordinate helpers, moved
+cells carry a generation stamp instead of a cleared flag array, row colors
+are computed in one call-free pass over a cached static background, and the
+framebuffer publish is the handwritten `powder_publish_row` loop in
+`powder_asm.s`, which packs each 2x2 cell into one word store per row.
+There are no multiply, divide, or remainder operations left in any
+per-step or per-frame path (the compiler lowers them to runtime calls);
+the only survivors are in the brush dab and the HUD number printing.
 
 ## Checks
 
