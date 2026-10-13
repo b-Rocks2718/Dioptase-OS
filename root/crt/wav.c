@@ -306,11 +306,14 @@ enum WavErrorCode wav_stream_open(struct WavStream* stream, char* path, struct W
   return WAV_OK;
 }
 
-// Refill the staging buffer from the file and hand the device what fits.
+// Refill the staging buffer from the file and hand the device what fits,
+// stopping when the ring is full or this call has queued
+// WAV_STREAM_PUMP_LIMIT_BYTES (see wav.h for why the limit is needed).
 int wav_stream_pump(struct WavStream* stream){
   char* buffer = (char*)stream->buffer;
+  unsigned queued = 0;
 
-  while (true){
+  while (queued < WAV_STREAM_PUMP_LIMIT_BYTES){
     if (stream->pending_offset == stream->pending_end){
       if (stream->data_remaining == 0){
         return 0;
@@ -338,11 +341,13 @@ int wav_stream_pump(struct WavStream* stream){
     }
     stream->pending_offset += accepted;
     stream->accepted += accepted;
+    queued += accepted;
     if (stream->pending_offset < stream->pending_end){
       // The ring is full; the rest waits for the next pump.
       return 0;
     }
   }
+  return 0;
 }
 
 // Samples played = samples accepted minus samples still queued in the ring.
