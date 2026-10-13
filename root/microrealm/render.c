@@ -5,13 +5,43 @@
 
 static volatile short* fb = NULL;
 
-/* Borrow the process's user-mode pixel mapping; only rows 0..235 are drawn.
- * The CRT owns the trap transition. Mapping failure leaves rendering disabled.
+/* The documented 80x60 tile overlay sits above the pixel framebuffer.
+ * One of the 256 tilemap slots is enough for this game's software pixel font.
  */
-void render_init(void) {
+#define TILE_FB_ENTRIES 4800
+#define TILEMAP_PIXELS_PER_TILE 64
+#define TRANSPARENT_TILE_INDEX 255
+
+/* Prepare borrowed display mappings after the terminal cursor/clear handoff.
+ * This single user thread owns drawing until the shell restores terminal state.
+ * The CRT manages mode transitions, MMU mappings and register preservation.
+ * Writes stay within the tilemap slot and 80x60 tile framebuffer documented in
+ * mem_map.md. Publish transparent art before its entries under the architecture's
+ * sequentially consistent ordering; cleared terminal tiles otherwise hide pixels.
+ * A failed mapping disables rendering and leaves device contents untouched.
+ */
+bool render_init(void) {
   fb = get_pixel_fb();
-  if (fb == (volatile short*)-1) fb = NULL;
-  if (fb != NULL) set_pixel_scale(0);
+  volatile short* tiles = get_tile_fb();
+  volatile short* tilemap = get_tilemap();
+  if (fb == (volatile short*)-1 || tiles == (volatile short*)-1 ||
+      tilemap == (volatile short*)-1 || fb == NULL || tiles == NULL || tilemap == NULL) {
+    fb = NULL;
+    return false;
+  }
+
+  int tile_start = TRANSPARENT_TILE_INDEX * TILEMAP_PIXELS_PER_TILE;
+  for (int i = 0; i < TILEMAP_PIXELS_PER_TILE; i++) {
+    tilemap[tile_start + i] = COLOR_TRANSPARENT;
+  }
+  for (int i = 0; i < TILE_FB_ENTRIES; i++) {
+    tiles[i] = TRANSPARENT_TILE_INDEX;
+  }
+  set_tile_scale(0);
+  set_hscroll(0);
+  set_vscroll(0);
+  set_pixel_scale(0);
+  return true;
 }
 
 /* Fast plot of an individual 12-bit color pixel using bit-shift addressing. */

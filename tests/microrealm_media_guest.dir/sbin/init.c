@@ -6,6 +6,11 @@
  * retaining the exact production algorithms. The fixed frame workload also serves
  * as an instruction-count benchmark with the emulator's --profile option.
  */
+#define get_tile_fb test_get_tile_fb
+#define get_tilemap test_get_tilemap
+#define set_tile_scale test_set_tile_scale
+#define set_hscroll test_set_hscroll
+#define set_vscroll test_set_vscroll
 #define get_pixel_fb test_get_pixel_fb
 #define set_pixel_scale test_set_pixel_scale
 #define audio_open test_audio_open
@@ -15,6 +20,11 @@
 #include "../../../root/microrealm/render.c"
 #include "../../../root/microrealm/audio.c"
 #include "../../../root/microrealm/font.c"
+#undef get_tile_fb
+#undef get_tilemap
+#undef set_tile_scale
+#undef set_hscroll
+#undef set_vscroll
 #undef get_pixel_fb
 #undef set_pixel_scale
 #undef audio_open
@@ -26,6 +36,14 @@
 /* 320 * 236 writable pixels plus two guards; bcc array bounds require literals. */
 static short pixels[75522];
 static short expected[75520];
+/* Full documented tile regions, initially opaque as after terminal CSI 2J. */
+static short tile_entries[TILE_FB_ENTRIES];
+static short tile_pixels[16384];
+static int tile_fb_failed;
+static int tilemap_failed;
+static unsigned tile_scale = 1;
+static unsigned horizontal_scroll = 8;
+static unsigned vertical_scroll = 8;
 static struct GameWorld scene;
 static int mapping_failed;
 static int queued_bytes;
@@ -41,6 +59,25 @@ static int capture_enabled;
 volatile short* test_get_pixel_fb(void) {
   return mapping_failed ? (volatile short*)-1 : &pixels[1];
 }
+
+/* Supply the covering tile framebuffer or its documented failed mapping. */
+volatile short* test_get_tile_fb(void) {
+  return tile_fb_failed ? (volatile short*)-1 : tile_entries;
+}
+
+/* Opaque zero-initialized graphics reproduce the terminal's black tile. */
+volatile short* test_get_tilemap(void) {
+  return tilemap_failed ? (volatile short*)-1 : tile_pixels;
+}
+
+/* Capture the overlay scale established during the graphics handoff. */
+void test_set_tile_scale(unsigned scale) { tile_scale = scale; }
+
+/* Capture horizontal scrolling inherited from a prior foreground program. */
+void test_set_hscroll(unsigned value) { horizontal_scroll = value; }
+
+/* Capture the terminal's circular row offset at display handoff. */
+void test_set_vscroll(unsigned value) { vertical_scroll = value; }
 
 /* Scaling does not alter the backing pixel values checked by this test. */
 int test_set_pixel_scale(unsigned scale) { return 0; }
@@ -135,7 +172,23 @@ static unsigned render_workload(void) {
 int main(void) {
   pixels[0] = 1234;
   pixels[SCREEN_W * MAX_RENDER_Y + 1] = 2345;
-  render_init();
+  if (!render_init()) {
+    puts("***FAIL microrealm valid display mappings were rejected\n");
+    return 1;
+  }
+  for (int i = 0; i < TILE_FB_ENTRIES; i++) {
+    int tile = tile_entries[i] & 255;
+    for (int pixel = 0; pixel < TILEMAP_PIXELS_PER_TILE; pixel++) {
+      if (((unsigned short)tile_pixels[tile * TILEMAP_PIXELS_PER_TILE + pixel] & 0xF000) != 0xF000) {
+        puts("***FAIL microrealm opaque tile overlay hides the pixel game\n");
+        return 1;
+      }
+    }
+  }
+  if (tile_scale != 0 || horizontal_scroll != 0 || vertical_scroll != 0) {
+    puts("***FAIL microrealm display setup retained terminal scale or scrolling\n");
+    return 1;
+  }
   unsigned hash = render_workload();
   if (hash != 0x10517ae7) {
     puts("***FAIL microrealm fixed scene pixels differ from pre-optimization frames\n");
@@ -172,11 +225,29 @@ int main(void) {
     return 1;
   }
   mapping_failed = 1;
-  render_init();
+  if (render_init()) {
+    puts("***FAIL microrealm accepted a failed pixel mapping\n");
+    return 1;
+  }
   render_title_screen(&scene);
   render_frame(&scene, 160, 120, 0, 0, 0);
   mapping_failed = 0;
-  render_init();
+  tile_fb_failed = 1;
+  if (render_init()) {
+    puts("***FAIL microrealm accepted a failed tile framebuffer mapping\n");
+    return 1;
+  }
+  tile_fb_failed = 0;
+  tilemap_failed = 1;
+  if (render_init()) {
+    puts("***FAIL microrealm accepted a failed tilemap mapping\n");
+    return 1;
+  }
+  tilemap_failed = 0;
+  if (!render_init()) {
+    puts("***FAIL microrealm could not restore valid display mappings\n");
+    return 1;
+  }
 #endif
   audio_init();
   scene.sound_enabled = 1;

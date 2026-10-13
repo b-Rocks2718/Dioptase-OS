@@ -1,0 +1,12 @@
+# Exercise startup through the real terminal/shell and capture each display state.
+# Type events are spaced four VGA frames apart; Enter follows the final character.
+300 type microrealm
+360 key enter
+600 shot title
+720 key enter
+960 shot play
+1080 key d
+1320 shot demo
+1380 key q
+1500 shot restored-shell
+1560 exit

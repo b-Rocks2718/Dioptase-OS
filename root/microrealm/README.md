@@ -114,7 +114,7 @@ make microrealm_guest.summary-test microrealm_media_guest.summary-test TEST_RUNS
 
 The media guest compiles the actual renderer and synthesizer with deterministic
 device doubles. It checks an eight-frame scene hash, full-range signed decimal
-text, clipping guards, transparent glyphs, failed video mapping, audio refill,
+text, clipping guards, transparent glyphs, transparent tile overlay, failed display mappings, audio refill,
 and PCM preservation across partial writes. The engine guest checks campaign
 reset and midnight harvest timing as well as its existing simulation checks.
 
@@ -131,3 +131,22 @@ instructions for this workload; the completed version consumed 3,123,220
 (50.3% fewer), with the same `10517ae7` frame hash. These are emulator instruction
 counts, not hardware cycles or an FPS claim; the checksum loop itself is excluded
 from this rectangle-filling comparison.
+
+
+## Display startup
+
+The terminal's tile layer is drawn above the pixel framebuffer. Clearing the
+terminal with `CSI 2J` selects its opaque black tile and does not expose a pixel
+game. After the terminal handoff, MicroRealm initializes transparent tile 255
+and selects it throughout the documented 80x60 tile framebuffer. It checks the
+pixel, tile framebuffer, and tilemap mappings before changing display contents.
+If a mapping fails, startup restores terminal display state and reports the
+failed graphics operation instead of continuing with invisible rendering.
+
+The expanded media test starts with opaque tile graphics and verifies every
+selected tile pixel is transparent, along with display scale, scrolling, and
+mapping failure paths. A real headless run through init/terminal/shell also
+verified the title, Enter to start, D to enable autoplay, and Q to restore the
+shell. The scripted sequence is in `tools/display-smoke.input`; pass it to the
+full emulator with `--headless --input-script` and a `--shot-dir` after building
+and packaging the normal root filesystem.

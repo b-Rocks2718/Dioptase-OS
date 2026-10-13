@@ -416,8 +416,10 @@ int main(int argc, char** argv) {
   }
 
   bool vga_present = hand_off_display();
-  if (vga_present) {
-    render_init();
+  if (vga_present && !render_init()) {
+    puts("\x1b[?25h\x1b[67J");
+    puts("MicroRealm video: mapping pixel framebuffer, tile framebuffer, or tilemap failed; cannot start graphics\n");
+    return 1;
   }
   audio_init();
   drain_keys();

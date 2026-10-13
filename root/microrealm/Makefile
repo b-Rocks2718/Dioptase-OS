@@ -35,7 +35,7 @@ $(PROGRAM): $(PROGRAM_OUTPUT)
 $(PROGRAM_OUTPUT): $(LINK_ASM_SRCS) Makefile | $(BUILD_DIR) $(SBIN_DIR)
 	$(BASM) -bin -o $@ $(LINK_ASM_SRCS)
 
-$(BUILD_DIR)/%.s: %.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/%.s: %.c $(wildcard *.h) Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)

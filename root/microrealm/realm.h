@@ -280,7 +280,8 @@ void add_particle(struct GameWorld* w, int x, int y, int vx, int vy, short color
 void projectile_spawn(struct GameWorld* w, int team, int sx, int sy, int tx, int ty, int dmg);
 
 /* Rendering subsystem. */
-void render_init(void);
+/* Borrow the pixel and tile mappings and make the covering tile layer transparent. */
+bool render_init(void);
 void render_frame(struct GameWorld* w, int mouse_px, int mouse_py, int drag_active, int drag_x0, int drag_y0);
 void render_title_screen(struct GameWorld* w);
 void render_help_screen(void);
