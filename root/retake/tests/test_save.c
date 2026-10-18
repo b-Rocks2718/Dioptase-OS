@@ -220,7 +220,7 @@ static void test_invalid_progress(void) {
   fresh();
   progress_save(&g_prog);
   struct SaveRecord good;
-  read_slot(0, &good);
+  save_read_slot(0, &good);
   unsigned changes[10] = {0, 10000, 0x80000000u, 4, 239, PAK_ROOM_COUNT, 0xFFFFFFFFu, 208, 0, 0};
   int fields[10] = {6, 7, 8, 9, 10, 11, 12, 13, 2, 3};
   for (int i = 0; i < 10; i++) {
@@ -268,7 +268,7 @@ static void test_serial_wrap(void) {
   fresh();
   progress_save(&g_prog);
   struct SaveRecord r;
-  read_slot(0, &r);
+  save_read_slot(0, &r);
   r.word[3] = 0xFFFFFFFEu;
   store_record(0, &r);
   g_prog.scrip = 20;

@@ -131,7 +131,7 @@ static int checkpoint_valid(struct Progress* p) {
 }
 
 /* Numeric bounds reflect actual upgrade rules; flag words are opaque bitsets. */
-static int progress_valid(struct Progress* p) {
+static int save_progress_valid(struct Progress* p) {
   int allowed = AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | SAVE_REEL_UPGRADE;
   int max_health = SAVE_SHOP_HEALTH;
   for (int i = 0; i < pak_room_count(); i++) {
@@ -150,16 +150,16 @@ static int progress_valid(struct Progress* p) {
 }
 
 /* CRC protects opaque bitsets too; a valid checksum alone cannot validate geometry. */
-static int record_valid(struct SaveRecord* r) {
+static int save_record_valid(struct SaveRecord* r) {
   if (r->word[0] != SAVE_MAGIC || r->word[1] != SAVE_VERSION || r->word[2] != PAK_WORLD_HASH ||
       !r->word[3] || r->word[4] != SAVE_PAYLOAD_WORDS || r->word[5] != record_crc(r)) return 0;
   struct Progress candidate;
   decode_progress(r, &candidate);
-  return progress_valid(&candidate);
+  return save_progress_valid(&candidate);
 }
 
 /* Return -1 for uncertain I/O, 0 for absent/invalid, 1 for a validated record. */
-static int read_slot(int slot, struct SaveRecord* r) {
+static int save_read_slot(int slot, struct SaveRecord* r) {
   r->valid = 0;
   errno = 0;
   int fd = open_existing(slot_path(slot));
@@ -179,7 +179,7 @@ static int read_slot(int slot, struct SaveRecord* r) {
     r->word[i] = (unsigned)bytes[at] | ((unsigned)bytes[at + 1] << 8) |
                  ((unsigned)bytes[at + 2] << 16) | ((unsigned)bytes[at + 3] << 24);
   }
-  r->valid = record_valid(r);
+  r->valid = save_record_valid(r);
   return r->valid;
 }
 
@@ -193,8 +193,8 @@ static int newer(unsigned a, unsigned b) {
 int progress_load(struct Progress* output) {
   struct SaveRecord a;
   struct SaveRecord b;
-  read_slot(0, &a);
-  read_slot(1, &b);
+  save_read_slot(0, &a);
+  save_read_slot(1, &b);
   if (!a.valid && !b.valid) {
     save_message = "retake save: neither /retake/save0.dat nor save1.dat has a compatible valid checkpoint";
     return -1;
@@ -208,14 +208,14 @@ int progress_load(struct Progress* output) {
 
 /* Preserve the newest file even if opening, writing, closing or verifying fails. */
 int progress_save(struct Progress* p) {
-  if (!progress_valid(p)) {
+  if (!save_progress_valid(p)) {
     save_message = "retake save: invalid progress or blocked checkpoint; return to a mirror before retrying";
     return -1;
   }
   struct SaveRecord a;
   struct SaveRecord b;
-  int ra = read_slot(0, &a);
-  int rb = read_slot(1, &b);
+  int ra = save_read_slot(0, &a);
+  int rb = save_read_slot(1, &b);
   if (ra < 0 || rb < 0) {
     save_message = ra < 0 ? "retake save: reading /retake/save0.dat failed; previous save left untouched" :
                            "retake save: reading /retake/save1.dat failed; previous save left untouched";
@@ -258,7 +258,7 @@ int progress_save(struct Progress* p) {
     return -1;
   }
   struct SaveRecord verify;
-  int verified = read_slot(target, &verify) == 1;
+  int verified = save_read_slot(target, &verify) == 1;
   for (int i = 0; i < SAVE_WORDS && verified; i++)
     if (verify.word[i] != next.word[i]) verified = 0;
   if (!verified) {
