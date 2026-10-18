@@ -36,6 +36,7 @@ import region0  # noqa: E402
 import region1  # noqa: E402
 import region2  # noqa: E402
 import region3  # noqa: E402
+import region4  # noqa: E402
 import world  # noqa: E402
 import rooms  # noqa: E402
 import sprites  # noqa: E402
@@ -196,8 +197,8 @@ def main():
     if len(set(names)) != len(names):
         raise SystemExit("build.py: duplicate room names in rooms/*.txt")
 
-    regions = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS)}
-    stamp_chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS}
+    regions = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS), 4: region4.build(GLYPHS)}
+    stamp_chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS, 4: region4.STAMP_CHARS}
     region_ids = sorted(regions)
     block_tables = {r: [] for r in region_ids}
     block_index = {r: {} for r in region_ids}
@@ -290,7 +291,7 @@ def main():
 
     image_entries = []
     image_names = []
-    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3() + bossart.build_boss3() + bossart.build_boss4():
+    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3() + bossart.build_boss3() + bossart.build_boss4() + entart.build4() + bossart.build_boss5():
         for i, f in enumerate(frames):
             h, w = f.shape
             if w % 2:

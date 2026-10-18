@@ -18,7 +18,6 @@
  * tools/build.py; a set flag means "already collected".
  */
 
-#define SAVE_PATH "/retake/save.dat"
 #define SAVE_MAGIC 0x31565352      /* 'RSV1' */
 
 #define HURT_INVULN 12
@@ -34,6 +33,7 @@
 #define HORSE_HP 10
 #define KRAKEN_HP 12
 #define CAMERA_HP 18
+#define APE_HP 20
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -173,8 +173,13 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_WAVE: w = 8; h = 8; break;
     case ENT_PLATFORM: w = 24; h = 4; break;   /* width fixed up from d after setup */
     case ENT_TENTACLE: w = 10; h = 56; break;
+    case ENT_CRUMBLE: w = 8; h = 8; break;
     case ENT_BOSS:
-      if (a == 4) {
+      if (a == 5) {
+        w = 40;
+        h = 44;
+        e->hp = APE_HP;
+      } else if (a == 4) {
         w = 44;
         h = 40;
         e->hp = CAMERA_HP;
@@ -225,6 +230,10 @@ static void boss_rewards(int boss, int tx) {
     script = SCRIPT_S3_WRAP;
     home_tx = 51;
     ty = 23;
+  } else if (boss == 5) {
+    ability = AB_EXTRA_REEL;
+    script = SCRIPT_S4_WRAP;
+    home_tx = 69;
   } else if (boss != 1) {
     return;
   }
@@ -274,6 +283,60 @@ static void spawn_room_entities(void) {
 }
 
 /* Apply gates to the room's collision: a closed gate's column is solid. */
+/* Crumbling blocks: solid (0) until Ruby stands on one, shaking (1) for 30
+ * ticks, then gone (2) for 180 ticks; a block re-forms only when neither
+ * Ruby nor a take overlaps its tile. The tile's collision is written into
+ * the live grid like a gate's. */
+static void update_crumbles(void) {
+  for (int i = 0; i < g_ent_count; i++) {
+    struct Ent* e = &g_ents[i];
+    if (!e->alive || e->kind != ENT_CRUMBLE) continue;
+    if (e->tx < 0 || e->tx >= g_room.w || e->ty < 0 || e->ty >= g_room.h) continue;
+    int cell = g_room.row[e->ty] + e->tx;
+    if (e->state == 0) {
+      g_room.col[cell] = COL_SOLID;
+      int px = g_hero.x >> 8;
+      int feet = (g_hero.y >> 8) + PLAYER_H;
+      int bx = e->tx << 3;
+      if (g_hero.on_ground && feet == (e->ty << 3) && px + PLAYER_W > bx && px < bx + 8) {
+        e->state = 1;
+        e->timer = 30;
+      }
+    } else if (e->state == 1) {
+      if (--e->timer <= 0) {
+        e->state = 2;
+        e->timer = 180;
+        e->anim = 0;
+        g_room.col[cell] = g_pak[pak_room(g_room_index)->col_off + cell];
+      }
+    } else {
+      e->anim++;
+      if (--e->timer <= 0) {
+        struct Hitbox hb;
+        struct Hitbox cb;
+        hero_box(&hb);
+        cb.x = (e->tx << 3) << 8;
+        cb.y = (e->ty << 3) << 8;
+        cb.w = 8 << 8;
+        cb.h = 8 << 8;
+        int blocked = hitbox_overlap(&hb, &cb);
+        for (int s = 0; s < TAKE_MAX_SLOTS && !blocked; s++) {
+          struct Take* t = &g_takes.slots[s];
+          if (!t->active || t->length == 0) continue;
+          struct Hitbox tb;
+          tb.x = t->frames[t->cursor].x;
+          tb.y = t->frames[t->cursor].y;
+          tb.w = PLAYER_W * Q8;
+          tb.h = PLAYER_H * Q8;
+          if (hitbox_overlap(&tb, &cb)) blocked = 1;
+        }
+        if (blocked) e->timer = 10;
+        else e->state = 0;
+      }
+    }
+  }
+}
+
 static void update_gates(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
@@ -1084,8 +1147,103 @@ static void step_camera(struct Ent* e) {
   }
 }
 
+/* ---- Gargantua (boss 5) ----
+ * States: 0 intro, 40 idle, 41 chest-pound (shockwaves both ways), 42
+ * boulder throw (an arcing SHOT drawn as a boulder), 43 leap to the far side
+ * of the arena, landing with shockwaves. e->c remembers the floor height. */
+
+#define G_IDLE 40
+#define G_POUND 41
+#define G_THROW 42
+#define G_LEAP 43
+
+static void step_ape(struct Ent* e) {
+  int floor_y = e->c;
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_S4_BOSS_INTRO;
+      e->c = e->y;
+      e->state = G_IDLE;
+      e->timer = 60;
+      break;
+    case G_IDLE:
+      e->dir = (g_hero.x < e->x) ? -1 : 1;
+      if (--e->timer <= 0) {
+        int pick = boss_cycle % 3;
+        boss_cycle++;
+        if (pick == 0) {
+          e->state = G_POUND;
+          e->timer = 40;
+        } else if (pick == 1) {
+          e->state = G_THROW;
+          e->timer = 30;
+        } else {
+          e->state = G_LEAP;
+          int mid = (g_room_pw << 8) >> 1;
+          e->dir = e->x + (e->w >> 1) < mid ? 1 : -1;
+          e->vx = e->dir * 560;
+          e->vy = -1300;
+        }
+      }
+      break;
+    case G_POUND:
+      if (--e->timer <= 0) {
+        spawn_wave(e->x - (8 << 8), floor_y + e->h - (8 << 8), -1);
+        spawn_wave(e->x + e->w, floor_y + e->h - (8 << 8), 1);
+        g_events |= GE_SLAM;
+        e->state = G_IDLE;
+        e->timer = e->hp <= APE_HP / 2 ? 30 : 50;
+      }
+      break;
+    case G_THROW:
+      if (--e->timer <= 0) {
+        struct Ent* b = ent_alloc();
+        if (b) {
+          ent_setup(b, ENT_SHOT, 0, 0, 0, 3, 0, -1);
+          b->x = e->x + (e->dir > 0 ? e->w : -(12 << 8));
+          b->y = e->y;
+          int dx = (g_hero.x - b->x) >> 8;
+          int speed = dx < 0 ? -dx : dx;
+          speed = (speed << 8) / 55;
+          if (speed < 200) speed = 200;
+          if (speed > 900) speed = 900;
+          b->vx = (dx < 0 ? -1 : 1) * speed;
+          b->vy = -760;
+          b->timer = SHOT_TICKS;
+          b->w = 10 << 8;
+          b->h = 10 << 8;
+        }
+        e->state = G_IDLE;
+        e->timer = 45;
+      }
+      break;
+    case G_LEAP: {
+      e->vy += 48;
+      e->x += e->vx;
+      e->y += e->vy;
+      int lim = (g_room_pw - 4) << 8;
+      if (e->x < (16 << 8)) e->x = 16 << 8;
+      if (e->x + e->w > lim) e->x = lim - e->w;
+      if (e->vy > 0 && e->y >= floor_y) {
+        e->y = floor_y;
+        e->vy = 0;
+        e->vx = 0;
+        spawn_wave(e->x - (8 << 8), floor_y + e->h - (8 << 8), -1);
+        spawn_wave(e->x + e->w, floor_y + e->h - (8 << 8), 1);
+        g_events |= GE_SLAM;
+        e->state = G_IDLE;
+        e->timer = 50;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 static void step_boss(struct Ent* e) {
-  if (e->a == 4) step_camera(e);
+  if (e->a == 5) step_ape(e);
+  else if (e->a == 4) step_camera(e);
   else if (e->a == 3) step_kraken(e);
   else if (e->a == 2) step_horse(e);
   else step_sergeant(e);
@@ -1093,6 +1251,7 @@ static void step_boss(struct Ent* e) {
 
 /* Whether claps land on the boss now, and how hard. */
 static int boss_hit_value(struct Ent* e) {
+  if (e->a == 5) return e->state == B_INTRO ? 0 : 1;
   if (e->a == 4) return e->state == C_OPEN ? 1 : 0;
   if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
   if (e->a == 2) return e->state == H_STOPPED ? 1 : 0;
@@ -1102,7 +1261,7 @@ static int boss_hit_value(struct Ent* e) {
 
 /* Whether touching the boss hurts Ruby. */
 static int boss_contact_hurts(struct Ent* e) {
-  if (e->a == 4) return 1;
+  if (e->a == 5 || e->a == 4) return 1;
   if (e->a == 3) return 0;
   if (e->a == 2) return e->state == H_RUN || e->state == H_BRAKE || e->state == H_LEAVE;
   return e->state != B_DAZED;
@@ -1378,6 +1537,10 @@ static void pickups_and_interactions(int pressed) {
         g_pending_script = e->a;
         break;
       case ENT_ABILITY:
+        if (e->a & AB_EXTRA_REEL) {
+          if (g_prog.take_slots < 3) g_prog.take_slots = 3;
+          takes_init(&g_takes, g_prog.take_slots, g_prog.take_frames);
+        }
         g_prog.abilities |= e->a;
         g_hero.abilities = g_prog.abilities;
         flag_set(e->flag);
@@ -1401,8 +1564,7 @@ static void pickups_and_interactions(int pressed) {
           g_prog.save_x = g_hero.x >> 8;
           g_prog.save_y = g_hero.y >> 8;
           g_health = g_prog.max_health;
-          game_save();
-          g_events |= GE_SAVE;
+          if (game_save() == 0) g_events |= GE_SAVE;
           e->timer = 60;
         }
         break;
@@ -1492,6 +1654,7 @@ void game_tick(int held, int pressed) {
   step_entities();
   update_switches();
   update_gates();
+  update_crumbles();
   combat();
   if (g_health <= 0) {
     die();
@@ -1530,30 +1693,101 @@ void game_new(int start_room) {
   game_enter_room(start_room, g_prog.save_x, g_prog.save_y);
 }
 
-/* The save file is a magic word, the pack size (so a save from a different
- * world layout is ignored rather than misread) and the Progress record. */
-int game_save(void) {
-  int fd = open(SAVE_PATH);
-  if (fd < 0) return -1;
-  unsigned head[2];
-  head[0] = SAVE_MAGIC;
-  head[1] = PAK_SIZE;
-  int ok = write(fd, head, 8) == 8;
-  ok = ok && write(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
-  close(fd);
-  return ok ? 0 : -1;
+/* ---- saves ----
+ *
+ * Two slot files (save_a.dat, save_b.dat) are written alternately, so a
+ * write cut short by a crash or a full disk can only damage the slot being
+ * written; the other still holds the previous mirror. A slot is: magic,
+ * world hash (PAK_WORLD_HASH: room order, geometry and entities, so a save
+ * from a different world layout is refused instead of misread), sequence
+ * number, a checksum of the Progress record, then the record. Loading reads
+ * both slots into scratch records, validates every field, and only then
+ * picks the newer valid one, so a bad file never touches live state.
+ * Writes are not atomic on this OS and rename cannot replace a target,
+ * which is why there are two slots rather than one renamed temp file. */
+
+#define SAVE_SLOT_A "/retake/save_a.dat"
+#define SAVE_SLOT_B "/retake/save_b.dat"
+#define SAVE_HEAD_WORDS 4
+
+static unsigned save_seq;          /* sequence number of the newest valid slot */
+
+/* Rotate-xor checksum over the Progress record (no multiplies). */
+static unsigned progress_sum(struct Progress* p) {
+  unsigned* w = (unsigned*)p;
+  int n = (int)(sizeof(struct Progress) >> 2);
+  unsigned h = 0x9E3779B9u;
+  for (int i = 0; i < n; i++) h = ((h << 5) | (h >> 27)) ^ w[i];
+  return h;
 }
 
-/* Load saved progress and enter its checkpoint, or return failure to the title menu. */
-int game_load(void) {
-  int fd = open_existing(SAVE_PATH);
+/* Whether a loaded record describes a reachable, sane game. */
+static int progress_valid(struct Progress* p) {
+  if (p->max_health < 1 || p->max_health > 9) return 0;
+  if (p->scrip < 0 || p->scrip > 9999) return 0;
+  if (p->take_slots < 1 || p->take_slots > TAKE_MAX_SLOTS) return 0;
+  if (p->take_frames < 1 || p->take_frames > TAKE_MAX_FRAMES) return 0;
+  if (p->abilities & ~(AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL)) return 0;
+  if (p->save_room < 0 || p->save_room >= pak_room_count()) return 0;
+  struct PakRoom* r = pak_room(p->save_room);
+  if (p->save_x < 0 || p->save_x > (r->w << 3) - PLAYER_W) return 0;
+  if (p->save_y < 0 || p->save_y > (r->h << 3) - PLAYER_H) return 0;
+  return 1;
+}
+
+/* Read one slot into `out`; returns its sequence number, or 0 if the slot is
+ * missing, truncated, from another world, corrupt or invalid. */
+static unsigned read_slot(char* path, struct Progress* out) {
+  int fd = open_existing(path);
+  if (fd < 0) return 0;
+  unsigned head[4];
+  int ok = read(fd, head, sizeof(head)) == (int)sizeof(head);
+  ok = ok && read(fd, out, sizeof(struct Progress)) == (int)sizeof(struct Progress);
+  close(fd);
+  if (!ok || head[0] != SAVE_MAGIC || head[1] != PAK_WORLD_HASH || head[2] == 0) return 0;
+  if (head[3] != progress_sum(out) || !progress_valid(out)) return 0;
+  return head[2];
+}
+
+int game_save(void) {
+  unsigned seq = save_seq + 1;
+  char* path = (seq & 1) ? SAVE_SLOT_A : SAVE_SLOT_B;
+  int fd = open(path);
   if (fd < 0) return -1;
-  unsigned head[2];
-  int ok = read(fd, head, 8) == 8 && head[0] == SAVE_MAGIC && head[1] == PAK_SIZE;
-  ok = ok && read(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
+  unsigned head[4];
+  head[0] = SAVE_MAGIC;
+  head[1] = PAK_WORLD_HASH;
+  head[2] = seq;
+  head[3] = progress_sum(&g_prog);
+  int ok = write(fd, head, sizeof(head)) == (int)sizeof(head);   /* a fresh open starts at offset 0 */
+  ok = ok && write(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
   close(fd);
   if (!ok) return -1;
-  if (g_prog.save_room < 0 || g_prog.save_room >= pak_room_count()) return -1;
+  save_seq = seq;
+  return 0;
+}
+
+/* Whether either slot holds a loadable game (for the title's Continue). */
+int game_has_save(void) {
+  struct Progress scratch;
+  return read_slot(SAVE_SLOT_A, &scratch) || read_slot(SAVE_SLOT_B, &scratch);
+}
+
+/* Load the newest valid slot and enter its checkpoint, or fail without
+ * touching live state. */
+int game_load(void) {
+  struct Progress a;
+  struct Progress b;
+  unsigned sa = read_slot(SAVE_SLOT_A, &a);
+  unsigned sb = read_slot(SAVE_SLOT_B, &b);
+  if (!sa && !sb) return -1;
+  if (sa >= sb) {
+    g_prog = a;
+    save_seq = sa;
+  } else {
+    g_prog = b;
+    save_seq = sb;
+  }
   g_health = g_prog.max_health;
   game_enter_room(g_prog.save_room, g_prog.save_x, g_prog.save_y);
   return 0;

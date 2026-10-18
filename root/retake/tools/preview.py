@@ -14,6 +14,7 @@ import region0
 import region1
 import region2
 import region3
+import region4
 import rooms
 import world
 from font import GLYPHS
@@ -27,10 +28,10 @@ ENT_MARK = {"coin": (15, 13, 2), "walker": (15, 2, 2), "hopper": (15, 2, 2), "fl
 
 
 def main(outdir, names):
-    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS)}
-    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS}
+    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS), 4: region4.build(GLYPHS)}
+    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS, 4: region4.STAMP_CHARS}
     all_rooms = world.all_rooms()
-    for region in (0, 1, 2, 3):
+    for region in (0, 1, 2, 3, 4):
         rs = [r for r in all_rooms if r.region == region]
         x0 = min(r.wx for r in rs)
         y0 = min(r.wy for r in rs)

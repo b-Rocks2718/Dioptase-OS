@@ -16,6 +16,8 @@ INSTRUMENTS = [
     ("music_box", "sine", 11, 9, 0, 3, 0, 0),
     ("square_lead", "pulse", 10, 12, 6, 2, 1, 5),
     ("tri_bass", "triangle", 13, 0, 13, 2, 0, 0),
+    ("tom", "triangle", 14, 2, 0, 1, 0, 0),
+    ("marimba", "sine", 12, 4, 0, 2, 0, 0),
 ]
 
 CHORDS = {
@@ -120,6 +122,14 @@ SHANTY_BEATS = ["Dm", "Dm", "Dm", "Dm", "C", "C", "C", "C", "Dm", "Dm", "Dm", "D
                 "Dm", "C", "Dm", "Dm", "C", "C", "Dm", "Dm"]
 _sb, _s1, _s2 = oompah(SHANTY_BEATS)
 
+# ---- Stage 4: drums and marimba in the jungle ----
+JUNGLE_MELODY = """
+A4 - C5 - | E5 - D5 C5 | A4 - - - | G4 - A4 - | C5 - D5 - | E5 - G5 E5 | D5 - - - | . - - - |
+A4 - C5 - | E5 - D5 C5 | A4 - - - | G4 - E4 - | G4 - A4 - | C5 - D5 C5 | A4 - - - | . - - - |
+"""
+JUNGLE_TOMS = " ".join(["A2 - A2 - E2 - A2 -"] * 8)
+JUNGLE_BASS = " ".join(["A2 - - - - - - -", "G2 - - - - - - -", "A2 - - - - - - -", "E2 - - - - - - -"] * 2)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -131,6 +141,8 @@ SONGS = {
                                          ("piano_chord", _w1), ("piano_chord", _w2)]},
     "stage3": {"tempo": 11, "channels": [("organ_lead", SHANTY_MELODY), ("tri_bass", _sb),
                                          ("piano_chord", _s1), ("piano_chord", _s2)]},
+    "stage4": {"tempo": 10, "channels": [("marimba", JUNGLE_MELODY), ("tom", JUNGLE_TOMS),
+                                         ("tri_bass", JUNGLE_BASS)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }

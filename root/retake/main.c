@@ -118,9 +118,27 @@ static int region3_image(struct Ent* e) {
   }
 }
 
+/* Region 4: the jungle serial's menagerie. */
+static int region4_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER4_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER4_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER4_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER4_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER4_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT4_0;
+    default: return -1;
+  }
+}
+
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
   if (e->kind == ENT_SHOT && e->b == 2) return IMG_FILM_0;
+  if (e->kind == ENT_SHOT && e->b == 3) return IMG_BOULDER_0;
+  if (current_region == 4) {
+    int v = region4_image(e);
+    if (v >= 0) return v;
+  }
   if (current_region == 2) {
     int v = region2_image(e);
     if (v >= 0) return v;
@@ -152,6 +170,14 @@ static int ent_image(struct Ent* e) {
     case ENT_WAVE: return IMG_WAVE_0;
     case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 5) {
+        switch (e->state) {
+          case 41: return IMG_BOSS5_2;
+          case 42: return IMG_BOSS5_3;
+          case 43: return IMG_BOSS5_4;
+          default: return IMG_BOSS5_0 + ((frame_clock >> 4) & 1);
+        }
+      }
       if (e->a == 4) return (e->state == 31 ? IMG_BOSS4_2 : IMG_BOSS4_0) + ((frame_clock >> 3) & 1);
       if (e->a == 3) return -1;                  /* the Kraken is under the deck */
       if (e->a == 2) return e->state == 13 ? IMG_BOSS2_3 : IMG_BOSS2_0 + ((e->x >> 10) % 3 + 3) % 3;
@@ -185,6 +211,12 @@ static void draw_entities(void) {
     int ey = (e->y >> 8) - cam_y;
     int ew = e->w >> 8;
     int eh = e->h >> 8;
+    if (e->kind == ENT_CRUMBLE) {
+      if (e->state == 0) draw_image(IMG_CRUMBLE_0, ex, ey, 0);
+      else if (e->state == 1) draw_image(IMG_CRUMBLE_1, ex + ((frame_clock & 2) ? 1 : -1), ey, 0);
+      else if (e->anim < 24) draw_image(IMG_CRUMBLE_1, ex, ey + ((e->anim * e->anim) >> 3), 0);
+      continue;
+    }
     if (e->kind == ENT_TENTACLE) {
       int cx = e->b - cam_x;
       int deck = (e->c >> 8) - cam_y;
@@ -211,7 +243,8 @@ static void draw_entities(void) {
     int iw = image_width(img);
     int ih = image_height(img);
     int flip = e->dir > 0 && (e->kind == ENT_WALKER || e->kind == ENT_FLYER || e->kind == ENT_THROWER ||
-                              e->kind == ENT_CHARGER || e->kind == ENT_HOPPER || e->kind == ENT_BOSS);
+                              e->kind == ENT_CHARGER || e->kind == ENT_HOPPER ||
+                              (e->kind == ENT_BOSS && e->a != 4));
     int x = ex + (ew >> 1) - (iw >> 1);
     int y = ey + eh - ih;
     if (e->kind == ENT_PLATFORM) y = ey;
@@ -231,7 +264,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
+  int total = g_boss->a == 5 ? 20 : g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -287,8 +320,9 @@ static void choose_music(void) {
   if (region == 0) song = MUSIC_BACKLOT;
   if (region == 2) song = MUSIC_STAGE2;
   if (region == 3) song = MUSIC_STAGE3;
+  if (region == 4) song = MUSIC_STAGE4;
   if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA ||
-      g_room_index == ROOM_TOWER_BOOTH) {
+      g_room_index == ROOM_TOWER_BOOTH || g_room_index == ROOM_S4_ARENA) {
     song = MUSIC_CHASE;
   }
   if (song != current_song) {
@@ -486,10 +520,7 @@ int main(int argc, char** argv) {
     if (debug_room < 0) {
       audio_music(MUSIC_TITLE);
       current_song = MUSIC_TITLE;
-      int fd = open_existing("/retake/save.dat");
-      int have_save = fd >= 0;
-      if (fd >= 0) close(fd);
-      choice = title_screen(have_save);
+      choice = title_screen(game_has_save());
       if (choice < 0) break;
       audio_sfx(SFX_CLAP);
     }
