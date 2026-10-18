@@ -115,11 +115,13 @@ void display_shutdown(void);
 void render_region(int region_id);
 void render_frame(int cam_x, int cam_y);
 void present(void);
+void film_fx(int clock);
 void sheet_load(int index);
 void sprites_init(void);
 void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);
 void sprite_hide(int slot);
 void draw_image(int id, int x, int y, int flip);
+void draw_image_clipped(int id, int x, int y, int flip, int bottom);
 int image_width(int id);
 int image_height(int id);
 void draw_prompt(int cx, int y, int clock);
@@ -164,6 +166,11 @@ void hud_text(int col, char* s, int red);
 void hud_number(int col, int value, int digits, int red);
 void hud_draw(int health, int max_health, int scrip, int slots, int slot_limit, int recording, int blink);
 void hud_bar_clear(void);
+
+/* ---- menus.c ---- */
+
+void shop_run(void);
+int pause_run(void);
 
 void tl_copy_words(void* dst, void* src, int words);
 void rt_composite(void* dst, void* room_row, void* bg_row, int words);

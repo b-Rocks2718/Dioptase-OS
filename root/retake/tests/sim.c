@@ -153,13 +153,16 @@ struct SimSnapshot {
   struct Takes takes;
   struct Progress progress;
   struct Ent ents[40];
-  struct Platform platforms[3];
+  struct Platform platforms[12];
   unsigned char col[4800];
   int switches[16];
   int room;
   int health;
   unsigned events;
   int pending_script;
+  int pending_shop;
+  int mover_x[8];
+  int mover_y[8];
   int ent_count;
   int boss_index;
   int cycle;
@@ -186,6 +189,9 @@ void sim_snapshot(void* dst) {
   s->health = g_health;
   s->events = g_events;
   s->pending_script = g_pending_script;
+  s->pending_shop = g_pending_shop;
+  memcpy(s->mover_x, mover_dx, sizeof(mover_dx));
+  memcpy(s->mover_y, mover_dy, sizeof(mover_dy));
   s->ent_count = g_ent_count;
   s->boss_index = g_boss ? (int)(g_boss - g_ents) : -1;
   s->cycle = boss_cycle;
@@ -208,6 +214,9 @@ void sim_restore(void* src) {
   g_health = s->health;
   g_events = s->events;
   g_pending_script = s->pending_script;
+  g_pending_shop = s->pending_shop;
+  memcpy(mover_dx, s->mover_x, sizeof(mover_dx));
+  memcpy(mover_dy, s->mover_y, sizeof(mover_dy));
   g_ent_count = s->ent_count;
   g_boss = s->boss_index >= 0 ? &g_ents[s->boss_index] : 0;
   boss_cycle = s->cycle;

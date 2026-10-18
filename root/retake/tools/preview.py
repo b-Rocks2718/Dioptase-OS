@@ -12,6 +12,8 @@ import numpy as np
 import pix
 import region0
 import region1
+import region2
+import region3
 import rooms
 import world
 from font import GLYPHS
@@ -20,14 +22,15 @@ ENT_MARK = {"coin": (15, 13, 2), "walker": (15, 2, 2), "hopper": (15, 2, 2), "fl
             "thrower": (15, 2, 2), "charger": (15, 2, 2), "boss": (15, 0, 15), "plate": (2, 15, 2),
             "gate": (2, 15, 2), "door": (2, 8, 15), "mirror": (2, 8, 15), "sign": (8, 8, 15),
             "npc": (8, 8, 15), "reel": (15, 15, 15), "frame": (15, 15, 15), "spring": (2, 15, 15),
-            "sandbag": (15, 8, 2), "heart": (15, 6, 8), "ability": (15, 15, 15), "shop": (2, 8, 15)}
+            "sandbag": (15, 8, 2), "heart": (15, 6, 8), "ability": (15, 15, 15), "shop": (2, 8, 15),
+            "platform": (2, 15, 2)}
 
 
 def main(outdir, names):
-    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS)}
-    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS}
+    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS)}
+    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS}
     all_rooms = world.all_rooms()
-    for region in (0, 1):
+    for region in (0, 1, 2, 3):
         rs = [r for r in all_rooms if r.region == region]
         x0 = min(r.wx for r in rs)
         y0 = min(r.wy for r in rs)

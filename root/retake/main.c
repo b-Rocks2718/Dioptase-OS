@@ -43,6 +43,7 @@ static int cam_x;
 static int cam_y;
 static unsigned frame_clock;
 static int current_song = -1;
+static int current_region = -1;
 
 static short title_ramp[4] = {0, 0x345, 0xABC, 0xEFF};
 static short dim_ramp[4] = {0, 0x123, 0x567, 0x89A};
@@ -90,8 +91,43 @@ static void update_camera(int snap) {
   if (cam_y < 0) cam_y = 0;
 }
 
+/* Region 2 dresses the same behaviors as Western characters. */
+static int region2_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER2_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER2_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER2_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER2_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER2_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return e->b ? IMG_COAL_0 : IMG_SHOT2_0;
+    default: return -1;
+  }
+}
+
+/* Region 3 dresses them as the pirate picture's cast. */
+static int region3_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER3_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER3_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER3_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER3_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER3_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT3_0;
+    case ENT_PLATFORM: return IMG_RAFT_0;
+    default: return -1;
+  }
+}
+
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
+  if (current_region == 2) {
+    int v = region2_image(e);
+    if (v >= 0) return v;
+  }
+  if (current_region == 3) {
+    int v = region3_image(e);
+    if (v >= 0) return v;
+  }
   switch (e->kind) {
     case ENT_COIN: return IMG_COIN_0 + ((e->anim >> 3) & 3);
     case ENT_HEART: return IMG_HEART_0 + ((frame_clock >> 4) & 1);
@@ -113,7 +149,10 @@ static int ent_image(struct Ent* e) {
     case ENT_SPRING: return IMG_SPRING_0 + (e->timer > 0 ? 1 : 0);
     case ENT_SHOP: return IMG_SHOP_0;
     case ENT_WAVE: return IMG_WAVE_0;
+    case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 3) return -1;                  /* the Kraken is under the deck */
+      if (e->a == 2) return e->state == 13 ? IMG_BOSS2_3 : IMG_BOSS2_0 + ((e->x >> 10) % 3 + 3) % 3;
       switch (e->state) {
         case 2: return IMG_BOSS1_2;            /* slam wind-up: baton raised */
         case 3: return IMG_BOSS1_3;            /* slam */
@@ -144,6 +183,21 @@ static void draw_entities(void) {
     int ey = (e->y >> 8) - cam_y;
     int ew = e->w >> 8;
     int eh = e->h >> 8;
+    if (e->kind == ENT_TENTACLE) {
+      int cx = e->b - cam_x;
+      int deck = (e->c >> 8) - cam_y;
+      if (e->state == 0) {
+        if (frame_clock & 4) draw_image(IMG_BUBBLES_0, cx - 8, deck - 8, 0);
+      } else if (e->state == 1 || e->state == 2) {
+        int rise = e->state == 1 ? e->timer * 4 : 0;   /* emerging from the deck */
+        draw_image_clipped(IMG_TENTACLE_UP_0, cx - 8, deck - 64 + rise, 0, deck);
+      } else if (e->state == 5) {
+        draw_image_clipped(IMG_TENTACLE_UP_0, cx - 8, deck - 64 + (12 - e->timer) * 5, 0, deck);
+      } else {
+        draw_image(IMG_TENTACLE_DOWN_0, e->dir < 0 ? cx - 62 : cx - 2, deck - 14, e->dir > 0);
+      }
+      continue;
+    }
     if (e->kind == ENT_GATE) {
       if (e->state) continue;                     /* open: slid out of view */
       int h = e->b > 0 ? e->b : 1;
@@ -158,6 +212,7 @@ static void draw_entities(void) {
                               e->kind == ENT_CHARGER || e->kind == ENT_HOPPER || e->kind == ENT_BOSS);
     int x = ex + (ew >> 1) - (iw >> 1);
     int y = ey + eh - ih;
+    if (e->kind == ENT_PLATFORM) y = ey;
     if (e->kind == ENT_SANDBAG || e->kind == ENT_SHOT || e->kind == ENT_FLYER || e->kind == ENT_COIN) y = ey;
     draw_image(img, x, y, flip);
     if (interactable(e->kind)) {
@@ -174,7 +229,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = 16;
+  int total = g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16);
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -225,8 +280,14 @@ static void draw_hud(void) {
 /* Music for the room Ruby is in. */
 static void choose_music(void) {
   int region = pak_room(g_room_index)->region;
-  int song = region == 0 ? MUSIC_BACKLOT : MUSIC_STAGE1;
-  if (g_room_index == ROOM_S1_CLOCK_TOP) song = MUSIC_CHASE;
+  current_region = region;
+  int song = MUSIC_STAGE1;
+  if (region == 0) song = MUSIC_BACKLOT;
+  if (region == 2) song = MUSIC_STAGE2;
+  if (region == 3) song = MUSIC_STAGE3;
+  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA) {
+    song = MUSIC_CHASE;
+  }
   if (song != current_song) {
     audio_music(song);
     current_song = song;
@@ -268,6 +329,7 @@ static void play_sfx(void) {
 static void draw_frame(void) {
   render_frame(cam_x, cam_y);
   draw_entities();
+  film_fx((int)frame_clock);
   draw_boss_bar();
   present();
   draw_sprites();
@@ -294,7 +356,7 @@ static int title_screen(int have_save) {
     }
     draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
     draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
-    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 144, 92);
+    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 64, 116);
     unsigned now = get_vga_frame_counter();
     while (get_vga_frame_counter() == now) {
     }
@@ -331,60 +393,29 @@ static void parse_args(int argc, char** argv) {
   }
 }
 
-int main(int argc, char** argv) {
-  parse_args(argc, argv);
-  if (pak_open() != 0) return 1;
-  audio_start();      /* fork the synthesizer before the big buffers exist */
-  audio_music(MUSIC_TITLE);
-  current_song = MUSIC_TITLE;
-  room_system_init();
-  if (display_init() != 0) return 1;
-  input_init();
-  sprites_init();
-  sheet_load(SHEET_HERO);
-  sheet_load(SHEET_GHOST_A);
-  sheet_load(SHEET_GHOST_B);
-
-  int fd = open_existing("/retake/save.dat");
-  int have_save = fd >= 0;
-  if (fd >= 0) close(fd);
-  int choice = debug_room >= 0 ? 2 : title_screen(have_save);
-  if (choice < 0) {
-    audio_stop();
-    input_shutdown();
-    display_shutdown();
-    return 0;
-  }
-  audio_sfx(SFX_CLAP);
-  if (choice == 2) {
-    game_new(debug_room);
-    g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
-    g_hero.abilities = g_prog.abilities;
-  } else if (choice == 1 && game_load() == 0) {
-    /* continuing */
-  } else {
-    card_show(SCRIPT_INTRO);
-    game_new(START_ROOM);
-  }
-  choose_music();
+/* Play from the current game state until the player quits to the title. */
+static void play(void) {
   update_camera(1);
   hud_bar_clear();
-
+  choose_music();
   unsigned last = get_vga_frame_counter();
   unsigned fps_mark = last;
   int fps_frames = 0;
-  int running = 1;
-  while (running) {
+  while (1) {
     unsigned now = get_vga_frame_counter();
     while (now == last) now = get_vga_frame_counter();
     int ticks = (int)(now - last);
     if (ticks > 4) ticks = 4;
     last = now;
     input_poll();
-    if (input_key_hit(KEY_ESC)) running = 0;
+    if (input_key_hit(KEY_ESC)) {
+      if (pause_run()) return;
+      last = get_vga_frame_counter();
+      continue;
+    }
     int held = input_held();
     int pressed = input_take_pressed();
-    for (int t = 0; t < ticks && running; t++) {
+    for (int t = 0; t < ticks; t++) {
       game_tick(held, pressed);
       pressed = 0;
       frame_clock++;
@@ -395,6 +426,12 @@ int main(int argc, char** argv) {
         choose_music();
       }
       if (g_events & GE_SAVE) g_pending_script = SCRIPT_SAVED;
+      if (g_pending_shop) {
+        g_pending_shop = 0;
+        shop_run();
+        last = get_vga_frame_counter();
+        break;
+      }
       if (g_pending_script >= 0) {
         int script = g_pending_script;
         g_pending_script = -1;
@@ -412,6 +449,45 @@ int main(int argc, char** argv) {
       fps_frames = 0;
       fps_mark = now;
     }
+  }
+}
+
+int main(int argc, char** argv) {
+  parse_args(argc, argv);
+  if (pak_open() != 0) return 1;
+  audio_start();      /* fork the synthesizer before the big buffers exist */
+  room_system_init();
+  if (display_init() != 0) return 1;
+  input_init();
+  sprites_init();
+  sheet_load(SHEET_HERO);
+  sheet_load(SHEET_GHOST_A);
+  sheet_load(SHEET_GHOST_B);
+
+  while (1) {
+    int choice = 2;
+    if (debug_room < 0) {
+      audio_music(MUSIC_TITLE);
+      current_song = MUSIC_TITLE;
+      int fd = open_existing("/retake/save.dat");
+      int have_save = fd >= 0;
+      if (fd >= 0) close(fd);
+      choice = title_screen(have_save);
+      if (choice < 0) break;
+      audio_sfx(SFX_CLAP);
+    }
+    if (choice == 2) {
+      game_new(debug_room);
+      g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
+      g_hero.abilities = g_prog.abilities;
+    } else if (choice == 1 && game_load() == 0) {
+      /* continuing from the last mirror */
+    } else {
+      card_show(SCRIPT_INTRO);
+      game_new(START_ROOM);
+    }
+    play();
+    if (debug_room >= 0) break;
   }
   audio_stop();
   input_shutdown();

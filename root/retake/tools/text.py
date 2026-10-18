@@ -89,6 +89,83 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nStage 1 falls quiet. Somewhere below, a comedian finally stops slipping.",
         "Tangled in the Sergeant's springs: a coil of STUNT WIRE.\n\n(Press jump again in the air for a second jump.)",
     ],
+    # ---- Stage 2 ----
+    "s2_title": [
+        "DUST & IRON\n\nA Western in three reels. Scene 1, Take 1.",
+    ],
+    "s2_sheriff": [
+        "\"This town ain't big enough for the... for the...\"",
+        "\"Dang it. Forty years I've been saying that line, and I still can't remember how it ends.\"",
+        "\"You look like a gal who's read the script. The Iron Horse runs the yard past the mine. Mind the BRAKE: hold it down and that engine stops cold.\"",
+    ],
+    "s2_cart_hint": [
+        "MINE FOREMAN:\n\nRide the carts. Don't ride the bulls.",
+    ],
+    "s2_brake_hint": [
+        "SWITCHMAN'S NOTE:\n\nPull the BRAKE and the engine stops. Nobody can hold it and fight at the same time...",
+        "...unless they happen to have a double.",
+    ],
+    "s2_reel_a": [
+        "LOST REEL: \"Dust & Iron, Dailies\" (1934)",
+        "Take 31. The stunt rider leaps from the cliff onto the moving train. Perfect.",
+        "Vale's voice, off camera:\n\n\"Again. I want to see it a thousand times.\"",
+    ],
+    "s2_reel_b": [
+        "LOST REEL: \"A Letter, Unsent\" (1935)",
+        "\"Dear Augustin. The crew is tired. You keep asking for more takes than we have days.\"",
+        "\"Pictures end. That is what makes them pictures.\n\n- V. L.\"",
+    ],
+    "s2_reel_c": [
+        "LOST REEL: \"Camera No. 7, Lens Test\" (1936)",
+        "The camera points at a mirror. In the mirror, the camera is pointed at a mirror.",
+        "The film is longer than the reel it was wound on.",
+    ],
+    "s2_boss_intro": [
+        "THE IRON HORSE",
+        "Somewhere a whistle screams. The rails begin to hum.",
+    ],
+    "s2_wrap": [
+        "THAT'S A WRAP!\n\nThe locomotive coughs, sighs, and rolls to a stop for good.",
+        "In the cab, wrapped in a red flag: a pair of editor's shears.\n\nJUMP CUT. (Press V to cut straight to your newest take.)",
+    ],
+    # ---- Stage 3 ----
+    "s3_title": [
+        "THE CRIMSON TIDE\n\nA swashbuckler in four reels. Shot at night, on a sea made of canvas.",
+    ],
+    "s3_captain": [
+        "\"AVAST! Captain Blackwater, terror of the seven seas!\"",
+        "\"...also the terror of the props department. I owe them a ship.\"",
+        "\"The Kraken's two stagehands and a rubber hose, lass. But down here, the hose bites.\"",
+        "\"Strike the tentacles when they come down. They can't hurt you while they're stuck in the deck.\"",
+    ],
+    "s3_rigging_hint": [
+        "BOATSWAIN:\n\nUp the ratlines, down the other side. Rope rungs hold you from above only.",
+    ],
+    "s3_cut_hint": [
+        "EDITOR'S NOTE, scrawled on a crate:\n\nA story can skip the boring part. So can you.",
+        "(Leave a take standing somewhere, then press V to cut straight back to it.)",
+    ],
+    "s3_reel_a": [
+        "LOST REEL: \"Storyboards\" (1936)",
+        "Sketches for The Everlasting Picture. Every panel shows the same scene: the cast, bowing, as the curtain refuses to fall.",
+    ],
+    "s3_reel_b": [
+        "LOST REEL: \"Rehearsal\" (1937)",
+        "Vivian, in costume, steps out of frame.\n\nThe film shows her stepping out of frame. Then stepping back in. Then out again.",
+        "She is still doing it.",
+    ],
+    "s3_reel_c": [
+        "LOST REEL: \"Payroll, Stunt Department\" (1937)",
+        "A ledger page. Every stunt in every picture, signed for by one name.\n\nThe name has been crossed out so many times the paper tore.",
+    ],
+    "s3_boss_intro": [
+        "THE KRAKEN",
+        "(Two stagehands, forty feet of rubber hose, and a great deal of enthusiasm.)",
+    ],
+    "s3_wrap": [
+        "THAT'S A WRAP!\n\nThe tentacles go limp. Somewhere under the deck, two stagehands sigh with relief.",
+        "Tangled in the rigging: a battered black UMBRELLA.\n\n(Hold jump while falling to drift.)",
+    ],
     "test_sign": [
         "SILVERLAKE PICTURES\nSTAGE 1\n\nPLEASE KEEP OFF THE SCAFFOLDING\nDURING TAKES.",
     ],

@@ -31,7 +31,8 @@
 #define ENT_FALL_MAX 1024
 #define SHOT_TICKS 180
 #define BOSS1_HP 16
-#define BOSS_FLAG_BASE 2000      /* flag ids 2000+ mark defeated bosses */
+#define HORSE_HP 10
+#define KRAKEN_HP 12
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -42,10 +43,12 @@ int g_ent_count;
 int g_health;
 unsigned g_events;
 int g_pending_script = -1;
+int g_pending_shop;
 int g_switch[16];
 
 struct Ent* g_boss;
-static struct Platform g_platforms[3];
+#define MAX_MOVERS 8
+static struct Platform g_platforms[12];   /* takes first, then moving platforms (ids 8+) */
 static int entry_x;            /* where Ruby entered this room (pixels) */
 static int entry_y;
 static int room_ox;            /* this room's world origin in pixels */
@@ -167,7 +170,23 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_SPRING: w = 8; h = 4; break;
     case ENT_SHOP: w = 16; h = 16; break;
     case ENT_WAVE: w = 8; h = 8; break;
-    case ENT_BOSS: w = 22; h = 30; e->hp = BOSS1_HP; break;
+    case ENT_PLATFORM: w = 24; h = 4; break;   /* width fixed up from d after setup */
+    case ENT_TENTACLE: w = 10; h = 56; break;
+    case ENT_BOSS:
+      if (a == 3) {
+        w = 8;
+        h = 8;
+        e->hp = KRAKEN_HP;
+      } else if (a == 2) {
+        w = 64;
+        h = 30;
+        e->hp = HORSE_HP;
+      } else {
+        w = 22;
+        h = 30;
+        e->hp = BOSS1_HP;
+      }
+      break;
     default: break;
   }
   e->w = w << 8;
@@ -187,13 +206,31 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
 
 /* Reconstruct persistent boss rewards on both victory and later room visits. */
 static void boss_rewards(int boss, int tx) {
-  if (boss != 1) return;
-  if (!(g_prog.abilities & AB_WIRE)) {
+  /* each stage's prize, its wrap card, and the way home to its stage door */
+  int ability = AB_WIRE;
+  int script = SCRIPT_S1_WRAP;
+  int home_tx = 15;
+  int ty = 25;
+  if (boss == 2) {
+    ability = AB_JUMPCUT;
+    script = SCRIPT_S2_WRAP;
+    home_tx = 33;
+  } else if (boss == 3) {
+    ability = AB_GLIDE;
+    script = SCRIPT_S3_WRAP;
+    home_tx = 51;
+    ty = 23;
+  } else if (boss != 1) {
+    return;
+  }
+  if (tx < 3) tx = 3;
+  if (tx > g_room.w - 4) tx = g_room.w - 4;
+  if (!(g_prog.abilities & ability)) {
     struct Ent* prize = ent_alloc();
-    if (prize) ent_setup(prize, ENT_ABILITY, tx, 25, AB_WIRE, SCRIPT_S1_WRAP, 0, -1);
+    if (prize) ent_setup(prize, ENT_ABILITY, tx, ty, ability, script, 0, -1);
   }
   struct Ent* door = ent_alloc();
-  if (door) ent_setup(door, ENT_DOOR, 4, 25, ROOM_BACKLOT_WEST, 15, 25, -1);
+  if (door) ent_setup(door, ENT_DOOR, 4, ty, ROOM_BACKLOT_WEST, home_tx, 25, -1);
 }
 
 /* Materialize the room's entities, then reconstruct defeated-boss rewards. */
@@ -215,6 +252,15 @@ static void spawn_room_entities(void) {
     ent_setup(e, kind, r[1], r[2], r[3], r[4], r[5], flag);
     e->d = r[6];
     if (kind == ENT_BOSS) g_boss = e;
+    if (kind == ENT_PLATFORM) {
+      int tiles = e->d > 0 ? e->d : 3;
+      e->w = (tiles << 3) << 8;
+      e->x = (r[1] << 3) << 8;
+      e->y = (r[2] << 3) << 8;    /* the riding surface is the tile's top edge */
+      e->c = e->c > 0 ? e->c : 128;
+      e->dir = 1;
+      e->state = 0;                /* distance travelled along the axis, Q8 */
+    }
   }
   for (int i = 0; i < pr->entity_count; i++) {
     short* r = raw + (i << 3);
@@ -669,7 +715,7 @@ static void spawn_pigeon(int x, int y) {
 }
 
 /* Advance Gearhart's telegraphed slam, charge and whistle encounter states. */
-static void step_boss(struct Ent* e) {
+static void step_sergeant(struct Ent* e) {
   int floor_y = e->y + e->h;
   switch (e->state) {
     case B_INTRO:
@@ -751,6 +797,236 @@ static void step_boss(struct Ent* e) {
   }
 }
 
+/* ---- the Iron Horse (boss 2) ----
+ *
+ * A locomotive that runs the length of the arena from alternating sides,
+ * spitting coals. Holding the brake (switch 3: a mark Ruby or a take stands
+ * on) while it is on screen stops it; stopped, its firebox is exposed and
+ * claps land. States: 0 intro, 10 waiting off-screen, 11 running, 12
+ * braking, 13 stopped, 14 leaving. */
+
+#define H_WAIT 10
+#define H_RUN 11
+#define H_BRAKE 12
+#define H_STOPPED 13
+#define H_LEAVE 14
+
+static void spawn_coal(struct Ent* e) {
+  struct Ent* c = ent_alloc();
+  if (!c) return;
+  ent_setup(c, ENT_SHOT, 0, 0, 0, 1, 0, -1);   /* b = 1: drawn as a coal */
+  c->x = e->x + (e->dir < 0 ? (18 << 8) : (46 << 8));
+  c->y = e->y - (6 << 8);
+  c->vx = -e->dir * 160;
+  c->vy = -820;
+  c->timer = SHOT_TICKS;
+}
+
+static void step_horse(struct Ent* e) {
+  int pw = g_room_pw << 8;
+  int on_screen = e->x + e->w > 0 && e->x < pw;
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_S2_BOSS_INTRO;
+      e->state = H_WAIT;
+      e->timer = 60;
+      e->dir = -1;
+      e->x = pw + (24 << 8);
+      break;
+    case H_WAIT:
+      if (--e->timer <= 0) {
+        e->state = H_RUN;
+        e->vx = e->dir * (e->hp <= HORSE_HP / 2 ? 1024 : 800);
+        e->x = e->dir < 0 ? pw + (8 << 8) : -e->w - (8 << 8);
+        e->timer = 0;
+      }
+      break;
+    case H_RUN:
+      e->x += e->vx;
+      if ((++e->timer % 50) == 25 && on_screen) spawn_coal(e);
+      if (g_switch[3] && on_screen && e->x > (16 << 8) && e->x + e->w < pw - (16 << 8)) {
+        e->state = H_BRAKE;
+        g_events |= GE_SLAM;
+      }
+      if ((e->dir < 0 && e->x + e->w < -(16 << 8)) || (e->dir > 0 && e->x > pw + (16 << 8))) {
+        e->state = H_WAIT;
+        e->timer = 50;
+        e->dir = -e->dir;
+      }
+      break;
+    case H_BRAKE:
+      e->x += e->vx;
+      e->vx -= e->vx >> 3;
+      if (e->vx > -40 && e->vx < 40) {
+        e->vx = 0;
+        e->state = H_STOPPED;
+        e->timer = 150;
+      }
+      break;
+    case H_STOPPED:
+      if (--e->timer <= 0) {
+        e->state = H_LEAVE;
+        e->vx = 0;
+      }
+      break;
+    case H_LEAVE:
+      e->vx += e->dir * 24;
+      e->x += e->vx;
+      if ((e->dir < 0 && e->x + e->w < -(16 << 8)) || (e->dir > 0 && e->x > pw + (16 << 8))) {
+        e->state = H_WAIT;
+        e->timer = 60;
+        e->dir = -e->dir;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+/* ---- the Kraken (boss 3) ----
+ *
+ * The boss entity is an unseen puppeteer under the deck (states 0 intro, 20
+ * choosing, 21 waiting). It sends up tentacles (ENT_TENTACLE) near Ruby, two
+ * at once below half health. A tentacle bubbles (state 0, a warning), bursts
+ * up through the deck (1) and hovers (2), then slams across the deck toward
+ * the side Ruby was on (3); it lies there stuck (4), harmless and open to
+ * claps, before sinking back (5). The deck surface is the puppeteer's spawn
+ * tile's bottom edge. */
+
+#define K_CHOOSE 20
+#define K_WAIT 21
+#define T_WARN 0
+#define T_RISE 1
+#define T_HOVER 2
+#define T_SLAM 3
+#define T_STUCK 4
+#define T_SINK 5
+
+static void spawn_tentacle(struct Ent* boss, int tile_x) {
+  struct Ent* t = ent_alloc();
+  if (!t) return;
+  ent_setup(t, ENT_TENTACLE, tile_x, boss->ty, 0, 0, 0, -1);
+  int deck = ((boss->ty + 1) << 3) << 8;
+  t->x = ((tile_x << 3) + 4 - 5) << 8;
+  t->y = deck - (56 << 8);
+  t->w = 10 << 8;
+  t->h = 56 << 8;
+  t->c = deck;                 /* remembered deck surface (Q8) */
+  t->b = (tile_x << 3) + 4;    /* center x in pixels */
+  t->state = T_WARN;
+  t->timer = 50;
+}
+
+static int tentacles_alive(void) {
+  int n = 0;
+  for (int i = 0; i < g_ent_count; i++) {
+    if (g_ents[i].alive && g_ents[i].kind == ENT_TENTACLE) n++;
+  }
+  return n;
+}
+
+static void step_kraken(struct Ent* e) {
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_S3_BOSS_INTRO;
+      e->state = K_CHOOSE;
+      e->timer = 60;
+      break;
+    case K_CHOOSE:
+      if (--e->timer <= 0) {
+        int hx = ((g_hero.x >> 8) + 4) >> 3;
+        if (hx < 7) hx = 7;
+        if (hx > g_room.w - 8) hx = g_room.w - 8;
+        spawn_tentacle(e, hx);
+        if (e->hp <= KRAKEN_HP / 2) {
+          int other = hx < (g_room.w >> 1) ? hx + 14 : hx - 14;
+          spawn_tentacle(e, other);
+        }
+        e->state = K_WAIT;
+      }
+      break;
+    case K_WAIT:
+      if (tentacles_alive() == 0) {
+        e->state = K_CHOOSE;
+        e->timer = e->hp <= KRAKEN_HP / 2 ? 25 : 45;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+static void step_tentacle(struct Ent* t) {
+  int deck = t->c;
+  int cx = t->b;
+  switch (t->state) {
+    case T_WARN:
+      if (--t->timer <= 0) {
+        t->state = T_RISE;
+        t->timer = 16;
+      }
+      break;
+    case T_RISE:
+      if (--t->timer <= 0) {
+        t->state = T_HOVER;
+        t->timer = 22;
+      }
+      break;
+    case T_HOVER:
+      t->dir = (g_hero.x >> 8) + 4 < cx ? -1 : 1;
+      if (--t->timer <= 0) {
+        t->state = T_SLAM;
+        t->timer = 6;
+        /* lie across the deck toward Ruby */
+        t->w = 56 << 8;
+        t->h = 10 << 8;
+        t->y = deck - (10 << 8);
+        t->x = t->dir < 0 ? ((cx - 56) << 8) : (cx << 8);
+        g_events |= GE_SLAM;
+      }
+      break;
+    case T_SLAM:
+      if (--t->timer <= 0) {
+        t->state = T_STUCK;
+        t->timer = 100;
+      }
+      break;
+    case T_STUCK:
+      if (--t->timer <= 0) {
+        t->state = T_SINK;
+        t->timer = 12;
+      }
+      break;
+    default:
+      if (--t->timer <= 0) {
+        t->alive = 0;
+        t->kind = ENT_NONE;
+      }
+      break;
+  }
+}
+
+static void step_boss(struct Ent* e) {
+  if (e->a == 3) step_kraken(e);
+  else if (e->a == 2) step_horse(e);
+  else step_sergeant(e);
+}
+
+/* Whether claps land on the boss now, and how hard. */
+static int boss_hit_value(struct Ent* e) {
+  if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
+  if (e->a == 2) return e->state == H_STOPPED ? 1 : 0;
+  if (e->state == B_CHARGE || e->state == B_INTRO) return 0;
+  return e->state == B_DAZED ? 2 : 1;
+}
+
+/* Whether touching the boss hurts Ruby. */
+static int boss_contact_hurts(struct Ent* e) {
+  if (e->a == 3) return 0;
+  if (e->a == 2) return e->state == H_RUN || e->state == H_BRAKE || e->state == H_LEAVE;
+  return e->state != B_DAZED;
+}
+
 /* Clear encounter hazards before allocating rewards, even at entity capacity. */
 static void boss_defeated(struct Ent* e) {
   int boss = e->a;
@@ -762,7 +1038,8 @@ static void boss_defeated(struct Ent* e) {
   g_events |= GE_BOSS_DOWN;
   g_boss = 0;
   for (int i = 0; i < g_ent_count; i++) {
-    if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE) {
+    if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE || g_ents[i].kind == ENT_SHOT ||
+        g_ents[i].kind == ENT_TENTACLE) {
       g_ents[i].alive = 0;
       g_ents[i].kind = ENT_NONE;
     }
@@ -778,6 +1055,66 @@ static void step_wave(struct Ent* e) {
     e->alive = 0;
     e->kind = ENT_NONE;
   }
+}
+
+/* ---- moving platforms ----
+ * Advanced before player_step so the controller sees this tick's position
+ * and displacement (struct Platform contract in player.h): ping-pong along
+ * one axis over `a` tiles at `c` Q8 pixels per tick. */
+
+static int mover_dx[8];
+static int mover_dy[8];
+
+static void step_movers(void) {
+  int k = 0;
+  for (int i = 0; i < g_ent_count && k < MAX_MOVERS; i++) {
+    struct Ent* e = &g_ents[i];
+    if (!e->alive || e->kind != ENT_PLATFORM) continue;
+    int range = (e->a > 0 ? e->a : 4) << 11;
+    int step = e->dir * e->c;
+    int next = e->state + step;
+    if (next < 0) {
+      next = 0;
+      e->dir = 1;
+    }
+    if (next > range) {
+      next = range;
+      e->dir = -1;
+    }
+    int delta = next - e->state;
+    e->state = next;
+    mover_dx[k] = 0;
+    mover_dy[k] = 0;
+    if (e->b) {
+      e->y += delta;
+      mover_dy[k] = delta;
+    } else {
+      e->x += delta;
+      mover_dx[k] = delta;
+    }
+    k++;
+  }
+}
+
+/* Append moving platforms after the takes' entries; returns the total. */
+static int fill_platforms(int count) {
+  int k = 0;
+  for (int i = 0; i < g_ent_count && k < MAX_MOVERS; i++) {
+    struct Ent* e = &g_ents[i];
+    if (!e->alive || e->kind != ENT_PLATFORM) continue;
+    struct Platform* p = &g_platforms[count];
+    p->x = e->x;
+    p->y = e->y;
+    p->w = e->w;
+    p->h = e->h;
+    p->dx = mover_dx[k];
+    p->dy = mover_dy[k];
+    p->id = 8 + k;
+    p->active = 1;
+    count++;
+    k++;
+  }
+  return count;
 }
 
 /* ---- per-tick entity work ---- */
@@ -830,12 +1167,36 @@ static void combat(void) {
       if (hitbox_overlap(&hb, &wb)) hurt_hero(e);
       continue;
     }
+    if (e->kind == ENT_TENTACLE) {
+      struct Hitbox tb;
+      ent_box(e, &tb);
+      if (e->state == T_STUCK && !e->hurt && g_boss && g_boss->alive) {
+        int hit = has_live && hitbox_overlap(&live, &tb);
+        if (hit && g_hero.attack_dir == 3) pogo = 1;
+        for (int s = 0; s < TAKE_MAX_SLOTS && !hit; s++) {
+          if (has_film[s] && hitbox_overlap(&film[s], &tb)) hit = 1;
+        }
+        if (hit) {
+          e->hurt = 16;
+          g_boss->hp -= 1;
+          g_events |= GE_HIT | GE_BOSS_HIT;
+          if (g_boss->hp <= 0) {
+            boss_defeated(g_boss);
+            continue;
+          }
+        }
+      }
+      if ((e->state == T_RISE || e->state == T_HOVER || e->state == T_SLAM) && hitbox_overlap(&hb, &tb)) {
+        hurt_hero(e);
+      }
+      continue;
+    }
     if (e->kind == ENT_BOSS) {
       struct Hitbox bb;
       ent_box(e, &bb);
-      int amount = e->state == B_DAZED ? 2 : 1;
+      int amount = boss_hit_value(e);
       int hit = 0;
-      if (e->state != B_CHARGE && e->state != B_INTRO && !e->hurt) {
+      if (amount > 0 && !e->hurt) {
         if (has_live && hitbox_overlap(&live, &bb)) {
           hit = 1;
           if (g_hero.attack_dir == 3) pogo = 1;
@@ -853,7 +1214,7 @@ static void combat(void) {
           continue;
         }
       }
-      if (hitbox_overlap(&hb, &bb) && e->state != B_DAZED) hurt_hero(e);
+      if (hitbox_overlap(&hb, &bb) && boss_contact_hurts(e)) hurt_hero(e);
       continue;
     }
     int enemy = is_enemy(e->kind);
@@ -967,8 +1328,18 @@ static void pickups_and_interactions(int pressed) {
       case ENT_NPC:
         if (want && g_hero.on_ground) g_pending_script = e->a;
         break;
+      case ENT_SHOP:
+        if (want && g_hero.on_ground) g_pending_shop = 1;
+        break;
       case ENT_DOOR:
         if (want && g_hero.on_ground) {
+          /* d bit 0: drawn by the room art; d bits 4..7: boss that must be
+           * defeated first (a sealed stage door until then) */
+          int needs = (e->d >> 4) & 15;
+          if (needs && !flag_get(BOSS_FLAG_BASE + needs)) {
+            g_pending_script = SCRIPT_STAGE_SEALED;
+            break;
+          }
           game_enter_room(e->a, e->b << 3, (e->c << 3) + TILE - PLAYER_H);
           return;
         }
@@ -995,6 +1366,7 @@ static void step_entities(void) {
       case ENT_SANDBAG: step_sandbag(e); break;
       case ENT_COIN: step_coin(e); break;
       case ENT_BOSS: step_boss(e); break;
+      case ENT_TENTACLE: step_tentacle(e); break;
       case ENT_WAVE: step_wave(e); break;
       default:
         if (e->timer > 0 && e->kind != ENT_GATE) e->timer--;
@@ -1011,7 +1383,8 @@ void game_tick(int held, int pressed) {
   g_events = 0;
   g_prog.play_ticks++;
   takes_advance(&g_takes);
-  g_room.platform_count = takes_platforms(&g_takes, g_platforms);
+  step_movers();
+  g_room.platform_count = fill_platforms(takes_platforms(&g_takes, g_platforms));
   g_room.platforms = g_platforms;
   player_step(&g_hero, &g_room, held, pressed);
   if (g_hero.events & EV_HAZARD) {

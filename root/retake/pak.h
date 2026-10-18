@@ -4,8 +4,9 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 949968
-#define PAK_ROOM_COUNT 12
+#define PAK_SIZE 1706412
+#define PAK_ROOM_COUNT 27
+#define PAK_WORLD_HASH 0x3572C185  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -20,6 +21,21 @@
 #define ROOM_S1_CLOCK_BASE 9
 #define ROOM_S1_CLOCK_CLIMB 10
 #define ROOM_S1_CLOCK_TOP 11
+#define ROOM_S2_ENTRY 12
+#define ROOM_S2_MAIN_STREET 13
+#define ROOM_S2_CANYON 14
+#define ROOM_S2_MINE_MOUTH 15
+#define ROOM_S2_MINE 16
+#define ROOM_S2_SHAFT 17
+#define ROOM_S2_RAIL_YARD 18
+#define ROOM_S2_ARENA 19
+#define ROOM_S3_ENTRY 20
+#define ROOM_S3_DOCKS 21
+#define ROOM_S3_DECK 22
+#define ROOM_S3_HOLD 23
+#define ROOM_S3_PLANK 24
+#define ROOM_S3_WRECK 25
+#define ROOM_S3_ARENA 26
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -52,6 +68,7 @@
 #define PAKH_SONG_COUNT 22
 #define PAKH_SONG_OFF 23
 #define PAKH_NOTE_OFF 24
+#define PAKH_WORLD_HASH 25
 
 /* Fonts. */
 #define FONT_SERIF 0
@@ -80,7 +97,25 @@
 #define SCRIPT_S1_REEL_C 19
 #define SCRIPT_S1_BOSS_INTRO 20
 #define SCRIPT_S1_WRAP 21
-#define SCRIPT_TEST_SIGN 22
+#define SCRIPT_S2_TITLE 22
+#define SCRIPT_S2_SHERIFF 23
+#define SCRIPT_S2_CART_HINT 24
+#define SCRIPT_S2_BRAKE_HINT 25
+#define SCRIPT_S2_REEL_A 26
+#define SCRIPT_S2_REEL_B 27
+#define SCRIPT_S2_REEL_C 28
+#define SCRIPT_S2_BOSS_INTRO 29
+#define SCRIPT_S2_WRAP 30
+#define SCRIPT_S3_TITLE 31
+#define SCRIPT_S3_CAPTAIN 32
+#define SCRIPT_S3_RIGGING_HINT 33
+#define SCRIPT_S3_CUT_HINT 34
+#define SCRIPT_S3_REEL_A 35
+#define SCRIPT_S3_REEL_B 36
+#define SCRIPT_S3_REEL_C 37
+#define SCRIPT_S3_BOSS_INTRO 38
+#define SCRIPT_S3_WRAP 39
+#define SCRIPT_TEST_SIGN 40
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -136,13 +171,47 @@
 #define IMG_BOSS1_5 37
 #define IMG_BOSS1_6 38
 #define IMG_WAVE_0 39
-#define PAK_FLAG_COUNT 37
+#define IMG_WALKER2_0 40
+#define IMG_WALKER2_1 41
+#define IMG_HOPPER2_0 42
+#define IMG_HOPPER2_1 43
+#define IMG_FLYER2_0 44
+#define IMG_FLYER2_1 45
+#define IMG_THROWER2_0 46
+#define IMG_THROWER2_1 47
+#define IMG_CHARGER2_0 48
+#define IMG_CHARGER2_1 49
+#define IMG_SHOT2_0 50
+#define IMG_CART_0 51
+#define IMG_BOSS2_0 52
+#define IMG_BOSS2_1 53
+#define IMG_BOSS2_2 54
+#define IMG_BOSS2_3 55
+#define IMG_COAL_0 56
+#define IMG_WALKER3_0 57
+#define IMG_WALKER3_1 58
+#define IMG_HOPPER3_0 59
+#define IMG_HOPPER3_1 60
+#define IMG_FLYER3_0 61
+#define IMG_FLYER3_1 62
+#define IMG_THROWER3_0 63
+#define IMG_THROWER3_1 64
+#define IMG_CHARGER3_0 65
+#define IMG_CHARGER3_1 66
+#define IMG_SHOT3_0 67
+#define IMG_RAFT_0 68
+#define IMG_TENTACLE_UP_0 69
+#define IMG_TENTACLE_DOWN_0 70
+#define IMG_BUBBLES_0 71
+#define PAK_FLAG_COUNT 79
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0
 #define MUSIC_STAGE1 1
 #define MUSIC_CHASE 2
-#define MUSIC_BACKLOT 3
+#define MUSIC_STAGE2 3
+#define MUSIC_STAGE3 4
+#define MUSIC_BACKLOT 5
 #define MUSIC_NONE 63
 
 #endif
