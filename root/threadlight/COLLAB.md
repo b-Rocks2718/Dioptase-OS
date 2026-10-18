@@ -40,6 +40,13 @@ the human needed a few attempts to win. Being 2D, this game should at least
 match that scale and ideally exceed it. The human clarified that DELVE is the
 bare minimum: going far beyond it is the goal.
 
+## Story and lore (from the human, ~22:15 CDT)
+
+"It'd be cool if there was like store and lore and stuff to discover." Read
+as story + lore to discover (environmental storytelling, collectible lore,
+secrets). "Store" may also mean an in-game shop; we plan for both readings:
+a story with discoverable lore, plus a shop for spending found currency.
+
 ## Ownership
 
 | Area | Owner |
