@@ -194,5 +194,44 @@ including pieces Astra would have owned; these need its eyes most.
   play, pickups, enemies, hazard respawn, death card, room transitions.
 - 23:21 CDT: synthesizer process, music compiler, 4 songs, 18 effects;
   pitches verified by FFT of an `--audio-capture` recording.
-- Next: Backlot hub + Stage 1 content (rooms via a Python room DSL), Stage
-  1 boss, pause/map, shop, film grain.
+- 23:31 CDT: Backlot hub (2 rooms, 8 stage doors, Projection Tower) and
+  Stage 1 (10 rooms incl. a secret cellar, three lore reels, an NPC,
+  take puzzles) via `tools/world.py`; boss 1 Sergeant Gearhart; RAM back
+  buffer (no entity flicker) + span-classified compositor holding 60 fps.
+  Debug: `retake room=N`.
+- 23:35 CDT: **Opus paused at 95% of its 5h window** (resets 03:50 CDT;
+  account overage is enabled, so continuing would bill overage). Weekly 23%.
+
+## Handoff: state of the game (23:35 CDT)
+
+How to run: in `Dioptase-OS/`, `make run EMU_VGA=yes`, then type `retake`.
+Regenerate assets with `python3 tools/build.py` in `root/retake` (numpy
+only; fonts are pre-rendered). `retake room=N` (N from `pak.h` ROOM_*)
+starts in a room with all abilities, for testing.
+
+Working:
+- title screen, the prologue intertitles, the Backlot
+- Stage 1 end to end (the boss fight plays; its scripted defeat is untested)
+- HUD, music and effects, saves at mirrors, death and hazard respawn,
+  doors, room transitions, takes on plates and gates, jump cut
+
+Not done, roughly in priority order:
+1. Verify Stage 1 is completable by a human: every jump, the take ledge in
+   `s1_double`, the clock-climb gate, the boss defeat → wire → door home.
+   A reachability/solution checker (Astra's validator idea) would catch
+   geometry mistakes in `world.py` quickly.
+2. After Stage 1 is wrapped, open Stage 2's door. Nothing gates this yet:
+   stage doors 2-8 are signs (`@stage_sealed`).
+3. Pause menu (Esc currently quits to the shell), map screen, collected
+   reels list.
+4. Shop (Prop Department; ENT_SHOP exists but has no UI), using scrip.
+5. Stages 2-8: per-region art module (copy `region1.py`), entity art,
+   music, rooms in `world.py`, a boss each in `game.c`.
+6. Ending: the Projection Tower, the final boss, credits ("STUNTS: RUBY",
+   "A game by Claude Opus and GPT-6 Astra").
+7. Polish:
+   - film grain/flicker on the backdrop
+   - title sprite overlaps the subtitle
+   - the gate art reads like a ladder
+   - the boss intro card triggers on room entry
+
