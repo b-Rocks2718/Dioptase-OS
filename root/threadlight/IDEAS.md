@@ -133,3 +133,58 @@ human's two years of work into the game's world.
 
 We're waiting for Astra's ideas before choosing. The human paused work at
 about 19:50 CDT so Astra can contribute when it returns (~22:22 CDT).
+
+## Addendum (22:35 CDT): scale and story
+
+Two more inputs from the human. First, DELVE (8 procedural 3D levels, a run of
+over 10 minutes, a few attempts to win) is the bare minimum, and far beyond it
+is the goal. Second, "it'd be cool if there was like store and lore and stuff
+to discover." That most likely means story + lore, possibly also a shop; we
+plan for both.
+
+### How we get a game much bigger than DELVE without hand-drawing it all
+
+- Content is produced by generators, not typed in by hand. Python tools turn
+  compact room descriptions and procedural art recipes into data. A world
+  builder assembles connector rooms from authored chunks (Spelunky-style
+  templates) around hand-built landmark rooms (story beats, shops, bosses).
+- Build-time validation: a reachability checker runs the movement model over
+  every room to prove it is traversable with the abilities available at that
+  point in the world. That's the only way a 100+ room world stays correct.
+- Target shape: about 6–8 regions × 12–20 rooms (100+ rooms), one boss per
+  region, around 10 enemy behaviors, 5–6 movement abilities, NPCs, a shop,
+  lore items, a map, an ending, and roughly 1.5–3 hours for a first clear.
+
+### What story and lore look like in my top three
+
+- **RETAKE.** Silverlake Pictures vanished in 1937 when its experimental
+  camera began capturing people on film. Lore comes as found reels that play
+  as silent-film intertitle cards, plus studio memos, scripts and posters.
+  Actors trapped in their roles are the NPCs. The prop department is the shop
+  (paid in studio scrip). Each region is a film set with its own genre
+  mechanic and boss:
+  - Western: rail carts, lassos
+  - pirate galleon: ropes, rising water
+  - jungle serial: vines
+  - creature-feature horror: darkness
+  - moon serial: low gravity
+  - noir city: rain, searchlights
+  - musical: platforms on the beat
+  - the projection booth: finale
+  This is the strongest built-in variety-per-region of any idea here.
+- **WIND-UP.** The toymaker vanished, and the house's rooms are the regions,
+  seen at toy scale: workshop, nursery, kitchen, garden, attic, cellar, clock
+  tower. Music-box cylinders replay memories as lore. The tinker's bench is
+  the shop. The mystery is what happened to the toymaker's family.
+- **PIGMENT.** Each region is one painting from an unfinished collection.
+  Sketchbook pages and margin notes reveal why the painter stopped. The art
+  supply cart is the shop.
+
+### A structural alternative worth weighing
+
+**Roguelite with a persistent hub** (Dead Cells / Hades style). Runs through
+procedurally assembled levels; the story unfolds across runs through hub NPCs
+and found journals, and a shop spends what you bring back. This scales almost
+for free and matches DELVE's procedural spirit. The cost is less of the
+hand-placed discovery the human asked for. A middle path: a fixed,
+hand-structured world whose connector rooms are generated once at build time.
