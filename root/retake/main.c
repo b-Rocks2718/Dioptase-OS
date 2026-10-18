@@ -43,6 +43,7 @@ static int cam_x;
 static int cam_y;
 static unsigned frame_clock;
 static int current_song = -1;
+static int current_region = -1;
 
 static short title_ramp[4] = {0, 0x345, 0xABC, 0xEFF};
 static short dim_ramp[4] = {0, 0x123, 0x567, 0x89A};
@@ -90,8 +91,25 @@ static void update_camera(int snap) {
   if (cam_y < 0) cam_y = 0;
 }
 
+/* Region 2 dresses the same behaviors as Western characters. */
+static int region2_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER2_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER2_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER2_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER2_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER2_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return e->b ? IMG_COAL_0 : IMG_SHOT2_0;
+    default: return -1;
+  }
+}
+
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
+  if (current_region == 2) {
+    int v = region2_image(e);
+    if (v >= 0) return v;
+  }
   switch (e->kind) {
     case ENT_COIN: return IMG_COIN_0 + ((e->anim >> 3) & 3);
     case ENT_HEART: return IMG_HEART_0 + ((frame_clock >> 4) & 1);
@@ -113,7 +131,9 @@ static int ent_image(struct Ent* e) {
     case ENT_SPRING: return IMG_SPRING_0 + (e->timer > 0 ? 1 : 0);
     case ENT_SHOP: return IMG_SHOP_0;
     case ENT_WAVE: return IMG_WAVE_0;
+    case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 2) return e->state == 13 ? IMG_BOSS2_3 : IMG_BOSS2_0 + ((e->x >> 10) % 3 + 3) % 3;
       switch (e->state) {
         case 2: return IMG_BOSS1_2;            /* slam wind-up: baton raised */
         case 3: return IMG_BOSS1_3;            /* slam */
@@ -158,6 +178,7 @@ static void draw_entities(void) {
                               e->kind == ENT_CHARGER || e->kind == ENT_HOPPER || e->kind == ENT_BOSS);
     int x = ex + (ew >> 1) - (iw >> 1);
     int y = ey + eh - ih;
+    if (e->kind == ENT_PLATFORM) y = ey;
     if (e->kind == ENT_SANDBAG || e->kind == ENT_SHOT || e->kind == ENT_FLYER || e->kind == ENT_COIN) y = ey;
     draw_image(img, x, y, flip);
     if (interactable(e->kind)) {
@@ -174,7 +195,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = 16;
+  int total = g_boss->a == 2 ? 10 : 16;
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -225,8 +246,11 @@ static void draw_hud(void) {
 /* Music for the room Ruby is in. */
 static void choose_music(void) {
   int region = pak_room(g_room_index)->region;
-  int song = region == 0 ? MUSIC_BACKLOT : MUSIC_STAGE1;
-  if (g_room_index == ROOM_S1_CLOCK_TOP) song = MUSIC_CHASE;
+  current_region = region;
+  int song = MUSIC_STAGE1;
+  if (region == 0) song = MUSIC_BACKLOT;
+  if (region == 2) song = MUSIC_STAGE2;
+  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA) song = MUSIC_CHASE;
   if (song != current_song) {
     audio_music(song);
     current_song = song;

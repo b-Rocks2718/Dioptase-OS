@@ -26,6 +26,7 @@ CHORDS = {
     "Dm": ("D3", "A2", "F4", "A4"),
     "G7": ("G2", "D3", "F4", "B4"),
     "G": ("G2", "D3", "D4", "B4"),
+    "D": ("D3", "A2", "F#4", "A4"),
     "F": ("F2", "C3", "A4", "C5"),
     "Fm": ("F2", "C3", "Ab4", "C5"),
     "F#dim": ("F#2", "C3", "A4", "Eb5"),
@@ -99,6 +100,16 @@ F#5 A5 - C6 | D6 - C6 A5 | B5 D6 - F6 | - D6 B5 G5 | E6 - D6 C6 | G5 - E5 C5 | C
 TITLE_BEATS = ["F", "F", "F#dim", "F#dim", "C/G", "C/G", "A7", "A7", "D7", "D7", "G7", "G7", "C", "C", "C", "C"]
 _tb, _t1, _t2 = oompah(TITLE_BEATS)
 
+# ---- Stage 2: a trail tune for harmonica (reed) over a loping bass ----
+WEST_MELODY = """
+G4 - - B4 | D5 - - B4 | C5 - B4 A4 | G4 - - - | E4 - - G4 | A4 - G4 E4 | D4 - - - | . - - - |
+G4 - - B4 | D5 - - G5 | F#5 - E5 D5 | E5 - - - | C5 - - E5 | D5 - B4 G4 | A4 - - - | . - - - |
+G4 - - B4 | D5 - - B4 | C5 - B4 A4 | G4 - - - | E4 - - G4 | A4 - G4 E4 | D4 - F#4 A4 | G4 - - - |
+"""
+WEST_BEATS = ["G", "G", "C", "G", "C", "C", "D7", "D7", "G", "G", "D7", "C", "C", "G", "D7", "D7",
+              "G", "G", "C", "G", "C", "C", "D7", "G"]
+_wb, _w1, _w2 = oompah(WEST_BEATS)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -106,6 +117,8 @@ SONGS = {
                                          ("piano_chord", _r1), ("piano_chord", _r2)]},
     "chase": {"tempo": 8, "channels": [("piano", CHASE_MELODY), ("piano_bass", _cb),
                                        ("piano_chord", _c1), ("piano_chord", _c2)]},
+    "stage2": {"tempo": 13, "channels": [("organ_lead", WEST_MELODY), ("tri_bass", _wb),
+                                         ("piano_chord", _w1), ("piano_chord", _w2)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }

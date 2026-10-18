@@ -25,6 +25,8 @@ def backlot():
         r.stamp(x + 8, 10, "w")
         if n == 1:
             r.ent("door", x + 6, 25, a="#s1_entry", b=6, c=25, d=1)
+        elif n == 2:
+            r.ent("door", x + 6, 25, a="#s2_entry", b=6, c=25, d=1 | (1 << 4))
         else:
             r.ent("sign", x + 7, 25, a="@stage_sealed")
     for x in (23, 41, 59, 77):
@@ -263,5 +265,166 @@ def stage1():
     return out
 
 
+def stage2():
+    """Stage 2, "Dust & Iron": Ruby now has the stunt wire (double jump)."""
+    out = []
+    # ---- The edge of town ----
+    r = Draft("s2_entry", 2, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.stamp(20, 20, "C")
+    r.stamp(30, 9, "M")
+    r.plank(10, 21, 6)
+    r.ent("door", 3, 25, a="#backlot_west", b=33, c=25)
+    r.ent("sign", 8, 25, a="@s2_title")
+    r.ent("mirror", 12, 25)
+    r.ent("coin", 11, 20)
+    r.ent("coin", 13, 20)
+    r.ent("hopper", 30, 25)
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    # ---- Main street: saloon, jail, general store ----
+    r = Draft("s2_main_street", 2, (40, 0), (80, 30))
+    r.ground(26)
+    r.back(2, 10, 20, 26)
+    r.stamp(8, 22, "D")
+    r.stamp(5, 12, "H")
+    r.stamp(4, 15, "W")
+    r.stamp(13, 15, "w")
+    r.girder(2, 9, 18)                          # saloon roof
+    r.back(26, 14, 40, 26)
+    r.stamp(29, 16, "K")
+    r.stamp(28, 20, "w")
+    r.stamp(34, 20, "w")
+    r.girder(26, 13, 14)                        # jail roof
+    r.stamp(42, 21, "P")
+    r.back(48, 12, 66, 26)
+    r.stamp(52, 14, "F")
+    r.stamp(50, 18, "W")
+    r.stamp(58, 18, "W")
+    r.girder(48, 11, 18)                        # store roof
+    r.stamp(70, 4, "T")
+    r.plank(20, 20, 6)
+    r.plank(40, 18, 6)
+    r.ent("npc", 32, 25, a="@s2_sheriff")
+    r.ent("walker", 14, 25)
+    r.ent("walker", 46, 25)
+    r.ent("thrower", 56, 10)
+    r.ent("flyer", 38, 6, a=8)
+    r.ent("reel", 33, 12, a="@s2_reel_a")
+    for x in (21, 23, 25, 41, 43, 45):
+        r.ent("coin", x, 19 if x < 30 else 17)
+    r.ent("heart", 62, 25)
+    out.append(r.done())
+
+    # ---- The canyon: trestles over a gorge (the bottom is a fatal drop) ----
+    r = Draft("s2_canyon", 2, (120, 0), (80, 30))
+    r.fill(0, 26, 12, 30)                       # left mesa, level with Main Street
+    r.girder(12, 24, 6)
+    r.girder(21, 21, 6)
+    r.fill(30, 22, 40, 30)                      # the middle pillar, cactus on its rims
+    r.nails(30, 21, 3)
+    r.nails(37, 21, 3)
+    r.girder(42, 19, 6)
+    r.girder(50, 16, 6)
+    r.fill(58, 20, 80, 30)                      # right mesa
+    r.girder(30, 12, 8)                         # a high perch for the wire
+    r.stamp(4, 18, "C")
+    r.stamp(66, 10, "C")
+    r.ent("coin", 31, 11)
+    r.ent("coin", 33, 11)
+    r.ent("frame", 36, 11)
+    r.ent("charger", 70, 19)
+    r.ent("hopper", 34, 21)
+    r.ent("flyer", 26, 12, a=6)
+    r.ent("flyer", 52, 9, a=6)
+    out.append(r.done())
+
+    # ---- The mine mouth ----
+    r = Draft("s2_mine_mouth", 2, (200, 0), (40, 30))
+    r.fill(0, 20, 26, 30)                       # level with the canyon's right mesa
+    r.fill(30, 20, 40, 30)
+    r.clear(26, 20, 30, 30)                     # the shaft down into the mine
+    r.plank(26, 20, 4)
+    r.wall(38, 0, 20, w=2)
+    r.stamp(27, 9, "N")
+    r.stamp(8, 12, "C")
+    r.ent("mirror", 6, 19)
+    r.ent("sign", 14, 19, a="@s2_cart_hint")
+    r.ent("walker", 20, 19)
+    out.append(r.done())
+
+    # ---- The mine: carts over the dark ----
+    r = Draft("s2_mine", 2, (200, 30), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.back(2, 2, 78, 26)
+    r.fill(0, 22, 26, 30)
+    r.clear(26, 0, 30, 2)                       # the way back up to the mouth
+    r.fill(26, 26, 30, 30)
+    r.fill(66, 26, 80, 30)                      # level with the shaft's floor
+    r.ent("platform", 30, 22, a=10, b=0, c=120, d=4)
+    r.ent("platform", 46, 18, a=8, b=0, c=150, d=4)
+    r.girder(58, 14, 6)
+    r.ent("reel", 61, 13, a="@s2_reel_b")
+    r.ent("coin", 40, 15)
+    r.ent("coin", 50, 12)
+    r.ent("flyer", 40, 8, a=8)
+    r.ent("hopper", 70, 21)
+    r.wall(78, 2, 14, w=2)
+    out.append(r.done())
+
+    # ---- The shaft: elevator cages up to the rail yard ----
+    r = Draft("s2_shaft", 2, (280, 0), (40, 60))
+    r.wall(38, 12, 60, w=2)
+    r.fill(0, 0, 40, 2)
+    r.wall(0, 2, 52, w=2)                       # opening at the bottom-left from the mine
+    r.ground(56)
+    r.back(2, 2, 38, 56)
+    r.ent("platform", 8, 40, a=12, b=1, c=110, d=4)
+    r.girder(16, 38, 6)
+    r.ent("platform", 26, 28, a=10, b=1, c=130, d=4)
+    r.girder(14, 20, 6)
+    r.girder(26, 12, 12)
+    r.ent("sandbag", 18, 39)
+    r.ent("coin", 17, 37)
+    r.ent("coin", 19, 37)
+    r.ent("flyer", 20, 26, a=6)
+    out.append(r.done())
+
+    # ---- The rail yard ----
+    r = Draft("s2_rail_yard", 2, (320, 0), (80, 30))
+    r.ground(26)
+    r.fill(0, 0, 80, 2)
+    r.block(0, 12, 6, 14)
+    r.block(10, 20, 12, 6)                      # boxcars
+    r.block(28, 18, 12, 8)
+    r.block(46, 21, 10, 5)
+    r.stamp(62, 6, "T")
+    r.girder(60, 13, 8)
+    r.ent("sign", 6, 25, a="@s2_brake_hint")
+    r.ent("walker", 20, 19)
+    r.ent("thrower", 34, 17)
+    r.ent("charger", 58, 25)
+    r.ent("reel", 64, 12, a="@s2_reel_c")
+    r.ent("heart", 50, 20)
+    out.append(r.done())
+
+    # ---- The Iron Horse's yard ----
+    r = Draft("s2_arena", 2, (400, 0), (60, 30))
+    r.ground(26)
+    r.fill(0, 0, 60, 2)
+    r.wall(58, 2, 26, w=2)
+    r.girder(4, 18, 8)
+    r.girder(22, 15, 10)                        # the signal platform with the brake
+    r.girder(46, 18, 8)
+    r.ent("plate", 26, 14, a=3, b=1)
+    r.ent("plate", 27, 14, a=3, b=1)
+    r.stamp(52, 6, "M")
+    r.ent("boss", 30, 25, a=2)
+    out.append(r.done())
+    return out
+
+
 def all_rooms():
-    return backlot() + stage1()
+    return backlot() + stage1() + stage2()

@@ -89,6 +89,45 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nStage 1 falls quiet. Somewhere below, a comedian finally stops slipping.",
         "Tangled in the Sergeant's springs: a coil of STUNT WIRE.\n\n(Press jump again in the air for a second jump.)",
     ],
+    # ---- Stage 2 ----
+    "s2_title": [
+        "DUST & IRON\n\nA Western in three reels. Scene 1, Take 1.",
+    ],
+    "s2_sheriff": [
+        "\"This town ain't big enough for the... for the...\"",
+        "\"Dang it. Forty years I've been saying that line, and I still can't remember how it ends.\"",
+        "\"You look like a gal who's read the script. The Iron Horse runs the yard past the mine. Mind the BRAKE: hold it down and that engine stops cold.\"",
+    ],
+    "s2_cart_hint": [
+        "MINE FOREMAN:\n\nRide the carts. Don't ride the bulls.",
+    ],
+    "s2_brake_hint": [
+        "SWITCHMAN'S NOTE:\n\nPull the BRAKE and the engine stops. Nobody can hold it and fight at the same time...",
+        "...unless they happen to have a double.",
+    ],
+    "s2_reel_a": [
+        "LOST REEL: \"Dust & Iron, Dailies\" (1934)",
+        "Take 31. The stunt rider leaps from the cliff onto the moving train. Perfect.",
+        "Vale's voice, off camera:\n\n\"Again. I want to see it a thousand times.\"",
+    ],
+    "s2_reel_b": [
+        "LOST REEL: \"A Letter, Unsent\" (1935)",
+        "\"Dear Augustin. The crew is tired. You keep asking for more takes than we have days.\"",
+        "\"Pictures end. That is what makes them pictures.\n\n- V. L.\"",
+    ],
+    "s2_reel_c": [
+        "LOST REEL: \"Camera No. 7, Lens Test\" (1936)",
+        "The camera points at a mirror. In the mirror, the camera is pointed at a mirror.",
+        "The film is longer than the reel it was wound on.",
+    ],
+    "s2_boss_intro": [
+        "THE IRON HORSE",
+        "Somewhere a whistle screams. The rails begin to hum.",
+    ],
+    "s2_wrap": [
+        "THAT'S A WRAP!\n\nThe locomotive coughs, sighs, and rolls to a stop for good.",
+        "In the cab, wrapped in a red flag: a pair of editor's shears.\n\nJUMP CUT. (Press V to cut straight to your newest take.)",
+    ],
     "test_sign": [
         "SILVERLAKE PICTURES\nSTAGE 1\n\nPLEASE KEEP OFF THE SCAFFOLDING\nDURING TAKES.",
     ],

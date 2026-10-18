@@ -145,3 +145,92 @@ if __name__ == "__main__":
     strip = np.concatenate(frames, axis=1)
     pix.write_png(sys.argv[1] if len(sys.argv) > 1 else "/tmp/retake-prev/boss.png", strip, scale=5,
                   background=(150, 140, 120))
+
+
+# ---------------------------------------------------------------- the Iron Horse
+
+LW, LH = 72, 44
+
+
+def amber(level):
+    level = max(0, min(15, int(level)))
+    return pix.rgb(min(15, level + (2 if level > 2 else 0)), level, max(0, level - 4))
+
+
+def locomotive(frame, firebox=False):
+    """A 4-4-0 locomotive facing left. frame rotates the wheel spokes."""
+    c = Canvas.__new__(Canvas)
+    c.img = pix.new_image(LW, LH)
+
+    def disc(cx, cy, r, col, ry=None):
+        ry = ry if ry is not None else r
+        for y in range(int(cy - ry - 1), int(cy + ry + 2)):
+            for x in range(int(cx - r - 1), int(cx + r + 2)):
+                if 0 <= x < LW and 0 <= y < LH and ((x - cx) / r) ** 2 + ((y - cy) / ry) ** 2 <= 1.0:
+                    c.img[y, x] = col
+
+    def rect(x0, y0, x1, y1, col):
+        c.img[max(0, y0):min(LH, y1), max(0, x0):min(LW, x1)] = col
+
+    # cab and roof
+    rect(52, 8, 70, 33, amber(5))
+    rect(50, 5, 72, 8, amber(3))
+    rect(56, 12, 66, 20, amber(12) if firebox else amber(2))   # cab window
+    # boiler with bands
+    rect(12, 15, 54, 31, amber(6))
+    rect(12, 15, 54, 17, amber(9))
+    for bx in (20, 30, 40):
+        rect(bx, 15, bx + 2, 31, amber(4))
+    # smokebox front with headlamp
+    rect(8, 13, 14, 32, amber(3))
+    disc(12, 11, 3, amber(14))
+    # smokestack (flared) and steam dome
+    rect(17, 4, 23, 15, amber(3))
+    rect(15, 1, 25, 5, amber(2))
+    disc(36, 14, 4, amber(7), ry=3)
+    # firebox at the back of the boiler
+    rect(46, 24, 53, 31, amber(15) if firebox else amber(4))
+    # cowcatcher
+    for i in range(10):
+        rect(1 + i, 31 + i // 2, 10, 32 + i // 2, amber(4))
+    for x in range(2, 10, 2):
+        rect(x, 32, x + 1, 37, amber(2))
+    # frame
+    rect(8, 31, 70, 34, amber(2))
+    # wheels with rotating spokes
+    for wx, wy, r in ((14, 39, 4), (30, 37, 6), (44, 37, 6), (60, 39, 4)):
+        disc(wx, wy, r, amber(2))
+        disc(wx, wy, r - 1, amber(8))
+        for k in range(4):
+            ang = (k * math.pi / 4) + frame * math.pi / 6
+            for rr in range(r - 1):
+                x = int(round(wx + rr * math.cos(ang)))
+                y = int(round(wy + rr * math.sin(ang)))
+                if 0 <= x < LW and 0 <= y < LH:
+                    c.img[y, x] = amber(3)
+        disc(wx, wy, 1, amber(13))
+    # coupling rod between the drive wheels, riding with the crank
+    ang = frame * math.pi / 6
+    ox = int(round(3 * math.cos(ang)))
+    oy = int(round(3 * math.sin(ang)))
+    for x in range(30 + ox, 45 + ox):
+        if 0 <= x < LW:
+            c.img[37 + oy, x] = amber(13)
+    if firebox:
+        for px, py in ((24, 2), (28, 0), (32, 3)):
+            disc(px, py, 2.5, amber(15))
+    return pix.outline(c.img, amber(0))
+
+
+def coal():
+    s = pix.new_image(6, 6)
+    for y in range(6):
+        for x in range(6):
+            if (x - 2.5) ** 2 + (y - 2.5) ** 2 <= 6:
+                s[y, x] = pix.rgb(15, 8, 1) if (x + y) % 3 else pix.rgb(15, 13, 4)
+    return s
+
+
+def build_boss2():
+    frames = [locomotive(f) for f in range(3)] + [locomotive(0, firebox=True)]
+    return [("boss2", frames), ("coal", [coal()])]

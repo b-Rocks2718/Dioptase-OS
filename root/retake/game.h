@@ -38,7 +38,8 @@
 #define ENT_BOSS 20      /* a: boss id */
 #define ENT_SHOP 21      /* the Prop Department counter */
 #define ENT_WAVE 22      /* a boss's ground shockwave (spawned) */
-#define ENT_KINDS 23
+#define ENT_PLATFORM 23  /* moving platform: a range tiles, b axis (0 x, 1 y), c speed Q8/tick, d width tiles */
+#define ENT_KINDS 24
 
 #define MAX_ENTS 40
 #define MAX_FLAGS 2048
