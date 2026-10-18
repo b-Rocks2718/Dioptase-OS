@@ -165,6 +165,11 @@ void hud_number(int col, int value, int digits, int red);
 void hud_draw(int health, int max_health, int scrip, int slots, int slot_limit, int recording, int blink);
 void hud_bar_clear(void);
 
+/* ---- menus.c ---- */
+
+void shop_run(void);
+int pause_run(void);
+
 void tl_copy_words(void* dst, void* src, int words);
 void rt_composite(void* dst, void* room_row, void* bg_row, int words);
 

@@ -110,6 +110,7 @@ extern int g_ent_count;
 extern int g_health;
 extern unsigned g_events;
 extern int g_pending_script;   /* script to show after this tick, or -1 */
+extern int g_pending_shop;     /* the Prop Department counter was used this tick */
 extern int g_switch[16];
 extern struct Ent* g_boss;     /* the room's boss, or 0 */
 
@@ -119,6 +120,7 @@ int game_save(void);
 void game_enter_room(int room, int x_px, int y_px);
 void game_tick(int held, int pressed);
 int flag_get(int id);
+#define BOSS_FLAG_BASE 2000      /* flag ids 2000+ mark defeated bosses */
 void flag_set(int id);
 
 #endif

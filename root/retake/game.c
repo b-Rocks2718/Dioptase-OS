@@ -31,7 +31,6 @@
 #define ENT_FALL_MAX 1024
 #define SHOT_TICKS 180
 #define BOSS1_HP 16
-#define BOSS_FLAG_BASE 2000      /* flag ids 2000+ mark defeated bosses */
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -42,6 +41,7 @@ int g_ent_count;
 int g_health;
 unsigned g_events;
 int g_pending_script = -1;
+int g_pending_shop;
 int g_switch[16];
 
 struct Ent* g_boss;
@@ -896,8 +896,18 @@ static void pickups_and_interactions(int pressed) {
       case ENT_NPC:
         if (want && g_hero.on_ground) g_pending_script = e->a;
         break;
+      case ENT_SHOP:
+        if (want && g_hero.on_ground) g_pending_shop = 1;
+        break;
       case ENT_DOOR:
         if (want && g_hero.on_ground) {
+          /* d bit 0: drawn by the room art; d bits 4..7: boss that must be
+           * defeated first (a sealed stage door until then) */
+          int needs = (e->d >> 4) & 15;
+          if (needs && !flag_get(BOSS_FLAG_BASE + needs)) {
+            g_pending_script = SCRIPT_STAGE_SEALED;
+            break;
+          }
           game_enter_room(e->a, e->b << 3, (e->c << 3) + TILE - PLAYER_H);
           return;
         }

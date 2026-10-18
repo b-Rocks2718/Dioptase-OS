@@ -331,60 +331,29 @@ static void parse_args(int argc, char** argv) {
   }
 }
 
-int main(int argc, char** argv) {
-  parse_args(argc, argv);
-  if (pak_open() != 0) return 1;
-  audio_start();      /* fork the synthesizer before the big buffers exist */
-  audio_music(MUSIC_TITLE);
-  current_song = MUSIC_TITLE;
-  room_system_init();
-  if (display_init() != 0) return 1;
-  input_init();
-  sprites_init();
-  sheet_load(SHEET_HERO);
-  sheet_load(SHEET_GHOST_A);
-  sheet_load(SHEET_GHOST_B);
-
-  int fd = open_existing("/retake/save.dat");
-  int have_save = fd >= 0;
-  if (fd >= 0) close(fd);
-  int choice = debug_room >= 0 ? 2 : title_screen(have_save);
-  if (choice < 0) {
-    audio_stop();
-    input_shutdown();
-    display_shutdown();
-    return 0;
-  }
-  audio_sfx(SFX_CLAP);
-  if (choice == 2) {
-    game_new(debug_room);
-    g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
-    g_hero.abilities = g_prog.abilities;
-  } else if (choice == 1 && game_load() == 0) {
-    /* continuing */
-  } else {
-    card_show(SCRIPT_INTRO);
-    game_new(START_ROOM);
-  }
-  choose_music();
+/* Play from the current game state until the player quits to the title. */
+static void play(void) {
   update_camera(1);
   hud_bar_clear();
-
+  choose_music();
   unsigned last = get_vga_frame_counter();
   unsigned fps_mark = last;
   int fps_frames = 0;
-  int running = 1;
-  while (running) {
+  while (1) {
     unsigned now = get_vga_frame_counter();
     while (now == last) now = get_vga_frame_counter();
     int ticks = (int)(now - last);
     if (ticks > 4) ticks = 4;
     last = now;
     input_poll();
-    if (input_key_hit(KEY_ESC)) running = 0;
+    if (input_key_hit(KEY_ESC)) {
+      if (pause_run()) return;
+      last = get_vga_frame_counter();
+      continue;
+    }
     int held = input_held();
     int pressed = input_take_pressed();
-    for (int t = 0; t < ticks && running; t++) {
+    for (int t = 0; t < ticks; t++) {
       game_tick(held, pressed);
       pressed = 0;
       frame_clock++;
@@ -395,6 +364,12 @@ int main(int argc, char** argv) {
         choose_music();
       }
       if (g_events & GE_SAVE) g_pending_script = SCRIPT_SAVED;
+      if (g_pending_shop) {
+        g_pending_shop = 0;
+        shop_run();
+        last = get_vga_frame_counter();
+        break;
+      }
       if (g_pending_script >= 0) {
         int script = g_pending_script;
         g_pending_script = -1;
@@ -412,6 +387,45 @@ int main(int argc, char** argv) {
       fps_frames = 0;
       fps_mark = now;
     }
+  }
+}
+
+int main(int argc, char** argv) {
+  parse_args(argc, argv);
+  if (pak_open() != 0) return 1;
+  audio_start();      /* fork the synthesizer before the big buffers exist */
+  room_system_init();
+  if (display_init() != 0) return 1;
+  input_init();
+  sprites_init();
+  sheet_load(SHEET_HERO);
+  sheet_load(SHEET_GHOST_A);
+  sheet_load(SHEET_GHOST_B);
+
+  while (1) {
+    int choice = 2;
+    if (debug_room < 0) {
+      audio_music(MUSIC_TITLE);
+      current_song = MUSIC_TITLE;
+      int fd = open_existing("/retake/save.dat");
+      int have_save = fd >= 0;
+      if (fd >= 0) close(fd);
+      choice = title_screen(have_save);
+      if (choice < 0) break;
+      audio_sfx(SFX_CLAP);
+    }
+    if (choice == 2) {
+      game_new(debug_room);
+      g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
+      g_hero.abilities = g_prog.abilities;
+    } else if (choice == 1 && game_load() == 0) {
+      /* continuing from the last mirror */
+    } else {
+      card_show(SCRIPT_INTRO);
+      game_new(START_ROOM);
+    }
+    play();
+    if (debug_room >= 0) break;
   }
   audio_stop();
   input_shutdown();

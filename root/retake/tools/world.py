@@ -32,6 +32,7 @@ def backlot():
     r.stamp(3, 21, "L")
     r.ent("sign", 5, 25, a="@backlot_gate")
     r.ent("mirror", 3, 25)
+    r.ent("shop", 22, 25)
     for x in (21, 24, 39, 42, 57, 60):
         r.ent("coin", x, 25)
     r.spawn(2, 25)
