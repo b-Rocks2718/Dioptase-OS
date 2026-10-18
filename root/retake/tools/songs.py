@@ -18,6 +18,7 @@ INSTRUMENTS = [
     ("tri_bass", "triangle", 13, 0, 13, 2, 0, 0),
     ("tom", "triangle", 14, 2, 0, 1, 0, 0),
     ("marimba", "sine", 12, 4, 0, 2, 0, 0),
+    ("theremin", "sine", 11, 0, 11, 3, 3, 4),
 ]
 
 CHORDS = {
@@ -33,6 +34,8 @@ CHORDS = {
     "Fm": ("F2", "C3", "Ab4", "C5"),
     "F#dim": ("F#2", "C3", "A4", "Eb5"),
     "C/G": ("G2", "C3", "E4", "C5"),
+    "Em": ("E2", "B2", "G4", "B4"),
+    "B7": ("B2", "F#2", "D#4", "A4"),
     "E7": ("E2", "B2", "G#4", "D5"),
     "Am": ("A2", "E3", "C4", "E4"),
     "Dm/A": ("A2", "D3", "F4", "A4"),
@@ -130,6 +133,30 @@ A4 - C5 - | E5 - D5 C5 | A4 - - - | G4 - E4 - | G4 - A4 - | C5 - D5 C5 | A4 - - 
 JUNGLE_TOMS = " ".join(["A2 - A2 - E2 - A2 -"] * 8)
 JUNGLE_BASS = " ".join(["A2 - - - - - - -", "G2 - - - - - - -", "A2 - - - - - - -", "E2 - - - - - - -"] * 2)
 
+# ---- Stage 5: an organ and a theremin in the haunted manor ----
+HORROR_LEAD = """
+E4 - - - - - - - | G4 - - - F#4 - - - | E4 - - - - - - - | B3 - - - - - . - |
+C4 - - - - - - - | E4 - - - D#4 - - - | B3 - - - - - - - | . - - - - - - - |
+E5 - - - D5 - - - | C5 - - - B4 - - - | A4 - - - C5 - - - | B4 - - - - - . - |
+"""
+HORROR_BEATS = ["Em", "Em", "Em", "Em", "Em", "Em", "B7", "B7", "C", "C", "Am", "Am", "B7", "B7", "B7", "B7",
+                "Em", "Em", "C", "C", "Am", "Am", "B7", "B7"]
+_hl1, _hl2 = held_chords(HORROR_BEATS, 4)
+_hbass = " ".join([[CHORDS[b][0] for b in HORROR_BEATS][i] if j == 0 else "-"
+                   for i in range(len(HORROR_BEATS)) for j in range(4)])
+
+# ---- Stage 6: "Rocket Rangers of the Moon" (a serial's heroic march) ----
+SPACE_MELODY = """
+A4 - - - E5 - - - | A5 - G5 - E5 - C5 - | F5 - - - A5 - - - | G5 - F5 - E5 - D5 - |
+D5 - - - G5 - - - | B5 - A5 - G5 - D5 - | E5 - - - G#5 - - - | B5 - - - - - . r |
+A4 - - - E5 - - - | A5 - C6 - B5 - A5 - | C6 - - - A5 - F5 - | A5 - - - C6 - - - |
+D6 - - - A5 - F5 - | D5 - F5 - A5 - D6 - | E6 - - - D6 - B5 - | G#5 - - - E5 - . r |
+"""
+SPACE_BEATS = ["Am", "Am", "F", "F", "G", "G", "E7", "E7", "Am", "Am", "F", "F", "Dm", "Dm", "E7", "E7"]
+_sp_arp = " ".join(" ".join([CHORDS[b][2], ".", CHORDS[b][3], ".", CHORDS[b][2], ".", CHORDS[b][3], "."])
+                   for b in SPACE_BEATS)
+_sp_bass = " ".join(" ".join([CHORDS[b][0], "-", "-", "-", CHORDS[b][1], "-", "-", "-"]) for b in SPACE_BEATS)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -143,6 +170,10 @@ SONGS = {
                                          ("piano_chord", _s1), ("piano_chord", _s2)]},
     "stage4": {"tempo": 10, "channels": [("marimba", JUNGLE_MELODY), ("tom", JUNGLE_TOMS),
                                          ("tri_bass", JUNGLE_BASS)]},
+    "stage5": {"tempo": 15, "channels": [("theremin", HORROR_LEAD), ("organ", _hl1), ("organ", _hl2),
+                                         ("tri_bass", _hbass)]},
+    "stage6": {"tempo": 11, "channels": [("square_lead", SPACE_MELODY), ("marimba", _sp_arp),
+                                         ("tri_bass", _sp_bass)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }

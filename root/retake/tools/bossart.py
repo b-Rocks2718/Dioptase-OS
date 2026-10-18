@@ -430,3 +430,54 @@ def boulder():
 def build_boss5():
     frames = [ape(p) for p in ("idle0", "idle1", "pound", "throw", "leap")]
     return [("boss5", frames), ("boulder", [boulder()])]
+
+
+# ---------------------------------------------------------------- the Monster
+
+def monster(pose):
+    """The Monster of Hollow Manor, facing left, 40x56. pose: idle0, idle1,
+    raise (calling the lightning), stomp."""
+    w, h = 40, 56
+    img = pix.new_image(w, h)
+    vi = lambda l: pix.rgb(max(0, min(15, l)), max(0, l - 1), min(15, l + 1))
+
+    def rect(x0, y0, x1, y1, col):
+        img[max(0, y0):min(h, y1), max(0, x0):min(w, x1)] = col
+
+    bob = 1 if pose == "idle1" else 0
+    # boots and legs
+    stomp = 4 if pose == "stomp" else 0
+    rect(12, 44, 19, 52 - stomp, vi(3))
+    rect(22, 44, 29, 52, vi(3))
+    rect(10, 52 - stomp, 20, 56 - stomp, vi(1))
+    rect(21, 52, 31, 56, vi(1))
+    # coat
+    rect(10, 24 + bob, 31, 46, vi(4))
+    rect(10, 24 + bob, 13, 46, vi(6))
+    rect(19, 26 + bob, 21, 44, vi(2))
+    # head: flat top, scar, bolts
+    rect(13, 6 + bob, 28, 23 + bob, vi(11))
+    rect(12, 4 + bob, 29, 9 + bob, vi(1))          # flat black hair
+    rect(15, 13 + bob, 18, 15 + bob, vi(1))        # eyes, sunken
+    rect(22, 13 + bob, 25, 15 + bob, vi(1))
+    rect(15, 19 + bob, 26, 20 + bob, vi(3))        # grim mouth
+    for y in range(9 + bob, 13 + bob):
+        img[y, 20] = vi(4)                         # stitches
+    rect(10, 16 + bob, 13, 19 + bob, vi(13))       # neck bolts
+    rect(28, 16 + bob, 31, 19 + bob, vi(13))
+    # arms
+    if pose == "raise":
+        rect(6, 4, 11, 26, vi(4))
+        rect(30, 4, 35, 26, vi(4))
+        rect(5, 0, 12, 5, vi(11))
+        rect(29, 0, 36, 5, vi(11))
+    else:
+        rect(5, 24 + bob, 10, 42, vi(4))
+        rect(31, 24 + bob, 36, 42, vi(4))
+        rect(4, 41, 11, 45, vi(11))
+        rect(30, 41, 37, 45, vi(11))
+    return pix.outline(img, vi(0))
+
+
+def build_boss6():
+    return [("boss6", [monster(p) for p in ("idle0", "idle1", "raise", "stomp")])]

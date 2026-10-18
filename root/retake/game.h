@@ -42,7 +42,11 @@
 #define ENT_PLATFORM 23  /* moving platform: a range tiles, b axis (0 x, 1 y), c speed Q8/tick, d width tiles */
 #define ENT_TENTACLE 24  /* the Kraken's tentacle (spawned by boss 3) */
 #define ENT_CRUMBLE 25   /* a block that gives way 30 ticks after Ruby stands on it, back 3 s later */
-#define ENT_KINDS 26
+#define ENT_PENDULUM 26  /* swinging blade: a rope tiles, b phase 0..31, c ticks per phase step */
+#define ENT_BOLT 27      /* a lightning strike: warns, then strikes its column (spawned) */
+#define ENT_LASER 28     /* ray curtain: a beam tiles, b on ticks (0 steady), c off ticks,
+                            d phase | (width-1) << 8 | (switch+1) << 12 */
+#define ENT_KINDS 29
 
 /* Not a movement ability: the third take reel, granted like one. */
 #define AB_EXTRA_REEL 256
@@ -110,6 +114,9 @@ struct Progress {
 #define GE_BOSS_DOWN 32768
 #define GE_SLAM 65536
 #define GE_FINALE 131072  /* the Everlasting Camera is broken: roll the ending */
+#define GE_OVERCRANK 262144
+#define GE_THUNDER 524288
+#define GE_REWIND 1048576
 
 extern struct Player g_hero;
 extern struct Takes g_takes;
@@ -122,11 +129,13 @@ extern int g_pending_script;   /* script to show after this tick, or -1 */
 extern int g_pending_shop;     /* the Prop Department counter was used this tick */
 extern int g_switch[16];
 extern struct Ent* g_boss;     /* the room's boss, or 0 */
+extern int g_overcrank;        /* ticks of slow motion left (the world steps on even ticks) */
 
 void game_new(int start_room);
 int game_load(void);
 int game_save(void);
 int game_has_save(void);
+int game_rewind_target(int* x_q8, int* y_q8);
 void game_enter_room(int room, int x_px, int y_px);
 void game_tick(int held, int pressed);
 int flag_get(int id);

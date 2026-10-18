@@ -131,12 +131,103 @@ static int region4_image(struct Ent* e) {
   }
 }
 
+/* Region 5: the haunted manor. */
+static int region5_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER5_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER5_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER5_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER5_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER5_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT5_0;
+    default: return -1;
+  }
+}
+
+/* Region 6: the moon serial. */
+static int region6_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER6_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER6_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER6_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER6_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER6_0 + ((frame_clock >> 2) & 1);
+    case ENT_SHOT: return IMG_SHOT6_0;
+    case ENT_PLATFORM: return IMG_PAD6_0;
+    default: return -1;
+  }
+}
+
+
+/* Fill a rectangle of the back buffer, clipped to the play area. */
+static void fill_rect(int x, int y, int w, int h, int color) {
+  int x1 = x + w;
+  int y1 = y + h;
+  if (x < 0) x = 0;
+  if (y < HUD_PIXEL_ROWS) y = HUD_PIXEL_ROWS;
+  if (x1 > SCREEN_W) x1 = SCREEN_W;
+  if (y1 > VIEW_H) y1 = VIEW_H;
+  for (int yy = y; yy < y1; yy++) {
+    unsigned short* row = g_back + yy * SCREEN_W;
+    for (int xx = x; xx < x1; xx++) row[xx] = (unsigned short)color;
+  }
+}
+
+/* A ray curtain: the emitter housing in the tile above its hitbox, then one
+ * ray per tile of width. State 1 burns (bright, shimmering); state 2 is the
+ * warning just before it lights (a faint flickering guide); state 0 is dark.
+ * The hitbox is inset 2 px on each side of the curtain's tiles. */
+static void draw_laser(struct Ent* e, int ex, int ey, int ew, int eh) {
+  int x0 = ex - 2;
+  int tiles = (ew + 4) >> 3;
+  fill_rect(x0, ey - 7, tiles << 3, 6, 0x0444);
+  fill_rect(x0, ey - 7, tiles << 3, 1, 0x0888);
+  int lens = e->state == 1 ? 0x0C3E : (e->state == 2 && (frame_clock & 2) ? 0x0A2B : 0x0213);
+  for (int k = 0; k < tiles; k++) {
+    int rx = x0 + (k << 3) + 3;
+    fill_rect(rx - 1, ey - 2, 4, 2, lens);
+    if (e->state == 1) {
+      fill_rect(rx - 1, ey, 1, eh, 0x0C3E);
+      fill_rect(rx, ey, 1, eh, (frame_clock & 1) ? 0x0FFF : 0x0FDF);
+      fill_rect(rx + 1, ey, 1, eh, 0x0FDF);
+      fill_rect(rx + 2, ey, 1, eh, 0x0C3E);
+    } else if (e->state == 2 && (frame_clock & 2)) {
+      for (int y = ey + ((int)frame_clock & 3); y < ey + eh; y += 4) fill_rect(rx, y, 2, 1, 0x0A2B);
+    }
+  }
+}
+
+/* While Rewind is ready, a flickering frame marks where it would put Ruby. */
+static void draw_rewind_marker(void) {
+  int rx;
+  int ry;
+  if (!(g_prog.abilities & AB_REWIND) || !game_rewind_target(&rx, &ry)) return;
+  if (frame_clock & 4) return;
+  int x = (rx >> 8) - cam_x;
+  int y = (ry >> 8) - cam_y;
+  fill_rect(x - 1, y - 1, 3, 1, 0x0FD8);
+  fill_rect(x - 1, y - 1, 1, 3, 0x0FD8);
+  fill_rect(x + PLAYER_W - 2, y - 1, 3, 1, 0x0FD8);
+  fill_rect(x + PLAYER_W, y - 1, 1, 3, 0x0FD8);
+  fill_rect(x - 1, y + PLAYER_H, 3, 1, 0x0FD8);
+  fill_rect(x - 1, y + PLAYER_H - 2, 1, 3, 0x0FD8);
+  fill_rect(x + PLAYER_W - 2, y + PLAYER_H, 3, 1, 0x0FD8);
+  fill_rect(x + PLAYER_W, y + PLAYER_H - 2, 1, 3, 0x0FD8);
+}
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
   if (e->kind == ENT_SHOT && e->b == 2) return IMG_FILM_0;
   if (e->kind == ENT_SHOT && e->b == 3) return IMG_BOULDER_0;
   if (current_region == 4) {
     int v = region4_image(e);
+    if (v >= 0) return v;
+  }
+  if (current_region == 5) {
+    int v = region5_image(e);
+    if (v >= 0) return v;
+  }
+  if (current_region == 6) {
+    int v = region6_image(e);
     if (v >= 0) return v;
   }
   if (current_region == 2) {
@@ -170,6 +261,16 @@ static int ent_image(struct Ent* e) {
     case ENT_WAVE: return IMG_WAVE_0;
     case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 7) {
+        if (e->state == 61 || e->state == 62) return IMG_BOSS7_3;
+        if (e->state == 63) return IMG_BOSS7_2;
+        return IMG_BOSS7_0 + ((frame_clock >> 4) & 1);
+      }
+      if (e->a == 6) {
+        if (e->state == 51 || e->state == 53) return IMG_BOSS6_2;
+        if (e->state == 52) return IMG_BOSS6_3;
+        return IMG_BOSS6_0 + ((frame_clock >> 4) & 1);
+      }
       if (e->a == 5) {
         switch (e->state) {
           case 41: return IMG_BOSS5_2;
@@ -211,6 +312,60 @@ static void draw_entities(void) {
     int ey = (e->y >> 8) - cam_y;
     int ew = e->w >> 8;
     int eh = e->h >> 8;
+    if (e->kind == ENT_LASER) {
+      draw_laser(e, ex, ey, ew, eh);
+      continue;
+    }
+    if (e->kind == ENT_FLYER && current_region == 6) {
+      int wx = ex + (ew >> 1);                  /* the saucers fly on wires */
+      if (wx >= 0 && wx < SCREEN_W) {
+        for (int y = HUD_PIXEL_ROWS; y < ey && y < VIEW_H; y++) g_back[y * SCREEN_W + wx] = 0x0999;
+      }
+    }
+    if (e->kind == ENT_PENDULUM) {
+      int px = (e->tx << 3) + 4 - cam_x;
+      int py = (e->ty << 3) + 4 - cam_y;
+      int bx = ex + 6;
+      int by = ey + 4;
+      int n = (e->a > 0 ? e->a : 6) << 1;     /* a chain link every 4 px */
+      int sx = (bx - px) * 256 / n;
+      int sy = (by - py) * 256 / n;
+      int rx = px * 256;
+      int ry = py * 256;
+      for (int k = 0; k < n; k++) {
+        int x = rx >> 8;
+        int y = ry >> 8;
+        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0CBC;
+        rx += sx;
+        ry += sy;
+      }
+      draw_image(IMG_BLADE_0, bx - 7, by - 3, 0);
+      continue;
+    }
+    if (e->kind == ENT_BOLT) {
+      int bx = ex + 5;
+      int floor = e->c - cam_y;
+      if (e->state == 0) {
+        if (frame_clock & 2) {
+          for (int k = -3; k <= 3; k++) {
+            int x = bx + k;
+            int y = floor - 1 - (k < 0 ? -k : k);
+            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0FFF;
+          }
+        }
+      } else {
+        int jag = 0;
+        int edge = current_region == 6 ? 0x0C3E : 0x0EDE;   /* the Emperor's rays are magenta */
+        for (int y = HUD_PIXEL_ROWS; y < floor && y < VIEW_H; y++) {
+          if ((y & 7) == 0) jag = ((y * 7 + (int)frame_clock) & 3) - 1;
+          for (int w = -1; w <= 1; w++) {
+            int x = bx + jag + w;
+            if (x >= 0 && x < SCREEN_W) g_back[y * SCREEN_W + x] = w ? edge : 0x0FFF;
+          }
+        }
+      }
+      continue;
+    }
     if (e->kind == ENT_CRUMBLE) {
       if (e->state == 0) draw_image(IMG_CRUMBLE_0, ex, ey, 0);
       else if (e->state == 1) draw_image(IMG_CRUMBLE_1, ex + ((frame_clock & 2) ? 1 : -1), ey, 0);
@@ -264,7 +419,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = g_boss->a == 5 ? 20 : g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
+  int total = g_boss->a == 7 ? 22 : g_boss->a == 6 ? 20 : g_boss->a == 5 ? 20 : g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -310,6 +465,7 @@ static void draw_hud(void) {
   }
   hud_draw(g_health, g_prog.max_health, g_prog.scrip, slots, g_takes.slot_limit, g_takes.recording,
            (frame_clock >> 4) & 1);
+  hud_text(64, g_overcrank > 0 ? "OVERCRANK" : "         ", 0);
 }
 
 /* Music for the room Ruby is in. */
@@ -321,8 +477,11 @@ static void choose_music(void) {
   if (region == 2) song = MUSIC_STAGE2;
   if (region == 3) song = MUSIC_STAGE3;
   if (region == 4) song = MUSIC_STAGE4;
+  if (region == 5) song = MUSIC_STAGE5;
+  if (region == 6) song = MUSIC_STAGE6;
   if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA ||
-      g_room_index == ROOM_TOWER_BOOTH || g_room_index == ROOM_S4_ARENA) {
+      g_room_index == ROOM_TOWER_BOOTH || g_room_index == ROOM_S4_ARENA || g_room_index == ROOM_S5_ARENA ||
+      g_room_index == ROOM_S6_THRONE) {
     song = MUSIC_CHASE;
   }
   if (song != current_song) {
@@ -355,6 +514,9 @@ static void play_sfx(void) {
   if (ge & GE_GATE) audio_sfx(SFX_GATE);
   if (ge & GE_SAVE) audio_sfx(SFX_SAVE);
   if (ge & GE_SLAM) audio_sfx(SFX_HAZARD);
+  if (ge & GE_THUNDER) audio_sfx(SFX_HAZARD);
+  if (ge & GE_OVERCRANK) audio_sfx(SFX_REC_START);
+  if (ge & GE_REWIND) audio_sfx(SFX_JUMPCUT);
   if (ge & GE_BOSS_DOWN) {
     audio_sfx(SFX_PICKUP);
     audio_music(MUSIC_STAGE1);
@@ -366,6 +528,7 @@ static void play_sfx(void) {
 static void draw_frame(void) {
   render_frame(cam_x, cam_y);
   draw_entities();
+  draw_rewind_marker();
   film_fx((int)frame_clock);
   draw_boss_bar();
   present();
