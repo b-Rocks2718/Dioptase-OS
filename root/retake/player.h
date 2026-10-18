@@ -113,9 +113,12 @@ struct Player {
   unsigned events;
   int pose;
   int riding;
+  int edge_vx;     /* attempted velocity stopped at a room boundary this tick */
+  int edge_vy;
   int coyote;
   int jump_buffer;
   int jump_hold;
+  int jump_cut;    /* release may shorten a voluntary jump, never a forced launch */
   int wall_lock;
   int attack_cooldown;
   int drop_timer;
@@ -139,6 +142,10 @@ void clapper_box(int x, int y, int facing, int dir, struct Hitbox* box);
 /* Apply recoil and invulnerability once; return zero if already protected.
  * Call after player_step so EV_HURT survives for presentation that tick. */
 int player_hurt(struct Player* p, int from_dir);
+
+/* Launch upward at positive Q8 speed, detach and refill the wire stunt.
+ * Springs and pogo use this after player_step; releasing jump cannot cut it. */
+void player_launch(struct Player* p, int speed);
 
 /* Check a destination against solid geometry and room bounds; one-way and
  * spike tiles are not safe teleport destinations when they overlap a body. */

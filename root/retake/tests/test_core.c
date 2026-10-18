@@ -393,6 +393,27 @@ static unsigned test_long_trace(void) {
   return hash;
 }
 
+/* A spring/pogo impulse detaches from films and ignores jump-release cutting. */
+static void test_forced_launch(void) {
+  struct Player p;
+  make_room();
+  player_init(&p, 80, 148, AB_WIRE);
+  p.riding = 1;
+  p.coyote = 5;
+  p.jump_buffer = 4;
+  p.jump_hold = 8;
+  p.jump_cut = 1;
+  p.drop_timer = 5;
+  p.air_jump_left = 0;
+  player_launch(&p, 1500);
+  expect(p.riding == -1 && !p.on_ground && !p.coyote && !p.jump_buffer &&
+         !p.jump_hold && !p.jump_cut && !p.drop_timer && p.air_jump_left,
+         "a forced launch clears stale contacts and inputs, and refills the wire");
+  player_step(&p, &room, 0, 0);
+  expect(p.vy < -1400 && p.y < 143 * Q8,
+         "a spring launch rises at full speed with Jump released");
+}
+
 /* Emit a portable decimal fingerprint without relying on variadic printf. */
 static void emit_unsigned(unsigned value) {
   char digits[12];
@@ -408,6 +429,7 @@ static void emit_unsigned(unsigned value) {
 
 /* Run the same assertions and trace in native sanitizers and on Dioptase. */
 int main(void) {
+  test_forced_launch();
   failures = 0;
   test_ground_and_walls();
   test_jump_height();

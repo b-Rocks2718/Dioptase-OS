@@ -258,6 +258,7 @@ static int try_jump(struct Player* p) {
   p->coyote = 0;
   p->jump_buffer = 0;
   p->jump_hold = HOLD_TICKS;
+  p->jump_cut = 1;
   return 1;
 }
 
@@ -318,9 +319,12 @@ void player_init(struct Player* p, int x_px, int y_px, int abilities) {
   p->events = 0;
   p->pose = POSE_IDLE;
   p->riding = -1;
+  p->edge_vx = 0;
+  p->edge_vy = 0;
   p->coyote = 0;
   p->jump_buffer = 0;
   p->jump_hold = 0;
+  p->jump_cut = 0;
   p->wall_lock = 0;
   p->attack_cooldown = 0;
   p->drop_timer = 0;
@@ -333,6 +337,8 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
   int was_gliding = p->gliding;
   int old_feet = p->y + BODY_H;
   p->events = 0;
+  p->edge_vx = 0;
+  p->edge_vy = 0;
   p->gliding = 0;
   if (p->hurt_timer) p->hurt_timer--;
   if (p->attack_timer) p->attack_timer--;
@@ -375,9 +381,10 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
     p->events |= EV_CLAP;
   }
   int jumped = try_jump(p);
-  if (!(held & IN_JUMP) && p->vy < -JUMP_CUT_SPEED) {
-    p->vy = -JUMP_CUT_SPEED;
+  if (!(held & IN_JUMP) && p->jump_cut) {
+    if (p->vy < -JUMP_CUT_SPEED) p->vy = -JUMP_CUT_SPEED;
     p->jump_hold = 0;
+    p->jump_cut = 0;
   }
   if (!p->on_ground) {
     int gravity = GRAVITY;
@@ -393,13 +400,20 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
     if (p->vy > cap) p->vy = cap;
   }
 
-  if (!move_x(p, r, p->vx)) p->vx = 0;
+  if (!move_x(p, r, p->vx)) {
+    if ((p->vx < 0 && p->x == 0) ||
+        (p->vx > 0 && p->x + BODY_W == r->w * TILE * Q8)) p->edge_vx = p->vx;
+    p->vx = 0;
+  }
   int vertical_hit = move_y(p, r, p->vy, p->vy < 0);
   p->on_ground = vertical_hit == 1;
   if (vertical_hit) {
+    if ((p->vy < 0 && p->y == 0) ||
+        (p->vy > 0 && p->y + BODY_H == r->h * TILE * Q8)) p->edge_vy = p->vy;
     p->vy = 0;
     p->jump_hold = 0;
   }
+  if (p->vy >= 0) p->jump_cut = 0;
   if (!jumped && p->vy >= 0) land_platform(p, r, old_feet, blocked);
   if (p->vy >= 0) p->on_ground = support(p, r, blocked);
   else p->riding = -1;
@@ -456,11 +470,29 @@ int player_hurt(struct Player* p, int from_dir) {
   p->riding = -1;
   p->coyote = 0;
   p->jump_hold = 0;
+  p->jump_cut = 0;
+  p->jump_buffer = 0;
   p->attack_timer = 0;
   p->attack_dir = 0;
   p->events |= EV_HURT;
   p->pose = POSE_HURT;
   return 1;
+}
+
+/* Forced bounces own their vertical impulse and cannot retain stale support. */
+void player_launch(struct Player* p, int speed) {
+  p->vy = -speed;
+  p->on_ground = 0;
+  p->riding = -1;
+  p->wall_dir = 0;
+  p->coyote = 0;
+  p->jump_buffer = 0;
+  p->jump_hold = 0;
+  p->jump_cut = 0;
+  p->drop_timer = 0;
+  p->air_jump_left = 1;
+  p->gliding = 0;
+  p->pose = POSE_RISE;
 }
 
 /* Placement deliberately excludes hazards and one-way interiors, even
@@ -488,6 +520,7 @@ int player_place(struct Player* p, struct Room* r, int x, int y) {
   p->coyote = 0;
   p->jump_buffer = 0;
   p->jump_hold = 0;
+  p->jump_cut = 0;
   p->drop_timer = 0;
   return 1;
 }
