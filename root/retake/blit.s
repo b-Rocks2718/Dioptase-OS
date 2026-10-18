@@ -1,4 +1,4 @@
-# THREADLIGHT hand-written copy loops (user mode, leaf routines).
+# RETAKE hand-written copy loops (user mode, leaf routines).
 
   .text
   .align 4

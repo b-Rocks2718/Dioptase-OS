@@ -4,7 +4,7 @@
 #include "../crt/vga.h"
 
 /*
- * THREADLIGHT render spike (temporary). Proves the hybrid display plan on the
+ * RETAKE render spike (temporary). Proves the hybrid display plan on the
  * emulator: the room lives in the hardware tile plane at tile scale 1 (an
  * 80x60-tile, 640x480 wrapping plane of 8x8 tiles in 320x240 screen space) and
  * the camera is just the tile scroll registers; the pixel layer behind it is a
@@ -197,7 +197,7 @@ static void poll_input(void) {
 int main(void) {
   pixel_fb = get_pixel_fb();
   if ((int)pixel_fb == -1) {
-    puts("threadlight: cannot map the pixel framebuffer (get_pixel_fb failed)\n");
+    puts("retake: cannot map the pixel framebuffer (get_pixel_fb failed)\n");
     return 1;
   }
   puts("\x1b[2J\x1b[?25l");
