@@ -7,7 +7,7 @@ start of the file.
 
 Layout:
     header      HEADER_FIELDS words (named in pak.h as PAKH_*)
-    region[i]   block_count, blocks_off, backdrop_w, backdrop_h, backdrop_off
+    region[i]   block_count, blocks_off, backdrop_w, backdrop_h, backdrop_off, id
     room[i]     region, wx, wy, w, h, blocks_off, col_off, entity_count,
                 entities_off, spawn_x, spawn_y, name_off
     sprite[i]   frame_count, frames_off   (frames are 32x32 packed pixels)
@@ -31,12 +31,15 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 import pix  # noqa: E402
+import region0  # noqa: E402
 import region1  # noqa: E402
+import world  # noqa: E402
 import rooms  # noqa: E402
 import sprites  # noqa: E402
 import text  # noqa: E402
 import ui  # noqa: E402
 import entart  # noqa: E402
+import bossart  # noqa: E402
 import entities  # noqa: E402
 import music  # noqa: E402
 import songs  # noqa: E402
@@ -135,6 +138,28 @@ class Pack:
         return off
 
 
+def default_spawn(room):
+    """A standable cell for rooms without an 'S': the leftmost column with a
+    solid or one-way floor under two cells of air, top surface first."""
+    col = room.col()
+    for x in range(1, room.w - 1):
+        for y in range(1, room.h - 1):
+            if col[y][x] == 0 and col[y - 1][x] == 0 and col[y + 1][x] in (1, 2):
+                return x, y
+    return 1, 1
+
+
+def check_overlaps(all_rooms):
+    """Rooms of one region share a world plane; transitions look rooms up by
+    world position, so two rooms of a region must never overlap."""
+    for i, a in enumerate(all_rooms):
+        for b in all_rooms[i + 1:]:
+            if a.region != b.region:
+                continue
+            if a.wx < b.wx + b.w and b.wx < a.wx + a.w and a.wy < b.wy + b.h and b.wy < a.wy + a.h:
+                raise SystemExit(f"build.py: rooms '{a.name}' and '{b.name}' overlap in region {a.region}")
+
+
 def blockify(img, table, index):
     """Split a composed room into 8x8 blocks, deduplicated through `index`
     (bytes -> block id) into `table`; return the room's u16 block grid."""
@@ -159,14 +184,16 @@ def main():
     room_files = sorted(
         os.path.join(root, "rooms", f) for f in os.listdir(os.path.join(root, "rooms")) if f.endswith(".txt")
     )
-    all_rooms = []
+    all_rooms = world.all_rooms()
     for path in room_files:
         all_rooms.extend(rooms.parse(path))
+    check_overlaps(all_rooms)
     names = [r.name for r in all_rooms]
     if len(set(names)) != len(names):
         raise SystemExit("build.py: duplicate room names in rooms/*.txt")
 
-    regions = {1: region1.build(GLYPHS)}
+    regions = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS)}
+    stamp_chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS}
     region_ids = sorted(regions)
     block_tables = {r: [] for r in region_ids}
     block_index = {r: {} for r in region_ids}
@@ -175,7 +202,7 @@ def main():
         if room.region not in regions:
             raise SystemExit(f"build.py: room '{room.name}' uses region {room.region}, which has no art")
         tiles, stamps, _ = regions[room.region]
-        img = rooms.compose(room, tiles, stamps)
+        img = rooms.compose(room, tiles, stamps, stamp_chars[room.region])
         room_grids.append(blockify(img, block_tables[room.region], block_index[room.region]))
 
     sheets = sprites.build()
@@ -189,7 +216,7 @@ def main():
         boff = pack.add(pix.le16(blocks))
         back = regions[r][2]
         doff = pack.add(pix.le16(back.reshape(-1)))
-        region_entries.append((len(block_tables[r]), boff, back.shape[1], back.shape[0], doff))
+        region_entries.append((len(block_tables[r]), boff, back.shape[1], back.shape[0], doff, r))
 
     script_index = {name: i for i, name in enumerate(text.SCRIPTS)}
     room_index = {r.name: i for i, r in enumerate(all_rooms)}
@@ -214,7 +241,7 @@ def main():
                 vals.append(-1)
             ents += struct.pack("<8h", *vals)
         eoff = pack.add(ents)
-        sp = room.spawn() or (1, 1)
+        sp = room.spawn() or default_spawn(room)
         noff = pack.add(room.name.encode() + b"\0")
         room_entries.append((room.region, room.wx, room.wy, room.w, room.h, goff, coff,
                              len(room.entities), eoff, sp[0], sp[1], noff))
@@ -253,7 +280,7 @@ def main():
 
     image_entries = []
     image_names = []
-    for name, frames in entart.build():
+    for name, frames in entart.build() + bossart.build():
         for i, f in enumerate(frames):
             h, w = f.shape
             if w % 2:
@@ -262,7 +289,7 @@ def main():
             image_names.append(f"{name}_{i}")
 
     pack.align()
-    region_off = pack.add(b"".join(struct.pack("<5I", *e) for e in region_entries))
+    region_off = pack.add(b"".join(struct.pack("<6I", *e) for e in region_entries))
     room_off = pack.add(b"".join(struct.pack("<12i", *e) for e in room_entries))
     sprite_off = pack.add(b"".join(struct.pack("<2I", *e) for e in sprite_entries))
     font_off = pack.add(b"".join(struct.pack("<3I", *e) for e in font_entries))

@@ -22,6 +22,7 @@
 #define SPRITE_SHORTS 1024
 
 volatile short* g_pixel_fb;
+unsigned short* g_back;          /* the frame being drawn; present() shows it */
 volatile short* g_tile_fb;
 volatile short* g_tilemap;
 volatile short* g_spritemap;
@@ -63,6 +64,11 @@ int display_init(void) {
   set_vscroll(0);
   set_pixel_scale(0);
   hud_init();
+  g_back = (unsigned short*)mmap(SCREEN_W * VIEW_H * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
+  if ((int)g_back == -1) {
+    puts("retake: out of memory for the back buffer\n");
+    return -1;
+  }
   return 0;
 }
 
@@ -72,9 +78,13 @@ void display_shutdown(void) {
   for (int i = 0; i < FB_NUM_TILES; i++) g_tile_fb[i] = TILE_CLEAR;
 }
 
-/* Prepare region `region_index`'s backdrop (pak region entry index). */
-void render_region(int region_index) {
-  struct PakRegion* r = pak_region(region_index);
+/* Prepare the backdrop of region number `region_id`. */
+static int shown_region = -1;
+
+void render_region(int region_id) {
+  if (region_id == shown_region) return;
+  shown_region = region_id;
+  struct PakRegion* r = pak_region_by_id(region_id);
   backdrop = (unsigned short*)(g_pak + r->backdrop_off);
   backdrop_w = (int)r->backdrop_w;
   backdrop_h = (int)r->backdrop_h;
@@ -86,8 +96,10 @@ void render_region(int region_index) {
   backdrop_odd[total - 1] = backdrop[total - 1];
 }
 
-/* Composite the frame for a camera whose top-left is (cam_x, cam_y) in room
- * pixels. The caller clamps the camera inside the room. */
+/* Composite the room and backdrop into the back buffer for a camera whose
+ * top-left is (cam_x, cam_y) in room pixels (clamped inside the room by the
+ * caller). Entities are drawn over it next, then present() copies the whole
+ * frame out, so the display never catches a frame with entities missing. */
 void render_frame(int cam_x, int cam_y) {
   unsigned short* room = (cam_x & 1) ? g_room_img_odd : g_room_img;
   int rx = cam_x & ~1;
@@ -100,11 +112,32 @@ void render_frame(int cam_x, int cam_y) {
   int max_by = backdrop_h - VIEW_H;
   if (by > max_by) by = max_by;
   if (by < 0) by = 0;
+  unsigned* opaque = (cam_x & 1) ? g_span_opaque_odd : g_span_opaque;
+  unsigned* clear = (cam_x & 1) ? g_span_clear_odd : g_span_clear;
   unsigned short* room_row = room + cam_y * g_room_pw + rx;
   unsigned short* bg_row = bg + by * backdrop_w + bx;
-  volatile short* dst = g_pixel_fb;
+  unsigned short* dst = g_back;
+  int end_x = rx + SCREEN_W;
   for (int y = 0; y < VIEW_H; y++) {
-    rt_composite((void*)dst, (void*)room_row, (void*)bg_row, SCREEN_W >> 1);
+    unsigned op = opaque[cam_y + y];
+    unsigned cl = clear[cam_y + y];
+    int px = rx;
+    while (px < end_x) {
+      int span = px >> 6;
+      int span_end = (span + 1) << 6;
+      if (span_end > end_x) span_end = end_x;
+      int words = (span_end - px) >> 1;
+      int off = px - rx;
+      int whole = (px & 63) == 0 && span_end - px == 64;
+      if (whole && ((op >> span) & 1)) {
+        tl_copy_words((void*)(dst + off), (void*)(room_row + off), words);
+      } else if (whole && ((cl >> span) & 1)) {
+        tl_copy_words((void*)(dst + off), (void*)(bg_row + off), words);
+      } else {
+        rt_composite((void*)(dst + off), (void*)(room_row + off), (void*)(bg_row + off), words);
+      }
+      px = span_end;
+    }
     dst += SCREEN_W;
     room_row += g_room_pw;
     bg_row += backdrop_w;
@@ -179,11 +212,11 @@ void draw_image(int id, int x, int y, int flip) {
   if (x0 >= x1 || y0 >= y1) return;
   for (int py = y0; py < y1; py++) {
     unsigned short* row = src + (py - y) * w;
-    volatile short* dst = g_pixel_fb + py * SCREEN_W;
+    unsigned short* dst = g_back + py * SCREEN_W;
     for (int px = x0; px < x1; px++) {
       int sx = px - x;
       unsigned short c = row[flip ? w - 1 - sx : sx];
-      if (c != TRANSPARENT_PX) dst[px] = (short)c;
+      if (c != TRANSPARENT_PX) dst[px] = c;
     }
   }
 }
@@ -204,10 +237,15 @@ void draw_prompt(int cx, int y, int clock) {
   for (int r = 0; r < 4; r++) {
     int py = y + r + bob;
     if (py < HUD_PIXEL_ROWS || py >= VIEW_H) continue;
-    volatile short* dst = g_pixel_fb + py * SCREEN_W;
+    unsigned short* dst = g_back + py * SCREEN_W;
     for (int dx = -r; dx <= r; dx++) {
       int px = cx + dx;
-      if (px >= 0 && px < SCREEN_W) dst[px] = (short)0x0EEF;
+      if (px >= 0 && px < SCREEN_W) dst[px] = 0x0EEF;
     }
   }
+}
+
+/* Copy the finished back buffer to the display in one pass. */
+void present(void) {
+  tl_copy_words((void*)g_pixel_fb, (void*)g_back, (SCREEN_W * VIEW_H) >> 1);
 }

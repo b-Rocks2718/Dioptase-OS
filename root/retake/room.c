@@ -15,6 +15,13 @@ int g_room_pw;
 int g_room_ph;
 unsigned short* g_room_img;
 unsigned short* g_room_img_odd;
+/* Per room-image row, bit i set when 64-pixel span i is entirely opaque
+ * (g_span_opaque) or entirely transparent (g_span_clear); the _odd tables
+ * describe the shifted twin. The compositor copies such spans directly. */
+unsigned g_span_opaque[480];
+unsigned g_span_clear[480];
+unsigned g_span_opaque_odd[480];
+unsigned g_span_clear_odd[480];
 
 static unsigned char room_col[ROOM_MAX_TILES];
 static int room_rows[ROOM_MAX_H];
@@ -37,9 +44,37 @@ void room_system_init(void) {
   g_room.row = room_rows;
 }
 
+/* Fill the span tables for one image: a span is opaque when no word has a
+ * transparency nibble set, clear when every pixel is 0xF000. */
+static void classify_spans(unsigned short* img, unsigned* opaque, unsigned* clear) {
+  int words_per_row = g_room_pw >> 1;
+  unsigned* row = (unsigned*)img;
+  for (int y = 0; y < g_room_ph; y++) {
+    unsigned op = 0;
+    unsigned cl = 0;
+    int span = 0;
+    for (int x = 0; x < words_per_row; x += 32) {
+      unsigned any = 0;
+      unsigned all = 0xF000F000;
+      int end = x + 32 < words_per_row ? x + 32 : words_per_row;
+      for (int i = x; i < end; i++) {
+        unsigned w = row[i];
+        any |= w & 0xF000F000;
+        all &= w;
+      }
+      if (any == 0) op |= 1u << span;
+      if (all == 0xF000F000 && (row[x] == 0xF000F000)) cl |= 1u << span;
+      span++;
+    }
+    opaque[y] = op;
+    clear[y] = cl;
+    row += words_per_row;
+  }
+}
+
 void room_load(int index) {
   struct PakRoom* pr = pak_room(index);
-  struct PakRegion* region = pak_region(pr->region - 1);
+  struct PakRegion* region = pak_region_by_id(pr->region);
   unsigned short* blocks = (unsigned short*)(g_pak + region->blocks_off);
   unsigned short* grid = (unsigned short*)(g_pak + pr->blocks_off);
   unsigned char* col = g_pak + pr->col_off;
@@ -83,4 +118,6 @@ void room_load(int index) {
   int total = pw * g_room_ph;
   for (int i = 0; i < total - 1; i++) g_room_img_odd[i] = g_room_img[i + 1];
   g_room_img_odd[total - 1] = g_room_img[total - 1];
+  classify_spans(g_room_img, g_span_opaque, g_span_clear);
+  classify_spans(g_room_img_odd, g_span_opaque_odd, g_span_clear_odd);
 }

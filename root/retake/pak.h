@@ -4,12 +4,22 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 543716
-#define PAK_ROOM_COUNT 2
+#define PAK_SIZE 949968
+#define PAK_ROOM_COUNT 12
 
 /* Room indices into the pack's room table. */
-#define ROOM_TEST_STREET 0
-#define ROOM_TEST_ALLEY 1
+#define ROOM_BACKLOT_WEST 0
+#define ROOM_BACKLOT_EAST 1
+#define ROOM_S1_ENTRY 2
+#define ROOM_S1_CELLAR 3
+#define ROOM_S1_STREET 4
+#define ROOM_S1_MARK 5
+#define ROOM_S1_SCAFFOLD 6
+#define ROOM_S1_DOUBLE 7
+#define ROOM_S1_ROOFTOPS 8
+#define ROOM_S1_CLOCK_BASE 9
+#define ROOM_S1_CLOCK_CLIMB 10
+#define ROOM_S1_CLOCK_TOP 11
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -55,7 +65,22 @@
 #define SCRIPT_DEATH2 4
 #define SCRIPT_DEATH3 5
 #define SCRIPT_SAVED 6
-#define SCRIPT_TEST_SIGN 7
+#define SCRIPT_BACKLOT_GATE 7
+#define SCRIPT_STAGE_SEALED 8
+#define SCRIPT_TOWER_SEALED 9
+#define SCRIPT_STAGE1_DOOR 10
+#define SCRIPT_S1_TITLE 11
+#define SCRIPT_S1_MARK_HINT 12
+#define SCRIPT_S1_DOUBLE_HINT 13
+#define SCRIPT_S1_WALL_HINT 14
+#define SCRIPT_S1_CLAP_HINT 15
+#define SCRIPT_S1_COMEDIAN 16
+#define SCRIPT_S1_REEL_A 17
+#define SCRIPT_S1_REEL_B 18
+#define SCRIPT_S1_REEL_C 19
+#define SCRIPT_S1_BOSS_INTRO 20
+#define SCRIPT_S1_WRAP 21
+#define SCRIPT_TEST_SIGN 22
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -103,7 +128,15 @@
 #define IMG_SPRING_0 29
 #define IMG_SPRING_1 30
 #define IMG_SHOP_0 31
-#define PAK_FLAG_COUNT 7
+#define IMG_BOSS1_0 32
+#define IMG_BOSS1_1 33
+#define IMG_BOSS1_2 34
+#define IMG_BOSS1_3 35
+#define IMG_BOSS1_4 36
+#define IMG_BOSS1_5 37
+#define IMG_BOSS1_6 38
+#define IMG_WAVE_0 39
+#define PAK_FLAG_COUNT 37
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0

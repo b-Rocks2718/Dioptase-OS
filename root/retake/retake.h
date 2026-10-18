@@ -43,6 +43,7 @@ struct PakRegion {
   unsigned backdrop_w;
   unsigned backdrop_h;
   unsigned backdrop_off;
+  unsigned id;            /* region number used by rooms (0 = the Backlot) */
 };
 
 struct PakRoom {
@@ -72,6 +73,7 @@ unsigned pak_header(int index);
 int pak_room_count(void);
 struct PakRoom* pak_room(int index);
 struct PakRegion* pak_region(int index);
+struct PakRegion* pak_region_by_id(int id);
 struct PakSprite* pak_sprite(int index);
 
 /* ---- input.c ---- */
@@ -92,6 +94,10 @@ extern int g_room_pw;          /* room size in pixels */
 extern int g_room_ph;
 extern unsigned short* g_room_img;      /* composed room image, row stride g_room_pw */
 extern unsigned short* g_room_img_odd;  /* the same shifted left by one pixel */
+extern unsigned g_span_opaque[480];
+extern unsigned g_span_clear[480];
+extern unsigned g_span_opaque_odd[480];
+extern unsigned g_span_clear_odd[480];
 
 void room_system_init(void);
 void room_load(int index);
@@ -99,14 +105,16 @@ void room_load(int index);
 /* ---- render.c ---- */
 
 extern volatile short* g_pixel_fb;
+extern unsigned short* g_back;
 extern volatile short* g_tile_fb;
 extern volatile short* g_tilemap;
 extern volatile short* g_spritemap;
 
 int display_init(void);
 void display_shutdown(void);
-void render_region(int region_index);
+void render_region(int region_id);
 void render_frame(int cam_x, int cam_y);
+void present(void);
 void sheet_load(int index);
 void sprites_init(void);
 void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);

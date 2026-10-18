@@ -37,7 +37,8 @@
 #define ENT_SPRING 19    /* bounces Ruby high */
 #define ENT_BOSS 20      /* a: boss id */
 #define ENT_SHOP 21      /* the Prop Department counter */
-#define ENT_KINDS 22
+#define ENT_WAVE 22      /* a boss's ground shockwave (spawned) */
+#define ENT_KINDS 23
 
 #define MAX_ENTS 40
 #define MAX_FLAGS 2048
@@ -58,6 +59,7 @@ struct Ent {
   int a;
   int b;
   int c;
+  int d;
   int flag;        /* persistent flag id, or -1 */
   int alive;
   int hurt;        /* invulnerability ticks after a hit */
@@ -96,6 +98,9 @@ struct Progress {
 #define GE_GATE 2048
 #define GE_REC_START 4096
 #define GE_REC_STOP 8192
+#define GE_BOSS_HIT 16384
+#define GE_BOSS_DOWN 32768
+#define GE_SLAM 65536
 
 extern struct Player g_hero;
 extern struct Takes g_takes;
@@ -106,6 +111,7 @@ extern int g_health;
 extern unsigned g_events;
 extern int g_pending_script;   /* script to show after this tick, or -1 */
 extern int g_switch[16];
+extern struct Ent* g_boss;     /* the room's boss, or 0 */
 
 void game_new(int start_room);
 int game_load(void);

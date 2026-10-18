@@ -30,6 +30,9 @@
 #define ENT_GRAVITY 48
 #define ENT_FALL_MAX 1024
 #define SHOT_TICKS 180
+#define BOSS1_HP 16
+#define BOSS_FLAG_BASE 2000      /* flag ids 2000+ mark defeated bosses */
+#define WAVE_SPEED 640
 
 struct Player g_hero;
 struct Takes g_takes;
@@ -41,6 +44,7 @@ unsigned g_events;
 int g_pending_script = -1;
 int g_switch[16];
 
+struct Ent* g_boss;
 static struct Platform g_platforms[3];
 static int entry_x;            /* where Ruby entered this room (pixels) */
 static int entry_y;
@@ -112,6 +116,7 @@ static struct Ent* ent_alloc(void) {
  * the tile's bottom edge. */
 static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int c, int flag) {
   e->kind = kind;
+  e->d = 0;
   e->tx = tx;
   e->ty = ty;
   e->a = a;
@@ -150,6 +155,8 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_SANDBAG: w = 8; h = 8; break;
     case ENT_SPRING: w = 8; h = 4; break;
     case ENT_SHOP: w = 16; h = 16; break;
+    case ENT_WAVE: w = 8; h = 8; break;
+    case ENT_BOSS: w = 22; h = 30; e->hp = BOSS1_HP; break;
     default: break;
   }
   e->w = w << 8;
@@ -171,6 +178,7 @@ static void spawn_room_entities(void) {
   struct PakRoom* pr = pak_room(g_room_index);
   short* raw = (short*)(g_pak + pr->entities_off);
   g_ent_count = 0;
+  g_boss = 0;
   for (int i = 0; i < pr->entity_count && g_ent_count < MAX_ENTS; i++) {
     short* r = raw + (i << 3);
     int kind = r[0];
@@ -178,8 +186,11 @@ static void spawn_room_entities(void) {
     if (kind <= ENT_NONE || kind >= ENT_KINDS) continue;
     if (flag >= 0 && flag_get(flag)) continue;   /* already collected */
     if (kind == ENT_ABILITY && (g_prog.abilities & r[3])) continue;
+    if (kind == ENT_BOSS && flag_get(BOSS_FLAG_BASE + r[3])) continue;
     struct Ent* e = &g_ents[g_ent_count++];
     ent_setup(e, kind, r[1], r[2], r[3], r[4], r[5], flag);
+    e->d = r[6];
+    if (kind == ENT_BOSS) g_boss = e;
   }
 }
 
@@ -210,7 +221,7 @@ void game_enter_room(int room, int x_px, int y_px) {
   struct PakRoom* pr = pak_room(room);
   room_ox = pr->wx << 3;
   room_oy = pr->wy << 3;
-  render_region(pr->region - 1);
+  render_region(pr->region);
   int vx = g_hero.vx;
   int vy = g_hero.vy;
   int facing = g_hero.facing;
@@ -303,7 +314,7 @@ static int check_edges(int held) {
       struct PakRoom* t = pak_room(target);
       nx = room_ox + px - (t->wx << 3);
       ny = (t->h << 3) - PLAYER_H - 1;
-      if (g_hero.vy > -900) g_hero.vy = -900;   /* carry Ruby up onto the next ledge */
+      if (g_hero.vy > -1150) g_hero.vy = -1150; /* carry Ruby up onto the next ledge */
     }
   }
   if (target < 0) return 0;
@@ -526,6 +537,177 @@ static void step_coin(struct Ent* e) {
   }
 }
 
+/* ---- Sergeant Gearhart, the Clockwork Constable (boss 1) ----
+ *
+ * States: 0 intro (waits for the intro card), 1 idle, 2 slam wind-up,
+ * 3 slam recovery, 4 charge wind-up, 5 charging, 6 dazed, 7 whistle,
+ * 8 defeated. He aims his charge at the nearest of Ruby and her takes, so a
+ * take is a decoy. Claps land at any time except mid-charge; while he is
+ * dazed (after hitting a wall) each hit counts double. */
+
+#define B_INTRO 0
+#define B_IDLE 1
+#define B_SLAM_UP 2
+#define B_SLAM_DOWN 3
+#define B_CHARGE_UP 4
+#define B_CHARGE 5
+#define B_DAZED 6
+#define B_WHISTLE 7
+#define B_DOWN 8
+
+static int boss_cycle;
+
+/* x (Q8) of the nearest charge target: Ruby or any active take. */
+static int boss_target_x(struct Ent* e) {
+  int best = g_hero.x;
+  int ex = e->x + (e->w >> 1);
+  int bd = best - ex;
+  if (bd < 0) bd = -bd;
+  for (int s = 0; s < TAKE_MAX_SLOTS; s++) {
+    struct Take* t = &g_takes.slots[s];
+    if (!t->active || t->length == 0) continue;
+    int tx = t->frames[t->cursor].x;
+    int d = tx - ex;
+    if (d < 0) d = -d;
+    if (d < bd) {
+      bd = d;
+      best = tx;
+    }
+  }
+  return best;
+}
+
+static void spawn_wave(int x, int y, int dir) {
+  struct Ent* w = ent_alloc();
+  if (!w) return;
+  ent_setup(w, ENT_WAVE, 0, 0, 0, 0, 0, -1);
+  w->x = x;
+  w->y = y;
+  w->vx = dir * WAVE_SPEED;
+  w->timer = 240;
+}
+
+static void spawn_pigeon(int x, int y) {
+  struct Ent* f = ent_alloc();
+  if (!f) return;
+  ent_setup(f, ENT_FLYER, x >> 11, y >> 11, 5, 0, 0, -1);
+}
+
+static void step_boss(struct Ent* e) {
+  int floor_y = e->y + e->h;
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_S1_BOSS_INTRO;
+      e->state = B_IDLE;
+      e->timer = 60;
+      break;
+    case B_IDLE:
+      e->dir = (g_hero.x < e->x) ? -1 : 1;
+      if (--e->timer <= 0) {
+        int pick = boss_cycle % 3;
+        if (e->hp <= BOSS1_HP / 2 && pick == 2) pick = 1;   /* angrier: fewer whistles */
+        boss_cycle++;
+        if (pick == 0) {
+          e->state = B_SLAM_UP;
+          e->timer = 36;
+        } else if (pick == 1) {
+          e->state = B_CHARGE_UP;
+          e->timer = 40;
+          e->dir = boss_target_x(e) < e->x ? -1 : 1;
+        } else {
+          e->state = B_WHISTLE;
+          e->timer = 50;
+        }
+      }
+      break;
+    case B_SLAM_UP:
+      if (--e->timer <= 0) {
+        spawn_wave(e->x - (8 << 8), floor_y - (8 << 8), -1);
+        spawn_wave(e->x + e->w, floor_y - (8 << 8), 1);
+        g_events |= GE_SLAM;
+        e->state = B_SLAM_DOWN;
+        e->timer = 30;
+      }
+      break;
+    case B_SLAM_DOWN:
+      if (--e->timer <= 0) {
+        e->state = B_IDLE;
+        e->timer = e->hp <= BOSS1_HP / 2 ? 30 : 50;
+      }
+      break;
+    case B_CHARGE_UP:
+      if (--e->timer <= 0) e->state = B_CHARGE;
+      break;
+    case B_CHARGE: {
+      int speed = e->hp <= BOSS1_HP / 2 ? 960 : 800;
+      int px = e->x >> 8;
+      int py = e->y >> 8;
+      int w = e->w >> 8;
+      int h = e->h >> 8;
+      int ahead = e->dir > 0 ? px + w + 2 : px - 3;
+      if (solid_px(ahead, py + h - 4) || solid_px(ahead, py + 4)) {
+        e->state = B_DAZED;
+        e->timer = 110;
+        g_events |= GE_SLAM;
+      } else {
+        e->x += e->dir * speed;
+      }
+      break;
+    }
+    case B_DAZED:
+      if (--e->timer <= 0) {
+        e->state = B_IDLE;
+        e->timer = 40;
+      }
+      break;
+    case B_WHISTLE:
+      if (e->timer == 30) {
+        spawn_pigeon(4 << 11, 8 << 11);
+        spawn_pigeon(34 << 11, 8 << 11);
+      }
+      if (--e->timer <= 0) {
+        e->state = B_IDLE;
+        e->timer = 40;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+static void boss_defeated(struct Ent* e) {
+  e->state = B_DOWN;
+  e->alive = 0;
+  e->kind = ENT_NONE;
+  flag_set(BOSS_FLAG_BASE + e->a);
+  g_events |= GE_BOSS_DOWN;
+  g_boss = 0;
+  /* the wire falls where he stood; the way home opens */
+  struct Ent* prize = ent_alloc();
+  if (prize) {
+    ent_setup(prize, ENT_ABILITY, (e->x >> 11) + 1, 25, AB_WIRE, SCRIPT_S1_WRAP, 0, -1);
+  }
+  struct Ent* door = ent_alloc();
+  if (door) {
+    ent_setup(door, ENT_DOOR, 4, 25, ROOM_BACKLOT_WEST, 15, 25, -1);
+  }
+  for (int i = 0; i < g_ent_count; i++) {
+    if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE) {
+      g_ents[i].alive = 0;
+      g_ents[i].kind = ENT_NONE;
+    }
+  }
+}
+
+static void step_wave(struct Ent* e) {
+  e->x += e->vx;
+  int px = (e->x >> 8) + (e->vx > 0 ? 8 : -1);
+  if (--e->timer <= 0 || solid_px(px, (e->y >> 8) + 4)) {
+    e->alive = 0;
+    e->kind = ENT_NONE;
+  }
+}
+
 /* ---- per-tick entity work ---- */
 
 static void update_switches(void) {
@@ -568,6 +750,38 @@ static void combat(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
     if (!e->alive) continue;
+    if (e->kind == ENT_WAVE) {
+      struct Hitbox wb;
+      ent_box(e, &wb);
+      if (hitbox_overlap(&hb, &wb)) hurt_hero(e);
+      continue;
+    }
+    if (e->kind == ENT_BOSS) {
+      struct Hitbox bb;
+      ent_box(e, &bb);
+      int amount = e->state == B_DAZED ? 2 : 1;
+      int hit = 0;
+      if (e->state != B_CHARGE && e->state != B_INTRO && !e->hurt) {
+        if (has_live && hitbox_overlap(&live, &bb)) {
+          hit = 1;
+          if (g_hero.attack_dir == 3) pogo = 1;
+        }
+        for (int s = 0; s < TAKE_MAX_SLOTS && !hit; s++) {
+          if (has_film[s] && hitbox_overlap(&film[s], &bb)) hit = 1;
+        }
+      }
+      if (hit) {
+        e->hp -= amount;
+        e->hurt = 16;
+        g_events |= GE_HIT | GE_BOSS_HIT;
+        if (e->hp <= 0) {
+          boss_defeated(e);
+          continue;
+        }
+      }
+      if (hitbox_overlap(&hb, &bb) && e->state != B_DAZED) hurt_hero(e);
+      continue;
+    }
     int enemy = is_enemy(e->kind);
     if (!enemy && e->kind != ENT_SHOT) continue;
     struct Hitbox eb;
@@ -708,6 +922,8 @@ static void step_entities(void) {
       case ENT_SHOT: step_shot(e); break;
       case ENT_SANDBAG: step_sandbag(e); break;
       case ENT_COIN: step_coin(e); break;
+      case ENT_BOSS: step_boss(e); break;
+      case ENT_WAVE: step_wave(e); break;
       default:
         if (e->timer > 0 && e->kind != ENT_GATE) e->timer--;
         e->anim++;

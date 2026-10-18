@@ -50,9 +50,18 @@ struct PakRoom* pak_room(int index) {
   return (struct PakRoom*)(g_pak + pak_header(PAKH_ROOM_OFF)) + index;
 }
 
-/* Region entries are stored in ascending region number, starting at 1. */
+/* Region entries are stored in ascending region number. */
 struct PakRegion* pak_region(int index) {
   return (struct PakRegion*)(g_pak + pak_header(PAKH_REGION_OFF)) + index;
+}
+
+/* The region entry for region number `id`, or the first region if absent. */
+struct PakRegion* pak_region_by_id(int id) {
+  int n = (int)pak_header(PAKH_REGION_COUNT);
+  for (int i = 0; i < n; i++) {
+    if ((int)pak_region(i)->id == id) return pak_region(i);
+  }
+  return pak_region(0);
 }
 
 struct PakSprite* pak_sprite(int index) {

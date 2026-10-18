@@ -157,8 +157,10 @@ def _solid_mask(room, x, y, chars):
     return m
 
 
-def compose(room, tiles, stamps):
-    """Bake a room into a (h*8, w*8) packed image; open sky is TRANSPARENT."""
+def compose(room, tiles, stamps, stamp_chars=None):
+    """Bake a room into a (h*8, w*8) packed image; open sky is TRANSPARENT.
+    `stamp_chars` maps deco characters to stamp names (default STAMP_CHARS)."""
+    chars = stamp_chars if stamp_chars is not None else STAMP_CHARS
     W, H = room.w * T, room.h * T
     img = pix.new_image(W, H)
     # 1. back-wall fill (stamp cells inherit their left neighbor's fill)
@@ -168,7 +170,7 @@ def compose(room, tiles, stamps):
             ch = room.deco[y][x]
             if ch == "b":
                 fill[y][x] = True
-            elif ch in STAMP_CHARS and x > 0:
+            elif ch in chars and x > 0:
                 fill[y][x] = fill[y][x - 1]
     for y in range(room.h):
         for x in range(room.w):
@@ -192,7 +194,7 @@ def compose(room, tiles, stamps):
     # 2. stamps
     for y in range(room.h):
         for x in range(room.w):
-            name = STAMP_CHARS.get(room.deco[y][x])
+            name = chars.get(room.deco[y][x])
             if name:
                 pix.blit(img, stamps[name], x * T, y * T)
     # 3. drop shadows of foreground solids onto the background (down-right)

@@ -37,7 +37,7 @@
 #define CANVAS_BODY_X 12
 #define CANVAS_BODY_Y 15
 
-#define START_ROOM ROOM_TEST_STREET
+#define START_ROOM ROOM_BACKLOT_WEST
 
 static int cam_x;
 static int cam_y;
@@ -102,7 +102,7 @@ static int ent_image(struct Ent* e) {
     case ENT_SIGN: return IMG_SIGN_0;
     case ENT_NPC: return IMG_NPC_0;
     case ENT_PLATE: return IMG_PLATE_0 + (e->state ? 1 : 0);
-    case ENT_DOOR: return IMG_DOOR_0;
+    case ENT_DOOR: return e->d ? -1 : IMG_DOOR_0;   /* d: the room art already shows the door */
     case ENT_WALKER: return IMG_WALKER_0 + ((e->x >> 11) & 1);
     case ENT_HOPPER: return IMG_HOPPER_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER_0 + ((frame_clock >> 3) & 1);
@@ -112,6 +112,16 @@ static int ent_image(struct Ent* e) {
     case ENT_SANDBAG: return IMG_SANDBAG_0;
     case ENT_SPRING: return IMG_SPRING_0 + (e->timer > 0 ? 1 : 0);
     case ENT_SHOP: return IMG_SHOP_0;
+    case ENT_WAVE: return IMG_WAVE_0;
+    case ENT_BOSS:
+      switch (e->state) {
+        case 2: return IMG_BOSS1_2;            /* slam wind-up: baton raised */
+        case 3: return IMG_BOSS1_3;            /* slam */
+        case 4: case 5: return IMG_BOSS1_4;    /* charge */
+        case 6: return IMG_BOSS1_5;            /* dazed */
+        case 7: return IMG_BOSS1_6;            /* whistle */
+        default: return IMG_BOSS1_0 + ((frame_clock >> 4) & 1);
+      }
     default: return -1;
   }
 }
@@ -145,7 +155,7 @@ static void draw_entities(void) {
     int iw = image_width(img);
     int ih = image_height(img);
     int flip = e->dir > 0 && (e->kind == ENT_WALKER || e->kind == ENT_FLYER || e->kind == ENT_THROWER ||
-                              e->kind == ENT_CHARGER || e->kind == ENT_HOPPER);
+                              e->kind == ENT_CHARGER || e->kind == ENT_HOPPER || e->kind == ENT_BOSS);
     int x = ex + (ew >> 1) - (iw >> 1);
     int y = ey + eh - ih;
     if (e->kind == ENT_SANDBAG || e->kind == ENT_SHOT || e->kind == ENT_FLYER || e->kind == ENT_COIN) y = ey;
@@ -157,6 +167,24 @@ static void draw_entities(void) {
       eb.w = e->w;
       eb.h = e->h;
       if (hitbox_overlap(&hb, &eb)) draw_prompt(ex + (ew >> 1), y - 8, (int)frame_clock);
+    }
+  }
+}
+
+/* The boss's remaining health as a bar along the bottom of the play area. */
+static void draw_boss_bar(void) {
+  if (!g_boss || !g_boss->alive) return;
+  int total = 16;
+  int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
+  int x0 = 80;
+  int w = 160;
+  int filled = (w * hp) / total;
+  for (int y = 226; y < 232; y++) {
+    unsigned short* row = g_back + y * SCREEN_W;
+    for (int x = x0 - 1; x <= x0 + w; x++) {
+      int edge = y == 226 || y == 231 || x == x0 - 1 || x == x0 + w;
+      if (edge) row[x] = 0x0111;
+      else row[x] = (unsigned short)((x - x0) < filled ? 0x022E : 0x0213);
     }
   }
 }
@@ -196,7 +224,9 @@ static void draw_hud(void) {
 
 /* Music for the room Ruby is in. */
 static void choose_music(void) {
-  int song = MUSIC_STAGE1;
+  int region = pak_room(g_room_index)->region;
+  int song = region == 0 ? MUSIC_BACKLOT : MUSIC_STAGE1;
+  if (g_room_index == ROOM_S1_CLOCK_TOP) song = MUSIC_CHASE;
   if (song != current_song) {
     audio_music(song);
     current_song = song;
@@ -226,12 +256,20 @@ static void play_sfx(void) {
   if (ge & GE_SPRING) audio_sfx(SFX_SPRING);
   if (ge & GE_GATE) audio_sfx(SFX_GATE);
   if (ge & GE_SAVE) audio_sfx(SFX_SAVE);
+  if (ge & GE_SLAM) audio_sfx(SFX_HAZARD);
+  if (ge & GE_BOSS_DOWN) {
+    audio_sfx(SFX_PICKUP);
+    audio_music(MUSIC_STAGE1);
+    current_song = MUSIC_STAGE1;
+  }
 }
 
-/* Present one frame of play. */
-static void present(void) {
+/* Draw and show one frame of play. */
+static void draw_frame(void) {
   render_frame(cam_x, cam_y);
   draw_entities();
+  draw_boss_bar();
+  present();
   draw_sprites();
   draw_hud();
 }
@@ -278,7 +316,23 @@ static int title_screen(int have_save) {
   }
 }
 
-int main(void) {
+/* Debug launch: "retake room=N" starts a new game in room N (skipping the
+ * title and intro) with every ability, for testing deep rooms. */
+static int debug_room = -1;
+
+static void parse_args(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    char* a = argv[i];
+    if (a[0] == 'r' && a[1] == 'o' && a[2] == 'o' && a[3] == 'm' && a[4] == '=') {
+      int n = 0;
+      for (char* p = a + 5; *p >= '0' && *p <= '9'; p++) n = n * 10 + (*p - '0');
+      if (n < PAK_ROOM_COUNT) debug_room = n;
+    }
+  }
+}
+
+int main(int argc, char** argv) {
+  parse_args(argc, argv);
   if (pak_open() != 0) return 1;
   audio_start();      /* fork the synthesizer before the big buffers exist */
   audio_music(MUSIC_TITLE);
@@ -294,7 +348,7 @@ int main(void) {
   int fd = open_existing("/retake/save.dat");
   int have_save = fd >= 0;
   if (fd >= 0) close(fd);
-  int choice = title_screen(have_save);
+  int choice = debug_room >= 0 ? 2 : title_screen(have_save);
   if (choice < 0) {
     audio_stop();
     input_shutdown();
@@ -302,7 +356,11 @@ int main(void) {
     return 0;
   }
   audio_sfx(SFX_CLAP);
-  if (choice == 1 && game_load() == 0) {
+  if (choice == 2) {
+    game_new(debug_room);
+    g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
+    g_hero.abilities = g_prog.abilities;
+  } else if (choice == 1 && game_load() == 0) {
     /* continuing */
   } else {
     card_show(SCRIPT_INTRO);
@@ -313,6 +371,8 @@ int main(void) {
   hud_bar_clear();
 
   unsigned last = get_vga_frame_counter();
+  unsigned fps_mark = last;
+  int fps_frames = 0;
   int running = 1;
   while (running) {
     unsigned now = get_vga_frame_counter();
@@ -345,7 +405,13 @@ int main(void) {
       }
     }
     update_camera(0);
-    present();
+    draw_frame();
+    fps_frames++;
+    if (debug_room >= 0 && now - fps_mark >= 60) {
+      hud_number(74, fps_frames * 60 / (int)(now - fps_mark), 3, 0);
+      fps_frames = 0;
+      fps_mark = now;
+    }
   }
   audio_stop();
   input_shutdown();
