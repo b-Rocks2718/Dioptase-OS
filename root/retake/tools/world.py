@@ -29,6 +29,8 @@ def backlot():
             r.ent("door", x + 6, 25, a="#s2_entry", b=6, c=25, d=1 | (1 << 4))
         elif n == 3:
             r.ent("door", x + 6, 25, a="#s3_entry", b=6, c=21, d=1 | (2 << 4))
+        elif n == 4:
+            r.ent("door", x + 6, 25, a="#s4_entry", b=6, c=25, d=1 | (3 << 4))
         else:
             r.ent("sign", x + 7, 25, a="@stage_sealed")
     for x in (23, 41, 59, 77):
@@ -53,7 +55,7 @@ def backlot():
         r.stamp(x + 8, 10, "W")
         r.ent("sign", x + 7, 25, a="@stage_sealed")
     r.stamp(68, 11, "X")
-    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (3 << 4))
+    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (5 << 4))
     r.stamp(16, 18, "P")
     r.stamp(48, 18, "P")
     r.stamp(65, 21, "L")
@@ -152,9 +154,10 @@ def stage1():
     r.plank(12, 47, 5)
     r.plank(20, 43, 5)
     r.plank(27, 39, 7)
-    r.wall(27, 16, 38)                         # chimney: kick up between x=28..33
-    r.wall(34, 16, 38)
-    r.girder(28, 15, 10)
+    r.wall(27, 16, 35)                         # chimney: kick up between x=28..33,
+    r.wall(34, 16, 38)                         # entered from below over the left wall
+    r.plank(28, 15, 6)                         # a one-way roof Ruby can kick up through
+    r.girder(34, 15, 4)
     r.plank(8, 34, 6)                          # a side ledge with a reward
     r.plank(14, 28, 5)
     r.ent("coin", 9, 33)
@@ -569,6 +572,133 @@ def stage3():
     return out
 
 
+def stage4():
+    """Stage 4, "Jungle Serial, Chapter 12": crumbling temple stones, vine
+    bridges, thorns; wire, jump cut and umbrella in hand."""
+    out = []
+    r = Draft("s4_entry", 4, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.stamp(20, 18, "P")
+    r.stamp(30, 10, "Q")
+    r.ent("door", 3, 25, a="#backlot_west", b=69, c=25)
+    r.ent("mirror", 8, 25)
+    r.ent("sign", 12, 25, a="@s4_title")
+    r.ent("npc", 16, 25, a="@s4_narrator")
+    r.ent("hopper", 30, 25)
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    r = Draft("s4_canopy", 4, (40, 0), (80, 30))
+    r.ground(26, 0, 10)
+    r.nails(10, 29, 60)
+    r.ground(26, 70, 80)
+    r.plank(10, 22, 8)
+    r.girder(20, 18, 6)
+    r.plank(28, 20, 10)
+    r.girder(40, 15, 6)
+    r.plank(48, 18, 10)
+    r.girder(60, 21, 10)
+    r.stamp(4, 18, "P")
+    r.stamp(34, 4, "Q")
+    r.stamp(64, 6, "Q")
+    r.ent("flyer", 24, 10, a=6)
+    r.ent("flyer", 52, 9, a=6)
+    r.ent("walker", 32, 19)
+    r.ent("thrower", 43, 14)
+    r.ent("reel", 42, 6, a="@s4_reel_a")
+    r.girder(40, 7, 6)
+    for x in (12, 14, 29, 31, 50, 52, 62, 64):
+        r.ent("coin", x, 21 if x < 20 else 19 if x < 40 else 17 if x < 60 else 20)
+    out.append(r.done())
+
+    r = Draft("s4_ruins", 4, (120, 0), (80, 30))
+    r.ground(26, 0, 8)
+    r.nails(8, 29, 64)
+    r.ground(26, 72, 80)
+    for i, x in enumerate(range(8, 72, 4)):
+        y = 24 - (i % 3) * 2
+        r.ent("crumble", x, y)
+        r.ent("crumble", x + 1, y)
+    r.back(20, 6, 60, 22)
+    r.stamp(36, 9, "I")
+    r.ent("sign", 4, 25, a="@s4_crumble_hint")
+    r.ent("flyer", 30, 12, a=8)
+    r.ent("flyer", 56, 10, a=8)
+    r.ent("heart", 74, 25)
+    out.append(r.done())
+
+    r = Draft("s4_temple_gate", 4, (200, 0), (40, 30))
+    r.ground(26)
+    r.back(6, 4, 34, 26)
+    r.stamp(16, 8, "I")
+    r.wall(30, 0, 20, w=2)
+    r.ent("gate", 30, 20, a=6, b=6)
+    r.ent("gate", 31, 20, a=6, b=6)
+    r.ent("plate", 18, 25, a=6)
+    r.ent("sign", 6, 25, a="@s4_gate_hint")
+    r.ent("coin", 34, 25)
+    r.ent("coin", 36, 25)
+    out.append(r.done())
+
+    r = Draft("s4_temple", 4, (240, 0), (80, 30))
+    r.ground(26)
+    r.fill(0, 0, 80, 2)
+    r.back(2, 2, 78, 26)
+    r.stamp(10, 6, "I")
+    r.stamp(60, 6, "I")
+    r.nails(20, 25, 8)
+    r.ent("crumble", 20, 22)
+    r.ent("crumble", 21, 22)
+    r.ent("crumble", 24, 21)
+    r.ent("crumble", 25, 21)
+    r.girder(30, 18, 6)
+    r.nails(40, 25, 12)
+    r.ent("platform", 40, 20, a=8, b=0, c=120, d=3)
+    r.girder(54, 16, 6)
+    r.block(64, 18, 6, 8)
+    r.ent("walker", 14, 25)
+    r.ent("charger", 70, 17)
+    r.ent("hopper", 34, 17)
+    r.ent("thrower", 56, 15)
+    r.ent("reel", 66, 17, a="@s4_reel_b")
+    r.ent("frame", 32, 17)
+    r.wall(78, 2, 18, w=2)
+    out.append(r.done())
+
+    r = Draft("s4_falls", 4, (320, -30), (40, 60))
+    r.wall(0, 0, 48, w=2)
+    r.wall(38, 12, 60, w=2)
+    r.fill(0, 0, 40, 2)
+    r.ground(56)
+    r.back(2, 2, 38, 56)
+    r.ent("platform", 6, 40, a=10, b=1, c=110, d=4)
+    r.girder(16, 38, 6)
+    r.ent("crumble", 26, 32)
+    r.ent("crumble", 27, 32)
+    r.girder(30, 26, 6)
+    r.ent("crumble", 20, 22)
+    r.ent("crumble", 21, 22)
+    r.girder(8, 18, 6)
+    r.girder(18, 12, 20)
+    r.ent("flyer", 20, 30, a=6)
+    r.ent("reel", 10, 17, a="@s4_reel_c")
+    r.ent("mirror", 34, 11)
+    out.append(r.done())
+
+    r = Draft("s4_arena", 4, (360, -30), (60, 30))
+    r.ground(26)
+    r.fill(0, 0, 60, 2)
+    r.wall(58, 2, 26, w=2)
+    r.girder(8, 18, 8)
+    r.girder(44, 18, 8)
+    r.girder(26, 12, 8)
+    r.stamp(28, 4, "I")
+    r.ent("boss", 30, 25, a=5)
+    out.append(r.done())
+    return out
+
+
 def tower():
     """The Projection Tower (region 0, east of the lot in world space)."""
     out = []
@@ -639,4 +769,4 @@ def tower():
 
 
 def all_rooms():
-    return backlot() + stage1() + stage2() + stage3() + tower()
+    return backlot() + stage1() + stage2() + stage3() + stage4() + tower()

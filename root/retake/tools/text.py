@@ -166,6 +166,44 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nThe tentacles go limp. Somewhere under the deck, two stagehands sigh with relief.",
         "Tangled in the rigging: a battered black UMBRELLA.\n\n(Hold jump while falling to drift.)",
     ],
+    # ---- Stage 4 ----
+    "s4_title": [
+        "JUNGLE SERIAL, CHAPTER 12\n\nPreviously: our heroine dangled over a pit of crocodiles. Now: everything else.",
+    ],
+    "s4_narrator": [
+        "\"WILL OUR HEROINE ESCAPE THE TEMPLE OF THE APE KING?\"",
+        "\"...sorry. Habit. I've been the voice of this serial for so long, I narrate everything.\"",
+        "\"The ape's on top of the ziggurat. He throws boulders. He leaps. And he pounds his chest before every shockwave, so watch for that.\"",
+        "\"Find out what happens next... in Chapter 13!\"",
+    ],
+    "s4_crumble_hint": [
+        "EXPEDITION LOG, DAY 40:\n\nThe old stones crumble if you stand on them too long. Keep moving, or let somebody else stand there for you.",
+    ],
+    "s4_gate_hint": [
+        "CARVED ON THE TEMPLE DOOR:\n\nONE MUST KNEEL FOR THE DOOR TO RISE. THE OTHER MAY WALK THROUGH.",
+    ],
+    "s4_reel_a": [
+        "LOST REEL: \"Cliffhanger\" (1932)",
+        "Chapter 11 ends with the heroine falling into a pit.\n\nChapter 12 opens with her already out of it. Nobody filmed how.",
+        "Pencilled in the margin of the script:\n\n\"Stunt double does the fall. Cut before she lands.\"",
+    ],
+    "s4_reel_b": [
+        "LOST REEL: \"Camera No. 7, Night Shoot\" (1937)",
+        "The camera films an empty stage for one hour.\n\nOn the last frame, every seat in the house is full.",
+    ],
+    "s4_reel_c": [
+        "LOST REEL: \"Vale, Interview\" (1935)",
+        "\"Why make pictures?\"",
+        "\"Because everyone I ever loved was a moment. I would like, just once, for a moment to stay.\"",
+    ],
+    "s4_boss_intro": [
+        "GARGANTUA, KING OF THE APES",
+        "(A man in a very hot suit, who has been doing this since 1931 and would like to sit down.)",
+    ],
+    "s4_wrap": [
+        "THAT'S A WRAP!\n\nThe ape sits down at last. Somewhere, a zipper unzips with a sigh of relief.",
+        "Behind the idol: a spare film magazine.\n\nA THIRD TAKE REEL. (You can keep three takes rolling at once.)",
+    ],
     # ---- The Projection Tower ----
     "tower_open": [
         "The film slot glows. Three wrapped pictures, three reels.\n\nThe Projection Tower door swings open.",

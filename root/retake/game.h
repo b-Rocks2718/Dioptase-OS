@@ -41,7 +41,11 @@
 #define ENT_WAVE 22      /* a boss's ground shockwave (spawned) */
 #define ENT_PLATFORM 23  /* moving platform: a range tiles, b axis (0 x, 1 y), c speed Q8/tick, d width tiles */
 #define ENT_TENTACLE 24  /* the Kraken's tentacle (spawned by boss 3) */
-#define ENT_KINDS 25
+#define ENT_CRUMBLE 25   /* a block that gives way 30 ticks after Ruby stands on it, back 3 s later */
+#define ENT_KINDS 26
+
+/* Not a movement ability: the third take reel, granted like one. */
+#define AB_EXTRA_REEL 256
 
 #define MAX_ENTS 40
 #define MAX_FLAGS 2048

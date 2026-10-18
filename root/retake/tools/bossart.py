@@ -365,3 +365,68 @@ def film_frame():
 def build_boss4():
     frames = [camera(f, False) for f in range(2)] + [camera(f, True) for f in range(2)]
     return [("boss4", frames), ("film", [film_frame()])]
+
+
+# ---------------------------------------------------------------- Gargantua
+
+def ape(pose):
+    """A giant ape facing left, 64x64. pose: idle0, idle1, pound, throw, leap."""
+    w, h = 64, 64
+    img = pix.new_image(w, h)
+    fur = lambda l: pix.rgb(max(0, l), max(0, l * 2 // 3 - 1), max(0, l // 2 - 1))
+    skin = lambda l: pix.rgb(min(15, l + 2), max(0, l), max(0, l - 2))
+
+    def disc(cx, cy, rx, ry, col):
+        for y in range(int(cy - ry - 1), int(cy + ry + 2)):
+            for x in range(int(cx - rx - 1), int(cx + rx + 2)):
+                if 0 <= x < w and 0 <= y < h and ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0:
+                    img[y, x] = col
+
+    bob = 1 if pose == "idle1" else 0
+    crouch = 6 if pose == "leap" else 0
+    # legs
+    disc(28, 54 - crouch // 2, 8, 9, fur(4))
+    disc(44, 54 - crouch // 2, 8, 9, fur(4))
+    # body
+    disc(36, 38 + bob + crouch // 2, 18, 15, fur(5))
+    disc(32, 40 + bob + crouch // 2, 9, 9, skin(9))      # chest
+    # head
+    hx, hy = 24, 18 + bob + crouch
+    disc(hx, hy, 11, 10, fur(5))
+    disc(hx - 3, hy + 3, 7, 6, skin(10))                 # face
+    img[hy - 1:hy + 1, hx - 7:hx - 4] = fur(1)            # eyes
+    img[hy - 1:hy + 1, hx - 1:hx + 2] = fur(1)
+    img[hy + 5, hx - 8:hx + 1] = fur(2)                   # mouth
+    disc(hx + 1, hy - 7, 8, 3, fur(4))                    # brow ridge
+    # arms
+    if pose == "pound":
+        disc(22, 14, 6, 8, fur(4))
+        disc(46, 14, 6, 8, fur(4))
+    elif pose == "throw":
+        disc(50, 20, 6, 10, fur(4))
+        disc(50, 8, 7, 7, pix.rgb(9, 6, 4))               # the boulder held high
+        disc(18, 46, 6, 10, fur(4))
+    elif pose == "leap":
+        disc(16, 34, 6, 9, fur(4))
+        disc(54, 34, 6, 9, fur(4))
+    else:
+        disc(18, 46 + bob, 6, 11, fur(4))
+        disc(52, 46 + bob, 6, 11, fur(4))
+    return pix.outline(img, fur(0))
+
+
+def boulder():
+    s = pix.new_image(12, 12)
+    for y in range(12):
+        for x in range(12):
+            d = (x - 5.5) ** 2 + (y - 5.5) ** 2
+            if d <= 30:
+                s[y, x] = pix.rgb(9, 6, 4) if (x * 3 + y) % 7 else pix.rgb(6, 4, 3)
+            if d <= 6 and x < 6 and y < 6:
+                s[y, x] = pix.rgb(12, 9, 6)
+    return pix.outline(s, pix.rgb(2, 1, 1))
+
+
+def build_boss5():
+    frames = [ape(p) for p in ("idle0", "idle1", "pound", "throw", "leap")]
+    return [("boss5", frames), ("boulder", [boulder()])]

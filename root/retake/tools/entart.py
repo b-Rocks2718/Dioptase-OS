@@ -788,3 +788,198 @@ def build3():
                 raise SystemExit(f"entart.py: frames of '{name}' differ in size")
         out.append((name, frames))
     return out
+
+
+# ---------------------------------------------------------------- Stage 4
+# Two-strip Technicolor: hex digits are the red-orange record, letters A-P
+# the blue-green record (A darkest).
+
+def _red4(level):
+    level = max(0, min(15, level))
+    return pix.rgb(level, max(0, level * 2 // 3 - 1), max(0, level // 2 - 1))
+
+
+def _teal4(level):
+    level = max(0, min(15, level))
+    return pix.rgb(max(0, level // 3), level, max(0, level * 3 // 4))
+
+
+PAL4 = {format(i, "x"): _red4(i) for i in range(16)}
+PAL4.update({chr(ord("A") + i): _teal4(i) for i in range(16)})
+
+ART4 = {
+    "walker4": [   # a monkey
+        ["...2222.....",
+         "..266662....",
+         ".26c66c62...",
+         ".26aaaa62...",
+         "..2a22a2....",
+         "...2aa2.....",
+         "..226622....",
+         ".26666662...",
+         "2626666262..",
+         "2.266662.2..",
+         "...2662...2.",
+         "...2662..22.",
+         "..262262....",
+         "..2.22.2....",
+         ".22....22...",
+         ".2......2..."],
+        ["...2222.....",
+         "..266662....",
+         ".26c66c62...",
+         ".26aaaa62...",
+         "..2a22a2....",
+         "...2aa2.....",
+         "..226622....",
+         ".26666662...",
+         ".2666666262.",
+         "..2666622..2",
+         "...2662...2.",
+         "...2662.....",
+         "...26262....",
+         "...2.2.2....",
+         "..22..22....",
+         "..2....2...."],
+    ],
+    "hopper4": [   # a poison frog
+        ["............",
+         "............",
+         "..AA....AA..",
+         ".AOOA..AOOA.",
+         ".AJJJJJJJJA.",
+         "AJJ3JJJJ3JJA",
+         "AJJJJJJJJJJA",
+         ".AJ3JJ3JJJA.",
+         "AJA.AAAA.AJA",
+         "AA........AA"],
+        ["..AA....AA..",
+         ".AOOA..AOOA.",
+         ".AJJJJJJJJA.",
+         "AJJ3JJJJ3JJA",
+         "AJJJJJJJJJJA",
+         ".AJ3JJ3JJJA.",
+         "..AJJJJJJA..",
+         ".AJA....AJA.",
+         "AJA......AJA",
+         "AA........AA"],
+    ],
+    "flyer4": [    # a parrot
+        ["9............9",
+         "99..........99",
+         ".999.KKKK.999.",
+         "...9KKLLKK9...",
+         ".....KLLK.ec..",
+         "......KK..e...",
+         ".......KK.....",
+         "........KK...."],
+        ["..............",
+         "..............",
+         ".....KKKK.....",
+         "...KKKLLKK.ec.",
+         ".999KLLLLK9e..",
+         "999..KKKK..999",
+         "99.....KK....9",
+         "........KK...."],
+    ],
+    "thrower4": [  # a carnivorous plant that spits seeds
+        ["...999999...",
+         "..9cccccc9..",
+         ".9c9c99c9c9.",
+         ".9cccccccc9.",
+         "..9c9999c9..",
+         "...999999...",
+         "....2HH2....",
+         ".....HH.....",
+         "..HH.HH.HH..",
+         ".HKKHHHHKKH.",
+         "..HHHHHHHH..",
+         ".....HH.....",
+         ".....HH.....",
+         "....HHHH....",
+         "...AAAAAA...",
+         "..AAAAAAAA.."],
+        ["..99999999..",
+         ".9cccccccc9.",
+         "9c9c9999c9c9",
+         "9cc2.22.2cc9",
+         ".9cccccccc9.",
+         "..99999999..",
+         "....2HH2....",
+         ".....HH.....",
+         "..HH.HH.HH..",
+         ".HKKHHHHKKH.",
+         "..HHHHHHHH..",
+         ".....HH.....",
+         ".....HH.....",
+         "....HHHH....",
+         "...AAAAAA...",
+         "..AAAAAAAA.."],
+    ],
+    "charger4": [  # a rhinoceros
+        ["......2...........",
+         ".....262..........",
+         "..2.2662222222....",
+         ".2c26666666666622.",
+         "2666666666666662..",
+         "2666626666666662..",
+         ".266666666666662..",
+         "..22666666666622..",
+         "...262....262.....",
+         "...262....262.....",
+         "..2222...2222.....",
+         ".................."],
+        ["......2...........",
+         ".....262..........",
+         "..2.2662222222....",
+         ".2c26666666666622.",
+         "2666666666666662..",
+         "2666626666666662..",
+         ".266666666666662..",
+         "..22666666666622..",
+         "..262......262....",
+         ".262........262...",
+         ".2222......2222...",
+         ".................."],
+    ],
+    "shot4": [     # a spat seed
+        ["..KK..",
+         ".KOOK.",
+         "KOOOJK",
+         "KOJJJK",
+         ".KJJK.",
+         "..KK.."],
+    ],
+    "crumble": [   # a cracked temple block that gives way
+        ["22222222",
+         "29899892",
+         "28928982",
+         "29829892",
+         "28989282",
+         "29298892",
+         "28898982",
+         "22222222"],
+        ["22222222",
+         "29899892",
+         "289..982",
+         "2.829.92",
+         "28.89.82",
+         "292.8892",
+         "28898.82",
+         "22222222"],
+    ],
+}
+
+ORDER4 = ["walker4", "hopper4", "flyer4", "thrower4", "charger4", "shot4", "crumble"]
+
+
+def build4():
+    out = []
+    for name in ORDER4:
+        frames = [pix.parse_ascii(rows, PAL4) for rows in ART4[name]]
+        shape = frames[0].shape
+        for f in frames:
+            if f.shape != shape:
+                raise SystemExit(f"entart.py: frames of '{name}' differ in size ({name})")
+        out.append((name, frames))
+    return out
