@@ -55,10 +55,12 @@ def backlot():
         r.stamp(x + 8, 10, "W")
         if i == 0:
             r.ent("door", x + 6, 25, a="#s5_gate", b=6, c=25, d=1 | (5 << 4))
+        elif i == 1:
+            r.ent("door", x + 6, 25, a="#s6_gate", b=6, c=25, d=1 | (6 << 4))
         else:
             r.ent("sign", x + 7, 25, a="@stage_sealed")
     r.stamp(68, 11, "X")
-    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (6 << 4))
+    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (7 << 4))
     r.stamp(16, 18, "P")
     r.stamp(48, 18, "P")
     r.stamp(65, 21, "L")
@@ -836,6 +838,184 @@ def stage5():
     return out
 
 
+def laser(r, x, y, length, on, off, phase=0, width=1, switch=None):
+    """A ray curtain whose emitter sits in tile (x, y): the beam runs
+    `length` tiles down from the tile below and is `width` tiles wide. It
+    burns for `on` ticks and rests for `off` (on=0: always burning); while
+    `switch` is held down the curtain is dark. Packed into d as phase |
+    (width-1) << 8 | (switch+1) << 12, which must fit an int16."""
+    assert 1 <= width <= 16 and 0 <= phase < 256 and (switch is None or 0 <= switch < 7)
+    d = phase | ((width - 1) << 8) | ((0 if switch is None else switch + 1) << 12)
+    r.ent("laser", x, y, a=length, b=on, c=off, d=d)
+
+
+def stage6():
+    """Stage 6, "Rocket Rangers of the Moon": moon gravity, ray curtains
+    (one too quick to pass without Overcrank, one held dark by a take on a
+    plate), saucers on wires, hover pads over a crystal pit."""
+    out = []
+    r = Draft("s6_gate", 6, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.stamp(28, 19, "K")
+    r.stamp(17, 24, "C")
+    r.stamp(23, 23, "D")
+    r.stamp(34, 23, "Y")
+    r.girder(20, 17, 5)                         # a first moon hop
+    r.ent("door", 3, 25, a="#backlot_east", b=25, c=25)
+    r.ent("mirror", 8, 25)
+    r.ent("sign", 12, 25, a="@s6_title")
+    r.ent("sign", 15, 25, a="@s6_gravity_hint")
+    r.ent("coin", 21, 16)
+    r.ent("coin", 23, 16)
+    r.ent("flyer", 31, 9, a=6)
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    r = Draft("s6_craters", 6, (40, 0), (80, 30))
+    r.ground(26)
+    for x0, x1 in ((10, 22), (32, 42), (58, 72)):
+        r.clear(x0, 26, x1, 28)
+        r.nails(x0, 28, x1 - x0)
+    r.girder(64, 20, 3)                         # a stepping stone over the widest crater
+    r.clear(46, 26, 50, 30)
+    r.plank(46, 26, 4)                          # a hatch down to the crater cave
+    for x in (4, 25, 54, 76):
+        r.stamp(x, 23, "Y")
+    r.stamp(28, 23, "D")
+    r.ent("walker", 27, 25)
+    r.ent("walker", 53, 25)
+    r.ent("hopper", 44, 25)
+    r.ent("flyer", 37, 9, a=8)
+    r.ent("flyer", 66, 8, a=8)
+    for x, y in ((14, 19), (16, 18), (18, 19), (35, 19), (37, 18), (39, 19)):
+        r.ent("coin", x, y)
+    out.append(r.done())
+
+    r = Draft("s6_cave", 6, (60, 30), (40, 20))
+    r.fill(0, 0, 40, 2)
+    r.clear(26, 0, 30, 2)                       # the hatch above
+    r.ground(16)
+    r.wall(0, 2, 16, w=2)
+    r.wall(38, 2, 16, w=2)
+    r.back(2, 2, 38, 16)
+    for y in (12, 7, 3):                        # grating rungs back up
+        r.plank(26, y, 4)
+    r.stamp(8, 13, "Y")
+    r.ent("reel", 33, 15, a="@s6_reel_a")
+    r.ent("frame", 6, 15)
+    r.ent("hopper", 16, 15)
+    r.ent("coin", 12, 15)
+    r.ent("coin", 20, 15)
+    out.append(r.done())
+
+    r = Draft("s6_lasers", 6, (120, 0), (60, 30))
+    r.ground(26)
+    r.fill(0, 0, 60, 2)
+    r.back(0, 2, 60, 26)
+    for x in (4, 27, 52):
+        r.stamp(x, 6, "O")
+    r.ent("sign", 6, 25, a="@s6_laser_hint")
+    laser(r, 12, 2, 23, 50, 50)
+    laser(r, 20, 2, 23, 40, 30, phase=20, width=3)
+    laser(r, 32, 2, 23, 40, 12, width=3)        # too quick to outrun: Overcrank
+    laser(r, 43, 2, 23, 24, 24, phase=12, width=2)
+    r.stamp(48, 24, "C")
+    r.ent("heart", 28, 25)
+    r.ent("thrower", 55, 25)
+    out.append(r.done())
+
+    r = Draft("s6_hangar", 6, (180, 0), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.ground(26, 0, 10)
+    r.ground(26, 70, 80)
+    r.nails(10, 29, 60)
+    r.back(0, 2, 80, 26)
+    r.girder(28, 21, 4)
+    r.girder(50, 19, 4)
+    r.ent("platform", 12, 22, a=12, b=0, c=120, d=3)
+    r.ent("platform", 36, 16, a=8, b=1, c=90, d=3)
+    r.ent("platform", 56, 22, a=10, b=0, c=140, d=3)
+    r.ent("flyer", 22, 9, a=8)
+    r.ent("flyer", 46, 7, a=8)
+    r.ent("flyer", 64, 10, a=8)
+    r.stamp(73, 19, "K")
+    r.ent("coin", 29, 20)
+    r.ent("coin", 51, 18)
+    out.append(r.done())
+
+    r = Draft("s6_reactor", 6, (260, -30), (40, 60))
+    r.fill(0, 0, 40, 2)
+    r.ground(56)
+    r.wall(0, 2, 48, w=2)                       # the hangar joins at the bottom left
+    r.wall(38, 2, 18, w=2)
+    r.wall(38, 27, 56, w=2)                     # the observatory joins at the top right
+    r.back(0, 2, 40, 56)
+    r.ent("spring", 8, 55)
+    r.girder(4, 46, 8)
+    r.girder(26, 40, 8)
+    r.girder(4, 33, 8)
+    r.girder(18, 26, 6)
+    r.girder(30, 26, 8)
+    laser(r, 19, 27, 29, 60, 40, width=2)       # splits the shaft below the top deck
+    r.stamp(6, 52, "C")
+    r.ent("flyer", 30, 48, a=6)
+    r.ent("flyer", 12, 20, a=6)
+    for x, y in ((28, 39), (30, 39), (6, 32), (8, 32)):
+        r.ent("coin", x, y)
+    out.append(r.done())
+
+    r = Draft("s6_observatory", 6, (300, -30), (40, 30))
+    r.fill(0, 0, 40, 2)
+    r.ground(26)
+    r.wall(0, 2, 18, w=2)                       # the reactor joins at rows 18-25
+    r.back(0, 2, 40, 26)
+    r.stamp(16, 4, "O")
+    r.stamp(22, 4, "O")
+    r.stamp(27, 24, "C")
+    r.girder(30, 18, 6)
+    r.ent("npc", 12, 25, a="@s6_alien")
+    r.ent("mirror", 20, 25)
+    r.ent("reel", 33, 17, a="@s6_reel_b")
+    r.ent("coin", 6, 25)
+    out.append(r.done())
+
+    r = Draft("s6_bridge", 6, (340, -30), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.back(0, 2, 80, 26)
+    r.ground(26, 0, 12)
+    r.ground(26, 22, 36)
+    r.ground(26, 46, 56)
+    r.ground(26, 66, 80)
+    for x0, x1 in ((12, 22), (36, 46), (56, 66)):
+        r.nails(x0, 29, x1 - x0)
+    laser(r, 16, 2, 27, 40, 40)                 # over the first gap
+    r.ent("plate", 25, 25, a=1)
+    r.ent("sign", 23, 25, a="@s6_plate_hint")
+    laser(r, 31, 2, 24, 0, 0, width=2, switch=1)   # dark only while the plate is held
+    r.ent("charger", 52, 25)
+    laser(r, 60, 2, 27, 30, 20, width=2)
+    r.ent("flyer", 41, 8, a=8)
+    r.ent("flyer", 70, 9, a=6)
+    r.stamp(72, 23, "D")
+    r.ent("heart", 68, 25)
+    out.append(r.done())
+
+    r = Draft("s6_throne", 6, (420, -30), (60, 30))
+    r.fill(0, 0, 60, 2)
+    r.ground(26)
+    r.wall(58, 2, 26, w=2)
+    r.back(0, 2, 58, 26)
+    r.girder(8, 18, 8)
+    r.girder(44, 18, 8)
+    r.stamp(4, 24, "C")
+    r.stamp(50, 24, "C")
+    r.stamp(28, 5, "O")
+    r.ent("boss", 40, 25, a=7)
+    out.append(r.done())
+    return out
+
+
 def tower():
     """The Projection Tower (region 0, east of the lot in world space)."""
     out = []
@@ -906,4 +1086,4 @@ def tower():
 
 
 def all_rooms():
-    return backlot() + stage1() + stage2() + stage3() + stage4() + stage5() + tower()
+    return backlot() + stage1() + stage2() + stage3() + stage4() + stage5() + stage6() + tower()

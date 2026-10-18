@@ -44,7 +44,9 @@
 #define ENT_CRUMBLE 25   /* a block that gives way 30 ticks after Ruby stands on it, back 3 s later */
 #define ENT_PENDULUM 26  /* swinging blade: a rope tiles, b phase 0..31, c ticks per phase step */
 #define ENT_BOLT 27      /* a lightning strike: warns, then strikes its column (spawned) */
-#define ENT_KINDS 28
+#define ENT_LASER 28     /* ray curtain: a beam tiles, b on ticks (0 steady), c off ticks,
+                            d phase | (width-1) << 8 | (switch+1) << 12 */
+#define ENT_KINDS 29
 
 /* Not a movement ability: the third take reel, granted like one. */
 #define AB_EXTRA_REEL 256
@@ -114,6 +116,7 @@ struct Progress {
 #define GE_FINALE 131072  /* the Everlasting Camera is broken: roll the ending */
 #define GE_OVERCRANK 262144
 #define GE_THUNDER 524288
+#define GE_REWIND 1048576
 
 extern struct Player g_hero;
 extern struct Takes g_takes;
@@ -132,6 +135,7 @@ void game_new(int start_room);
 int game_load(void);
 int game_save(void);
 int game_has_save(void);
+int game_rewind_target(int* x_q8, int* y_q8);
 void game_enter_room(int room, int x_px, int y_px);
 void game_tick(int held, int pressed);
 int flag_get(int id);

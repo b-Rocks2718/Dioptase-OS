@@ -145,6 +145,18 @@ _hl1, _hl2 = held_chords(HORROR_BEATS, 4)
 _hbass = " ".join([[CHORDS[b][0] for b in HORROR_BEATS][i] if j == 0 else "-"
                    for i in range(len(HORROR_BEATS)) for j in range(4)])
 
+# ---- Stage 6: "Rocket Rangers of the Moon" (a serial's heroic march) ----
+SPACE_MELODY = """
+A4 - - - E5 - - - | A5 - G5 - E5 - C5 - | F5 - - - A5 - - - | G5 - F5 - E5 - D5 - |
+D5 - - - G5 - - - | B5 - A5 - G5 - D5 - | E5 - - - G#5 - - - | B5 - - - - - . r |
+A4 - - - E5 - - - | A5 - C6 - B5 - A5 - | C6 - - - A5 - F5 - | A5 - - - C6 - - - |
+D6 - - - A5 - F5 - | D5 - F5 - A5 - D6 - | E6 - - - D6 - B5 - | G#5 - - - E5 - . r |
+"""
+SPACE_BEATS = ["Am", "Am", "F", "F", "G", "G", "E7", "E7", "Am", "Am", "F", "F", "Dm", "Dm", "E7", "E7"]
+_sp_arp = " ".join(" ".join([CHORDS[b][2], ".", CHORDS[b][3], ".", CHORDS[b][2], ".", CHORDS[b][3], "."])
+                   for b in SPACE_BEATS)
+_sp_bass = " ".join(" ".join([CHORDS[b][0], "-", "-", "-", CHORDS[b][1], "-", "-", "-"]) for b in SPACE_BEATS)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -160,6 +172,8 @@ SONGS = {
                                          ("tri_bass", JUNGLE_BASS)]},
     "stage5": {"tempo": 15, "channels": [("theremin", HORROR_LEAD), ("organ", _hl1), ("organ", _hl2),
                                          ("tri_bass", _hbass)]},
+    "stage6": {"tempo": 11, "channels": [("square_lead", SPACE_MELODY), ("marimba", _sp_arp),
+                                         ("tri_bass", _sp_bass)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }

@@ -239,6 +239,44 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nThe monster lies down, folds its hands, and for the first time in years gets some rest.",
         "On the lab bench: a camera crank with a hand-written tag.\n\nOVERCRANK. (Press F: for a moment, the world slows while you don't.)",
     ],
+    # ---- Stage 6 ----
+    "s6_title": [
+        "ROCKET RANGERS OF THE MOON\n\nChapter 1: Prisoners of the Pale Planet. The rockets hang from wires. Nobody minds.",
+    ],
+    "s6_gravity_hint": [
+        "STAGE NOTICE:\n\nREDUCED GRAVITY ON THIS SET. JUMP ACCORDINGLY.",
+    ],
+    "s6_laser_hint": [
+        "PROPS DEPT. WARNING:\n\nTHE RAY CURTAINS ARE REAL. THE LAST ONE BLINKS FASTER THAN ANYBODY CAN RUN.",
+        "UNLESS THE CAMERA SLOWS DOWN AND YOU DON'T. (F)",
+    ],
+    "s6_plate_hint": [
+        "CHALKED ON THE GANTRY:\n\nCURTAIN STAYS DARK WHILE SOMEBODY STANDS ON THE MARK. SOMEBODY. NOT NECESSARILY YOU.",
+    ],
+    "s6_alien": [
+        "\"Take me to your... oh. It's you. Sorry, force of habit.\"",
+        "\"I've been in this suit since Tuesday. The zipper's in the back and nobody reads the call sheet.\"",
+        "\"The Robot Emperor was a fellow named Herb in a boiler suit. The camera took Herb. The suit kept going.\"",
+        "\"It hops on rocket boots, and when it points that scepter, rays come down out of the sky. Keep moving.\"",
+    ],
+    "s6_reel_a": [
+        "LOST REEL: \"Rocket Rangers, Chapter 1\" (1936)",
+        "Captain Comet leaps from the burning rocket. In the wide shot, the leap is Ruby. In the close-up, it's Vivian Lark, pretending to be out of breath.",
+        "Between takes Viv hands Ruby a coffee: \"That was you, kid. Everybody on this stage knows it.\" The studio cut the line.",
+    ],
+    "s6_reel_b": [
+        "LOST REEL: \"Mrs. Vale's Moon\" (1933)",
+        "Eleanor Vale paints the moon rose-pink. \"Nobody's been there, Augustin. It can be any color we like.\"",
+        "It was the last set she designed.",
+    ],
+    "s6_boss_intro": [
+        "THE ROBOT EMPEROR",
+        "\"KNEEL BEFORE THE EMPEROR OF THE MOON!\" The voice crackles out of a speaker grille. Nobody is inside the suit anymore.",
+    ],
+    "s6_wrap": [
+        "THAT'S A WRAP!\n\nThe Emperor sits down on its throne and powers off, with a sound like a sigh.",
+        "In the throne's control panel, a film can spinning backward, tagged in Otto's hand:\n\nREWIND. (Press R: snap back to where you stood two seconds ago.)",
+    ],
     # ---- The Projection Tower ----
     "tower_open": [
         "The film slot glows. Three wrapped pictures, three reels.\n\nThe Projection Tower door swings open.",
