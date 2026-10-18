@@ -9,9 +9,10 @@
  * hazards and respawn, persistent progress, entities and combat, saving.
  * Written by Opus while Astra was away; listed in COLLAB.md's review queue.
  *
- * Tick order (game_tick): takes advance -> platforms -> player_step ->
- * take capture -> jump cut -> entities -> combat -> pickups/interactions ->
- * hazards -> room transitions. Everything is deterministic given inputs.
+ * Tick order: takes advance -> platforms -> player_step -> immediate hazard
+ * resolution -> capture -> jump cut -> entities -> switches/gates -> combat
+ * and death -> pickups/interactions -> room transitions. Death/hazards cannot
+ * be bypassed by a same-tick door or healing pickup. Inputs are deterministic.
  */
 
 /* Entity kinds; tools/entities.py mirrors these codes for the room files. */
@@ -44,6 +45,7 @@
 #define MAX_FLAGS 2048
 #define MAX_SWITCHES 16
 
+/* One room-local actor or prop; dead reusable slots have kind ENT_NONE. */
 struct Ent {
   int kind;
   int x;           /* Q8 top-left of the hitbox */

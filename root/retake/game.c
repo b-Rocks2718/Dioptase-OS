@@ -50,39 +50,47 @@ static int entry_x;            /* where Ruby entered this room (pixels) */
 static int entry_y;
 static int room_ox;            /* this room's world origin in pixels */
 static int room_oy;
+static int boss_cycle;         /* restart each encounter, including after death */
 
 /* ---- persistent flags ---- */
 
+/* Invalid or absent persistence bits are false, including transient flag -1. */
 int flag_get(int id) {
   if (id < 0 || id >= MAX_FLAGS) return 0;
   return (g_prog.flags[id >> 5] >> (id & 31)) & 1;
 }
 
+/* Only bounded persistent flag ids may modify campaign progress. */
 void flag_set(int id) {
   if (id < 0 || id >= MAX_FLAGS) return;
   g_prog.flags[id >> 5] |= 1u << (id & 31);
 }
 
+/* Mark a room discovered for the campaign map (the pack supports 256 rooms). */
 static void mark_visited(int room) {
   g_prog.visited[(room >> 5) & 7] |= 1u << (room & 31);
 }
 
 /* ---- tile queries for entities (pixel coordinates) ---- */
 
+/* Enemy tile queries treat the outside of the current room as solid. */
 static int col_px(int x, int y) {
   if (x < 0 || y < 0 || x >= g_room_pw || y >= g_room_ph) return COL_SOLID;
   return g_room.col[g_room.row[y >> 3] + (x >> 3)];
 }
 
+/* Only full solids block horizontal or upward enemy motion. */
 static int solid_px(int x, int y) {
   return col_px(x, y) == COL_SOLID;
 }
 
+/* Enemy feet can stand on solid tiles and one-way ledges. */
 static int floor_px(int x, int y) {
   int c = col_px(x, y);
   return c == COL_SOLID || c == COL_ONEWAY;
 }
 
+/* Expose an entity body in the same Q8 space used by clapper contacts. */
 static void ent_box(struct Ent* e, struct Hitbox* b) {
   b->x = e->x;
   b->y = e->y;
@@ -90,6 +98,7 @@ static void ent_box(struct Ent* e, struct Hitbox* b) {
   b->h = e->h;
 }
 
+/* Expose Ruby's physical body, excluding her clapper reach. */
 static void hero_box(struct Hitbox* b) {
   b->x = g_hero.x;
   b->y = g_hero.y;
@@ -99,11 +108,13 @@ static void hero_box(struct Hitbox* b) {
 
 /* ---- entities ---- */
 
+/* Identify damageable ordinary enemies, excluding bosses and projectiles. */
 static int is_enemy(int kind) {
   return kind == ENT_WALKER || kind == ENT_HOPPER || kind == ENT_FLYER || kind == ENT_THROWER ||
          kind == ENT_CHARGER;
 }
 
+/* Reuse a dead slot or append within the fixed entity budget; return zero if full. */
 static struct Ent* ent_alloc(void) {
   for (int i = 0; i < g_ent_count; i++) {
     if (!g_ents[i].alive && g_ents[i].kind == ENT_NONE) return &g_ents[i];
@@ -162,23 +173,36 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
   e->w = w << 8;
   e->h = h << 8;
   /* stand on the bottom of the spawn tile, centered */
-  e->x = ((tx << 3) + 4 - (w >> 1)) << 8;
-  e->y = ((ty << 3) + 8 - h) << 8;
+  e->x = (tx * TILE + 4 - (w >> 1)) * Q8;
+  e->y = (ty * TILE + 8 - h) * Q8;
   if (kind == ENT_GATE) {
-    e->x = (tx << 3) << 8;
-    e->y = (ty << 3) << 8;
+    e->x = tx * TILE * Q8;
+    e->y = ty * TILE * Q8;
   }
-  if (kind == ENT_SANDBAG) e->y = (ty << 3) << 8;
+  if (kind == ENT_SANDBAG) e->y = ty * TILE * Q8;
   if (kind == ENT_FLYER) {
     e->c = e->y;   /* home height */
   }
 }
 
+/* Reconstruct persistent boss rewards on both victory and later room visits. */
+static void boss_rewards(int boss, int tx) {
+  if (boss != 1) return;
+  if (!(g_prog.abilities & AB_WIRE)) {
+    struct Ent* prize = ent_alloc();
+    if (prize) ent_setup(prize, ENT_ABILITY, tx, 25, AB_WIRE, SCRIPT_S1_WRAP, 0, -1);
+  }
+  struct Ent* door = ent_alloc();
+  if (door) ent_setup(door, ENT_DOOR, 4, 25, ROOM_BACKLOT_WEST, 15, 25, -1);
+}
+
+/* Materialize the room's entities, then reconstruct defeated-boss rewards. */
 static void spawn_room_entities(void) {
   struct PakRoom* pr = pak_room(g_room_index);
   short* raw = (short*)(g_pak + pr->entities_off);
   g_ent_count = 0;
   g_boss = 0;
+  boss_cycle = 0;
   for (int i = 0; i < pr->entity_count && g_ent_count < MAX_ENTS; i++) {
     short* r = raw + (i << 3);
     int kind = r[0];
@@ -192,20 +216,34 @@ static void spawn_room_entities(void) {
     e->d = r[6];
     if (kind == ENT_BOSS) g_boss = e;
   }
+  for (int i = 0; i < pr->entity_count; i++) {
+    short* r = raw + (i << 3);
+    if (r[0] == ENT_BOSS && flag_get(BOSS_FLAG_BASE + r[3])) boss_rewards(r[3], r[1]);
+  }
 }
 
 /* Apply gates to the room's collision: a closed gate's column is solid. */
 static void update_gates(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
-    if (e->kind != ENT_GATE) continue;
+    if (!e->alive || e->kind != ENT_GATE || e->tx < 0 || e->tx >= g_room.w) continue;
     int open = g_switch[e->a & 15];
+    /* A released plate may close behind Ruby, but never through her. Takes
+     * are projections, so their overlap does not prevent a gate closing. */
+    struct Hitbox hb;
+    struct Hitbox gb;
+    hero_box(&hb);
+    ent_box(e, &gb);
+    if (!open && hitbox_overlap(&hb, &gb)) open = 1;
     int want = open ? 1 : 0;
     if (want != e->state || e->timer == 0) {
       int h = e->b > 0 ? e->b : 1;
       for (int k = 0; k < h; k++) {
         int ty = e->ty + k;
-        if (ty >= 0 && ty < g_room.h) g_room.col[g_room.row[ty] + e->tx] = open ? COL_AIR : COL_SOLID;
+        if (ty >= 0 && ty < g_room.h) {
+          int cell = g_room.row[ty] + e->tx;
+          g_room.col[cell] = open ? g_pak[pak_room(g_room_index)->col_off + cell] : COL_SOLID;
+        }
       }
       if (e->timer != 0) g_events |= GE_GATE;
       e->state = want;
@@ -216,11 +254,12 @@ static void update_gates(void) {
 
 /* ---- room changes ---- */
 
+/* Reset room-local state and load collision while retaining the entrance impulse. */
 void game_enter_room(int room, int x_px, int y_px) {
   room_load(room);
   struct PakRoom* pr = pak_room(room);
-  room_ox = pr->wx << 3;
-  room_oy = pr->wy << 3;
+  room_ox = pr->wx * TILE;
+  room_oy = pr->wy * TILE;
   render_region(pr->region);
   int vx = g_hero.vx;
   int vy = g_hero.vy;
@@ -246,8 +285,8 @@ static int room_at(int region, int wx, int wy) {
   for (int i = 0; i < n; i++) {
     struct PakRoom* r = pak_room(i);
     if (r->region != region) continue;
-    int x0 = r->wx << 3;
-    int y0 = r->wy << 3;
+    int x0 = r->wx * TILE;
+    int y0 = r->wy * TILE;
     if (wx >= x0 && wy >= y0 && wx < x0 + (r->w << 3) && wy < y0 + (r->h << 3)) return i;
   }
   return -1;
@@ -265,6 +304,7 @@ static void hazard_respawn(void) {
   takes_init(&g_takes, g_prog.take_slots, g_prog.take_frames);
 }
 
+/* Restore the last mirror checkpoint with full health and an empty take bank. */
 static void die(void) {
   g_events |= GE_DEATH;
   g_pending_script = SCRIPT_DEATH0 + (int)(g_prog.play_ticks & 3);
@@ -276,7 +316,7 @@ static void die(void) {
 
 /* Room edges: walk off a side into the neighbor, fall through the bottom,
  * or jump through the top. Returns 1 if the room changed. */
-static int check_edges(int held) {
+static int check_edges(void) {
   struct PakRoom* pr = pak_room(g_room_index);
   int px = g_hero.x >> 8;
   int py = g_hero.y >> 8;
@@ -285,36 +325,35 @@ static int check_edges(int held) {
   int target = -1;
   int nx = 0;
   int ny = 0;
-  if (px >= g_room_pw - PLAYER_W && (held & IN_RIGHT)) {
+  if (g_hero.edge_vx > 0) {
     target = room_at(pr->region, room_ox + g_room_pw + 1, mid_y);
     if (target >= 0) {
       struct PakRoom* t = pak_room(target);
       nx = 0;
-      ny = room_oy + py - (t->wy << 3);
+      ny = room_oy + py - (t->wy * TILE);
     }
-  } else if (px <= 0 && (held & IN_LEFT)) {
+  } else if (g_hero.edge_vx < 0) {
     target = room_at(pr->region, room_ox - 2, mid_y);
     if (target >= 0) {
       struct PakRoom* t = pak_room(target);
       nx = (t->w << 3) - PLAYER_W;
-      ny = room_oy + py - (t->wy << 3);
+      ny = room_oy + py - (t->wy * TILE);
     }
-  } else if (py >= g_room_ph - PLAYER_H) {
+  } else if (g_hero.edge_vy > 0) {
     target = room_at(pr->region, mid_x, room_oy + g_room_ph + 1);
     if (target < 0) {
       hazard_respawn();
       return 0;
     }
     struct PakRoom* t = pak_room(target);
-    nx = room_ox + px - (t->wx << 3);
+    nx = room_ox + px - (t->wx * TILE);
     ny = 0;
-  } else if (py <= 0 && g_hero.vy < 0) {
+  } else if (g_hero.edge_vy < 0) {
     target = room_at(pr->region, mid_x, room_oy - 2);
     if (target >= 0) {
       struct PakRoom* t = pak_room(target);
-      nx = room_ox + px - (t->wx << 3);
+      nx = room_ox + px - (t->wx * TILE);
       ny = (t->h << 3) - PLAYER_H - 1;
-      if (g_hero.vy > -1150) g_hero.vy = -1150; /* carry Ruby up onto the next ledge */
     }
   }
   if (target < 0) return 0;
@@ -323,12 +362,38 @@ static int check_edges(int held) {
   if (nx > (t->w << 3) - PLAYER_W) nx = (t->w << 3) - PLAYER_W;
   if (ny < 0) ny = 0;
   if (ny > (t->h << 3) - PLAYER_H) ny = (t->h << 3) - PLAYER_H;
+  /* A neighbor's rectangle alone is not an opening. Refuse transitions
+   * whose whole body would overlap scenery, spikes, or a closed gate. */
+  struct Room destination;
+  int rows[60];
+  destination.w = t->w;
+  destination.h = t->h;
+  destination.col = g_pak + t->col_off;
+  destination.row = rows;
+  destination.platform_count = 0;
+  destination.platforms = 0;
+  for (int y = 0; y < t->h; y++) rows[y] = y * t->w;
+  if (!player_can_place(&destination, nx * Q8, ny * Q8)) return 0;
+  short* raw = (short*)(g_pak + t->entities_off);
+  for (int i = 0; i < t->entity_count; i++) {
+    short* e = raw + (i << 3);
+    if (e[0] != ENT_GATE) continue;
+    int height = e[4] > 0 ? e[4] : 1;
+    if (nx < (e[1] + 1) * TILE && nx + PLAYER_W > e[1] * TILE &&
+        ny < (e[2] + height) * TILE && ny + PLAYER_H > e[2] * TILE) return 0;
+  }
+  if (g_hero.edge_vx) g_hero.vx = g_hero.edge_vx;
+  if (g_hero.edge_vy) g_hero.vy = g_hero.edge_vy;
+  /* The vertical seam hides one body height. A small upward handoff keeps
+   * Ruby rising far enough to reach the first ledge in the next screen. */
+  if (g_hero.edge_vy < 0 && g_hero.vy > -1150) g_hero.vy = -1150;
   game_enter_room(target, nx, ny);
   return 1;
 }
 
 /* ---- enemies ---- */
 
+/* Apply at most one health loss during the controller's invulnerability window. */
 static void hurt_hero(struct Ent* e) {
   int dir = (e->x + (e->w >> 1)) < (g_hero.x + (PLAYER_W << 7)) ? -1 : 1;
   if (player_hurt(&g_hero, dir)) {
@@ -337,6 +402,7 @@ static void hurt_hero(struct Ent* e) {
   }
 }
 
+/* Damage an ordinary enemy and replace a defeated body with falling scrip. */
 static void damage(struct Ent* e, int from_x, int amount) {
   if (e->hurt) return;
   e->hp -= amount;
@@ -364,6 +430,7 @@ static void damage(struct Ent* e, int from_x, int amount) {
   }
 }
 
+/* Patrol a ledge, turning at walls or missing support; recoil briefly interrupts patrol. */
 static void step_walker(struct Ent* e) {
   int px = e->x >> 8;
   int py = e->y >> 8;
@@ -379,6 +446,7 @@ static void step_walker(struct Ent* e) {
   e->x += e->dir * WALKER_SPEED;
 }
 
+/* Telegraph a level rush, then become vulnerable while recovering at an obstruction. */
 static void step_charger(struct Ent* e) {
   int px = e->x >> 8;
   int py = e->y >> 8;
@@ -409,6 +477,7 @@ static void step_charger(struct Ent* e) {
   }
 }
 
+/* Wait on a ledge before hopping toward Ruby with capped falling speed. */
 static void step_hopper(struct Ent* e) {
   int px = e->x >> 8;
   int py = e->y >> 8;
@@ -419,7 +488,7 @@ static void step_hopper(struct Ent* e) {
     e->vy = 0;
     e->vx = 0;
     e->y = ((py + h) & ~7) - h;
-    e->y <<= 8;
+    e->y *= Q8;
     if (++e->timer >= 70) {
       e->timer = 0;
       e->dir = (g_hero.x < e->x) ? -1 : 1;
@@ -437,6 +506,7 @@ static void step_hopper(struct Ent* e) {
   }
 }
 
+/* Patrol around a home height, with a brief swoop when Ruby passes below. */
 static void step_flyer(struct Ent* e) {
   e->anim++;
   int range = (e->a > 0 ? e->a : 6) << 11;   /* tiles -> Q8 pixels */
@@ -447,7 +517,7 @@ static void step_flyer(struct Ent* e) {
     if (e->x > home_x + range) e->dir = -1;
     int phase = (e->anim >> 2) & 15;
     int wave = phase < 8 ? phase - 4 : 12 - phase;
-    e->y = e->c + (wave << 8);
+    e->y = e->c + (wave * Q8);
     int dx = (g_hero.x - e->x) >> 8;
     int dy = (g_hero.y - e->y) >> 8;
     if (dx > -48 && dx < 48 && dy > 0 && dy < 72 && e->timer == 0) {
@@ -468,6 +538,7 @@ static void step_flyer(struct Ent* e) {
   }
 }
 
+/* Periodically aim a bounded arcing shot toward Ruby's current horizontal position. */
 static void step_thrower(struct Ent* e) {
   int dx = (g_hero.x - e->x) >> 8;
   e->dir = dx < 0 ? -1 : 1;
@@ -493,6 +564,7 @@ static void step_thrower(struct Ent* e) {
   if (e->state > 0) e->state--;
 }
 
+/* Expire projectiles on terrain contact, lifetime exhaustion, or leaving the room. */
 static void step_shot(struct Ent* e) {
   e->vy += 24;
   e->x += e->vx;
@@ -503,6 +575,7 @@ static void step_shot(struct Ent* e) {
   }
 }
 
+/* Drop when Ruby passes below and stop at the first supporting floor. */
 static void step_sandbag(struct Ent* e) {
   if (e->state == 0) {
     int hx = g_hero.x >> 8;
@@ -513,7 +586,7 @@ static void step_sandbag(struct Ent* e) {
     if (e->vy > ENT_FALL_MAX) e->vy = ENT_FALL_MAX;
     int ny = (e->y + e->vy) >> 8;
     if (floor_px((e->x >> 8) + 4, ny + 8)) {
-      e->y = (((ny + 8) & ~7) - 8) << 8;
+      e->y = (((ny + 8) & ~7) - 8) * Q8;
       e->state = 2;
       e->vy = 0;
     } else {
@@ -522,6 +595,7 @@ static void step_sandbag(struct Ent* e) {
   }
 }
 
+/* Let dropped scrip settle before it becomes collectable. */
 static void step_coin(struct Ent* e) {
   e->anim++;
   if (e->state != 1) return;
@@ -529,7 +603,7 @@ static void step_coin(struct Ent* e) {
   if (e->vy > ENT_FALL_MAX) e->vy = ENT_FALL_MAX;
   int ny = (e->y + e->vy) >> 8;
   if (e->vy > 0 && floor_px((e->x >> 8) + 3, ny + 6)) {
-    e->y = (((ny + 6) & ~7) - 6) << 8;
+    e->y = (((ny + 6) & ~7) - 6) * Q8;
     e->vy = 0;
     e->state = 2;
   } else {
@@ -555,7 +629,6 @@ static void step_coin(struct Ent* e) {
 #define B_WHISTLE 7
 #define B_DOWN 8
 
-static int boss_cycle;
 
 /* x (Q8) of the nearest charge target: Ruby or any active take. */
 static int boss_target_x(struct Ent* e) {
@@ -577,6 +650,7 @@ static int boss_target_x(struct Ent* e) {
   return best;
 }
 
+/* Allocate a finite-lived ground shockwave, dropping it if the room is full. */
 static void spawn_wave(int x, int y, int dir) {
   struct Ent* w = ent_alloc();
   if (!w) return;
@@ -587,12 +661,14 @@ static void spawn_wave(int x, int y, int dir) {
   w->timer = 240;
 }
 
+/* Allocate a boss minion at a Q8 position if a room slot remains. */
 static void spawn_pigeon(int x, int y) {
   struct Ent* f = ent_alloc();
   if (!f) return;
   ent_setup(f, ENT_FLYER, x >> 11, y >> 11, 5, 0, 0, -1);
 }
 
+/* Advance Gearhart's telegraphed slam, charge and whistle encounter states. */
 static void step_boss(struct Ent* e) {
   int floor_y = e->y + e->h;
   switch (e->state) {
@@ -675,30 +751,26 @@ static void step_boss(struct Ent* e) {
   }
 }
 
+/* Clear encounter hazards before allocating rewards, even at entity capacity. */
 static void boss_defeated(struct Ent* e) {
+  int boss = e->a;
+  int tx = (e->x >> 11) + 1;
   e->state = B_DOWN;
   e->alive = 0;
   e->kind = ENT_NONE;
   flag_set(BOSS_FLAG_BASE + e->a);
   g_events |= GE_BOSS_DOWN;
   g_boss = 0;
-  /* the wire falls where he stood; the way home opens */
-  struct Ent* prize = ent_alloc();
-  if (prize) {
-    ent_setup(prize, ENT_ABILITY, (e->x >> 11) + 1, 25, AB_WIRE, SCRIPT_S1_WRAP, 0, -1);
-  }
-  struct Ent* door = ent_alloc();
-  if (door) {
-    ent_setup(door, ENT_DOOR, 4, 25, ROOM_BACKLOT_WEST, 15, 25, -1);
-  }
   for (int i = 0; i < g_ent_count; i++) {
     if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE) {
       g_ents[i].alive = 0;
       g_ents[i].kind = ENT_NONE;
     }
   }
+  boss_rewards(boss, tx);
 }
 
+/* Move a ground shockwave until its leading edge hits scenery or its timer expires. */
 static void step_wave(struct Ent* e) {
   e->x += e->vx;
   int px = (e->x >> 8) + (e->vx > 0 ? 8 : -1);
@@ -710,6 +782,7 @@ static void step_wave(struct Ent* e) {
 
 /* ---- per-tick entity work ---- */
 
+/* A plate accepts Ruby or a projected body; plates on one channel are ORed. */
 static void update_switches(void) {
   for (int i = 0; i < MAX_SWITCHES; i++) g_switch[i] = 0;
   struct Hitbox hb;
@@ -736,6 +809,7 @@ static void update_switches(void) {
   }
 }
 
+/* Resolve live and recorded clapper hits, then enemy contacts and any live pogo. */
 static void combat(void) {
   struct Hitbox live;
   int has_live = player_attack_box(&g_hero, &live);
@@ -803,7 +877,7 @@ static void combat(void) {
         break;
       }
     }
-    if (!e->alive) continue;
+    if (!e->alive || (e->kind != ENT_SHOT && !is_enemy(e->kind))) continue;
     if (hitbox_overlap(&hb, &eb)) {
       if (e->kind == ENT_SHOT) {
         hurt_hero(e);
@@ -815,12 +889,11 @@ static void combat(void) {
     }
   }
   if (pogo) {
-    g_hero.vy = -POGO_SPEED;
-    g_hero.air_jump_left = 1;
-    g_hero.on_ground = 0;
+    player_launch(&g_hero, POGO_SPEED);
   }
 }
 
+/* Collect overlapping rewards and process a single room-changing interaction. */
 static void pickups_and_interactions(int pressed) {
   struct Hitbox hb;
   hero_box(&hb);
@@ -871,9 +944,7 @@ static void pickups_and_interactions(int pressed) {
         break;
       case ENT_SPRING:
         if (g_hero.vy > 0) {
-          g_hero.vy = -SPRING_SPEED;
-          g_hero.air_jump_left = 1;
-          g_hero.on_ground = 0;
+          player_launch(&g_hero, SPRING_SPEED);
           e->timer = 12;
           g_events |= GE_SPRING;
         }
@@ -908,6 +979,7 @@ static void pickups_and_interactions(int pressed) {
   }
 }
 
+/* Advance each live actor once and decrement its shared hit protection timer. */
 static void step_entities(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
@@ -934,6 +1006,7 @@ static void step_entities(void) {
 
 /* ---- the tick ---- */
 
+/* Run one deterministic 60-Hz step, resolving fatal contacts before interactions. */
 void game_tick(int held, int pressed) {
   g_events = 0;
   g_prog.play_ticks++;
@@ -941,6 +1014,11 @@ void game_tick(int held, int pressed) {
   g_room.platform_count = takes_platforms(&g_takes, g_platforms);
   g_room.platforms = g_platforms;
   player_step(&g_hero, &g_room, held, pressed);
+  if (g_hero.events & EV_HAZARD) {
+    hazard_respawn();
+    if (g_health <= 0) die();
+    return;
+  }
   int rec = takes_capture(&g_takes, &g_hero, (pressed & IN_RECORD) != 0);
   if (rec == 1) g_events |= GE_REC_START;
   if (rec == 2) g_events |= GE_REC_STOP;
@@ -960,19 +1038,23 @@ void game_tick(int held, int pressed) {
   update_switches();
   update_gates();
   combat();
-  pickups_and_interactions(pressed);
-  if (g_events & GE_ROOM) return;   /* a door moved us; the new room starts clean */
-  if (g_hero.events & EV_HAZARD) hazard_respawn();
   if (g_health <= 0) {
     die();
     return;
   }
-  check_edges(held);
+  pickups_and_interactions(pressed);
+  if (g_events & GE_ROOM) return;   /* a door moved us; the new room starts clean */
+  if (g_health <= 0) {
+    die();
+    return;
+  }
+  check_edges();
   if (g_health <= 0) die();   /* a pit at a room's bottom edge */
 }
 
 /* ---- new game, save and load ---- */
 
+/* Initialize all campaign progress and enter the chosen debug or normal start room. */
 void game_new(int start_room) {
   for (int i = 0; i < 64; i++) g_prog.flags[i] = 0;
   for (int i = 0; i < 8; i++) g_prog.visited[i] = 0;
@@ -1007,6 +1089,7 @@ int game_save(void) {
   return ok ? 0 : -1;
 }
 
+/* Load saved progress and enter its checkpoint, or return failure to the title menu. */
 int game_load(void) {
   int fd = open_existing(SAVE_PATH);
   if (fd < 0) return -1;
