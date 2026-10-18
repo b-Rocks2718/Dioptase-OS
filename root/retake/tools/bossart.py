@@ -285,3 +285,83 @@ def bubbles():
 def build_boss3():
     return [("tentacle_up", [tentacle_up()]), ("tentacle_down", [tentacle_down()]),
             ("bubbles", [bubbles()])]
+
+
+# ---------------------------------------------------------------- the Everlasting Camera
+
+def camera(frame, lens_open):
+    """A giant hand-cranked camera on a tripod, facing left. 64x56."""
+    w, h = 64, 56
+    img = pix.new_image(w, h)
+    metal = lambda l: pix.rgb(max(0, l - 1), l, min(15, l + 1))
+    brassc = lambda l: pix.rgb(min(15, l + 2), l, max(0, l - 4))
+
+    def disc(cx, cy, r, col):
+        for y in range(int(cy - r - 1), int(cy + r + 2)):
+            for x in range(int(cx - r - 1), int(cx + r + 2)):
+                if 0 <= x < w and 0 <= y < h and (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
+                    img[y, x] = col
+
+    def line(x0, y0, x1, y1, col):
+        n = max(abs(x1 - x0), abs(y1 - y0)) * 2 + 1
+        for i in range(n + 1):
+            x = int(round(x0 + (x1 - x0) * i / n))
+            y = int(round(y0 + (y1 - y0) * i / n))
+            if 0 <= x < w and 0 <= y < h:
+                img[y, x] = col
+
+    # tripod
+    line(36, 40, 22, 55, metal(4))
+    line(36, 40, 50, 55, metal(4))
+    line(36, 40, 36, 55, metal(3))
+    # film magazines (two reels on top), spokes turning with the frame
+    for cx in (28, 44):
+        disc(cx, 10, 9, metal(3))
+        disc(cx, 10, 8, metal(6))
+        for k in range(3):
+            ang = k * 2 * math.pi / 3 + frame * math.pi / 5
+            line(cx, 10, int(round(cx + 7 * math.cos(ang))), int(round(10 + 7 * math.sin(ang))), metal(2))
+        disc(cx, 10, 1.5, brassc(12))
+    # body
+    for y in range(18, 41):
+        for x in range(22, 54):
+            img[y, x] = metal(5 if x < 50 else 3)
+    for x in range(22, 54):
+        img[18, x] = metal(9)
+    img[24:26, 28:48] = brassc(10)                      # a brass nameplate
+    # crank on the back
+    ang = frame * math.pi / 3
+    cx, cy = 56, 30
+    ex = int(round(cx + 5 * math.cos(ang)))
+    ey = int(round(cy + 5 * math.sin(ang)))
+    line(cx, cy, ex, ey, brassc(11))
+    disc(ex, ey, 1.5, brassc(13))
+    # lens barrel and the lens (an iris that opens)
+    for y in range(22, 38):
+        for x in range(8, 22):
+            img[y, x] = metal(4 if (x // 3) % 2 else 6)
+    disc(8, 30, 8, metal(2))
+    if lens_open:
+        disc(8, 30, 6.5, pix.rgb(15, 15, 11))
+        disc(8, 30, 4, pix.rgb(15, 12, 4))
+        disc(6, 28, 1.5, pix.rgb(15, 15, 15))
+    else:
+        disc(8, 30, 6.5, metal(1))
+        for k in range(6):
+            ang = k * math.pi / 3
+            line(8, 30, int(round(8 + 6 * math.cos(ang))), int(round(30 + 6 * math.sin(ang))), metal(4))
+    return pix.outline(img, pix.rgb(0, 0, 0))
+
+
+def film_frame():
+    s = pix.new_image(8, 8, pix.rgb(13, 13, 12))
+    s[2:6, 2:6] = pix.rgb(5, 5, 6)
+    for y in (0, 2, 4, 6):
+        s[y, 0] = pix.rgb(2, 2, 2)
+        s[y, 7] = pix.rgb(2, 2, 2)
+    return s
+
+
+def build_boss4():
+    frames = [camera(f, False) for f in range(2)] + [camera(f, True) for f in range(2)]
+    return [("boss4", frames), ("film", [film_frame()])]

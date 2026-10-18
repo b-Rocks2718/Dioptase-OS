@@ -53,7 +53,7 @@ def backlot():
         r.stamp(x + 8, 10, "W")
         r.ent("sign", x + 7, 25, a="@stage_sealed")
     r.stamp(68, 11, "X")
-    r.ent("sign", 71, 25, a="@tower_sealed")
+    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (3 << 4))
     r.stamp(16, 18, "P")
     r.stamp(48, 18, "P")
     r.stamp(65, 21, "L")
@@ -569,5 +569,74 @@ def stage3():
     return out
 
 
+def tower():
+    """The Projection Tower (region 0, east of the lot in world space)."""
+    out = []
+    r = Draft("tower_base", 0, (200, 60), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.wall(38, 0, 26, w=2)
+    r.fill(0, 0, 40, 2)
+    r.clear(18, 0, 22, 2)
+    r.back(2, 2, 38, 26)
+    r.stamp(6, 8, "W")
+    r.stamp(30, 8, "W")
+    r.plank(14, 21, 5)
+    r.plank(20, 16, 5)
+    r.plank(14, 11, 5)
+    r.plank(18, 6, 6)
+    r.plank(18, 3, 4)
+    r.ent("door", 3, 25, a="#backlot_east", b=70, c=25)
+    r.ent("mirror", 7, 25)
+    r.ent("sign", 11, 25, a="@tower_note")
+    r.ent("heart", 30, 25)
+    r.spawn(5, 25)
+    out.append(r.done())
+
+    r = Draft("tower_climb", 0, (200, 0), (40, 60))
+    r.wall(0, 0, 60, w=2)
+    r.wall(38, 0, 60, w=2)
+    r.fill(2, 58, 18, 60)
+    r.fill(22, 58, 38, 60)
+    r.plank(16, 56, 8)
+    r.back(2, 0, 38, 58)
+    r.girder(4, 50, 8)
+    r.girder(26, 45, 8)
+    r.ent("platform", 14, 34, a=8, b=1, c=100, d=4)
+    r.girder(4, 30, 6)
+    r.ent("plate", 6, 29, a=5)
+    r.plank(26, 30, 8)
+    r.fill(2, 24, 38, 26)                       # the booth floor's underside...
+    r.clear(30, 24, 32, 26)
+    r.ent("gate", 30, 24, a=5, b=2)             # ...opened only while the mark is held
+    r.ent("gate", 31, 24, a=5, b=2)
+    r.girder(8, 18, 8)
+    r.girder(24, 12, 8)
+    r.plank(14, 7, 8)
+    r.plank(16, 3, 8)
+    r.ent("flyer", 12, 40, a=6)
+    r.ent("flyer", 28, 16, a=6)
+    r.ent("coin", 9, 17)
+    r.ent("coin", 11, 17)
+    out.append(r.done())
+
+    r = Draft("tower_booth", 0, (180, -30), (80, 30))
+    r.fill(0, 26, 80, 30)
+    r.clear(36, 26, 44, 30)
+    r.plank(36, 26, 8)                          # the hatch up from the stairs
+    r.wall(0, 0, 26, w=2)
+    r.wall(78, 0, 26, w=2)
+    r.fill(0, 0, 80, 2)
+    r.back(2, 2, 78, 26)
+    r.stamp(8, 6, "W")
+    r.stamp(20, 6, "w")
+    r.stamp(48, 6, "W")
+    r.girder(10, 18, 8)
+    r.girder(24, 14, 8)
+    r.ent("boss", 66, 25, a=4)
+    out.append(r.done())
+    return out
+
+
 def all_rooms():
-    return backlot() + stage1() + stage2() + stage3()
+    return backlot() + stage1() + stage2() + stage3() + tower()

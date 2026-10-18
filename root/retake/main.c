@@ -120,6 +120,7 @@ static int region3_image(struct Ent* e) {
 
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
+  if (e->kind == ENT_SHOT && e->b == 2) return IMG_FILM_0;
   if (current_region == 2) {
     int v = region2_image(e);
     if (v >= 0) return v;
@@ -151,6 +152,7 @@ static int ent_image(struct Ent* e) {
     case ENT_WAVE: return IMG_WAVE_0;
     case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 4) return (e->state == 31 ? IMG_BOSS4_2 : IMG_BOSS4_0) + ((frame_clock >> 3) & 1);
       if (e->a == 3) return -1;                  /* the Kraken is under the deck */
       if (e->a == 2) return e->state == 13 ? IMG_BOSS2_3 : IMG_BOSS2_0 + ((e->x >> 10) % 3 + 3) % 3;
       switch (e->state) {
@@ -229,7 +231,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16);
+  int total = g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -285,7 +287,8 @@ static void choose_music(void) {
   if (region == 0) song = MUSIC_BACKLOT;
   if (region == 2) song = MUSIC_STAGE2;
   if (region == 3) song = MUSIC_STAGE3;
-  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA) {
+  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA ||
+      g_room_index == ROOM_TOWER_BOOTH) {
     song = MUSIC_CHASE;
   }
   if (song != current_song) {
@@ -393,6 +396,16 @@ static void parse_args(int argc, char** argv) {
   }
 }
 
+/* The Camera is broken: the ending, the credits, then back to the title.
+ * Progress is saved first so the finished picture shows on Continue. */
+static void finale(void) {
+  game_save();
+  audio_music(MUSIC_TITLE);
+  current_song = MUSIC_TITLE;
+  card_show(SCRIPT_ENDING);
+  card_show(SCRIPT_CREDITS);
+}
+
 /* Play from the current game state until the player quits to the title. */
 static void play(void) {
   update_camera(1);
@@ -420,6 +433,10 @@ static void play(void) {
       pressed = 0;
       frame_clock++;
       play_sfx();
+      if (g_events & GE_FINALE) {
+        finale();
+        return;
+      }
       if ((frame_clock & 31) == 0) audio_heartbeat();
       if (g_events & GE_ROOM) {
         update_camera(1);

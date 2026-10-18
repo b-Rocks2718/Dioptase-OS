@@ -33,6 +33,7 @@
 #define BOSS1_HP 16
 #define HORSE_HP 10
 #define KRAKEN_HP 12
+#define CAMERA_HP 18
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -173,7 +174,11 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_PLATFORM: w = 24; h = 4; break;   /* width fixed up from d after setup */
     case ENT_TENTACLE: w = 10; h = 56; break;
     case ENT_BOSS:
-      if (a == 3) {
+      if (a == 4) {
+        w = 44;
+        h = 40;
+        e->hp = CAMERA_HP;
+      } else if (a == 3) {
         w = 8;
         h = 8;
         e->hp = KRAKEN_HP;
@@ -612,7 +617,7 @@ static void step_thrower(struct Ent* e) {
 
 /* Expire projectiles on terrain contact, lifetime exhaustion, or leaving the room. */
 static void step_shot(struct Ent* e) {
-  e->vy += 24;
+  if (e->b != 2) e->vy += 24;   /* b 2: a film frame flies straight */
   e->x += e->vx;
   e->y += e->vy;
   if (--e->timer <= 0 || solid_px((e->x >> 8) + 3, (e->y >> 8) + 3)) {
@@ -1006,14 +1011,89 @@ static void step_tentacle(struct Ent* t) {
   }
 }
 
+/* ---- the Everlasting Camera (boss 4, the finale) ----
+ *
+ * States: 0 intro, 30 lens shut (fires fans of film frames at Ruby), 31
+ * lens open (the only time claps land), 32 rerun (calls up minions from
+ * earlier pictures once below two thirds health). It never moves. */
+
+#define C_SHUT 30
+#define C_OPEN 31
+#define C_RERUN 32
+
+static void fire_film(struct Ent* e, int spread) {
+  struct Ent* f = ent_alloc();
+  if (!f) return;
+  ent_setup(f, ENT_SHOT, 0, 0, 0, 2, 0, -1);
+  f->x = e->x - (6 << 8);
+  f->y = e->y + (12 << 8);
+  int dx = (g_hero.x - f->x) >> 8;
+  int dy = (g_hero.y - f->y) >> 8;
+  if (dx > -8) dx = -8;
+  /* normalize roughly to 2.5 px/tick using the larger axis */
+  int ax = dx < 0 ? -dx : dx;
+  int ay = dy < 0 ? -dy : dy;
+  int big = ax > ay ? ax : ay;
+  f->vx = (dx * 640) / big;
+  f->vy = (dy * 640) / big + spread * 120;
+  f->timer = 240;
+}
+
+static void step_camera(struct Ent* e) {
+  e->anim++;
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_FINAL_INTRO;
+      e->state = C_SHUT;
+      e->timer = 120;
+      break;
+    case C_SHUT:
+      if ((e->timer % 36) == 0) {
+        fire_film(e, 0);
+        if (e->hp <= (CAMERA_HP * 2) / 3) {
+          fire_film(e, -2);
+          fire_film(e, 2);
+        }
+      }
+      if (--e->timer <= 0) {
+        e->state = C_OPEN;
+        e->timer = 90;
+      }
+      break;
+    case C_OPEN:
+      if (--e->timer <= 0) {
+        boss_cycle++;
+        e->state = (e->hp <= (CAMERA_HP * 2) / 3 && (boss_cycle & 1)) ? C_RERUN : C_SHUT;
+        e->timer = e->state == C_RERUN ? 30 : 120;
+      }
+      break;
+    case C_RERUN:
+      if (e->timer == 15) {
+        struct Ent* m = ent_alloc();
+        if (m) ent_setup(m, ENT_WALKER, 6, e->ty, 0, 0, 0, -1);
+        struct Ent* f = ent_alloc();
+        if (f) ent_setup(f, ENT_FLYER, 14, 10, 6, 0, 0, -1);
+      }
+      if (--e->timer <= 0) {
+        e->state = C_SHUT;
+        e->timer = 120;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 static void step_boss(struct Ent* e) {
-  if (e->a == 3) step_kraken(e);
+  if (e->a == 4) step_camera(e);
+  else if (e->a == 3) step_kraken(e);
   else if (e->a == 2) step_horse(e);
   else step_sergeant(e);
 }
 
 /* Whether claps land on the boss now, and how hard. */
 static int boss_hit_value(struct Ent* e) {
+  if (e->a == 4) return e->state == C_OPEN ? 1 : 0;
   if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
   if (e->a == 2) return e->state == H_STOPPED ? 1 : 0;
   if (e->state == B_CHARGE || e->state == B_INTRO) return 0;
@@ -1022,6 +1102,7 @@ static int boss_hit_value(struct Ent* e) {
 
 /* Whether touching the boss hurts Ruby. */
 static int boss_contact_hurts(struct Ent* e) {
+  if (e->a == 4) return 1;
   if (e->a == 3) return 0;
   if (e->a == 2) return e->state == H_RUN || e->state == H_BRAKE || e->state == H_LEAVE;
   return e->state != B_DAZED;
@@ -1036,10 +1117,11 @@ static void boss_defeated(struct Ent* e) {
   e->kind = ENT_NONE;
   flag_set(BOSS_FLAG_BASE + e->a);
   g_events |= GE_BOSS_DOWN;
+  if (boss == 4) g_events |= GE_FINALE;
   g_boss = 0;
   for (int i = 0; i < g_ent_count; i++) {
     if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE || g_ents[i].kind == ENT_SHOT ||
-        g_ents[i].kind == ENT_TENTACLE) {
+        g_ents[i].kind == ENT_TENTACLE || (boss == 4 && g_ents[i].kind == ENT_WALKER)) {
       g_ents[i].alive = 0;
       g_ents[i].kind = ENT_NONE;
     }
@@ -1337,7 +1419,7 @@ static void pickups_and_interactions(int pressed) {
            * defeated first (a sealed stage door until then) */
           int needs = (e->d >> 4) & 15;
           if (needs && !flag_get(BOSS_FLAG_BASE + needs)) {
-            g_pending_script = SCRIPT_STAGE_SEALED;
+            g_pending_script = e->a == ROOM_TOWER_BASE ? SCRIPT_TOWER_SEALED : SCRIPT_STAGE_SEALED;
             break;
           }
           game_enter_room(e->a, e->b << 3, (e->c << 3) + TILE - PLAYER_H);

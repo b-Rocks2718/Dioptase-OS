@@ -290,7 +290,7 @@ def main():
 
     image_entries = []
     image_names = []
-    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3() + bossart.build_boss3():
+    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3() + bossart.build_boss3() + bossart.build_boss4():
         for i, f in enumerate(frames):
             h, w = f.shape
             if w % 2:

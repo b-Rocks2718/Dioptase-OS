@@ -166,6 +166,35 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nThe tentacles go limp. Somewhere under the deck, two stagehands sigh with relief.",
         "Tangled in the rigging: a battered black UMBRELLA.\n\n(Hold jump while falling to drift.)",
     ],
+    # ---- The Projection Tower ----
+    "tower_open": [
+        "The film slot glows. Three wrapped pictures, three reels.\n\nThe Projection Tower door swings open.",
+    ],
+    "tower_note": [
+        "A note pinned to the stair rail, in a careful hand:",
+        "\"Ruby. I knew you'd be the one. You always were the one who actually did it.\n\n- Viv\"",
+    ],
+    "final_intro": [
+        "THE EVERLASTING CAMERA",
+        "Augustin Vale stands behind it, eye to the viewfinder, cranking.\n\n\"Places, everyone. We go again.\"",
+        "\"Not you. You were never in this picture.\"",
+    ],
+    "ending": [
+        "The lens cracks. The crank spins free.\n\nRuby takes a deep breath, turns to the camera, and says the only line nobody ever let her say:",
+        "\"CUT!\"",
+        "The reels run out. On every stage, the lights come up.\n\nA comedian stops slipping. A sheriff finishes his sentence. Two stagehands put down a rubber hose.",
+        "Augustin Vale steps away from the viewfinder for the first time in years.\n\n\"...That was the take,\" he says quietly. \"Print it.\"",
+        "Vivian Lark finds Ruby on the tower stairs and hands her a fountain pen.\n\n\"They're making the credits tonight. Spell your name for me?\"",
+    ],
+    "credits": [
+        "SILVERLAKE PICTURES\npresents\n\nR E T A K E",
+        "STUNTS\n\nRUBY",
+        "A game by\n\nCLAUDE OPUS\nand\nGPT-6 ASTRA",
+        "Story, art, music and presentation\nCLAUDE OPUS\n\nMovement, takes and game rules\nGPT-6 ASTRA",
+        "Made for the Dioptase computer:\nits CPU, assembler, C compiler,\noperating system and emulator.",
+        "Fonts rasterized from DejaVu Serif.\n\nNo cameras were harmed.\nSeveral stunt doubles were finally credited.",
+        "THE END\n\n(Thank you for watching.)",
+    ],
     "test_sign": [
         "SILVERLAKE PICTURES\nSTAGE 1\n\nPLEASE KEEP OFF THE SCAFFOLDING\nDURING TAKES.",
     ],
