@@ -104,6 +104,23 @@ static void test_room_ticks(void) {
   }
 }
 
+/* Solver backtracking must reproduce enemies, motion and input-visible events. */
+static void test_snapshot_replay(void) {
+  struct SimSnapshot before;
+  struct SimSnapshot after;
+  struct SimSnapshot replayed;
+  game_new(ROOM_S1_STREET);
+  for (int i = 0; i < 30; i++) game_tick(IN_RIGHT, 0);
+  sim_snapshot(&before);
+  for (int i = 0; i < 30; i++) game_tick(IN_RIGHT | IN_JUMP, i == 0 ? IN_JUMP : 0);
+  sim_snapshot(&after);
+  sim_restore(&before);
+  for (int i = 0; i < 30; i++) game_tick(IN_RIGHT | IN_JUMP, i == 0 ? IN_JUMP : 0);
+  sim_snapshot(&replayed);
+  expect(memcmp(&after, &replayed, sizeof(after)) == 0,
+         "restoring a search snapshot reproduces the entire simulation exactly");
+}
+
 /* Run adversarial contacts before broader room solution replays. */
 int main(void) {
   if (sim_open("../retake.pak")) return 1;
@@ -114,6 +131,7 @@ int main(void) {
   test_hazard_door();
   test_spring_impulse();
   test_room_ticks();
+  test_snapshot_replay();
   sim_close();
   if (!failures) puts("***PASS retake game rule regressions");
   return failures != 0;
