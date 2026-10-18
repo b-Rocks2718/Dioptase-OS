@@ -56,7 +56,10 @@
 
 /* Axis-aligned Q8 rectangle; touching edges alone do not overlap. */
 struct Hitbox {
-  int x, y, w, h;
+  int x;
+  int y;
+  int w;
+  int h;
 };
 
 /* An immutable moving one-way surface for this tick. x/y are its new
@@ -64,8 +67,12 @@ struct Hitbox {
  * while the surface exists. Disable active on a teleport/loop-reset tick.
  * Carry is clipped against live solid tiles; obstruction detaches a rider. */
 struct Platform {
-  int x, y, w, h;
-  int dx, dy;
+  int x;
+  int y;
+  int w;
+  int h;
+  int dx;
+  int dy;
   int id;
   int active;
 };
@@ -76,7 +83,8 @@ struct Platform {
  * At most 16 platforms are supplied; they collide only with the live player.
  * Room transitions and mutable doors are managed by the game between ticks. */
 struct Room {
-  int w, h;
+  int w;
+  int h;
   unsigned char* col;
   int* row;
   struct Platform* platforms;
@@ -89,7 +97,10 @@ struct Room {
  * riding is a stable platform id, or -1. The game owns health and progression.
  * Timers below riding are private simulation state, not rendering controls. */
 struct Player {
-  int x, y, vx, vy;
+  int x;
+  int y;
+  int vx;
+  int vy;
   int facing;
   int on_ground;
   int wall_dir;
@@ -121,6 +132,9 @@ void player_step(struct Player* p, struct Room* room, int held, int pressed);
 
 /* Return an active clapper hitbox, or zero during idle/startup/recovery. */
 int player_attack_box(struct Player* p, struct Hitbox* box);
+
+/* Use identical clapper geometry for live attacks and recorded frames. */
+void clapper_box(int x, int y, int facing, int dir, struct Hitbox* box);
 
 /* Apply recoil and invulnerability once; return zero if already protected.
  * Call after player_step so EV_HURT survives for presentation that tick. */

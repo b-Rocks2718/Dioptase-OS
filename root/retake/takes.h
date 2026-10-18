@@ -11,7 +11,8 @@
  * is nonzero only for active clapper frames. The recording does not change
  * when doors close, an enemy moves, or the live player stands on a double. */
 struct TakeFrame {
-  int x, y;
+  int x;
+  int y;
   int facing;
   int pose;
   int attack_dir;
@@ -19,14 +20,18 @@ struct TakeFrame {
 
 /* One looping projection. cursor names the displayed frame; wrapped means
  * it just returned to frame zero and cannot carry/support a rider this tick.
- * dx/dy describe only continuous playback; large jumps also set wrapped. */
+ * dx/dy describe only continuous playback; large jumps also set wrapped.
+ * fresh is private state for a newly published slot. A single-frame still
+ * remains continuously supportive after its initial flicker. */
 struct Take {
   struct TakeFrame frames[480];
   int length;
   int cursor;
   int active;
   int wrapped;
-  int dx, dy;
+  int dx;
+  int dy;
+  int fresh;
 };
 
 /* Caller-owned room-local recordings: three playback slots and one scratch
