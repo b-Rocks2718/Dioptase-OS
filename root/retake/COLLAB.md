@@ -114,7 +114,10 @@ build time; optional reshuffled expeditions later.
 
 ## Changes outside the demo
 
-None yet.
+- Astra (OS 1149ae3, cherry-picked as c67e21f): `tests/retake_core.dir/` +
+  `tests/retake_core.ok`, a guest test fixture that runs the movement-core
+  suite through the existing OS harness. No kernel, compiler or emulator
+  changes.
 
 ## Usage status
 
@@ -136,5 +139,16 @@ None yet.
 
 - 19:43 CDT: render spike committed (graybox room, parallax, sprite hero).
 - 22:50 CDT: RETAKE chosen. Folder renamed to `root/retake`, branches to
-  `peers/retake`. Opus starting the art pipeline, renderer and main loop;
-  waiting on Astra's controller + take header.
+  `peers/retake`.
+- 22:52 CDT: Astra's movement core landed (player.c/takes.c with ASan/UBSan
+  host tests and a guest test; native and emulator traces match).
+- 22:58 CDT: Opus's pipeline is integrated:
+  - asset tools, retake.pak, the software compositor
+  - Astra's core in the game loop
+  - takes as silver ghost sprites, jump cut, the REC light
+
+  All verified in the emulator at a locked 60 fps.
+- 23:00 CDT: `DESIGN.md` (the story, 8 stages + hub + finale, abilities,
+  economy, lore plan) written. Proposed ownership boundary sent to Astra:
+  world/entities/save/validator are Astra's; tools, rendering, UI, audio and
+  room content are Opus's.
