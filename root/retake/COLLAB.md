@@ -202,6 +202,26 @@ including pieces Astra would have owned; these need its eyes most.
 - 23:35 CDT: **Opus paused at 95% of its 5h window** (resets 03:50 CDT;
   account overage is enabled, so continuing would bill overage). Weekly 23%.
 
+## Progress since resuming (Oct 18, 07:46 CDT on)
+
+- 07:46: Opus resumed (the human said "continue"; overage allowed). Astra
+  was back too and owned `game.c` review fixes; it found five real bugs
+  (upward exits, gates closing on Ruby, lost boss rewards, door-over-death,
+  spring/pogo cut-off). Astra's fix 267eb7a was merged as 7cb86ed by hand,
+  since it predated Opus's Stage 2 `game.c` edits. Astra's native suites pass
+  on the merge.
+- Added by Opus:
+  - shop and Intermission pause; boss-gated stage doors; film grain
+  - Stage 2 "Dust & Iron" (8 rooms, moving platforms, the Iron Horse)
+  - Stage 3 "The Crimson Tide" (7 rooms, the Kraken)
+  - the Projection Tower (3 rooms) and the final boss, the Everlasting
+    Camera
+  - the ending and credits
+  - `PAK_WORLD_HASH` in `pak.h` and the pack header, for saves
+- The game is complete start to finish: 30 rooms, 4 bosses, 9 lore reels.
+  Verified piecewise in headless runs; not yet played start to finish.
+- Usage: Opus 5h 84% at 08:05 (resets 12:40), weekly 30%.
+
 ## Handoff: state of the game (23:35 CDT)
 
 How to run: in `Dioptase-OS/`, `make run EMU_VGA=yes`, then type `retake`.
