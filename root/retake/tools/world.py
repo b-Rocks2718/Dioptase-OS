@@ -53,9 +53,12 @@ def backlot():
         r.stamp(x + 4, 20, str(i + 5))
         r.stamp(x + 2, 10, "w")
         r.stamp(x + 8, 10, "W")
-        r.ent("sign", x + 7, 25, a="@stage_sealed")
+        if i == 0:
+            r.ent("door", x + 6, 25, a="#s5_gate", b=6, c=25, d=1 | (5 << 4))
+        else:
+            r.ent("sign", x + 7, 25, a="@stage_sealed")
     r.stamp(68, 11, "X")
-    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (5 << 4))
+    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (6 << 4))
     r.stamp(16, 18, "P")
     r.stamp(48, 18, "P")
     r.stamp(65, 21, "L")
@@ -699,6 +702,140 @@ def stage4():
     return out
 
 
+def stage5():
+    """Stage 5, "The Monster of Hollow Manor": pendulums, crumbling stairs,
+    graveyard ghouls; everything Ruby has learned so far."""
+    out = []
+    r = Draft("s5_gate", 5, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.stamp(22, 18, "R")
+    r.stamp(30, 20, "G")
+    r.stamp(8, 21, "L")
+    r.ent("door", 3, 25, a="#backlot_east", b=9, c=25)
+    r.ent("mirror", 12, 25)
+    r.ent("sign", 16, 25, a="@s5_title")
+    r.ent("flyer", 28, 10, a=6)
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    r = Draft("s5_graveyard", 5, (40, 0), (80, 30))
+    r.ground(26)
+    r.clear(30, 26, 36, 28)
+    r.nails(30, 28, 6)
+    r.clear(52, 26, 58, 28)
+    r.nails(52, 28, 6)
+    for x in (6, 16, 40, 46, 62, 70):
+        r.stamp(x, 21, "G")
+    r.stamp(24, 10, "R")
+    r.stamp(66, 12, "R")
+    r.girder(26, 18, 6)
+    r.girder(48, 17, 6)
+    r.ent("walker", 12, 25)
+    r.ent("walker", 44, 25)
+    r.ent("walker", 66, 25)
+    r.ent("hopper", 28, 17)
+    r.ent("flyer", 34, 8, a=8)
+    r.ent("flyer", 58, 7, a=8)
+    for x in (27, 29, 49, 51):
+        r.ent("coin", x, 17 if x < 40 else 16)
+    out.append(r.done())
+
+    r = Draft("s5_hall", 5, (120, 0), (80, 30))
+    r.ground(26)
+    r.fill(0, 0, 80, 2)
+    r.back(2, 2, 78, 26)
+    for x in (8, 26, 44, 62):
+        r.stamp(x, 6, "P")
+    # Three long blades graze the walkway (lowest point ~4 px above the
+    # floor), a third of a swing apart; the gaps between them are safe.
+    # The girder starts past the last blade's reach at standing height.
+    r.ent("pendulum", 16, 2, a=22, b=0, c=4)
+    r.ent("pendulum", 32, 2, a=22, b=11, c=4)
+    r.ent("pendulum", 48, 2, a=22, b=22, c=4)
+    r.girder(67, 18, 8)
+    r.ent("sign", 6, 25, a="@s5_pendulum_hint")
+    r.ent("thrower", 69, 17)
+    r.ent("charger", 74, 25)
+    r.ent("heart", 72, 17)
+    out.append(r.done())
+
+    r = Draft("s5_library", 5, (200, 0), (40, 60))
+    r.wall(0, 0, 52, w=2)
+    r.wall(38, 0, 46, w=2)
+    r.ground(56)
+    r.fill(0, 0, 40, 2)
+    r.back(2, 2, 38, 56)
+    r.girder(26, 50, 10)
+    r.ent("crumble", 18, 46)
+    r.ent("crumble", 19, 46)
+    r.girder(4, 42, 10)
+    r.ent("pendulum", 20, 30, a=6, b=8, c=2)
+    r.girder(26, 36, 10)
+    r.ent("crumble", 14, 30)
+    r.ent("crumble", 15, 30)
+    r.girder(4, 24, 8)
+    r.girder(16, 18, 6)
+    r.girder(28, 12, 10)
+    r.stamp(8, 8, "P")
+    r.ent("flyer", 20, 40, a=8)
+    r.ent("hopper", 8, 41)
+    r.ent("reel", 6, 23, a="@s5_reel_a")
+    r.ent("coin", 30, 11)
+    r.ent("coin", 33, 11)
+    out.append(r.done())
+
+    r = Draft("s5_lab", 5, (240, 0), (80, 30))
+    r.ground(26)
+    r.clear(6, 26, 10, 30)
+    r.plank(6, 26, 4)                           # a trapdoor down to the crypt
+    r.fill(0, 0, 80, 2)
+    r.back(2, 2, 78, 26)
+    for x in (12, 30, 48):
+        r.stamp(x, 21, "Z")
+    r.nails(18, 25, 6)
+    r.nails(36, 25, 6)
+    r.girder(16, 20, 10)
+    r.girder(34, 19, 10)
+    r.ent("platform", 54, 20, a=10, b=0, c=110, d=3)
+    r.ent("npc", 12, 25, a="@s5_igor")
+    r.ent("mirror", 70, 25)
+    r.ent("reel", 40, 18, a="@s5_reel_b")
+    r.ent("walker", 26, 25)
+    r.ent("thrower", 46, 25)
+    r.ent("flyer", 60, 8, a=8)
+    r.ent("frame", 20, 19)
+    out.append(r.done())
+
+    r = Draft("s5_crypt", 5, (240, 30), (40, 30))
+    r.fill(0, 0, 40, 2)
+    r.ground(26)
+    r.wall(0, 2, 26, w=2)
+    r.wall(38, 2, 26, w=2)
+    r.back(2, 2, 38, 26)
+    r.clear(6, 0, 10, 2)                        # back up to the lab's trapdoor
+    for y in (22, 17, 12, 7, 3):
+        r.plank(6, y, 4)
+    r.ent("reel", 30, 25, a="@s5_reel_c")
+    r.ent("coin", 12, 25)
+    r.ent("coin", 14, 25)
+    r.ent("walker", 20, 25)
+    out.append(r.done())
+
+    r = Draft("s5_arena", 5, (320, 0), (60, 30))
+    r.ground(26)
+    r.fill(0, 0, 60, 2)
+    r.wall(58, 2, 26, w=2)
+    r.back(2, 2, 58, 26)
+    r.stamp(8, 21, "Z")
+    r.stamp(48, 21, "Z")
+    r.girder(10, 17, 8)
+    r.girder(42, 17, 8)
+    r.ent("boss", 30, 25, a=6)
+    out.append(r.done())
+    return out
+
+
 def tower():
     """The Projection Tower (region 0, east of the lot in world space)."""
     out = []
@@ -769,4 +906,4 @@ def tower():
 
 
 def all_rooms():
-    return backlot() + stage1() + stage2() + stage3() + stage4() + tower()
+    return backlot() + stage1() + stage2() + stage3() + stage4() + stage5() + tower()

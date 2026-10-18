@@ -221,6 +221,18 @@ including pieces Astra would have owned; these need its eyes most.
 - The game is complete start to finish: 30 rooms, 4 bosses, 9 lore reels.
   Verified piecewise in headless runs; not yet played start to finish.
 - Usage: Opus 5h 84% at 08:05 (resets 12:40), weekly 30%.
+- 09:00-13:15, added by Opus:
+  - Stage 4 "Jungle Serial" (7 rooms, crumbling ledges, Gargantua; its prize
+    is the third take reel)
+  - Stage 5 "The Monster of Hollow Manor" (7 rooms in the East lot:
+    pendulum blades, lightning, the Monster; its prize is Overcrank, which
+    runs the world at half speed for 3 s, 8 s cooldown, key F)
+  - two-slot checksummed saves (newest valid slot wins; a torn write keeps
+    the previous slot), `game_has_save()` for Continue on the title
+  - boss title cards play only on the first encounter (flags 2016+boss)
+  - the Projection Tower now needs the Monster beaten; Stage 5 needs Gargantua
+  - 44 rooms, 6 bosses. Native suites pass, including the every-room
+    480-tick UBSan sweep (it caught two negative shifts in new code).
 
 ## Handoff: state of the game (23:35 CDT)
 

@@ -4,9 +4,9 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 2153988
-#define PAK_ROOM_COUNT 37
-#define PAK_WORLD_HASH 0xF55BF2E3  /* CRC32 of room order, geometry and entities */
+#define PAK_SIZE 2525372
+#define PAK_ROOM_COUNT 44
+#define PAK_WORLD_HASH 0x422E38D1  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -43,9 +43,16 @@
 #define ROOM_S4_TEMPLE 31
 #define ROOM_S4_FALLS 32
 #define ROOM_S4_ARENA 33
-#define ROOM_TOWER_BASE 34
-#define ROOM_TOWER_CLIMB 35
-#define ROOM_TOWER_BOOTH 36
+#define ROOM_S5_GATE 34
+#define ROOM_S5_GRAVEYARD 35
+#define ROOM_S5_HALL 36
+#define ROOM_S5_LIBRARY 37
+#define ROOM_S5_LAB 38
+#define ROOM_S5_CRYPT 39
+#define ROOM_S5_ARENA 40
+#define ROOM_TOWER_BASE 41
+#define ROOM_TOWER_CLIMB 42
+#define ROOM_TOWER_BOOTH 43
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -134,12 +141,20 @@
 #define SCRIPT_S4_REEL_C 46
 #define SCRIPT_S4_BOSS_INTRO 47
 #define SCRIPT_S4_WRAP 48
-#define SCRIPT_TOWER_OPEN 49
-#define SCRIPT_TOWER_NOTE 50
-#define SCRIPT_FINAL_INTRO 51
-#define SCRIPT_ENDING 52
-#define SCRIPT_CREDITS 53
-#define SCRIPT_TEST_SIGN 54
+#define SCRIPT_S5_TITLE 49
+#define SCRIPT_S5_IGOR 50
+#define SCRIPT_S5_PENDULUM_HINT 51
+#define SCRIPT_S5_REEL_A 52
+#define SCRIPT_S5_REEL_B 53
+#define SCRIPT_S5_REEL_C 54
+#define SCRIPT_S5_BOSS_INTRO 55
+#define SCRIPT_S5_WRAP 56
+#define SCRIPT_TOWER_OPEN 57
+#define SCRIPT_TOWER_NOTE 58
+#define SCRIPT_FINAL_INTRO 59
+#define SCRIPT_ENDING 60
+#define SCRIPT_CREDITS 61
+#define SCRIPT_TEST_SIGN 62
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -251,7 +266,23 @@
 #define IMG_BOSS5_3 93
 #define IMG_BOSS5_4 94
 #define IMG_BOULDER_0 95
-#define PAK_FLAG_COUNT 95
+#define IMG_WALKER5_0 96
+#define IMG_WALKER5_1 97
+#define IMG_HOPPER5_0 98
+#define IMG_HOPPER5_1 99
+#define IMG_FLYER5_0 100
+#define IMG_FLYER5_1 101
+#define IMG_THROWER5_0 102
+#define IMG_THROWER5_1 103
+#define IMG_CHARGER5_0 104
+#define IMG_CHARGER5_1 105
+#define IMG_SHOT5_0 106
+#define IMG_BLADE_0 107
+#define IMG_BOSS6_0 108
+#define IMG_BOSS6_1 109
+#define IMG_BOSS6_2 110
+#define IMG_BOSS6_3 111
+#define PAK_FLAG_COUNT 107
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0
@@ -260,7 +291,8 @@
 #define MUSIC_STAGE2 3
 #define MUSIC_STAGE3 4
 #define MUSIC_STAGE4 5
-#define MUSIC_BACKLOT 6
+#define MUSIC_STAGE5 6
+#define MUSIC_BACKLOT 7
 #define MUSIC_NONE 63
 
 #endif

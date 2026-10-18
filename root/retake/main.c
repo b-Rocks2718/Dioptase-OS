@@ -131,12 +131,29 @@ static int region4_image(struct Ent* e) {
   }
 }
 
+/* Region 5: the haunted manor. */
+static int region5_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER5_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER5_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER5_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER5_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER5_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT5_0;
+    default: return -1;
+  }
+}
+
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
   if (e->kind == ENT_SHOT && e->b == 2) return IMG_FILM_0;
   if (e->kind == ENT_SHOT && e->b == 3) return IMG_BOULDER_0;
   if (current_region == 4) {
     int v = region4_image(e);
+    if (v >= 0) return v;
+  }
+  if (current_region == 5) {
+    int v = region5_image(e);
     if (v >= 0) return v;
   }
   if (current_region == 2) {
@@ -170,6 +187,11 @@ static int ent_image(struct Ent* e) {
     case ENT_WAVE: return IMG_WAVE_0;
     case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 6) {
+        if (e->state == 51 || e->state == 53) return IMG_BOSS6_2;
+        if (e->state == 52) return IMG_BOSS6_3;
+        return IMG_BOSS6_0 + ((frame_clock >> 4) & 1);
+      }
       if (e->a == 5) {
         switch (e->state) {
           case 41: return IMG_BOSS5_2;
@@ -211,6 +233,49 @@ static void draw_entities(void) {
     int ey = (e->y >> 8) - cam_y;
     int ew = e->w >> 8;
     int eh = e->h >> 8;
+    if (e->kind == ENT_PENDULUM) {
+      int px = (e->tx << 3) + 4 - cam_x;
+      int py = (e->ty << 3) + 4 - cam_y;
+      int bx = ex + 6;
+      int by = ey + 4;
+      int n = (e->a > 0 ? e->a : 6) << 1;     /* a chain link every 4 px */
+      int sx = (bx - px) * 256 / n;
+      int sy = (by - py) * 256 / n;
+      int rx = px * 256;
+      int ry = py * 256;
+      for (int k = 0; k < n; k++) {
+        int x = rx >> 8;
+        int y = ry >> 8;
+        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0CBC;
+        rx += sx;
+        ry += sy;
+      }
+      draw_image(IMG_BLADE_0, bx - 7, by - 3, 0);
+      continue;
+    }
+    if (e->kind == ENT_BOLT) {
+      int bx = ex + 5;
+      int floor = e->c - cam_y;
+      if (e->state == 0) {
+        if (frame_clock & 2) {
+          for (int k = -3; k <= 3; k++) {
+            int x = bx + k;
+            int y = floor - 1 - (k < 0 ? -k : k);
+            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0FFF;
+          }
+        }
+      } else {
+        int jag = 0;
+        for (int y = HUD_PIXEL_ROWS; y < floor && y < VIEW_H; y++) {
+          if ((y & 7) == 0) jag = ((y * 7 + (int)frame_clock) & 3) - 1;
+          for (int w = -1; w <= 1; w++) {
+            int x = bx + jag + w;
+            if (x >= 0 && x < SCREEN_W) g_back[y * SCREEN_W + x] = w ? 0x0EDE : 0x0FFF;
+          }
+        }
+      }
+      continue;
+    }
     if (e->kind == ENT_CRUMBLE) {
       if (e->state == 0) draw_image(IMG_CRUMBLE_0, ex, ey, 0);
       else if (e->state == 1) draw_image(IMG_CRUMBLE_1, ex + ((frame_clock & 2) ? 1 : -1), ey, 0);
@@ -264,7 +329,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = g_boss->a == 5 ? 20 : g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
+  int total = g_boss->a == 6 ? 20 : g_boss->a == 5 ? 20 : g_boss->a == 4 ? 18 : (g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16));
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -310,6 +375,7 @@ static void draw_hud(void) {
   }
   hud_draw(g_health, g_prog.max_health, g_prog.scrip, slots, g_takes.slot_limit, g_takes.recording,
            (frame_clock >> 4) & 1);
+  hud_text(64, g_overcrank > 0 ? "OVERCRANK" : "         ", 0);
 }
 
 /* Music for the room Ruby is in. */
@@ -321,8 +387,9 @@ static void choose_music(void) {
   if (region == 2) song = MUSIC_STAGE2;
   if (region == 3) song = MUSIC_STAGE3;
   if (region == 4) song = MUSIC_STAGE4;
+  if (region == 5) song = MUSIC_STAGE5;
   if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA ||
-      g_room_index == ROOM_TOWER_BOOTH || g_room_index == ROOM_S4_ARENA) {
+      g_room_index == ROOM_TOWER_BOOTH || g_room_index == ROOM_S4_ARENA || g_room_index == ROOM_S5_ARENA) {
     song = MUSIC_CHASE;
   }
   if (song != current_song) {
@@ -355,6 +422,8 @@ static void play_sfx(void) {
   if (ge & GE_GATE) audio_sfx(SFX_GATE);
   if (ge & GE_SAVE) audio_sfx(SFX_SAVE);
   if (ge & GE_SLAM) audio_sfx(SFX_HAZARD);
+  if (ge & GE_THUNDER) audio_sfx(SFX_HAZARD);
+  if (ge & GE_OVERCRANK) audio_sfx(SFX_REC_START);
   if (ge & GE_BOSS_DOWN) {
     audio_sfx(SFX_PICKUP);
     audio_music(MUSIC_STAGE1);

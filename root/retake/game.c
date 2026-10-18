@@ -34,6 +34,9 @@
 #define KRAKEN_HP 12
 #define CAMERA_HP 18
 #define APE_HP 20
+#define MONSTER_HP 20
+#define OVERCRANK_TICKS 180
+#define OVERCRANK_COOLDOWN 480
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -48,6 +51,12 @@ int g_pending_shop;
 int g_switch[16];
 
 struct Ent* g_boss;
+int g_overcrank;
+static int overcrank_cool;
+
+/* A pendulum's swing: 256 * sin and cos of 60 degrees * sin(2 pi k / 32). */
+static int swing_x[32] = {0, 52, 100, 141, 173, 196, 211, 219, 222, 219, 211, 196, 173, 141, 100, 52, 0, -52, -100, -141, -173, -196, -211, -219, -222, -219, -211, -196, -173, -141, -100, -52};
+static int swing_y[32] = {256, 251, 236, 214, 189, 165, 145, 132, 128, 132, 145, 165, 189, 214, 236, 251, 256, 251, 236, 214, 189, 165, 145, 132, 128, 132, 145, 165, 189, 214, 236, 251};
 #define MAX_MOVERS 8
 static struct Platform g_platforms[12];   /* takes first, then moving platforms (ids 8+) */
 static int entry_x;            /* where Ruby entered this room (pixels) */
@@ -174,8 +183,14 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_PLATFORM: w = 24; h = 4; break;   /* width fixed up from d after setup */
     case ENT_TENTACLE: w = 10; h = 56; break;
     case ENT_CRUMBLE: w = 8; h = 8; break;
+    case ENT_PENDULUM: w = 12; h = 8; break;
+    case ENT_BOLT: w = 10; h = 8; break;
     case ENT_BOSS:
-      if (a == 5) {
+      if (a == 6) {
+        w = 24;
+        h = 50;
+        e->hp = MONSTER_HP;
+      } else if (a == 5) {
         w = 40;
         h = 44;
         e->hp = APE_HP;
@@ -212,6 +227,7 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
   if (kind == ENT_FLYER) {
     e->c = e->y;   /* home height */
   }
+  if (kind == ENT_PENDULUM) e->state = b & 31;   /* authored starting phase */
 }
 
 /* Reconstruct persistent boss rewards on both victory and later room visits. */
@@ -234,6 +250,10 @@ static void boss_rewards(int boss, int tx) {
     ability = AB_EXTRA_REEL;
     script = SCRIPT_S4_WRAP;
     home_tx = 69;
+  } else if (boss == 6) {
+    ability = AB_OVERCRANK;
+    script = SCRIPT_S5_WRAP;
+    home_tx = 9;
   } else if (boss != 1) {
     return;
   }
@@ -244,7 +264,8 @@ static void boss_rewards(int boss, int tx) {
     if (prize) ent_setup(prize, ENT_ABILITY, tx, ty, ability, script, 0, -1);
   }
   struct Ent* door = ent_alloc();
-  if (door) ent_setup(door, ENT_DOOR, 4, ty, ROOM_BACKLOT_WEST, home_tx, 25, -1);
+  int home_room = boss >= 6 ? ROOM_BACKLOT_EAST : ROOM_BACKLOT_WEST;   /* stages 5-8 are on the east lot */
+  if (door) ent_setup(door, ENT_DOOR, 4, ty, home_room, home_tx, 25, -1);
 }
 
 /* Materialize the room's entities, then reconstruct defeated-boss rewards. */
@@ -725,6 +746,17 @@ static void step_coin(struct Ent* e) {
   }
 }
 
+/* Flag ids BOSS_SEEN_BASE+boss record that a boss's title cards have played. */
+#define BOSS_SEEN_BASE 2016
+
+/* Title cards play on the first encounter only; retries after a death or a
+ * retreat go straight to the fight. */
+static void boss_intro(int boss, int script) {
+  if (flag_get(BOSS_SEEN_BASE + boss)) return;
+  flag_set(BOSS_SEEN_BASE + boss);
+  g_pending_script = script;
+}
+
 /* ---- Sergeant Gearhart, the Clockwork Constable (boss 1) ----
  *
  * States: 0 intro (waits for the intro card), 1 idle, 2 slam wind-up,
@@ -787,7 +819,7 @@ static void step_sergeant(struct Ent* e) {
   int floor_y = e->y + e->h;
   switch (e->state) {
     case B_INTRO:
-      g_pending_script = SCRIPT_S1_BOSS_INTRO;
+      boss_intro(e->a, SCRIPT_S1_BOSS_INTRO);
       e->state = B_IDLE;
       e->timer = 60;
       break;
@@ -895,7 +927,7 @@ static void step_horse(struct Ent* e) {
   int on_screen = e->x + e->w > 0 && e->x < pw;
   switch (e->state) {
     case B_INTRO:
-      g_pending_script = SCRIPT_S2_BOSS_INTRO;
+      boss_intro(e->a, SCRIPT_S2_BOSS_INTRO);
       e->state = H_WAIT;
       e->timer = 60;
       e->dir = -1;
@@ -996,7 +1028,7 @@ static int tentacles_alive(void) {
 static void step_kraken(struct Ent* e) {
   switch (e->state) {
     case B_INTRO:
-      g_pending_script = SCRIPT_S3_BOSS_INTRO;
+      boss_intro(e->a, SCRIPT_S3_BOSS_INTRO);
       e->state = K_CHOOSE;
       e->timer = 60;
       break;
@@ -1161,7 +1193,7 @@ static void step_ape(struct Ent* e) {
   int floor_y = e->c;
   switch (e->state) {
     case B_INTRO:
-      g_pending_script = SCRIPT_S4_BOSS_INTRO;
+      boss_intro(e->a, SCRIPT_S4_BOSS_INTRO);
       e->c = e->y;
       e->state = G_IDLE;
       e->timer = 60;
@@ -1241,8 +1273,117 @@ static void step_ape(struct Ent* e) {
   }
 }
 
+/* ---- pendulums and lightning ---- */
+
+/* Swing the blade: the pivot is the spawn tile's center; the blade's hitbox
+ * is centered on the end of a rope `a` tiles long. */
+static void step_pendulum(struct Ent* e) {
+  int step = e->c > 0 ? e->c : 3;
+  if (++e->timer >= step) {
+    e->timer = 0;
+    e->state = (e->state + 1) & 31;
+  }
+  int len = (e->a > 0 ? e->a : 6) << 3;
+  int px = (e->tx << 3) + 4;
+  int py = (e->ty << 3) + 4;
+  int bx = px + ((len * swing_x[e->state]) >> 8);
+  int by = py + ((len * swing_y[e->state]) >> 8);
+  e->x = (bx - 6) * Q8;           /* may be negative past the left wall */
+  e->y = (by - 4) * Q8;
+}
+
+/* A strike outside the arena walls would be invisible and unfair, so columns
+ * within 8 px of either room edge are skipped. */
+static void spawn_bolt(int x_px, int floor_px) {
+  if (x_px < 8 || x_px > g_room_pw - 8) return;
+  struct Ent* b = ent_alloc();
+  if (!b) return;
+  ent_setup(b, ENT_BOLT, 0, 0, 0, 0, 0, -1);
+  b->x = (x_px - 5) << 8;
+  b->y = 0;
+  b->h = floor_px << 8;          /* strikes the whole column down to the floor */
+  b->c = floor_px;
+  b->state = 0;
+  b->timer = 40;
+}
+
+static void step_bolt(struct Ent* e) {
+  if (--e->timer > 0) return;
+  if (e->state == 0) {
+    e->state = 1;
+    e->timer = 12;
+    g_events |= GE_THUNDER;
+  } else {
+    e->alive = 0;
+    e->kind = ENT_NONE;
+  }
+}
+
+/* ---- the Monster (boss 6) ----
+ * States: 0 intro, 50 lumbering toward Ruby, 51 arms raised (lightning on
+ * Ruby's column and either side), 52 stomp (shockwaves), 53 summoning bats.
+ * e->c remembers the floor height. */
+
+#define M_WALK 50
+#define M_RAISE 51
+#define M_STOMP 52
+#define M_SUMMON 53
+
+static void step_monster(struct Ent* e) {
+  switch (e->state) {
+    case B_INTRO:
+      boss_intro(e->a, SCRIPT_S5_BOSS_INTRO);
+      e->c = e->y;
+      e->state = M_WALK;
+      e->timer = 90;
+      break;
+    case M_WALK:
+      e->dir = (g_hero.x < e->x) ? -1 : 1;
+      if (e->timer & 1) e->x += e->dir * (e->hp <= MONSTER_HP / 2 ? 120 : 80);
+      if (e->x < (16 << 8)) e->x = 16 << 8;
+      if (e->x + e->w > (g_room_pw - 16) << 8) e->x = ((g_room_pw - 16) << 8) - e->w;
+      if (--e->timer <= 0) {
+        int pick = boss_cycle % 3;
+        boss_cycle++;
+        e->state = pick == 0 ? M_RAISE : (pick == 1 ? M_STOMP : M_SUMMON);
+        e->timer = 40;
+        if (e->state == M_RAISE) {
+          int floor = (e->c + e->h) >> 8;
+          int hx = (g_hero.x >> 8) + 4;
+          spawn_bolt(hx, floor);
+          spawn_bolt(hx - 48, floor);
+          spawn_bolt(hx + 48, floor);
+        }
+      }
+      break;
+    case M_RAISE:
+    case M_SUMMON:
+      if (e->state == M_SUMMON && e->timer == 20) {
+        spawn_pigeon(6 << 11, 6 << 11);
+        spawn_pigeon((g_room.w - 8) << 11, 6 << 11);
+      }
+      if (--e->timer <= 0) {
+        e->state = M_WALK;
+        e->timer = 80;
+      }
+      break;
+    case M_STOMP:
+      if (--e->timer <= 0) {
+        spawn_wave(e->x - (8 << 8), e->c + e->h - (8 << 8), -1);
+        spawn_wave(e->x + e->w, e->c + e->h - (8 << 8), 1);
+        g_events |= GE_SLAM;
+        e->state = M_WALK;
+        e->timer = 80;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 static void step_boss(struct Ent* e) {
-  if (e->a == 5) step_ape(e);
+  if (e->a == 6) step_monster(e);
+  else if (e->a == 5) step_ape(e);
   else if (e->a == 4) step_camera(e);
   else if (e->a == 3) step_kraken(e);
   else if (e->a == 2) step_horse(e);
@@ -1251,7 +1392,7 @@ static void step_boss(struct Ent* e) {
 
 /* Whether claps land on the boss now, and how hard. */
 static int boss_hit_value(struct Ent* e) {
-  if (e->a == 5) return e->state == B_INTRO ? 0 : 1;
+  if (e->a == 6 || e->a == 5) return e->state == B_INTRO ? 0 : 1;
   if (e->a == 4) return e->state == C_OPEN ? 1 : 0;
   if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
   if (e->a == 2) return e->state == H_STOPPED ? 1 : 0;
@@ -1261,7 +1402,7 @@ static int boss_hit_value(struct Ent* e) {
 
 /* Whether touching the boss hurts Ruby. */
 static int boss_contact_hurts(struct Ent* e) {
-  if (e->a == 5 || e->a == 4) return 1;
+  if (e->a == 6 || e->a == 5 || e->a == 4) return 1;
   if (e->a == 3) return 0;
   if (e->a == 2) return e->state == H_RUN || e->state == H_BRAKE || e->state == H_LEAVE;
   return e->state != B_DAZED;
@@ -1280,7 +1421,8 @@ static void boss_defeated(struct Ent* e) {
   g_boss = 0;
   for (int i = 0; i < g_ent_count; i++) {
     if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE || g_ents[i].kind == ENT_SHOT ||
-        g_ents[i].kind == ENT_TENTACLE || (boss == 4 && g_ents[i].kind == ENT_WALKER)) {
+        g_ents[i].kind == ENT_TENTACLE || g_ents[i].kind == ENT_BOLT ||
+        (boss == 4 && g_ents[i].kind == ENT_WALKER)) {
       g_ents[i].alive = 0;
       g_ents[i].kind = ENT_NONE;
     }
@@ -1306,11 +1448,17 @@ static void step_wave(struct Ent* e) {
 static int mover_dx[8];
 static int mover_dy[8];
 
-static void step_movers(void) {
+static void step_movers(int frozen) {
   int k = 0;
   for (int i = 0; i < g_ent_count && k < MAX_MOVERS; i++) {
     struct Ent* e = &g_ents[i];
     if (!e->alive || e->kind != ENT_PLATFORM) continue;
+    if (frozen) {               /* overcrank: platforms hold still on odd ticks */
+      mover_dx[k] = 0;
+      mover_dy[k] = 0;
+      k++;
+      continue;
+    }
     int range = (e->a > 0 ? e->a : 4) << 11;
     int step = e->dir * e->c;
     int next = e->state + step;
@@ -1406,6 +1554,12 @@ static void combat(void) {
       struct Hitbox wb;
       ent_box(e, &wb);
       if (hitbox_overlap(&hb, &wb)) hurt_hero(e);
+      continue;
+    }
+    if (e->kind == ENT_PENDULUM || (e->kind == ENT_BOLT && e->state == 1)) {
+      struct Hitbox pb;
+      ent_box(e, &pb);
+      if (hitbox_overlap(&hb, &pb)) hurt_hero(e);
       continue;
     }
     if (e->kind == ENT_TENTACLE) {
@@ -1611,6 +1765,8 @@ static void step_entities(void) {
       case ENT_COIN: step_coin(e); break;
       case ENT_BOSS: step_boss(e); break;
       case ENT_TENTACLE: step_tentacle(e); break;
+      case ENT_PENDULUM: step_pendulum(e); break;
+      case ENT_BOLT: step_bolt(e); break;
       case ENT_WAVE: step_wave(e); break;
       default:
         if (e->timer > 0 && e->kind != ENT_GATE) e->timer--;
@@ -1626,8 +1782,22 @@ static void step_entities(void) {
 void game_tick(int held, int pressed) {
   g_events = 0;
   g_prog.play_ticks++;
+  /* Overcrank: the camera runs fast, so on screen the world moves at half
+   * speed. Entities, bosses and platforms step only on even ticks while it
+   * lasts; Ruby and her takes keep full speed. */
+  if ((pressed & IN_OVERCRANK) && (g_prog.abilities & AB_OVERCRANK) && overcrank_cool == 0) {
+    g_overcrank = OVERCRANK_TICKS;
+    overcrank_cool = OVERCRANK_COOLDOWN;
+    g_events |= GE_OVERCRANK;
+  }
+  if (overcrank_cool > 0) overcrank_cool--;
+  int frozen = 0;
+  if (g_overcrank > 0) {
+    g_overcrank--;
+    frozen = (int)(g_prog.play_ticks & 1);
+  }
   takes_advance(&g_takes);
-  step_movers();
+  step_movers(frozen);
   g_room.platform_count = fill_platforms(takes_platforms(&g_takes, g_platforms));
   g_room.platforms = g_platforms;
   player_step(&g_hero, &g_room, held, pressed);
@@ -1651,7 +1821,7 @@ void game_tick(int held, int pressed) {
       }
     }
   }
-  step_entities();
+  if (!frozen) step_entities();
   update_switches();
   update_gates();
   update_crumbles();
@@ -1674,6 +1844,8 @@ void game_tick(int held, int pressed) {
 
 /* Initialize all campaign progress and enter the chosen debug or normal start room. */
 void game_new(int start_room) {
+  g_overcrank = 0;
+  overcrank_cool = 0;
   for (int i = 0; i < 64; i++) g_prog.flags[i] = 0;
   for (int i = 0; i < 8; i++) g_prog.visited[i] = 0;
   g_prog.max_health = 5;
