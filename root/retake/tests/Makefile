@@ -15,6 +15,11 @@ $(BUILD_DIR)/game_test: test_game.c sim.c sim.h ../game.c ../game.h ../retake.h 
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_FLAGS) $(SANITIZERS) $(CORE) test_game.c -o $@
 
+# ctypes authoring uses the same sources; committed routes run with UBSan too.
+$(BUILD_DIR)/sim.so: sim.c sim.h ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_FLAGS) -O2 -fPIC -shared -fsanitize=undefined -fno-sanitize-recover=all $(CORE) sim.c -o $@
+
 $(BUILD_DIR)/core_test: test_core.c $(CORE) $(HEADERS) Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_FLAGS) $(SANITIZERS) $(CORE) test_core.c -o $@
