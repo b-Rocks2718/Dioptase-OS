@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "pack_sha256": "fb098b49d664f458273fdc3320dc3b205b79f39176c47b9ca16d164352e922cd",
+  "pack_sha256": "551fcb0425980b935ccd68817a2ddaed10d9762180fef6855b70a415a66d9305",
   "start": {
     "room": "s1_entry"
   },
@@ -392,6 +392,186 @@
           332,
           199,
           332
+        ]
+      }
+    },
+    {
+      "label": "Wall-kick through the scaffold chimney",
+      "actions": [
+        [
+          4,
+          1
+        ],
+        [
+          16,
+          18
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          12,
+          18
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          4,
+          18
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_scaffold",
+        "rect": [
+          224,
+          100,
+          264,
+          119
+        ]
+      }
+    },
+    {
+      "label": "Exit the chimney into s1_double",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          16
+        ],
+        [
+          8,
+          18
+        ],
+        [
+          12,
+          2
+        ],
+        [
+          8,
+          18
+        ],
+        [
+          16,
+          2
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_double",
+        "rect": [
+          0,
+          80,
+          20,
+          90
+        ]
+      }
+    },
+    {
+      "label": "Reach the s1_double floor below the take ledge",
+      "actions": [
+        [
+          80,
+          2
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_double",
+        "rect": [
+          160,
+          100,
+          200,
+          120
+        ]
+      }
+    },
+    {
+      "label": "Record an actual jump take below the ledge",
+      "actions": [
+        [
+          1,
+          32
+        ],
+        [
+          8,
+          18
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_double",
+        "rect": [
+          180,
+          78,
+          182,
+          80
         ]
       }
     }
