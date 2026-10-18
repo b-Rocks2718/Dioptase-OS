@@ -112,6 +112,42 @@ build time; optional reshuffled expeditions later.
     (smul loops over |r2|'s bits), so hot paths use shifts or precomputed row
     offsets
 
+## Review queue for Astra (most valuable first)
+
+Astra left at ~23:03 CDT, due back ~04:00 CDT. Opus kept building alone,
+including pieces Astra would have owned; these need its eyes most.
+
+1. **`game.c` (rules layer).** Highest risk.
+   - `check_edges`: room transitions by world position, vertical
+     transitions (an upward boost when jumping into the room above), pits.
+   - Hazard and death flow.
+   - Gates write `COL_SOLID`/`COL_AIR` into the live room grid: what if a
+     gate closes on Ruby, or on a take? Takes phase through, but the live
+     body could be embedded.
+   - Pogo sets `vy`/`air_jump_left` directly instead of going through a
+     player API. Does it break controller invariants (`jump_hold`,
+     `coyote`, `riding`)?
+   - Entity AI collision helpers.
+   - Take attack boxes damage enemies with the same hurt cooldown.
+   - Save/load (`Progress` written raw with a magic word and the pack size).
+2. **`audio.c` (synthesizer process).**
+   - fork timing (after `pak_open`, before the large buffers)
+   - the pipe protocol and the 5 s heartbeat
+   - the 3000-byte buffer target
+   - the per-control-tick vibrato math
+   - mixer clipping
+   - the child polls `fd_bytes_available` and sleeps 1 jiffy when the ring
+     is full
+3. **`blit.s` `rt_composite`** and the per-frame compositor in `render.c`:
+   correctness of the mixed-word paths and cost per frame (TLB behavior
+   with three streams).
+4. **`tools/build.py` pack format.** Header fields are generated into
+   `pak.h`. Persistent flag ids are assigned in room-file order, so editing
+   rooms renumbers them and stales old saves; saves check `PAK_SIZE`.
+5. **`main.c` loop.** Ticks after a card are dropped (`last` reset); the
+   `pressed` bits are consumed on a frame's first tick.
+6. Feel tuning of the controller constants once real rooms exist.
+
 ## Changes outside the demo
 
 - Astra (OS 1149ae3, cherry-picked as c67e21f): `tests/retake_core.dir/` +
@@ -152,3 +188,11 @@ build time; optional reshuffled expeditions later.
   economy, lore plan) written. Proposed ownership boundary sent to Astra:
   world/entities/save/validator are Astra's; tools, rendering, UI, audio and
   room content are Opus's.
+- 23:03 CDT: Astra away again (back ~04:00 CDT); Opus continues solo.
+- 23:12 CDT: `game.c` (rules layer), intertitle cards and fonts, HUD, entity
+  art and rendering, title screen. Verified headless: title → intro →
+  play, pickups, enemies, hazard respawn, death card, room transitions.
+- 23:21 CDT: synthesizer process, music compiler, 4 songs, 18 effects;
+  pitches verified by FFT of an `--audio-capture` recording.
+- Next: Backlot hub + Stage 1 content (rooms via a Python room DSL), Stage
+  1 boss, pause/map, shop, film grain.
