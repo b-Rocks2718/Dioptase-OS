@@ -25,6 +25,7 @@ type, tx, ty, a, b, c, d, e.
 """
 import os
 import struct
+import zlib
 import sys
 
 import numpy as np
@@ -54,7 +55,8 @@ VERSION = 2
 HEADER_FIELDS = ["magic", "version", "size", "region_count", "region_off", "room_count", "room_off",
                  "sprite_count", "sprite_off", "font_count", "font_off", "script_count", "script_off",
                  "hud_tile_count", "hud_tiles_off", "card_off", "image_count", "image_off",
-                 "wave_count", "wave_off", "inst_count", "inst_off", "song_count", "song_off", "note_off"]
+                 "wave_count", "wave_off", "inst_count", "inst_off", "song_count", "song_off", "note_off",
+                 "world_hash"]
 CARD_TEXT_W = 268   # widest wrapped line on an intertitle card, in pixels
 FONTS = [("serif", font_serif), ("title", font_title)]
 T = 8
@@ -224,6 +226,7 @@ def main():
     room_index = {r.name: i for i, r in enumerate(all_rooms)}
     next_flag = [0]
     room_entries = []
+    world_crc = 0
     for room, grid in zip(all_rooms, room_grids):
         goff = pack.add(pix.le16(grid))
         col = bytes(c for row in room.col() for c in row)
@@ -243,6 +246,11 @@ def main():
                 vals.append(-1)
             ents += struct.pack("<8h", *vals)
         eoff = pack.add(ents)
+        # world compatibility: everything a save's flags and positions depend on
+        world_crc = zlib.crc32(room.name.encode(), world_crc)
+        world_crc = zlib.crc32(struct.pack("<5i", room.region, room.wx, room.wy, room.w, room.h), world_crc)
+        world_crc = zlib.crc32(col, world_crc)
+        world_crc = zlib.crc32(ents, world_crc)
         sp = room.spawn() or default_spawn(room)
         noff = pack.add(room.name.encode() + b"\0")
         room_entries.append((room.region, room.wx, room.wy, room.w, room.h, goff, coff,
@@ -282,7 +290,7 @@ def main():
 
     image_entries = []
     image_names = []
-    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3():
+    for name, frames in entart.build() + bossart.build() + entart.build2() + bossart.build_boss2() + entart.build3() + bossart.build_boss3():
         for i, f in enumerate(frames):
             h, w = f.shape
             if w % 2:
@@ -309,6 +317,7 @@ def main():
         "image_count": len(image_entries), "image_off": image_off,
         "wave_count": len(music.WAVES), "wave_off": wave_off, "inst_count": len(songs.INSTRUMENTS),
         "inst_off": inst_off, "song_count": len(song_offs), "song_off": song_off, "note_off": note_off,
+        "world_hash": world_crc & 0xFFFFFFFF,
     }
     struct.pack_into("<%dI" % len(HEADER_FIELDS), pack.data, 0, *[fields[f] for f in HEADER_FIELDS])
 
@@ -324,6 +333,7 @@ def main():
         f"#define PAK_VERSION {VERSION}",
         f"#define PAK_SIZE {len(pack.data)}",
         f"#define PAK_ROOM_COUNT {len(all_rooms)}",
+        f"#define PAK_WORLD_HASH 0x{world_crc & 0xFFFFFFFF:08X}  /* CRC32 of room order, geometry and entities */",
         "",
         "/* Room indices into the pack's room table. */",
     ]

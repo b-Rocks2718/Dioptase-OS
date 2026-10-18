@@ -201,12 +201,19 @@ struct PakImage {
  * Transparent pixels (0xF000) are skipped; clipped to the play area below
  * the HUD bar (pixel rows HUD_PIXEL_ROWS..VIEW_H-1). */
 void draw_image(int id, int x, int y, int flip) {
+  draw_image_clipped(id, x, y, flip, VIEW_H);
+}
+
+/* draw_image with the bottom edge also clipped at screen row `bottom`
+ * (exclusive), for things that rise out of the floor. */
+void draw_image_clipped(int id, int x, int y, int flip, int bottom) {
   struct PakImage* im = (struct PakImage*)(g_pak + pak_header(PAKH_IMAGE_OFF)) + id;
   int w = (int)im->w;
   int h = (int)im->h;
   unsigned short* src = (unsigned short*)(g_pak + im->off);
+  if (bottom > VIEW_H) bottom = VIEW_H;
   int y0 = y < HUD_PIXEL_ROWS ? HUD_PIXEL_ROWS : y;
-  int y1 = y + h > VIEW_H ? VIEW_H : y + h;
+  int y1 = y + h > bottom ? bottom : y + h;
   int x0 = x < 0 ? 0 : x;
   int x1 = x + w > SCREEN_W ? SCREEN_W : x + w;
   if (x0 >= x1 || y0 >= y1) return;

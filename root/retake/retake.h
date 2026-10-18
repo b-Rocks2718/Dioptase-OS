@@ -121,6 +121,7 @@ void sprites_init(void);
 void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);
 void sprite_hide(int slot);
 void draw_image(int id, int x, int y, int flip);
+void draw_image_clipped(int id, int x, int y, int flip, int bottom);
 int image_width(int id);
 int image_height(int id);
 void draw_prompt(int cx, int y, int clock);

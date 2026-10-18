@@ -234,3 +234,54 @@ def coal():
 def build_boss2():
     frames = [locomotive(f) for f in range(3)] + [locomotive(0, firebox=True)]
     return [("boss2", frames), ("coal", [coal()])]
+
+
+# ---------------------------------------------------------------- the Kraken
+
+def blue(level):
+    level = max(0, min(15, int(level)))
+    return pix.rgb(max(0, level - 4), max(0, level - 2), min(15, level + 1))
+
+
+def tentacle_up():
+    """A tentacle rising from the deck: 16x64, tapering to a curled tip."""
+    w, h = 16, 64
+    img = pix.new_image(w, h)
+    for y in range(h):
+        t = y / h                       # 0 at the tip (top), 1 at the base
+        half = 2 + int(5 * t)
+        sway = int(2 * math.sin(y / 7.0))
+        cx = 8 + sway
+        for x in range(cx - half, cx + half):
+            if 0 <= x < w:
+                img[y, x] = blue(7 if x < cx else 5)
+        if y % 6 == 3 and half > 3:     # a row of suckers on the inner edge
+            for dx in (-half + 1,):
+                x = cx + dx
+                if 0 <= x < w:
+                    img[y, x] = blue(12)
+                    if x + 1 < w:
+                        img[y, x + 1] = blue(10)
+    return pix.outline(img, blue(1))
+
+
+def tentacle_down():
+    """The same tentacle slammed across the deck: 64x16, tip to the left."""
+    up = tentacle_up()
+    return np.rot90(up, 1).copy()
+
+
+def bubbles():
+    img = pix.new_image(16, 8)
+    for cx, cy, r in ((3, 5, 2), (8, 4, 3), (13, 5, 2)):
+        for y in range(8):
+            for x in range(16):
+                d = (x - cx) ** 2 + (y - cy) ** 2
+                if r * r - 2 <= d <= r * r + 1:
+                    img[y, x] = blue(13)
+    return img
+
+
+def build_boss3():
+    return [("tentacle_up", [tentacle_up()]), ("tentacle_down", [tentacle_down()]),
+            ("bubbles", [bubbles()])]

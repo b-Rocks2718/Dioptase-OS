@@ -104,10 +104,28 @@ static int region2_image(struct Ent* e) {
   }
 }
 
+/* Region 3 dresses them as the pirate picture's cast. */
+static int region3_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_WALKER: return IMG_WALKER3_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER3_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER3_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER3_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER3_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT3_0;
+    case ENT_PLATFORM: return IMG_RAFT_0;
+    default: return -1;
+  }
+}
+
 /* The image for entity `e` this frame, or -1 to skip drawing. */
 static int ent_image(struct Ent* e) {
   if (current_region == 2) {
     int v = region2_image(e);
+    if (v >= 0) return v;
+  }
+  if (current_region == 3) {
+    int v = region3_image(e);
     if (v >= 0) return v;
   }
   switch (e->kind) {
@@ -133,6 +151,7 @@ static int ent_image(struct Ent* e) {
     case ENT_WAVE: return IMG_WAVE_0;
     case ENT_PLATFORM: return IMG_CART_0;
     case ENT_BOSS:
+      if (e->a == 3) return -1;                  /* the Kraken is under the deck */
       if (e->a == 2) return e->state == 13 ? IMG_BOSS2_3 : IMG_BOSS2_0 + ((e->x >> 10) % 3 + 3) % 3;
       switch (e->state) {
         case 2: return IMG_BOSS1_2;            /* slam wind-up: baton raised */
@@ -164,6 +183,21 @@ static void draw_entities(void) {
     int ey = (e->y >> 8) - cam_y;
     int ew = e->w >> 8;
     int eh = e->h >> 8;
+    if (e->kind == ENT_TENTACLE) {
+      int cx = e->b - cam_x;
+      int deck = (e->c >> 8) - cam_y;
+      if (e->state == 0) {
+        if (frame_clock & 4) draw_image(IMG_BUBBLES_0, cx - 8, deck - 8, 0);
+      } else if (e->state == 1 || e->state == 2) {
+        int rise = e->state == 1 ? e->timer * 4 : 0;   /* emerging from the deck */
+        draw_image_clipped(IMG_TENTACLE_UP_0, cx - 8, deck - 64 + rise, 0, deck);
+      } else if (e->state == 5) {
+        draw_image_clipped(IMG_TENTACLE_UP_0, cx - 8, deck - 64 + (12 - e->timer) * 5, 0, deck);
+      } else {
+        draw_image(IMG_TENTACLE_DOWN_0, e->dir < 0 ? cx - 62 : cx - 2, deck - 14, e->dir > 0);
+      }
+      continue;
+    }
     if (e->kind == ENT_GATE) {
       if (e->state) continue;                     /* open: slid out of view */
       int h = e->b > 0 ? e->b : 1;
@@ -195,7 +229,7 @@ static void draw_entities(void) {
 /* The boss's remaining health as a bar along the bottom of the play area. */
 static void draw_boss_bar(void) {
   if (!g_boss || !g_boss->alive) return;
-  int total = g_boss->a == 2 ? 10 : 16;
+  int total = g_boss->a == 3 ? 12 : (g_boss->a == 2 ? 10 : 16);
   int hp = g_boss->hp < 0 ? 0 : g_boss->hp;
   int x0 = 80;
   int w = 160;
@@ -250,7 +284,10 @@ static void choose_music(void) {
   int song = MUSIC_STAGE1;
   if (region == 0) song = MUSIC_BACKLOT;
   if (region == 2) song = MUSIC_STAGE2;
-  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA) song = MUSIC_CHASE;
+  if (region == 3) song = MUSIC_STAGE3;
+  if (g_room_index == ROOM_S1_CLOCK_TOP || g_room_index == ROOM_S2_ARENA || g_room_index == ROOM_S3_ARENA) {
+    song = MUSIC_CHASE;
+  }
   if (song != current_song) {
     audio_music(song);
     current_song = song;

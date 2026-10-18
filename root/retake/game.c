@@ -32,6 +32,7 @@
 #define SHOT_TICKS 180
 #define BOSS1_HP 16
 #define HORSE_HP 10
+#define KRAKEN_HP 12
 #define WAVE_SPEED 640
 
 struct Player g_hero;
@@ -170,8 +171,13 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_SHOP: w = 16; h = 16; break;
     case ENT_WAVE: w = 8; h = 8; break;
     case ENT_PLATFORM: w = 24; h = 4; break;   /* width fixed up from d after setup */
+    case ENT_TENTACLE: w = 10; h = 56; break;
     case ENT_BOSS:
-      if (a == 2) {
+      if (a == 3) {
+        w = 8;
+        h = 8;
+        e->hp = KRAKEN_HP;
+      } else if (a == 2) {
         w = 64;
         h = 30;
         e->hp = HORSE_HP;
@@ -877,13 +883,138 @@ static void step_horse(struct Ent* e) {
   }
 }
 
+/* ---- the Kraken (boss 3) ----
+ *
+ * The boss entity is an unseen puppeteer under the deck (states 0 intro, 20
+ * choosing, 21 waiting). It sends up tentacles (ENT_TENTACLE) near Ruby, two
+ * at once below half health. A tentacle bubbles (state 0, a warning), bursts
+ * up through the deck (1) and hovers (2), then slams across the deck toward
+ * the side Ruby was on (3); it lies there stuck (4), harmless and open to
+ * claps, before sinking back (5). The deck surface is the puppeteer's spawn
+ * tile's bottom edge. */
+
+#define K_CHOOSE 20
+#define K_WAIT 21
+#define T_WARN 0
+#define T_RISE 1
+#define T_HOVER 2
+#define T_SLAM 3
+#define T_STUCK 4
+#define T_SINK 5
+
+static void spawn_tentacle(struct Ent* boss, int tile_x) {
+  struct Ent* t = ent_alloc();
+  if (!t) return;
+  ent_setup(t, ENT_TENTACLE, tile_x, boss->ty, 0, 0, 0, -1);
+  int deck = ((boss->ty + 1) << 3) << 8;
+  t->x = ((tile_x << 3) + 4 - 5) << 8;
+  t->y = deck - (56 << 8);
+  t->w = 10 << 8;
+  t->h = 56 << 8;
+  t->c = deck;                 /* remembered deck surface (Q8) */
+  t->b = (tile_x << 3) + 4;    /* center x in pixels */
+  t->state = T_WARN;
+  t->timer = 50;
+}
+
+static int tentacles_alive(void) {
+  int n = 0;
+  for (int i = 0; i < g_ent_count; i++) {
+    if (g_ents[i].alive && g_ents[i].kind == ENT_TENTACLE) n++;
+  }
+  return n;
+}
+
+static void step_kraken(struct Ent* e) {
+  switch (e->state) {
+    case B_INTRO:
+      g_pending_script = SCRIPT_S3_BOSS_INTRO;
+      e->state = K_CHOOSE;
+      e->timer = 60;
+      break;
+    case K_CHOOSE:
+      if (--e->timer <= 0) {
+        int hx = ((g_hero.x >> 8) + 4) >> 3;
+        if (hx < 7) hx = 7;
+        if (hx > g_room.w - 8) hx = g_room.w - 8;
+        spawn_tentacle(e, hx);
+        if (e->hp <= KRAKEN_HP / 2) {
+          int other = hx < (g_room.w >> 1) ? hx + 14 : hx - 14;
+          spawn_tentacle(e, other);
+        }
+        e->state = K_WAIT;
+      }
+      break;
+    case K_WAIT:
+      if (tentacles_alive() == 0) {
+        e->state = K_CHOOSE;
+        e->timer = e->hp <= KRAKEN_HP / 2 ? 25 : 45;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+static void step_tentacle(struct Ent* t) {
+  int deck = t->c;
+  int cx = t->b;
+  switch (t->state) {
+    case T_WARN:
+      if (--t->timer <= 0) {
+        t->state = T_RISE;
+        t->timer = 16;
+      }
+      break;
+    case T_RISE:
+      if (--t->timer <= 0) {
+        t->state = T_HOVER;
+        t->timer = 22;
+      }
+      break;
+    case T_HOVER:
+      t->dir = (g_hero.x >> 8) + 4 < cx ? -1 : 1;
+      if (--t->timer <= 0) {
+        t->state = T_SLAM;
+        t->timer = 6;
+        /* lie across the deck toward Ruby */
+        t->w = 56 << 8;
+        t->h = 10 << 8;
+        t->y = deck - (10 << 8);
+        t->x = t->dir < 0 ? ((cx - 56) << 8) : (cx << 8);
+        g_events |= GE_SLAM;
+      }
+      break;
+    case T_SLAM:
+      if (--t->timer <= 0) {
+        t->state = T_STUCK;
+        t->timer = 100;
+      }
+      break;
+    case T_STUCK:
+      if (--t->timer <= 0) {
+        t->state = T_SINK;
+        t->timer = 12;
+      }
+      break;
+    default:
+      if (--t->timer <= 0) {
+        t->alive = 0;
+        t->kind = ENT_NONE;
+      }
+      break;
+  }
+}
+
 static void step_boss(struct Ent* e) {
-  if (e->a == 2) step_horse(e);
+  if (e->a == 3) step_kraken(e);
+  else if (e->a == 2) step_horse(e);
   else step_sergeant(e);
 }
 
 /* Whether claps land on the boss now, and how hard. */
 static int boss_hit_value(struct Ent* e) {
+  if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
   if (e->a == 2) return e->state == H_STOPPED ? 1 : 0;
   if (e->state == B_CHARGE || e->state == B_INTRO) return 0;
   return e->state == B_DAZED ? 2 : 1;
@@ -891,6 +1022,7 @@ static int boss_hit_value(struct Ent* e) {
 
 /* Whether touching the boss hurts Ruby. */
 static int boss_contact_hurts(struct Ent* e) {
+  if (e->a == 3) return 0;
   if (e->a == 2) return e->state == H_RUN || e->state == H_BRAKE || e->state == H_LEAVE;
   return e->state != B_DAZED;
 }
@@ -906,7 +1038,8 @@ static void boss_defeated(struct Ent* e) {
   g_events |= GE_BOSS_DOWN;
   g_boss = 0;
   for (int i = 0; i < g_ent_count; i++) {
-    if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE || g_ents[i].kind == ENT_SHOT) {
+    if (g_ents[i].kind == ENT_FLYER || g_ents[i].kind == ENT_WAVE || g_ents[i].kind == ENT_SHOT ||
+        g_ents[i].kind == ENT_TENTACLE) {
       g_ents[i].alive = 0;
       g_ents[i].kind = ENT_NONE;
     }
@@ -1032,6 +1165,30 @@ static void combat(void) {
       struct Hitbox wb;
       ent_box(e, &wb);
       if (hitbox_overlap(&hb, &wb)) hurt_hero(e);
+      continue;
+    }
+    if (e->kind == ENT_TENTACLE) {
+      struct Hitbox tb;
+      ent_box(e, &tb);
+      if (e->state == T_STUCK && !e->hurt && g_boss && g_boss->alive) {
+        int hit = has_live && hitbox_overlap(&live, &tb);
+        if (hit && g_hero.attack_dir == 3) pogo = 1;
+        for (int s = 0; s < TAKE_MAX_SLOTS && !hit; s++) {
+          if (has_film[s] && hitbox_overlap(&film[s], &tb)) hit = 1;
+        }
+        if (hit) {
+          e->hurt = 16;
+          g_boss->hp -= 1;
+          g_events |= GE_HIT | GE_BOSS_HIT;
+          if (g_boss->hp <= 0) {
+            boss_defeated(g_boss);
+            continue;
+          }
+        }
+      }
+      if ((e->state == T_RISE || e->state == T_HOVER || e->state == T_SLAM) && hitbox_overlap(&hb, &tb)) {
+        hurt_hero(e);
+      }
       continue;
     }
     if (e->kind == ENT_BOSS) {
@@ -1209,6 +1366,7 @@ static void step_entities(void) {
       case ENT_SANDBAG: step_sandbag(e); break;
       case ENT_COIN: step_coin(e); break;
       case ENT_BOSS: step_boss(e); break;
+      case ENT_TENTACLE: step_tentacle(e); break;
       case ENT_WAVE: step_wave(e); break;
       default:
         if (e->timer > 0 && e->kind != ENT_GATE) e->timer--;

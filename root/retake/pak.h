@@ -4,8 +4,9 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 1702020
+#define PAK_SIZE 1706412
 #define PAK_ROOM_COUNT 27
+#define PAK_WORLD_HASH 0x3572C185  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -67,6 +68,7 @@
 #define PAKH_SONG_COUNT 22
 #define PAKH_SONG_OFF 23
 #define PAKH_NOTE_OFF 24
+#define PAKH_WORLD_HASH 25
 
 /* Fonts. */
 #define FONT_SERIF 0
@@ -198,6 +200,9 @@
 #define IMG_CHARGER3_1 66
 #define IMG_SHOT3_0 67
 #define IMG_RAFT_0 68
+#define IMG_TENTACLE_UP_0 69
+#define IMG_TENTACLE_DOWN_0 70
+#define IMG_BUBBLES_0 71
 #define PAK_FLAG_COUNT 79
 
 /* Songs (audio_music). */

@@ -40,7 +40,8 @@
 #define ENT_SHOP 21      /* the Prop Department counter */
 #define ENT_WAVE 22      /* a boss's ground shockwave (spawned) */
 #define ENT_PLATFORM 23  /* moving platform: a range tiles, b axis (0 x, 1 y), c speed Q8/tick, d width tiles */
-#define ENT_KINDS 24
+#define ENT_TENTACLE 24  /* the Kraken's tentacle (spawned by boss 3) */
+#define ENT_KINDS 25
 
 #define MAX_ENTS 40
 #define MAX_FLAGS 2048
