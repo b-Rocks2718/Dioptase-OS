@@ -10,7 +10,8 @@
  * pending_code.
  *
  * Controls: arrows or WASD move; Z, Space or K jumps; X or J claps (attack);
- * C or L records a take; V or ; jump-cuts; Esc pauses.
+ * C or L records a take; V or ; jump-cuts; E or Enter interacts; R rewinds;
+ * F overcranks; Esc pauses.
  */
 
 static int key_down[256];
@@ -26,9 +27,12 @@ static int bits_for_key(int code) {
     case KEY_UP: case 'w': return IN_UP;
     case KEY_DOWN: case 's': return IN_DOWN;
     case 'z': case KEY_SPACE: case 'k': return IN_JUMP;
-    case 'x': case 'j': return IN_SLASH;
+    case 'x': case 'j': return IN_ATTACK;
     case 'c': case 'l': return IN_RECORD;
-    case 'v': case ';': return IN_CUT;
+    case 'v': case ';': return IN_JUMPCUT;
+    case 'e': case KEY_ENTER: return IN_INTERACT;
+    case 'r': return IN_REWIND;
+    case 'f': return IN_OVERCRANK;
     default: return 0;
   }
 }

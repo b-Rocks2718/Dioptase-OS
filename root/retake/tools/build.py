@@ -8,7 +8,7 @@ start of the file.
 Layout:
     header      magic 'RTK1', version, region_count, room_count,
                 region_table_off, room_table_off, sprite_table_off,
-                sprite_count
+                sprite_count, total_size
     region[i]   block_count, blocks_off, backdrop_w, backdrop_h, backdrop_off
     room[i]     region, wx, wy, w, h, blocks_off, col_off, entity_count,
                 entities_off, spawn_x, spawn_y, name_off
@@ -98,7 +98,7 @@ def main():
     sheets = sprites.build()
 
     pack = Pack()
-    header_size = 8 * 4
+    header_size = 9 * 4
     pack.data += bytes(header_size)
 
     region_entries = []
@@ -134,8 +134,8 @@ def main():
     region_off = pack.add(b"".join(struct.pack("<5I", *e) for e in region_entries))
     room_off = pack.add(b"".join(struct.pack("<12i", *e) for e in room_entries))
     sprite_off = pack.add(b"".join(struct.pack("<2I", *e) for e in sprite_entries))
-    struct.pack_into("<8I", pack.data, 0, MAGIC, VERSION, len(region_ids), len(all_rooms),
-                     region_off, room_off, sprite_off, len(sprite_entries))
+    struct.pack_into("<9I", pack.data, 0, MAGIC, VERSION, len(region_ids), len(all_rooms),
+                     region_off, room_off, sprite_off, len(sprite_entries), len(pack.data))
 
     with open(os.path.join(root, "retake.pak"), "wb") as f:
         f.write(pack.data)

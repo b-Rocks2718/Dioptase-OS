@@ -105,8 +105,10 @@ int display_init(void);
 void display_shutdown(void);
 void render_region(int region_index);
 void render_frame(int cam_x, int cam_y);
-void hero_sprite_init(void);
-void hero_sprite_place(int frame, int facing, int x, int y);
+void sheet_load(int index);
+void sprites_init(void);
+void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);
+void sprite_hide(int slot);
 
 void tl_copy_words(void* dst, void* src, int words);
 void rt_composite(void* dst, void* room_row, void* bg_row, int words);

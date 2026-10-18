@@ -52,6 +52,10 @@ $(BUILD_DIR)/%.s: %.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 $(BUILD_DIR)/crt_%.gen.s: $(CRT_DIR)/%.c Makefile $(CC) $(BCC_STAMP) | $(BUILD_DIR)
 	$(CC) $(BCC_FLAGS) -s -o $@ $<
 
+# Every C file includes the shared headers (retake.h, player.h, takes.h and
+# the generated pak.h), so any header change rebuilds every module.
+$(C_ASMS): $(wildcard *.h)
+
 # The bcc flags the generated assembly was built with. make compares only
 # timestamps, so assembly from an earlier build with other flags (say, without
 # -opt) would otherwise be reused silently; this file changes, and the

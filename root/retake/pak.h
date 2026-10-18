@@ -4,7 +4,7 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 1
-#define PAK_SIZE 271784
+#define PAK_SIZE 323004
 #define PAK_ROOM_COUNT 1
 
 /* Room indices into the pack's room table. */
@@ -12,5 +12,7 @@
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
+#define SHEET_GHOST_A 1
+#define SHEET_GHOST_B 2
 
 #endif

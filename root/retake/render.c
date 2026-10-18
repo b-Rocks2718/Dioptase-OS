@@ -30,11 +30,18 @@ static unsigned short* backdrop_odd;  /* shifted left by one pixel */
 static int backdrop_w;
 static int backdrop_h;
 
-static unsigned short* hero_frames;   /* right-facing frames, in the pak */
-static unsigned short* hero_mirror;   /* left-facing copies */
-static int hero_frame_count;
-static int hero_shown_frame = -1;
-static int hero_shown_facing;
+/* A sprite sheet from the pak plus left-facing copies made at load. */
+struct SheetCache {
+  unsigned short* right;
+  unsigned short* left;
+  int count;
+};
+
+#define SHEET_SLOTS 4
+static struct SheetCache sheets[4];
+static int shown_sheet[16];
+static int shown_frame[16];
+static int shown_facing[16];
 
 int display_init(void) {
   g_pixel_fb = get_pixel_fb();
@@ -112,29 +119,47 @@ void render_frame(int cam_x, int cam_y) {
   }
 }
 
-void hero_sprite_init(void) {
-  struct PakSprite* s = pak_sprite(0);
-  hero_frames = (unsigned short*)(g_pak + s->frames_off);
-  hero_frame_count = (int)s->frame_count;
-  hero_mirror = (unsigned short*)mmap(hero_frame_count * SPRITE_SHORTS * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
-  for (int f = 0; f < hero_frame_count; f++) {
-    unsigned short* src = hero_frames + f * SPRITE_SHORTS;
-    unsigned short* dst = hero_mirror + f * SPRITE_SHORTS;
+/* Load sheet `index` from the pak and build its mirrored frames. */
+void sheet_load(int index) {
+  struct PakSprite* ps = pak_sprite(index);
+  struct SheetCache* c = &sheets[index];
+  c->right = (unsigned short*)(g_pak + ps->frames_off);
+  c->count = (int)ps->frame_count;
+  c->left = (unsigned short*)mmap(c->count * SPRITE_SHORTS * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
+  if ((int)c->left == -1) {
+    puts("retake: out of memory mirroring a sprite sheet\n");
+    exit(1);
+  }
+  for (int f = 0; f < c->count; f++) {
+    unsigned short* src = c->right + f * SPRITE_SHORTS;
+    unsigned short* dst = c->left + f * SPRITE_SHORTS;
     for (int y = 0; y < 32; y++) {
       for (int x = 0; x < 32; x++) dst[(y << 5) + x] = src[(y << 5) + 31 - x];
     }
   }
-  set_sprite_scale(HERO_SPRITE, 1);
 }
 
-/* Show frame `frame` facing `facing` with the canvas top-left at screen
- * (x, y); uploads pixels only when the frame or facing changed. */
-void hero_sprite_place(int frame, int facing, int x, int y) {
-  if (frame != hero_shown_frame || facing != hero_shown_facing) {
-    unsigned short* src = (facing < 0 ? hero_mirror : hero_frames) + frame * SPRITE_SHORTS;
-    tl_copy_words((void*)(g_spritemap + HERO_SPRITE * SPRITE_SHORTS), (void*)src, SPRITE_SHORTS >> 1);
-    hero_shown_frame = frame;
-    hero_shown_facing = facing;
+void sprites_init(void) {
+  for (int s = 0; s < 16; s++) {
+    shown_sheet[s] = -1;
+    set_sprite_scale(s, 1);
   }
-  set_sprite_coords(HERO_SPRITE, (unsigned)x, (unsigned)y);
+}
+
+/* Show `frame` of `sheet` facing `facing` in hardware sprite `slot` with the
+ * canvas top-left at screen (x, y). Pixels are uploaded only on change. */
+void sprite_show(int slot, int sheet, int frame, int facing, int x, int y) {
+  if (sheet != shown_sheet[slot] || frame != shown_frame[slot] || facing != shown_facing[slot]) {
+    struct SheetCache* c = &sheets[sheet];
+    unsigned short* src = (facing < 0 ? c->left : c->right) + frame * SPRITE_SHORTS;
+    tl_copy_words((void*)(g_spritemap + slot * SPRITE_SHORTS), (void*)src, SPRITE_SHORTS >> 1);
+    shown_sheet[slot] = sheet;
+    shown_frame[slot] = frame;
+    shown_facing[slot] = facing;
+  }
+  set_sprite_coords(slot, (unsigned)x, (unsigned)y);
+}
+
+void sprite_hide(int slot) {
+  set_sprite_coords(slot, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
 }

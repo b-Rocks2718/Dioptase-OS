@@ -23,6 +23,7 @@ unsigned char* g_pak;
 #define HDR_ROOM_OFF 5
 #define HDR_SPRITE_OFF 6
 #define HDR_SPRITES 7
+#define HDR_SIZE 8
 
 static unsigned* header(void) {
   return (unsigned*)g_pak;
@@ -44,7 +45,8 @@ int pak_open(void) {
   }
   g_pak = (unsigned char*)base;
   unsigned* h = header();
-  if (h[HDR_MAGIC] != PAK_MAGIC || h[HDR_VERSION] != PAK_VERSION || h[HDR_ROOMS] != PAK_ROOM_COUNT) {
+  if (h[HDR_MAGIC] != PAK_MAGIC || h[HDR_VERSION] != PAK_VERSION || h[HDR_ROOMS] != PAK_ROOM_COUNT ||
+      h[HDR_SIZE] != PAK_SIZE) {
     puts("retake: /retake/retake.pak does not match this build (rebuild with tools/build.py)\n");
     return -1;
   }
