@@ -147,7 +147,8 @@ bad:
 /* No snapshots or room pointers may be used after closing the pack. */
 void sim_close(void) { free(g_pak); g_pak = 0; }
 
-/* Full rule state for search backtracking, never serialized as a game save. */
+/* Rule state for search backtracking, never serialized as a game save.
+ * File contents are intentionally excluded: search does not invoke game_load. */
 struct SimSnapshot {
   struct Player hero;
   struct Takes takes;
@@ -250,4 +251,11 @@ void sim_state(int* out) {
   out[17] = g_boss ? g_boss->hp : 0;
   out[18] = g_prog.scrip;
   out[19] = g_hero.riding;
+}
+
+/* Fixtures retain their abilities across transitions; they are not run proofs. */
+void sim_fixture(int room, int x, int y, int abilities) {
+  game_new(room);
+  g_prog.abilities = abilities;
+  game_enter_room(room, x, y);
 }

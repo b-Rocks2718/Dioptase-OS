@@ -59,9 +59,7 @@ class Sim:
         if x is not None or y is not None or abilities:
             if x is None or y is None:
                 raise ValueError("a fixture needs both x and y")
-            # Local fixtures use the public player initializer after the room lifecycle.
-            hero = ctypes.c_int.in_dll(self.lib, "g_hero")
-            self.lib.player_init(ctypes.byref(hero), x, y, abilities)
+            self.lib.sim_fixture(index, x, y, abilities)
         self.held = 0
         self.frames = 0
 

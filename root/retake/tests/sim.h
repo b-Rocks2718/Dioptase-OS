@@ -15,4 +15,6 @@ void sim_snapshot(void* dst);
 void sim_restore(void* src);
 /* Export compact telemetry for route authoring; indices are documented in sim.c. */
 void sim_state(int* out);
+/* Explicit local fixture setup; campaign witnesses use game_new instead. */
+void sim_fixture(int room, int x, int y, int abilities);
 #endif
