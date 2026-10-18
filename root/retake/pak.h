@@ -4,7 +4,7 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 537432
+#define PAK_SIZE 537416
 #define PAK_ROOM_COUNT 2
 
 /* Room indices into the pack's room table. */

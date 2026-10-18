@@ -71,8 +71,8 @@ sign 10 25 a=@test_sign
 coin 14 22
 coin 16 22
 coin 18 22
-walker 22 25
-sandbag 17 17
+walker 12 25
+
 plate 31 25 a=1
 gate 35 23 a=1 b=3
 spring 45 25
