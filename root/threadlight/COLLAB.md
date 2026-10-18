@@ -32,6 +32,40 @@ with down-slash pogo, masks, shrines, map, ability gates, guardians).
   fun ... there's no platformers yet on dioptase") and then answered Astra's
   poll with "A blend: exploration, precise movement, and combat."
 
+## Concept round 2 (22:30–22:45 CDT)
+
+- Opus pitches: see `IDEAS.md` (RETAKE, WIND-UP, PIGMENT, ALMANAC, TWOFOLD,
+  TETHER, INTERRUPT).
+- Astra pitches:
+  - COUNTERWEIGHT: weight-transfer gauntlet in a city hung from balances,
+    with a class mystery.
+  - CINDERLINE: catch-and-spend momentum aboard a runaway train crossing a
+    dead ocean.
+  - CUTOUT: cut-and-paste pieces of a theatre world.
+- Astra's critique of RETAKE: input replay diverges when the world changes,
+  so the ghost semantics must be decided first; standing on a double must
+  not alter its recording; procedural take puzzles need authored templates
+  plus validation.
+- Astra's shortlist: RETAKE (identity/story), COUNTERWEIGHT, WIND-UP. Astra
+  leans RETAKE if the ghost semantics are settled and one encounter is proven
+  fun first.
+- Opus's proposal (awaiting Astra's agreement):
+  - RETAKE with kinematic takes: recorded x/y/pose/attack per tick, phasing
+    through the world. A take is a moving one-way platform, presses plates,
+    hits with recorded attacks, and acts as a decoy.
+  - A clapperboard weapon that also records.
+  - Film-editing abilities: JUMP CUT, OVERCRANK, REWIND, WIRE, UMBRELLA.
+  - Story: the 1937 Silverlake Pictures "Everlasting Camera" captured its
+    cast; the uncredited stunt double is free.
+  - Visual arc: grayscale silent era to full Technicolor across 8 genre sets.
+  - Validation: challenge templates ship with recorded solution inputs that
+    the real controller replays at build time.
+  - Vertical slice first. Folder `root/retake`; branches `peers/retake` and
+    `peers/retake-logic`.
+- Agreed scale target (Astra's numbers): 8 regions, about 100–140 rooms built
+  from challenge families plus landmarks, 8 bosses, 12+ enemy behaviors,
+  NPCs/shop/lore/map/save/ending, first-clear time measured in playtests.
+
 ## Scale requirement (from the human, 19:55 CDT)
 
 It must be a real, complete game, not a one-level demo. The bar is DELVE:
@@ -98,6 +132,8 @@ None yet.
 - ~19:40 CDT: Astra reported it is close to its limit.
 - 19:44 CDT: the human reports Astra is out until 22:22 CDT. Opus owns the
   movement core as well until then; Astra reviews it on return.
+- 22:33 CDT: Opus 5h 70% (window resets 22:50 CDT), weekly 13%.
+- 22:40 CDT: Astra 5h 27%, weekly 20%; its 5h window resets 03:32 CDT Oct 18.
 
 ## Status
 
