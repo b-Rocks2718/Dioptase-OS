@@ -2,18 +2,17 @@
 #include "../crt/print.h"
 #include "../crt/vga.h"
 #include "retake.h"
-#include "takes.h"
+#include "game.h"
 #include "pak.h"
 
 /*
  * RETAKE: a stunt double, a cursed film studio, and the takes she records.
- * By Claude Opus and GPT-6 Astra.
+ * A game by Claude Opus and GPT-6 Astra, for Dioptase-OS.
  *
- * Main loop: the game advances in fixed 60 Hz ticks paced by the VGA frame
- * counter, then composites and presents one frame. Each tick follows the
- * movement core's documented order (takes.h): advance projections, offer
- * them as platforms, step the live player, then capture her resolved pose
- * for a recording in progress. Jump cuts happen after the capture.
+ * main() owns the display and the frame loop: the title screen, then fixed
+ * 60 Hz game ticks (game.c) paced by the VGA frame counter, with one
+ * composited frame presented per loop. Scripts the game asks for (lore,
+ * signs, deaths) are shown as intertitle cards between ticks.
  */
 
 /* Hero animation frames, in tools/sprites.py HERO_ORDER. */
@@ -30,7 +29,6 @@
 #define FR_HURT 10
 #define FR_GLIDE 11
 
-/* Hardware sprite slots. */
 #define SLOT_HERO 0
 #define SLOT_TAKE0 1
 
@@ -39,20 +37,21 @@
 #define CANVAS_BODY_X 12
 #define CANVAS_BODY_Y 15
 
-static struct Player hero;
-static struct Takes takes;
-static struct Platform platforms[3];
+#define START_ROOM ROOM_TEST_STREET
+
 static int cam_x;
 static int cam_y;
-static unsigned tick_count;
-static int rec_ticks;
+static unsigned frame_clock;
 
-/* Animation frame for a pose. Running strides advance with distance, so the
- * legs keep pace with the speed; `x` is the body's Q8 x position. */
+static short title_ramp[4] = {0, 0x345, 0xABC, 0xEFF};
+static short dim_ramp[4] = {0, 0x123, 0x567, 0x89A};
+static short red_ramp[4] = {0, 0x113, 0x238, 0x34F};
+
+/* Animation frame for a pose; running strides advance with distance. */
 static int frame_for(int pose, int clapping_active, int x, int clock) {
   switch (pose) {
     case POSE_RUN: {
-      int phase = (x >> 11) & 3;   /* a new leg position every 8 pixels */
+      int phase = (x >> 11) & 3;
       if (phase == 0) return FR_RUN0;
       if (phase == 2) return FR_RUN2;
       return FR_RUN1;
@@ -67,12 +66,13 @@ static int frame_for(int pose, int clapping_active, int x, int clock) {
   }
 }
 
-/* Ease the camera toward the hero and keep it inside the room. */
+/* Ease the camera toward Ruby (leading a little where she faces) and keep it
+ * inside the room. The visible play area is pixel rows 8..235. */
 static void update_camera(int snap) {
-  int hx = (hero.x >> 8) + (PLAYER_W >> 1);
-  int hy = (hero.y >> 8) + (PLAYER_H >> 1);
-  int tx = hx - (SCREEN_W >> 1) + (hero.facing << 4);
-  int ty = hy - (VIEW_H >> 1) - 8;
+  int hx = (g_hero.x >> 8) + (PLAYER_W >> 1);
+  int hy = (g_hero.y >> 8) + (PLAYER_H >> 1);
+  int tx = hx - (SCREEN_W >> 1) + (g_hero.facing << 4);
+  int ty = hy - 122;
   if (snap) {
     cam_x = tx;
     cam_y = ty;
@@ -85,86 +85,154 @@ static void update_camera(int snap) {
   if (cam_x > max_x) cam_x = max_x;
   if (cam_y > max_y) cam_y = max_y;
   if (cam_x < 0) cam_x = 0;
+  if (cam_y < -HUD_PIXEL_ROWS) cam_y = -HUD_PIXEL_ROWS;
   if (cam_y < 0) cam_y = 0;
 }
 
-/* Write ASCII text into the tile layer using the terminal font tiles that are
- * still loaded (tile index = character code), colored with an RGB332 byte. */
-static void put_text(int col, int row, char* s, int color) {
-  int i = 0;
-  while (s[i]) {
-    g_tile_fb[row * TILE_ROW_WIDTH + col + i] = (short)((color << 8) | (s[i] & 0xFF));
-    i++;
+/* The image for entity `e` this frame, or -1 to skip drawing. */
+static int ent_image(struct Ent* e) {
+  switch (e->kind) {
+    case ENT_COIN: return IMG_COIN_0 + ((e->anim >> 3) & 3);
+    case ENT_HEART: return IMG_HEART_0 + ((frame_clock >> 4) & 1);
+    case ENT_FRAME: return IMG_FRAME_0;
+    case ENT_REEL: return IMG_REEL_0 + ((frame_clock >> 3) & 1);
+    case ENT_ABILITY: return IMG_ABILITY_0;
+    case ENT_MIRROR: return IMG_MIRROR_0;
+    case ENT_SIGN: return IMG_SIGN_0;
+    case ENT_NPC: return IMG_NPC_0;
+    case ENT_PLATE: return IMG_PLATE_0 + (e->state ? 1 : 0);
+    case ENT_DOOR: return IMG_DOOR_0;
+    case ENT_WALKER: return IMG_WALKER_0 + ((e->x >> 11) & 1);
+    case ENT_HOPPER: return IMG_HOPPER_0 + (e->vy != 0 ? 1 : 0);
+    case ENT_FLYER: return IMG_FLYER_0 + ((frame_clock >> 3) & 1);
+    case ENT_THROWER: return IMG_THROWER_0 + (e->state > 0 ? 1 : 0);
+    case ENT_CHARGER: return IMG_CHARGER_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
+    case ENT_SHOT: return IMG_SHOT_0;
+    case ENT_SANDBAG: return IMG_SANDBAG_0;
+    case ENT_SPRING: return IMG_SPRING_0 + (e->timer > 0 ? 1 : 0);
+    case ENT_SHOP: return IMG_SHOP_0;
+    default: return -1;
   }
 }
 
-static void show_number(int n, int col, int row, int color) {
-  for (int i = 3; i >= 0; i--) {
-    int digit = n % 10;
-    n = n / 10;
-    g_tile_fb[row * TILE_ROW_WIDTH + col + i] = (short)((color << 8) | ('0' + digit));
+static int interactable(int kind) {
+  return kind == ENT_MIRROR || kind == ENT_SIGN || kind == ENT_NPC || kind == ENT_DOOR || kind == ENT_SHOP;
+}
+
+static void draw_entities(void) {
+  struct Hitbox hb;
+  hb.x = g_hero.x;
+  hb.y = g_hero.y;
+  hb.w = PLAYER_W * Q8;
+  hb.h = PLAYER_H * Q8;
+  for (int i = 0; i < g_ent_count; i++) {
+    struct Ent* e = &g_ents[i];
+    if (!e->alive) continue;
+    if (e->hurt && (frame_clock & 2)) continue;   /* hit flash */
+    int ex = (e->x >> 8) - cam_x;
+    int ey = (e->y >> 8) - cam_y;
+    int ew = e->w >> 8;
+    int eh = e->h >> 8;
+    if (e->kind == ENT_GATE) {
+      if (e->state) continue;                     /* open: slid out of view */
+      int h = e->b > 0 ? e->b : 1;
+      for (int k = 0; k < h; k++) draw_image(IMG_GATE_0, ex, ey + (k << 3), 0);
+      continue;
+    }
+    int img = ent_image(e);
+    if (img < 0) continue;
+    int iw = image_width(img);
+    int ih = image_height(img);
+    int flip = e->dir > 0 && (e->kind == ENT_WALKER || e->kind == ENT_FLYER || e->kind == ENT_THROWER ||
+                              e->kind == ENT_CHARGER || e->kind == ENT_HOPPER);
+    int x = ex + (ew >> 1) - (iw >> 1);
+    int y = ey + eh - ih;
+    if (e->kind == ENT_SANDBAG || e->kind == ENT_SHOT || e->kind == ENT_FLYER || e->kind == ENT_COIN) y = ey;
+    draw_image(img, x, y, flip);
+    if (interactable(e->kind)) {
+      struct Hitbox eb;
+      eb.x = e->x;
+      eb.y = e->y;
+      eb.w = e->w;
+      eb.h = e->h;
+      if (hitbox_overlap(&hb, &eb)) draw_prompt(ex + (ew >> 1), y - 8, (int)frame_clock);
+    }
   }
-}
-
-static void respawn(void) {
-  struct PakRoom* pr = pak_room(g_room_index);
-  player_init(&hero, pr->spawn_x << 3, (pr->spawn_y << 3) + TILE - PLAYER_H, AB_JUMPCUT | AB_WIRE | AB_GLIDE);
-  takes_init(&takes, 3, TAKE_BASE_FRAMES);
-}
-
-/* Jump-cut to the newest take that accepts the destination. */
-static void try_jumpcut(void) {
-  int limit = takes.slot_limit;
-  int slot = takes.replace_next;
-  for (int i = 0; i < limit; i++) {
-    slot = slot - 1;
-    if (slot < 0) slot = limit - 1;
-    if (takes_jumpcut(&takes, &hero, &g_room, slot)) return;
-  }
-}
-
-/* One fixed simulation tick in the movement core's documented order. */
-static void tick(int held, int pressed) {
-  takes_advance(&takes);
-  g_room.platform_count = takes_platforms(&takes, platforms);
-  g_room.platforms = platforms;
-  player_step(&hero, &g_room, held, pressed);
-  int rec = takes_capture(&takes, &hero, (pressed & IN_RECORD) != 0);
-  if (rec == 1) rec_ticks = 0;
-  if (takes.recording) rec_ticks++;
-  if ((pressed & IN_JUMPCUT) && (hero.abilities & AB_JUMPCUT)) try_jumpcut();
-  if (hero.events & EV_HAZARD) respawn();
-  tick_count++;
 }
 
 static void draw_sprites(void) {
   struct Hitbox box;
-  int active = player_attack_box(&hero, &box);
-  int f = frame_for(hero.pose, active, hero.x, (int)tick_count);
-  sprite_show(SLOT_HERO, SHEET_HERO, f, hero.facing,
-              (hero.x >> 8) - cam_x - CANVAS_BODY_X, (hero.y >> 8) - cam_y - CANVAS_BODY_Y);
-  int sheet = ((tick_count >> 1) & 1) ? SHEET_GHOST_B : SHEET_GHOST_A;
+  int active = player_attack_box(&g_hero, &box);
+  int f = frame_for(g_hero.pose, active, g_hero.x, (int)frame_clock);
+  if (g_hero.hurt_timer > 0 && (frame_clock & 4)) {
+    sprite_hide(SLOT_HERO);
+  } else {
+    sprite_show(SLOT_HERO, SHEET_HERO, f, g_hero.facing,
+                (g_hero.x >> 8) - cam_x - CANVAS_BODY_X, (g_hero.y >> 8) - cam_y - CANVAS_BODY_Y);
+  }
+  int sheet = ((frame_clock >> 1) & 1) ? SHEET_GHOST_B : SHEET_GHOST_A;
   for (int i = 0; i < TAKE_MAX_SLOTS; i++) {
-    struct Take* t = &takes.slots[i];
+    struct Take* t = &g_takes.slots[i];
     if (!t->active || t->length == 0) {
       sprite_hide(SLOT_TAKE0 + i);
       continue;
     }
     struct TakeFrame* fr = &t->frames[t->cursor];
-    int tf = frame_for(fr->pose, fr->attack_dir != 0, fr->x, (int)tick_count);
+    int tf = frame_for(fr->pose, fr->attack_dir != 0, fr->x, (int)frame_clock);
     sprite_show(SLOT_TAKE0 + i, sheet, tf, fr->facing,
                 (fr->x >> 8) - cam_x - CANVAS_BODY_X, (fr->y >> 8) - cam_y - CANVAS_BODY_Y);
   }
 }
 
-/* Top letterbox: a REC light while recording. */
-static void draw_status(void) {
-  if (takes.recording) {
-    int blink = (tick_count >> 4) & 1;
-    put_text(2, 0, blink ? "* REC" : "  REC", 0xE0);
-    show_number(rec_ticks, 8, 0, 0xE0);
-  } else {
-    put_text(2, 0, "           ", 0);
+static void draw_hud(void) {
+  int slots = 0;
+  for (int i = 0; i < g_takes.slot_limit; i++) {
+    if (g_takes.slots[i].active) slots |= 1 << i;
+  }
+  hud_draw(g_health, g_prog.max_health, g_prog.scrip, slots, g_takes.slot_limit, g_takes.recording,
+           (frame_clock >> 4) & 1);
+}
+
+/* Present one frame of play. */
+static void present(void) {
+  render_frame(cam_x, cam_y);
+  draw_entities();
+  draw_sprites();
+  draw_hud();
+}
+
+/* ---- title screen ---- */
+
+static int title_screen(int have_save) {
+  hud_hide();
+  for (int s = 0; s < NUM_SPRITES; s++) sprite_hide(s);
+  int choice = have_save ? 1 : 0;
+  int ready = 0;
+  while (1) {
+    tl_copy_words((void*)g_pixel_fb, (void*)(g_pak + pak_header(PAKH_CARD_OFF)), (SCREEN_W * VIEW_H) >> 1);
+    draw_text_centered(46, "SILVERLAKE PICTURES PRESENTS", FONT_SERIF, dim_ramp);
+    draw_text_centered(66, "R E T A K E", FONT_TITLE, title_ramp);
+    draw_text_centered(92, "a picture in eight reels", FONT_SERIF, dim_ramp);
+    draw_text_centered(128, choice == 0 ? "> NEW PICTURE <" : "NEW PICTURE", FONT_SERIF,
+                       choice == 0 ? title_ramp : dim_ramp);
+    if (have_save) {
+      draw_text_centered(144, choice == 1 ? "> CONTINUE <" : "CONTINUE", FONT_SERIF,
+                         choice == 1 ? title_ramp : dim_ramp);
+    }
+    draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
+    draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
+    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 144, 92);
+    unsigned now = get_vga_frame_counter();
+    while (get_vga_frame_counter() == now) {
+    }
+    frame_clock++;
+    input_poll();
+    int pressed = input_take_pressed();
+    if (input_key_hit(KEY_ESC)) return -1;
+    if (pressed & IN_UP) choice = 0;
+    if ((pressed & IN_DOWN) && have_save) choice = 1;
+    if (frame_clock > 20) ready = 1;
+    if (ready && (pressed & (IN_JUMP | IN_ATTACK | IN_INTERACT))) return choice;
   }
 }
 
@@ -177,14 +245,26 @@ int main(void) {
   sheet_load(SHEET_HERO);
   sheet_load(SHEET_GHOST_A);
   sheet_load(SHEET_GHOST_B);
-  room_load(ROOM_TEST_STREET);
-  render_region(pak_room(g_room_index)->region - 1);
-  respawn();
+
+  int fd = open_existing("/retake/save.dat");
+  int have_save = fd >= 0;
+  if (fd >= 0) close(fd);
+  int choice = title_screen(have_save);
+  if (choice < 0) {
+    input_shutdown();
+    display_shutdown();
+    return 0;
+  }
+  if (choice == 1 && game_load() == 0) {
+    /* continuing */
+  } else {
+    card_show(SCRIPT_INTRO);
+    game_new(START_ROOM);
+  }
   update_camera(1);
+  hud_bar_clear();
 
   unsigned last = get_vga_frame_counter();
-  unsigned fps_mark = last;
-  int frames = 0;
   int running = 1;
   while (running) {
     unsigned now = get_vga_frame_counter();
@@ -196,20 +276,23 @@ int main(void) {
     if (input_key_hit(KEY_ESC)) running = 0;
     int held = input_held();
     int pressed = input_take_pressed();
-    for (int t = 0; t < ticks; t++) {
-      tick(held, pressed);
+    for (int t = 0; t < ticks && running; t++) {
+      game_tick(held, pressed);
       pressed = 0;
+      frame_clock++;
+      if (g_events & GE_ROOM) update_camera(1);
+      if (g_events & GE_SAVE) g_pending_script = SCRIPT_SAVED;
+      if (g_pending_script >= 0) {
+        int script = g_pending_script;
+        g_pending_script = -1;
+        card_show(script);
+        hud_bar_clear();
+        last = get_vga_frame_counter();
+        break;
+      }
     }
     update_camera(0);
-    render_frame(cam_x, cam_y);
-    draw_sprites();
-    draw_status();
-    frames++;
-    if (now - fps_mark >= 60) {
-      show_number(frames * 60 / (int)(now - fps_mark), TILE_ROW_WIDTH - 5, 0, 0xFF);
-      frames = 0;
-      fps_mark = now;
-    }
+    present();
   }
   input_shutdown();
   display_shutdown();

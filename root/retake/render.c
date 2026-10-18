@@ -2,6 +2,7 @@
 #include "../crt/print.h"
 #include "../crt/vga.h"
 #include "retake.h"
+#include "pak.h"
 
 /*
  * Display ownership and the per-frame compositor.
@@ -61,16 +62,7 @@ int display_init(void) {
   set_hscroll(0);
   set_vscroll(0);
   set_pixel_scale(0);
-  for (int i = 0; i < 64; i++) {
-    g_tilemap[TILE_CLEAR * 64 + i] = (short)TRANSPARENT_PX;
-    g_tilemap[TILE_BLACK * 64 + i] = 0;
-  }
-  for (int i = 0; i < FB_NUM_TILES; i++) g_tile_fb[i] = TILE_CLEAR;
-  /* letterbox: the top tile row and the bottom one (which hides rows 236-239) */
-  for (int x = 0; x < TILE_ROW_WIDTH; x++) {
-    g_tile_fb[x] = TILE_BLACK;
-    g_tile_fb[(TILE_COL_HEIGHT - 1) * TILE_ROW_WIDTH + x] = TILE_BLACK;
-  }
+  hud_init();
   return 0;
 }
 
@@ -162,4 +154,60 @@ void sprite_show(int slot, int sheet, int frame, int facing, int x, int y) {
 
 void sprite_hide(int slot) {
   set_sprite_coords(slot, HIDDEN_SPRITE_COORD, HIDDEN_SPRITE_COORD);
+}
+
+/* ---- software images (entities, props) ---- */
+
+struct PakImage {
+  unsigned w;
+  unsigned h;
+  unsigned off;
+};
+
+/* Draw image `id` with its top-left at screen (x, y), mirrored if `flip`.
+ * Transparent pixels (0xF000) are skipped; clipped to the play area below
+ * the HUD bar (pixel rows HUD_PIXEL_ROWS..VIEW_H-1). */
+void draw_image(int id, int x, int y, int flip) {
+  struct PakImage* im = (struct PakImage*)(g_pak + pak_header(PAKH_IMAGE_OFF)) + id;
+  int w = (int)im->w;
+  int h = (int)im->h;
+  unsigned short* src = (unsigned short*)(g_pak + im->off);
+  int y0 = y < HUD_PIXEL_ROWS ? HUD_PIXEL_ROWS : y;
+  int y1 = y + h > VIEW_H ? VIEW_H : y + h;
+  int x0 = x < 0 ? 0 : x;
+  int x1 = x + w > SCREEN_W ? SCREEN_W : x + w;
+  if (x0 >= x1 || y0 >= y1) return;
+  for (int py = y0; py < y1; py++) {
+    unsigned short* row = src + (py - y) * w;
+    volatile short* dst = g_pixel_fb + py * SCREEN_W;
+    for (int px = x0; px < x1; px++) {
+      int sx = px - x;
+      unsigned short c = row[flip ? w - 1 - sx : sx];
+      if (c != TRANSPARENT_PX) dst[px] = (short)c;
+    }
+  }
+}
+
+int image_width(int id) {
+  struct PakImage* im = (struct PakImage*)(g_pak + pak_header(PAKH_IMAGE_OFF)) + id;
+  return (int)im->w;
+}
+
+int image_height(int id) {
+  struct PakImage* im = (struct PakImage*)(g_pak + pak_header(PAKH_IMAGE_OFF)) + id;
+  return (int)im->h;
+}
+
+/* A small bouncing arrow above an interactable, at screen (cx, y). */
+void draw_prompt(int cx, int y, int clock) {
+  int bob = (clock >> 3) & 1;
+  for (int r = 0; r < 4; r++) {
+    int py = y + r + bob;
+    if (py < HUD_PIXEL_ROWS || py >= VIEW_H) continue;
+    volatile short* dst = g_pixel_fb + py * SCREEN_W;
+    for (int dx = -r; dx <= r; dx++) {
+      int px = cx + dx;
+      if (px >= 0 && px < SCREEN_W) dst[px] = (short)0x0EEF;
+    }
+  }
 }

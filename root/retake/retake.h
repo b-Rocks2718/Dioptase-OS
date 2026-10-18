@@ -24,6 +24,7 @@
 #define ROOM_MAX_PH 480
 #define ROOM_MAX_TILES 4800     /* ROOM_MAX_W * ROOM_MAX_H; bcc array sizes must be literals */
 #define TRANSPARENT_PX 0xF000
+#define HUD_PIXEL_ROWS 8        /* pixel rows hidden under the two-tile-row HUD bar */
 
 /* Key codes (docs/mem_map.md, PS/2 keyboard input stream). */
 #define KEY_ESC 0x1B
@@ -67,6 +68,7 @@ struct PakSprite {
 extern unsigned char* g_pak;
 
 int pak_open(void);
+unsigned pak_header(int index);
 int pak_room_count(void);
 struct PakRoom* pak_room(int index);
 struct PakRegion* pak_region(int index);
@@ -109,6 +111,24 @@ void sheet_load(int index);
 void sprites_init(void);
 void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);
 void sprite_hide(int slot);
+void draw_image(int id, int x, int y, int flip);
+int image_width(int id);
+int image_height(int id);
+void draw_prompt(int cx, int y, int clock);
+
+/* ---- ui.c ---- */
+
+int font_height(int font);
+int text_width(int font, char* s);
+int draw_text(int x, int y, char* s, int font, short* ramp);
+void draw_text_centered(int y, char* s, int font, short* ramp);
+void card_show(int script);
+void hud_init(void);
+void hud_hide(void);
+void hud_text(int col, char* s, int red);
+void hud_number(int col, int value, int digits, int red);
+void hud_draw(int health, int max_health, int scrip, int slots, int slot_limit, int recording, int blink);
+void hud_bar_clear(void);
 
 void tl_copy_words(void* dst, void* src, int words);
 void rt_composite(void* dst, void* room_row, void* bg_row, int words);

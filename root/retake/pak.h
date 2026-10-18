@@ -3,16 +3,99 @@
 #define RETAKE_PAK_H
 
 #define PAK_MAGIC 0x314B5452
-#define PAK_VERSION 1
-#define PAK_SIZE 323004
-#define PAK_ROOM_COUNT 1
+#define PAK_VERSION 2
+#define PAK_SIZE 537432
+#define PAK_ROOM_COUNT 2
 
 /* Room indices into the pack's room table. */
 #define ROOM_TEST_STREET 0
+#define ROOM_TEST_ALLEY 1
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
 #define SHEET_GHOST_A 1
 #define SHEET_GHOST_B 2
+
+/* Header word indices (pak.c reads the pack through these). */
+#define PAKH_MAGIC 0
+#define PAKH_VERSION 1
+#define PAKH_SIZE 2
+#define PAKH_REGION_COUNT 3
+#define PAKH_REGION_OFF 4
+#define PAKH_ROOM_COUNT 5
+#define PAKH_ROOM_OFF 6
+#define PAKH_SPRITE_COUNT 7
+#define PAKH_SPRITE_OFF 8
+#define PAKH_FONT_COUNT 9
+#define PAKH_FONT_OFF 10
+#define PAKH_SCRIPT_COUNT 11
+#define PAKH_SCRIPT_OFF 12
+#define PAKH_HUD_TILE_COUNT 13
+#define PAKH_HUD_TILES_OFF 14
+#define PAKH_CARD_OFF 15
+#define PAKH_IMAGE_COUNT 16
+#define PAKH_IMAGE_OFF 17
+
+/* Fonts. */
+#define FONT_SERIF 0
+#define FONT_TITLE 1
+
+/* Intertitle scripts. */
+#define SCRIPT_INTRO 0
+#define SCRIPT_CREDITS_TEASE 1
+#define SCRIPT_DEATH0 2
+#define SCRIPT_DEATH1 3
+#define SCRIPT_DEATH2 4
+#define SCRIPT_DEATH3 5
+#define SCRIPT_SAVED 6
+#define SCRIPT_TEST_SIGN 7
+
+/* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
+#define HT_CLEAR 0
+#define HT_BLACK 1
+#define HT_FRAME_FULL 2
+#define HT_FRAME_EMPTY 6
+#define HT_COIN 10
+#define HT_REEL_FULL 14
+#define HT_REEL_EMPTY 18
+#define HT_REC_ON 22
+#define HT_FONT 26
+#define HT_FONT_RED 118
+#define HUD_TEXT_CHARS " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'-:/&"
+
+/* Entity images (frames of one entity are consecutive). */
+#define IMG_COIN_0 0
+#define IMG_COIN_1 1
+#define IMG_COIN_2 2
+#define IMG_COIN_3 3
+#define IMG_HEART_0 4
+#define IMG_HEART_1 5
+#define IMG_FRAME_0 6
+#define IMG_REEL_0 7
+#define IMG_REEL_1 8
+#define IMG_ABILITY_0 9
+#define IMG_MIRROR_0 10
+#define IMG_SIGN_0 11
+#define IMG_NPC_0 12
+#define IMG_PLATE_0 13
+#define IMG_PLATE_1 14
+#define IMG_GATE_0 15
+#define IMG_DOOR_0 16
+#define IMG_WALKER_0 17
+#define IMG_WALKER_1 18
+#define IMG_HOPPER_0 19
+#define IMG_HOPPER_1 20
+#define IMG_FLYER_0 21
+#define IMG_FLYER_1 22
+#define IMG_THROWER_0 23
+#define IMG_THROWER_1 24
+#define IMG_CHARGER_0 25
+#define IMG_CHARGER_1 26
+#define IMG_SHOT_0 27
+#define IMG_SANDBAG_0 28
+#define IMG_SPRING_0 29
+#define IMG_SPRING_1 30
+#define IMG_SHOP_0 31
+#define PAK_FLAG_COUNT 7
 
 #endif

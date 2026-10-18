@@ -14,19 +14,9 @@
 
 unsigned char* g_pak;
 
-/* Header words, in the order build.py writes them. */
-#define HDR_MAGIC 0
-#define HDR_VERSION 1
-#define HDR_REGIONS 2
-#define HDR_ROOMS 3
-#define HDR_REGION_OFF 4
-#define HDR_ROOM_OFF 5
-#define HDR_SPRITE_OFF 6
-#define HDR_SPRITES 7
-#define HDR_SIZE 8
-
-static unsigned* header(void) {
-  return (unsigned*)g_pak;
+/* Header word `index` (PAKH_* in the generated pak.h). */
+unsigned pak_header(int index) {
+  return ((unsigned*)g_pak)[index];
 }
 
 /* Map the pack. Returns 0, or -1 after printing why (missing file, failed
@@ -44,9 +34,8 @@ int pak_open(void) {
     return -1;
   }
   g_pak = (unsigned char*)base;
-  unsigned* h = header();
-  if (h[HDR_MAGIC] != PAK_MAGIC || h[HDR_VERSION] != PAK_VERSION || h[HDR_ROOMS] != PAK_ROOM_COUNT ||
-      h[HDR_SIZE] != PAK_SIZE) {
+  if (pak_header(PAKH_MAGIC) != PAK_MAGIC || pak_header(PAKH_VERSION) != PAK_VERSION ||
+      pak_header(PAKH_ROOM_COUNT) != PAK_ROOM_COUNT || pak_header(PAKH_SIZE) != PAK_SIZE) {
     puts("retake: /retake/retake.pak does not match this build (rebuild with tools/build.py)\n");
     return -1;
   }
@@ -54,18 +43,18 @@ int pak_open(void) {
 }
 
 int pak_room_count(void) {
-  return (int)header()[HDR_ROOMS];
+  return (int)pak_header(PAKH_ROOM_COUNT);
 }
 
 struct PakRoom* pak_room(int index) {
-  return (struct PakRoom*)(g_pak + header()[HDR_ROOM_OFF]) + index;
+  return (struct PakRoom*)(g_pak + pak_header(PAKH_ROOM_OFF)) + index;
 }
 
 /* Region entries are stored in ascending region number, starting at 1. */
 struct PakRegion* pak_region(int index) {
-  return (struct PakRegion*)(g_pak + header()[HDR_REGION_OFF]) + index;
+  return (struct PakRegion*)(g_pak + pak_header(PAKH_REGION_OFF)) + index;
 }
 
 struct PakSprite* pak_sprite(int index) {
-  return (struct PakSprite*)(g_pak + header()[HDR_SPRITE_OFF]) + index;
+  return (struct PakSprite*)(g_pak + pak_header(PAKH_SPRITE_OFF)) + index;
 }
