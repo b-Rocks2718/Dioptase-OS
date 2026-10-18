@@ -115,6 +115,7 @@ void display_shutdown(void);
 void render_region(int region_id);
 void render_frame(int cam_x, int cam_y);
 void present(void);
+void film_fx(int clock);
 void sheet_load(int index);
 void sprites_init(void);
 void sprite_show(int slot, int sheet, int frame, int facing, int x, int y);

@@ -249,3 +249,41 @@ void draw_prompt(int cx, int y, int clock) {
 void present(void) {
   tl_copy_words((void*)g_pixel_fb, (void*)g_back, (SCREEN_W * VIEW_H) >> 1);
 }
+
+/* ---- film stock ---- */
+
+static unsigned grain_seed = 1937;
+static int scratch_x = -1;
+static int scratch_ticks;
+
+static unsigned grain_rand(void) {
+  grain_seed = grain_seed * 1103515245u + 12345u;
+  return grain_seed >> 8;
+}
+
+/* Dust and scratches on the back buffer: a few dozen bright flecks each
+ * frame and, now and then, a thin vertical scratch that lingers for a few
+ * frames, like a print that has been through the projector too often.
+ * Brightening keeps each pixel's tint: two levels added per channel,
+ * saturating at 15 by masking before the add. */
+void film_fx(int clock) {
+  for (int i = 0; i < 28; i++) {
+    unsigned r = grain_rand();
+    int x = (int)(r % SCREEN_W);
+    int y = HUD_PIXEL_ROWS + (int)((r >> 9) % (VIEW_H - HUD_PIXEL_ROWS));
+    unsigned short* p = g_back + y * SCREEN_W + x;
+    unsigned short c = *p;
+    *p = (unsigned short)((c & 0x0CCC) + 0x0333);
+  }
+  if (scratch_ticks > 0) {
+    scratch_ticks--;
+    for (int y = HUD_PIXEL_ROWS; y < VIEW_H; y++) {
+      if (((y + clock) & 7) == 0) continue;
+      unsigned short* p = g_back + y * SCREEN_W + scratch_x;
+      *p = (unsigned short)((*p & 0x0EEE) + 0x0111);
+    }
+  } else if ((grain_rand() & 255) < 3) {
+    scratch_x = 8 + (int)(grain_rand() % (SCREEN_W - 16));
+    scratch_ticks = 6 + (int)(grain_rand() & 7);
+  }
+}

@@ -292,6 +292,7 @@ static void play_sfx(void) {
 static void draw_frame(void) {
   render_frame(cam_x, cam_y);
   draw_entities();
+  film_fx((int)frame_clock);
   draw_boss_bar();
   present();
   draw_sprites();
@@ -318,7 +319,7 @@ static int title_screen(int have_save) {
     }
     draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
     draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
-    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 144, 92);
+    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 64, 116);
     unsigned now = get_vga_frame_counter();
     while (get_vga_frame_counter() == now) {
     }
