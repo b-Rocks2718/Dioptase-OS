@@ -107,7 +107,7 @@ static void decode_progress(struct SaveRecord* r, struct Progress* p) {
   for (int i = 0; i < 8; i++) p->visited[i] = r->word[79 + i];
 }
 
-/* A loaded body must fit the immutable terrain and any initially closed gate. */
+/* A loaded body must fit terrain and the gates/crumbles restored on room entry. */
 static int checkpoint_valid(struct Progress* p) {
   if (p->save_room < 0 || p->save_room >= pak_room_count()) return 0;
   struct PakRoom* room = pak_room(p->save_room);
@@ -121,8 +121,8 @@ static int checkpoint_valid(struct Progress* p) {
   short* raw = (short*)(g_pak + room->entities_off);
   for (int i = 0; i < room->entity_count; i++) {
     short* e = raw + i * 8;
-    if (e[0] != ENT_GATE) continue;
-    int height = e[4] > 0 ? e[4] : 1;
+    if (e[0] != ENT_GATE && e[0] != ENT_CRUMBLE) continue;
+    int height = e[0] == ENT_GATE && e[4] > 0 ? e[4] : 1;
     if (p->save_x < (e[1] + 1) * TILE && p->save_x + PLAYER_W > e[1] * TILE &&
         p->save_y < (e[2] + height) * TILE && p->save_y + PLAYER_H > e[2] * TILE) return 0;
   }

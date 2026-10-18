@@ -125,6 +125,16 @@ static void test_invalid_progress(void) {
   }
   g_prog.save_x = -1;
   expect(progress_save(&g_prog) == -1, "invalid caller progress cannot replace a save");
+  game_new(ROOM_S5_LIBRARY);
+  for (int i = 0; i < g_ent_count; i++) {
+    struct Ent* e = &g_ents[i];
+    if (e->kind != ENT_CRUMBLE) continue;
+    g_prog.save_x = e->tx * TILE;
+    g_prog.save_y = e->ty * TILE;
+    expect(progress_save(&g_prog) == -1,
+           "checkpoint validation rejects a crumble that becomes solid on re-entry");
+    break;
+  }
 }
 
 /* Unknown I/O failures must not be mistaken for a safely replaceable empty slot. */

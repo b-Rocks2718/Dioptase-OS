@@ -331,12 +331,12 @@ static void spawn_room_entities(void) {
   }
 }
 
-/* Apply gates to the room's collision: a closed gate's column is solid. */
 /* Crumbling blocks: solid (0) until Ruby stands on one, shaking (1) for 30
  * ticks, then gone (2) for 180 ticks; a block re-forms only when neither
  * Ruby nor a take overlaps its tile. The tile's collision is written into
- * the live grid like a gate's. */
-static void update_crumbles(void) {
+ * the live grid like a gate's. Frozen ticks maintain collision and detect
+ * footsteps but do not advance world timers. */
+static void update_crumbles(int frozen) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
     if (!e->alive || e->kind != ENT_CRUMBLE) continue;
@@ -352,13 +352,14 @@ static void update_crumbles(void) {
         e->timer = 30;
       }
     } else if (e->state == 1) {
-      if (--e->timer <= 0) {
+      if (!frozen && --e->timer <= 0) {
         e->state = 2;
         e->timer = 180;
         e->anim = 0;
         g_room.col[cell] = g_pak[pak_room(g_room_index)->col_off + cell];
       }
     } else {
+      if (frozen) continue;
       e->anim++;
       if (--e->timer <= 0) {
         struct Hitbox hb;
@@ -380,12 +381,16 @@ static void update_crumbles(void) {
           if (hitbox_overlap(&tb, &cb)) blocked = 1;
         }
         if (blocked) e->timer = 10;
-        else e->state = 0;
+        else {
+          e->state = 0;
+          g_room.col[cell] = COL_SOLID;
+        }
       }
     }
   }
 }
 
+/* Closed gates write their column only when it is clear of Ruby's body. */
 static void update_gates(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
@@ -438,6 +443,7 @@ void game_enter_room(int room, int x_px, int y_px) {
   for (int i = 0; i < MAX_SWITCHES; i++) g_switch[i] = 0;
   spawn_room_entities();
   update_gates();
+  update_crumbles(1);           /* collision must exist before the first player sweep */
   entry_x = x_px;
   entry_y = y_px;
   mark_visited(room);
@@ -1919,6 +1925,7 @@ static void step_entities(void) {
       case ENT_LASER: step_laser(e); break;
       case ENT_BOLT: step_bolt(e); break;
       case ENT_WAVE: step_wave(e); break;
+      case ENT_CRUMBLE: break;  /* update_crumbles owns both its timer and collision */
       default:
         if (e->timer > 0 && e->kind != ENT_GATE) e->timer--;
         e->anim++;
@@ -1948,11 +1955,10 @@ void game_tick(int held, int pressed) {
   if (rewind_cool > 0) rewind_cool--;
   if ((pressed & IN_REWIND) && (g_prog.abilities & AB_REWIND) && rewind_cool == 0 && rewind_count > 0) {
     int i = (rewind_head - rewind_count) & 127;
-    if (player_can_place(&g_room, rewind_x[i], rewind_y[i])) {
-      g_hero.x = rewind_x[i];
-      g_hero.y = rewind_y[i];
+    if (player_place(&g_hero, &g_room, rewind_x[i], rewind_y[i])) {
       g_hero.vx = 0;
       g_hero.vy = 0;
+      g_hero.wall_lock = 0;
       rewind_count = 0;
       rewind_cool = REWIND_COOLDOWN;
       g_events |= GE_REWIND;
@@ -2002,7 +2008,7 @@ void game_tick(int held, int pressed) {
   if (!frozen) step_entities();
   update_switches();
   update_gates();
-  update_crumbles();
+  update_crumbles(frozen);
   combat();
   if (g_health <= 0) {
     die();

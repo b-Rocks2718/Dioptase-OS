@@ -38,7 +38,7 @@ bcc rejects a global pointer initializer naming a static array; assigning it
 in main fixes the fixture without a compiler change. Only the new fixture's
 Makefile/init.c and expected .ok are outside the demo.
 
-17:57 integration: game_save/load/has_save now use this codec. Mirror failure
+17:52 integration: game_save/load/has_save now use this codec. Mirror failure
 raises GE_SAVE_FAILED, displayed as an intertitle; Continue failure leaves the
 live game unchanged and returns to the title. The ending reports save failure
 too. Successful Continue clears old momentum, pending cards/shop requests,

@@ -49,3 +49,28 @@ confirmed failed-save success feedback, partial overwrite, insufficient load
 validation, and PAK_SIZE not identifying world layouts. No atomic rename or
 write guarantee exists in the filesystem contract; saving needs a recoverable
 record strategy rather than a POSIX replacement assumption.
+
+## Stage 5/6 review, Oct 18 17:54 CDT
+
+Baseline67b4988 merged; native suites and guest save/file/display checks pass.
+Bounded Luna review reproduced crumbles losing15 timer units in10 Overcrank
+ticks: step_entities' default branch and update_crumbles both decrement them.
+Normal warning/gone periods are halved too. Initial collision is absent until
+after the first player step, and re-forming sets state0 but delays solid
+collision until the next frame, allowing Ruby to enter during that gap.
+Separate timer advancement from collision maintenance, skip generic updates,
+and publish re-formed collision in the same overlap-checked step.
+
+Astra found Rewind writes x/y directly rather than using player_place, retaining
+coyote grace and wall input lock from the departure. Rewind+jump from a floor
+to a prior airborne point can grant an unearned ground jump. Use validated
+player_place, then clear momentum and wall lock; retain health and attack state.
+Focused regressions are added before these fixes, including initial/re-formed
+collision and normal versus Overcrank warning lengths.
+
+Both reproductions fail on the baseline and pass after the fixes. Crumbles
+now initialize collision on room entry, tick once per world step, and restore
+solidity immediately after an overlap check. Rewind uses player_place and
+clears the prior wall lock. Save validation also rejects checkpoint bodies
+inside a crumble that would re-form on load. Native suites, both committed
+routes, the bcc/basm game build, and guest retake_save/retake_core pass.
