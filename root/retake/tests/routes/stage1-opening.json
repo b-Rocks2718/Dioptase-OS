@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "pack_sha256": "551fcb0425980b935ccd68817a2ddaed10d9762180fef6855b70a415a66d9305",
+  "pack_sha256": "49f21709f43a92634a671d0332d78505136f0d9620554f582455cfc13748d090",
   "start": {
     "room": "s1_entry"
   },
@@ -573,6 +573,822 @@
           182,
           80
         ]
+      }
+    },
+    {
+      "label": "Land above the take ledge",
+      "actions": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          42,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_double",
+        "rect": [
+          216,
+          60,
+          280,
+          60
+        ]
+      }
+    },
+    {
+      "label": "Leave Double for the rooftops",
+      "actions": [
+        [
+          33,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_rooftops",
+        "rect": [
+          0,
+          40,
+          16,
+          70
+        ]
+      }
+    },
+    {
+      "label": "First rooftop gap",
+      "actions": [
+        [
+          48,
+          18
+        ],
+        [
+          4,
+          72
+        ],
+        [
+          38,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_rooftops",
+        "rect": [
+          160,
+          76,
+          190,
+          76
+        ]
+      }
+    },
+    {
+      "label": "Second rooftop gap",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          20,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_rooftops",
+        "rect": [
+          280,
+          60,
+          305,
+          60
+        ]
+      }
+    },
+    {
+      "label": "Third rooftop gap",
+      "actions": [
+        [
+          12,
+          18
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          4,
+          82
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          4,
+          82
+        ],
+        [
+          4,
+          17
+        ],
+        [
+          46,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_rooftops",
+        "rect": [
+          398,
+          92,
+          412,
+          92
+        ]
+      }
+    },
+    {
+      "label": "Last rooftop gap",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          41,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_rooftops",
+        "rect": [
+          530,
+          68,
+          558,
+          68
+        ]
+      }
+    },
+    {
+      "label": "Reach the clock tower entrance",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          48,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_base",
+        "rect": [
+          0,
+          68,
+          12,
+          68
+        ]
+      }
+    },
+    {
+      "label": "Clock base middle ledge",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          48,
+          18
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          18,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_base",
+        "rect": [
+          136,
+          60,
+          168,
+          60
+        ]
+      }
+    },
+    {
+      "label": "Clock base upper ledge",
+      "actions": [
+        [
+          4,
+          0
+        ],
+        [
+          34,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_base",
+        "rect": [
+          144,
+          20,
+          168,
+          20
+        ]
+      }
+    },
+    {
+      "label": "Enter the clock mechanism",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          24,
+          17
+        ],
+        [
+          21,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          144,
+          436,
+          148,
+          436
+        ]
+      }
+    },
+    {
+      "label": "Stand on a recorded still to reach the first clock ledge",
+      "actions": [
+        [
+          6,
+          0
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          40,
+          16
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          35,
+          17
+        ],
+        [
+          12,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          70,
+          388,
+          95,
+          388
+        ]
+      }
+    },
+    {
+      "label": "Reach the outer clock wall",
+      "actions": [
+        [
+          38,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          16,
+          340,
+          16,
+          360
+        ]
+      }
+    },
+    {
+      "label": "Wall kick onto the middle clock ledge",
+      "actions": [
+        [
+          4,
+          1
+        ],
+        [
+          38,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          96,
+          324,
+          136,
+          324
+        ]
+      }
+    },
+    {
+      "label": "Reach the escapement plate",
+      "actions": [
+        [
+          4,
+          1
+        ],
+        [
+          34,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          48,
+          284,
+          52,
+          284
+        ]
+      }
+    },
+    {
+      "label": "Record a still on the escapement plate",
+      "actions": [
+        [
+          6,
+          0
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          1,
+          32
+        ],
+        [
+          1,
+          0
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          40,
+          284,
+          52,
+          284
+        ]
+      }
+    },
+    {
+      "label": "Cross the approach plank under the clock ceiling",
+      "actions": [
+        [
+          30,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          96,
+          284,
+          120,
+          284
+        ]
+      }
+    },
+    {
+      "label": "Reach the open escapement",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          24,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          152,
+          268,
+          180,
+          268
+        ]
+      }
+    },
+    {
+      "label": "Jump through the take-held gate",
+      "actions": [
+        [
+          8,
+          2
+        ],
+        [
+          11,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          176,
+          228,
+          184,
+          235
+        ]
+      }
+    },
+    {
+      "label": "Land above the escapement",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          38,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          192,
+          196,
+          225,
+          196
+        ]
+      }
+    },
+    {
+      "label": "Clock right gear ledge",
+      "actions": [
+        [
+          4,
+          0
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          10,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          240,
+          156,
+          272,
+          156
+        ]
+      }
+    },
+    {
+      "label": "Clock upper center plank",
+      "actions": [
+        [
+          4,
+          1
+        ],
+        [
+          39,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          144,
+          124,
+          168,
+          124
+        ]
+      }
+    },
+    {
+      "label": "Clock left gear ledge",
+      "actions": [
+        [
+          4,
+          1
+        ],
+        [
+          38,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          72,
+          92,
+          90,
+          92
+        ]
+      }
+    },
+    {
+      "label": "Clock hatch approach",
+      "actions": [
+        [
+          4,
+          64
+        ],
+        [
+          34,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          128,
+          52,
+          168,
+          52
+        ]
+      }
+    },
+    {
+      "label": "Clock hatch plank",
+      "actions": [
+        [
+          4,
+          2
+        ],
+        [
+          38,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_climb",
+        "rect": [
+          144,
+          20,
+          168,
+          20
+        ]
+      }
+    },
+    {
+      "label": "Reach Sergeant Gearhart",
+      "actions": [
+        [
+          4,
+          0
+        ],
+        [
+          43,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_top",
+        "rect": [
+          128,
+          196,
+          184,
+          196
+        ]
+      }
+    },
+    {
+      "label": "Defeat Sergeant Gearhart without respawning",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          72
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          6,
+          81
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          64
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          72
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          64
+        ],
+        [
+          48,
+          16
+        ],
+        [
+          6,
+          18
+        ],
+        [
+          6,
+          82
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          82
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          81
+        ],
+        [
+          12,
+          17
+        ],
+        [
+          6,
+          82
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          82
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          64
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          1,
+          66
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_top",
+        "boss_hp": 0
+      }
+    },
+    {
+      "label": "Collect the stunt-wire reward",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          21,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_top",
+        "abilities": 2
+      }
+    },
+    {
+      "label": "Reach Gearhart return door",
+      "actions": [
+        [
+          131,
+          17
+        ]
+      ],
+      "expect": {
+        "room": "s1_clock_top",
+        "rect": [
+          32,
+          196,
+          36,
+          196
+        ],
+        "abilities": 2
+      }
+    },
+    {
+      "label": "Return to the Backlot with the earned wire",
+      "actions": [
+        [
+          1,
+          256
+        ]
+      ],
+      "expect": {
+        "room": "backlot_west",
+        "abilities": 2
       }
     }
   ]

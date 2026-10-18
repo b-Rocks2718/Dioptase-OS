@@ -74,3 +74,10 @@ solidity immediately after an overlap check. Rewind uses player_place and
 clears the prior wall lock. Save validation also rejects checkpoint bodies
 inside a crumble that would re-form on load. Native suites, both committed
 routes, the bcc/basm game build, and guest retake_save/retake_core pass.
+
+Stage1 witness completed:2845ticks,42checkpoints,5health, wire earned and
+return door used. One transfer plank(12,37,4) added below the clock ceiling;
+the plate still requires a take and both gates are traversed. A mutable-grid
+prototype first established the local route, then the actual world.py pack
+was rebuilt and the entire continuous route replayed independently. Both
+committed routes, native suites and bcc/basm build pass.

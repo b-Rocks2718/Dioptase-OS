@@ -16,13 +16,13 @@ ASan. Snapshots include movers and every rule global, but exclude save-file
 contents: route search never calls game_load. Snapshots are validated by
 restoring and comparing the entire result after a repeated simulation.
 
-The opening witness starts at the actual Stage 1 spawn, crosses Mark's gate
-with a stationary take, climbs the corrected scaffold chimney, and records a
-jump take below Double's ledge. It takes 999 ticks without damage. This is
-**not a full Stage 1 solution or a play-duration estimate**. Double's ledge,
-rooftops, clock tower, boss, and optional cellar still need continuous witnesses.
-stage1-clock-local.json separately checks 346 ticks from explicit roof-entry
-coordinates to the clock gate's plate. It is only a local traversal witness.
+The opening witness starts at the actual Stage 1 spawn and returns to the
+Backlot with the stunt wire earned from Gearhart. All 42 checkpoints pass over
+2845 ticks without damage. This is a critical-path witness, **not a first-play
+duration estimate or a full-campaign proof**. Optional collectibles and
+Stages 2 onward remain unverified. See routes/stage1-opening-report.md.
+The separate stage1-clock-local.json checks 346 ticks from explicit roof-entry
+coordinates to the clock gate's plate; it remains only a local fixture.
 
 Every witness contains sequential `[tick_count, held_input_mask]` pairs.
 Press edges are derived from held input, so a held jump never automatically

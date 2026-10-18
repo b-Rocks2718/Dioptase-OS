@@ -69,6 +69,7 @@ def backlot():
 
 
 def stage1():
+    """Teach recording, wall kicks and plate cooperation across the silent comedy set."""
     out = []
     # ---- Arrival from the stage door ----
     r = Draft("s1_entry", 1, (0, 30), (40, 30))
@@ -242,6 +243,7 @@ def stage1():
     r.clear(22, 30, 24, 32)
     r.ent("gate", 22, 30, a=2, b=2)
     r.ent("gate", 23, 30, a=2, b=2)
+    r.plank(12, 37, 4)                        # transfer under the ceiling without spending the plate take
     r.plank(19, 35, 7)
     r.plank(24, 26, 6)
     r.girder(30, 21, 6)

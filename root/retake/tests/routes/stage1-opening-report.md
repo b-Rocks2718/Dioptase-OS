@@ -1,5 +1,22 @@
-# Stage 1 route checkpoint report
+# Stage 1 continuous route witness
 
-Validated continuous route: normal Stage 1 spawn through the existing 725-tick Scaffold checkpoint, wall-kick chimney exit, entry into `s1_double`, and a real recorded jump take below the ghost-head ledge. The checked endpoint is `s1_double` at hero top-left approximately `(180.9, 78.8)` after recording, with 5 health.
+The committed input-only route starts at the ordinary Stage 1 spawn and
+returns to the Backlot after defeating Sergeant Gearhart and collecting the
+stunt wire. It runs 2845 simulation ticks, checks 42 checkpoints, and finishes
+with all five health frames. Enemies, hazards, takes, gates, boss combat,
+pickups and transitions use the shipping rules throughout; no debug teleport
+or granted ability occurs. This is a critical-path completion witness, not a
+first-play duration estimate or proof that every optional collectible is reachable.
 
-The route does not yet reach the elevated `s1_double` ledge or rooftops. Bounded searches from the recorded take setup approached the ledge underside but did not find a grounded checkpoint; this is a search result, not proof of impossibility. No geometry fault was witnessed: the scaffold chimney is traversable and the `s1_double` floor and ledge are present. The take puzzle traversal remains unresolved.
+The route records a still for Mark, a jump take in Double, a still boost in
+the lower clock, and a still to hold the escapement plate. One authored change
+adds plank(12,37,4) under the clock ceiling, making the approach jump clear
+without consuming the single take holding the plate. The former approach
+resisted bounded searches; that failure alone did not prove impossibility.
+The revised geometry has been independently replayed from the normal spawn.
+
+Luna originally contributed the 725-to-999-tick scaffold/Double continuation
+(8448b709, reviewed and imported as0328ffb). Astra added full-hold candidates to
+the solver, verified the remaining traversal and combat, and checked the final
+route against the rebuilt pack. Native ASan/UBSan suites and bcc/basm build pass.
+Stages 2 onward and optional side routes still require continuous witnesses.
