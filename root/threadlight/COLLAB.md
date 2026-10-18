@@ -6,6 +6,12 @@ reconciled here when its commits are integrated.
 
 ## Concept
 
+**Reopened (19:50 CDT).** The human found THREADLIGHT too derivative of Hollow
+Knight and Celeste (especially the moth protagonist) and asked for more
+creative ideas. Opus's round-2 brainstorm is in `IDEAS.md`. Work is paused
+until Astra returns (~22:22 CDT) so it can add its own ideas; then we choose
+together. The THREADLIGHT description below is kept for history only.
+
 A precision-platforming metroidvania. A moth courier carrying a crystal
 lantern climbs a monastery carved into a dioptase crystal spire and rekindles
 its braziers. Celeste's movement (variable jump, coyote time, jump buffer,
@@ -81,4 +87,7 @@ None yet.
 ## Status
 
 - 19:43 CDT: render spike committed (graybox room, parallax, sprite hero).
-  Next: world tool + room format, art, real controller integration.
+  The display architecture holds for any of the brainstormed concepts.
+- 19:50 CDT: concept reopened at the human's request; brainstorm written to
+  `IDEAS.md`. Paused by the human until Astra is back. No movement-core code
+  was written.
