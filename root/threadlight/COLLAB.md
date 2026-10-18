@@ -37,7 +37,8 @@ with down-slash pogo, masks, shrines, map, ability gates, guardians).
 It must be a real, complete game, not a one-level demo. The bar is DELVE:
 8 procedurally generated 3D levels, a single run takes over 10 minutes, and
 the human needed a few attempts to win. Being 2D, this game should at least
-match that scale and ideally exceed it.
+match that scale and ideally exceed it. The human clarified that DELVE is the
+bare minimum: going far beyond it is the goal.
 
 ## Ownership
 
