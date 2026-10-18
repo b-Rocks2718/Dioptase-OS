@@ -121,6 +121,28 @@ static void test_snapshot_replay(void) {
          "restoring a search snapshot reproduces the entire simulation exactly");
 }
 
+/* Search backtracking must preserve delayed abilities and the moon-room rules. */
+static void test_edit_snapshot(void) {
+  struct SimSnapshot before;
+  struct SimSnapshot after;
+  struct SimSnapshot replayed;
+  game_new(ROOM_S6_GATE);
+  g_prog.abilities = AB_OVERCRANK | AB_REWIND;
+  g_hero.abilities = g_prog.abilities;
+  for (int i = 0; i < 140; i++) game_tick(i < 30 ? IN_RIGHT : 0, 0);
+  game_tick(IN_OVERCRANK, IN_OVERCRANK);
+  sim_snapshot(&before);
+  for (int i = 0; i < 20; i++) game_tick(IN_RIGHT, i == 5 ? IN_REWIND : 0);
+  sim_snapshot(&after);
+  /* Entering another region changes private state outside the Player struct. */
+  game_new(ROOM_S1_ENTRY);
+  sim_restore(&before);
+  for (int i = 0; i < 20; i++) game_tick(IN_RIGHT, i == 5 ? IN_REWIND : 0);
+  sim_snapshot(&replayed);
+  expect(memcmp(&after, &replayed, sizeof(after)) == 0,
+         "snapshots restore moon gravity, Overcrank phase and the full Rewind ring");
+}
+
 /* Run adversarial contacts before broader room solution replays. */
 int main(void) {
   if (sim_open("../retake.pak")) return 1;
@@ -132,6 +154,7 @@ int main(void) {
   test_spring_impulse();
   test_room_ticks();
   test_snapshot_replay();
+  test_edit_snapshot();
   sim_close();
   if (!failures) puts("***PASS retake game rule regressions");
   return failures != 0;

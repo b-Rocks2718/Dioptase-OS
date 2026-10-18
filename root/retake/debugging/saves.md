@@ -37,3 +37,20 @@ previous, reject an invalid checkpoint, preserve output when both slots fail.
 bcc rejects a global pointer initializer naming a static array; assigning it
 in main fixes the fixture without a compiler change. Only the new fixture's
 Makefile/init.c and expected .ok are outside the demo.
+
+17:57 integration: game_save/load/has_save now use this codec. Mirror failure
+raises GE_SAVE_FAILED, displayed as an intertitle; Continue failure leaves the
+live game unchanged and returns to the title. The ending reports save failure
+too. Successful Continue clears old momentum, pending cards/shop requests,
+Overcrank and Rewind cooldowns. The native game adapter now includes the actual
+codec and shares the two-file fault shim with its unit suite. Integration
+tests verify mirror success/failure events, process-local new-game slot
+selection, read-only Continue probing, untouched state on corrupt load, and
+transient reset on valid load. The old save_a/save_b format is not imported;
+it remains untouched on disk. Only save0/save1 are read/written by the codec.
+
+Before and after integration: all native ASan/UBSan suites pass, as do guest
+retake_save, file_syscalls and user_foreground_display. bcc/basm build passes.
+Both committed route witnesses still replay unchanged. Snapshots now include
+the Overcrank timers, moon flag, and full Rewind ring, with a cross-region
+restore/replay regression.

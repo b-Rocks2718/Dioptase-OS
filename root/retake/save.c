@@ -32,7 +32,6 @@
 #define SAVE_CRC_POLYNOMIAL 0xEDB88320u
 #define SAVE_BASE_HEALTH 5          /* game_new's starting health */
 #define SAVE_SHOP_HEALTH 8          /* menus.c stops selling frames at eight */
-#define SAVE_REEL_UPGRADE 256       /* Stage 4's non-movement third-take reward */
 
 /* Aligned decoded disk words plus a validity result; no native pointers persist. */
 struct SaveRecord {
@@ -132,7 +131,7 @@ static int checkpoint_valid(struct Progress* p) {
 
 /* Numeric bounds reflect actual upgrade rules; flag words are opaque bitsets. */
 static int save_progress_valid(struct Progress* p) {
-  int allowed = AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | SAVE_REEL_UPGRADE;
+  int allowed = AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL;
   int max_health = SAVE_SHOP_HEALTH;
   for (int i = 0; i < pak_room_count(); i++) {
     struct PakRoom* room = pak_room(i);

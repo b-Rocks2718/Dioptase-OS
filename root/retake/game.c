@@ -2,6 +2,7 @@
 #include "../crt/print.h"
 #include "retake.h"
 #include "game.h"
+#include "save.h"
 #include "pak.h"
 
 /*
@@ -17,8 +18,6 @@
  * takes.h requires. Persistent pickups carry a flag id assigned by
  * tools/build.py; a set flag means "already collected".
  */
-
-#define SAVE_MAGIC 0x31565352      /* 'RSV1' */
 
 #define HURT_INVULN 12
 #define POGO_SPEED 900
@@ -1869,6 +1868,7 @@ static void pickups_and_interactions(int pressed) {
           g_prog.save_y = g_hero.y >> 8;
           g_health = g_prog.max_health;
           if (game_save() == 0) g_events |= GE_SAVE;
+          else g_events |= GE_SAVE_FAILED;
           e->timer = 60;
         }
         break;
@@ -2020,11 +2020,22 @@ void game_tick(int held, int pressed) {
 
 /* ---- new game, save and load ---- */
 
-/* Initialize all campaign progress and enter the chosen debug or normal start room. */
-void game_new(int start_room) {
+/* New/continued pictures do not inherit transient state from the title's last run. */
+static void reset_session_state(void) {
+  g_events = 0;
+  g_pending_script = -1;
+  g_pending_shop = 0;
   g_overcrank = 0;
   overcrank_cool = 0;
   rewind_cool = 0;
+  g_hero.vx = 0;
+  g_hero.vy = 0;
+  g_hero.facing = 1;
+}
+
+/* Initialize all campaign progress and enter the chosen debug or normal start room. */
+void game_new(int start_room) {
+  reset_session_state();
   for (int i = 0; i < 64; i++) g_prog.flags[i] = 0;
   for (int i = 0; i < 8; i++) g_prog.visited[i] = 0;
   g_prog.max_health = 5;
@@ -2038,107 +2049,25 @@ void game_new(int start_room) {
   g_prog.save_x = pr->spawn_x << 3;
   g_prog.save_y = (pr->spawn_y << 3) + TILE - PLAYER_H;
   g_health = g_prog.max_health;
-  g_hero.vx = 0;
-  g_hero.vy = 0;
-  g_hero.facing = 1;
   game_enter_room(start_room, g_prog.save_x, g_prog.save_y);
 }
 
-/* ---- saves ----
- *
- * Two slot files (save_a.dat, save_b.dat) are written alternately, so a
- * write cut short by a crash or a full disk can only damage the slot being
- * written; the other still holds the previous mirror. A slot is: magic,
- * world hash (PAK_WORLD_HASH: room order, geometry and entities, so a save
- * from a different world layout is refused instead of misread), sequence
- * number, a checksum of the Progress record, then the record. Loading reads
- * both slots into scratch records, validates every field, and only then
- * picks the newer valid one, so a bad file never touches live state.
- * Writes are not atomic on this OS and rename cannot replace a target,
- * which is why there are two slots rather than one renamed temp file. */
+/* Save only after the recoverable codec has verified the new slot on disk. */
+int game_save(void) { return progress_save(&g_prog); }
 
-#define SAVE_SLOT_A "/retake/save_a.dat"
-#define SAVE_SLOT_B "/retake/save_b.dat"
-#define SAVE_HEAD_WORDS 4
-
-static unsigned save_seq;          /* sequence number of the newest valid slot */
-
-/* Rotate-xor checksum over the Progress record (no multiplies). */
-static unsigned progress_sum(struct Progress* p) {
-  unsigned* w = (unsigned*)p;
-  int n = (int)(sizeof(struct Progress) >> 2);
-  unsigned h = 0x9E3779B9u;
-  for (int i = 0; i < n; i++) h = ((h << 5) | (h >> 27)) ^ w[i];
-  return h;
-}
-
-/* Whether a loaded record describes a reachable, sane game. */
-static int progress_valid(struct Progress* p) {
-  if (p->max_health < 1 || p->max_health > 9) return 0;
-  if (p->scrip < 0 || p->scrip > 9999) return 0;
-  if (p->take_slots < 1 || p->take_slots > TAKE_MAX_SLOTS) return 0;
-  if (p->take_frames < 1 || p->take_frames > TAKE_MAX_FRAMES) return 0;
-  if (p->abilities & ~(AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL)) return 0;
-  if (p->save_room < 0 || p->save_room >= pak_room_count()) return 0;
-  struct PakRoom* r = pak_room(p->save_room);
-  if (p->save_x < 0 || p->save_x > (r->w << 3) - PLAYER_W) return 0;
-  if (p->save_y < 0 || p->save_y > (r->h << 3) - PLAYER_H) return 0;
-  return 1;
-}
-
-/* Read one slot into `out`; returns its sequence number, or 0 if the slot is
- * missing, truncated, from another world, corrupt or invalid. */
-static unsigned read_slot(char* path, struct Progress* out) {
-  int fd = open_existing(path);
-  if (fd < 0) return 0;
-  unsigned head[4];
-  int ok = read(fd, head, sizeof(head)) == (int)sizeof(head);
-  ok = ok && read(fd, out, sizeof(struct Progress)) == (int)sizeof(struct Progress);
-  close(fd);
-  if (!ok || head[0] != SAVE_MAGIC || head[1] != PAK_WORLD_HASH || head[2] == 0) return 0;
-  if (head[3] != progress_sum(out) || !progress_valid(out)) return 0;
-  return head[2];
-}
-
-int game_save(void) {
-  unsigned seq = save_seq + 1;
-  char* path = (seq & 1) ? SAVE_SLOT_A : SAVE_SLOT_B;
-  int fd = open(path);
-  if (fd < 0) return -1;
-  unsigned head[4];
-  head[0] = SAVE_MAGIC;
-  head[1] = PAK_WORLD_HASH;
-  head[2] = seq;
-  head[3] = progress_sum(&g_prog);
-  int ok = write(fd, head, sizeof(head)) == (int)sizeof(head);   /* a fresh open starts at offset 0 */
-  ok = ok && write(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
-  close(fd);
-  if (!ok) return -1;
-  save_seq = seq;
-  return 0;
-}
-
-/* Whether either slot holds a loadable game (for the title's Continue). */
+/* Probing Continue is read-only and never changes live campaign progress. */
 int game_has_save(void) {
   struct Progress scratch;
-  return read_slot(SAVE_SLOT_A, &scratch) || read_slot(SAVE_SLOT_B, &scratch);
+  return progress_load(&scratch) == 0;
 }
 
-/* Load the newest valid slot and enter its checkpoint, or fail without
- * touching live state. */
+/* Validate in scratch storage, then begin the checkpoint without old motion,
+ * pending cards, or room-local ability state from the previous picture. */
 int game_load(void) {
-  struct Progress a;
-  struct Progress b;
-  unsigned sa = read_slot(SAVE_SLOT_A, &a);
-  unsigned sb = read_slot(SAVE_SLOT_B, &b);
-  if (!sa && !sb) return -1;
-  if (sa >= sb) {
-    g_prog = a;
-    save_seq = sa;
-  } else {
-    g_prog = b;
-    save_seq = sb;
-  }
+  struct Progress candidate;
+  if (progress_load(&candidate) != 0) return -1;
+  g_prog = candidate;
+  reset_session_state();
   g_health = g_prog.max_health;
   game_enter_room(g_prog.save_room, g_prog.save_x, g_prog.save_y);
   return 0;

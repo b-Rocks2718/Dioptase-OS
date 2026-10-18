@@ -18,65 +18,23 @@ int g_room_pw;
 int g_room_ph;
 static unsigned char sim_col[4800];
 static int sim_rows[60];
-static unsigned char sim_save[4096];
-static int sim_save_size;
-static int sim_save_cursor;
-static int sim_io_limit = 4096;
-
-/* The guest save descriptor is a bounded memory file, never a host fd. */
-static int sim_create(char* path) {
-  (void)path;
-  sim_save_cursor = 0;
-  return 3;
-}
-
-/* Read-only opens fail until a fixture or game_save has written a record. */
-static int sim_existing(char* path) {
-  (void)path;
-  sim_save_cursor = 0;
-  return sim_save_size ? 3 : -1;
-}
-
-/* Model documented short reads, including EOF, without host syscall rules. */
-static int sim_read(int fd, void* dst, unsigned size) {
-  if (fd != 3) return -1;
-  int n = (int)size;
-  if (n > sim_io_limit) n = sim_io_limit;
-  if (n > sim_save_size - sim_save_cursor) n = sim_save_size - sim_save_cursor;
-  memcpy(dst, sim_save + sim_save_cursor, (size_t)n);
-  sim_save_cursor += n;
-  return n;
-}
-
-/* Short writes retain their prefix, as the guest file interface permits. */
-static int sim_write(int fd, void* src, unsigned size) {
-  if (fd != 3) return -1;
-  int n = (int)size;
-  if (n > sim_io_limit) n = sim_io_limit;
-  if (n > (int)sizeof(sim_save) - sim_save_cursor) return -1;
-  memcpy(sim_save + sim_save_cursor, src, (size_t)n);
-  sim_save_cursor += n;
-  if (sim_save_cursor > sim_save_size) sim_save_size = sim_save_cursor;
-  return n;
-}
-
-/* The memory fixture has no descriptor resources to release. */
-static int sim_close_fd(int fd) { return fd == 3 ? 0 : -1; }
-
 /* Suppress guest CRT declarations only inside this native translation unit. */
 #define SYS_H
 #define PRINT_H
-#define open sim_create
-#define open_existing sim_existing
-#define read sim_read
-#define write sim_write
-#define close sim_close_fd
 #include "../game.c"
+
+/* Compile the actual codec against the shared fault-injection file boundary. */
+#define RETAKE_SAVE_NATIVE
+#include "../save.c"
 #undef open
 #undef open_existing
 #undef read
 #undef write
 #undef close
+#undef seek
+#undef truncate
+#undef errno
+#include "save_memory.h"
 
 /* Pack words are little endian, aligned 32-bit integers on the supported host. */
 unsigned pak_header(int index) { return ((unsigned*)g_pak)[index]; }
@@ -115,6 +73,8 @@ static int sim_span(unsigned off, unsigned bytes, unsigned total) {
 
 /* Fail explicitly instead of testing a stale or incompatible generated pack. */
 int sim_open(char* path) {
+  clear_faults();
+  memset(files, 0, sizeof(files));
   unsigned endian = 1;
   if (sizeof(int) != 4 || sizeof(short) != 2 || CHAR_BIT != 8 || *(unsigned char*)&endian != 1) {
     fprintf(stderr, "retake replay: native adapter requires little-endian 32-bit int and 16-bit short\n");
@@ -162,6 +122,14 @@ struct SimSnapshot {
   unsigned events;
   int pending_script;
   int pending_shop;
+  int overcrank;
+  int overcrank_cooldown;
+  int moon;
+  int rewind_xs[128];
+  int rewind_ys[128];
+  int rewind_next;
+  int rewind_length;
+  int rewind_cooldown;
   int mover_x[8];
   int mover_y[8];
   int ent_count;
@@ -191,6 +159,14 @@ void sim_snapshot(void* dst) {
   s->events = g_events;
   s->pending_script = g_pending_script;
   s->pending_shop = g_pending_shop;
+  s->overcrank = g_overcrank;
+  s->overcrank_cooldown = overcrank_cool;
+  s->moon = moon_gravity;
+  memcpy(s->rewind_xs, rewind_x, sizeof(rewind_x));
+  memcpy(s->rewind_ys, rewind_y, sizeof(rewind_y));
+  s->rewind_next = rewind_head;
+  s->rewind_length = rewind_count;
+  s->rewind_cooldown = rewind_cool;
   memcpy(s->mover_x, mover_dx, sizeof(mover_dx));
   memcpy(s->mover_y, mover_dy, sizeof(mover_dy));
   s->ent_count = g_ent_count;
@@ -216,6 +192,14 @@ void sim_restore(void* src) {
   g_events = s->events;
   g_pending_script = s->pending_script;
   g_pending_shop = s->pending_shop;
+  g_overcrank = s->overcrank;
+  overcrank_cool = s->overcrank_cooldown;
+  moon_gravity = s->moon;
+  memcpy(rewind_x, s->rewind_xs, sizeof(rewind_x));
+  memcpy(rewind_y, s->rewind_ys, sizeof(rewind_y));
+  rewind_head = s->rewind_next;
+  rewind_count = s->rewind_length;
+  rewind_cool = s->rewind_cooldown;
   memcpy(mover_dx, s->mover_x, sizeof(mover_dx));
   memcpy(mover_dy, s->mover_y, sizeof(mover_dy));
   g_ent_count = s->ent_count;

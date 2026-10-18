@@ -160,6 +160,8 @@ int text_width(int font, char* s);
 int draw_text(int x, int y, char* s, int font, short* ramp);
 void draw_text_centered(int y, char* s, int font, short* ramp);
 void card_show(int script);
+/* Runtime messages use explicit newlines and the intertitle dismissal controls. */
+void card_message(char* text);
 void hud_init(void);
 void hud_hide(void);
 void hud_text(int col, char* s, int red);
