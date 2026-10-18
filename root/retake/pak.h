@@ -4,8 +4,8 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 1344296
-#define PAK_ROOM_COUNT 20
+#define PAK_SIZE 1702020
+#define PAK_ROOM_COUNT 27
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -28,6 +28,13 @@
 #define ROOM_S2_SHAFT 17
 #define ROOM_S2_RAIL_YARD 18
 #define ROOM_S2_ARENA 19
+#define ROOM_S3_ENTRY 20
+#define ROOM_S3_DOCKS 21
+#define ROOM_S3_DECK 22
+#define ROOM_S3_HOLD 23
+#define ROOM_S3_PLANK 24
+#define ROOM_S3_WRECK 25
+#define ROOM_S3_ARENA 26
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -97,7 +104,16 @@
 #define SCRIPT_S2_REEL_C 28
 #define SCRIPT_S2_BOSS_INTRO 29
 #define SCRIPT_S2_WRAP 30
-#define SCRIPT_TEST_SIGN 31
+#define SCRIPT_S3_TITLE 31
+#define SCRIPT_S3_CAPTAIN 32
+#define SCRIPT_S3_RIGGING_HINT 33
+#define SCRIPT_S3_CUT_HINT 34
+#define SCRIPT_S3_REEL_A 35
+#define SCRIPT_S3_REEL_B 36
+#define SCRIPT_S3_REEL_C 37
+#define SCRIPT_S3_BOSS_INTRO 38
+#define SCRIPT_S3_WRAP 39
+#define SCRIPT_TEST_SIGN 40
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -170,14 +186,27 @@
 #define IMG_BOSS2_2 54
 #define IMG_BOSS2_3 55
 #define IMG_COAL_0 56
-#define PAK_FLAG_COUNT 55
+#define IMG_WALKER3_0 57
+#define IMG_WALKER3_1 58
+#define IMG_HOPPER3_0 59
+#define IMG_HOPPER3_1 60
+#define IMG_FLYER3_0 61
+#define IMG_FLYER3_1 62
+#define IMG_THROWER3_0 63
+#define IMG_THROWER3_1 64
+#define IMG_CHARGER3_0 65
+#define IMG_CHARGER3_1 66
+#define IMG_SHOT3_0 67
+#define IMG_RAFT_0 68
+#define PAK_FLAG_COUNT 79
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0
 #define MUSIC_STAGE1 1
 #define MUSIC_CHASE 2
 #define MUSIC_STAGE2 3
-#define MUSIC_BACKLOT 4
+#define MUSIC_STAGE3 4
+#define MUSIC_BACKLOT 5
 #define MUSIC_NONE 63
 
 #endif

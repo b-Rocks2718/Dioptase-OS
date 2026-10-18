@@ -27,6 +27,8 @@ def backlot():
             r.ent("door", x + 6, 25, a="#s1_entry", b=6, c=25, d=1)
         elif n == 2:
             r.ent("door", x + 6, 25, a="#s2_entry", b=6, c=25, d=1 | (1 << 4))
+        elif n == 3:
+            r.ent("door", x + 6, 25, a="#s3_entry", b=6, c=21, d=1 | (2 << 4))
         else:
             r.ent("sign", x + 7, 25, a="@stage_sealed")
     for x in (23, 41, 59, 77):
@@ -426,5 +428,146 @@ def stage2():
     return out
 
 
+def stage3():
+    """Stage 3, "The Crimson Tide": wire and jump cut in hand. The sea below
+    every pier is a fatal drop (the rooms' bottom edges are pits)."""
+    out = []
+    # ---- The harbor ----
+    r = Draft("s3_entry", 3, (0, 0), (40, 30))
+    r.fill(0, 22, 26, 30)
+    r.plank(26, 22, 14)
+    r.wall(0, 0, 22, w=2)
+    r.stamp(5, 13, "T")
+    r.stamp(30, 10, "K")
+    r.ent("door", 3, 21, a="#backlot_west", b=51, c=25)
+    r.ent("mirror", 9, 21)
+    r.ent("sign", 13, 21, a="@s3_title")
+    r.ent("npc", 19, 21, a="@s3_captain")
+    r.ent("coin", 30, 21)
+    r.ent("coin", 33, 21)
+    r.ent("flyer", 30, 8, a=6)
+    r.spawn(6, 21)
+    out.append(r.done())
+
+    # ---- The docks: piers, crates and rafts over the water ----
+    r = Draft("s3_docks", 3, (40, 0), (80, 30))
+    r.plank(0, 22, 10)
+    r.ent("platform", 11, 18, a=5, b=1, c=90, d=4)
+    r.plank(16, 22, 12)
+    r.block(20, 19, 3, 3)
+    r.ent("platform", 28, 22, a=5, b=0, c=110, d=3)
+    r.plank(36, 22, 10)
+    r.nails(40, 21, 2)
+    r.plank(46, 18, 8)
+    r.plank(62, 22, 18)
+    r.stamp(66, 12, "K")
+    r.ent("walker", 25, 21)
+    r.ent("flyer", 34, 10, a=6)
+    r.ent("flyer", 58, 8, a=6)
+    r.ent("thrower", 50, 17)
+    r.ent("hopper", 44, 21)
+    for x in (17, 18, 47, 49, 51, 64, 66):
+        r.ent("coin", x, 21 if x < 40 or x > 60 else 17)
+    out.append(r.done())
+
+    # ---- The galleon's deck: rigging up the mainmast ----
+    r = Draft("s3_deck", 3, (120, 0), (80, 30))
+    r.fill(0, 22, 80, 30)
+    r.clear(38, 22, 42, 30)
+    r.plank(38, 22, 4)                          # the hatch to the hold
+    r.block(60, 18, 20, 4)                      # the quarterdeck
+    r.girder(24, 2, 1, 20)                      # the mainmast
+    r.stamp(25, 3, "S")
+    r.stamp(26, 0, "F")
+    r.plank(18, 18, 5)
+    r.plank(26, 15, 5)
+    r.plank(18, 12, 5)
+    r.plank(26, 9, 5)
+    r.plank(18, 6, 5)                           # the crow's nest
+    r.stamp(72, 13, "H")
+    r.back(2, 14, 14, 22)
+    r.stamp(4, 16, "W")
+    r.stamp(9, 16, "w")
+    r.ent("reel", 20, 5, a="@s3_reel_a")
+    r.ent("walker", 12, 21)
+    r.ent("walker", 50, 21)
+    r.ent("thrower", 70, 17)
+    r.ent("flyer", 40, 6, a=8)
+    r.ent("heart", 66, 17)
+    out.append(r.done())
+
+    # ---- The hold: a dead end with a cache (back up through the hatch) ----
+    r = Draft("s3_hold", 3, (120, 30), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.clear(38, 0, 42, 2)
+    r.ground(26)
+    r.wall(0, 2, 26, w=2)
+    r.wall(78, 2, 26, w=2)
+    r.back(2, 2, 78, 26)
+    r.stamp(10, 8, "w")
+    r.stamp(30, 8, "W")
+    r.stamp(50, 8, "w")
+    r.stamp(70, 8, "W")
+    r.plank(36, 20, 8)                          # a step to jump back up the hatch
+    r.ent("sign", 32, 25, a="@s3_cut_hint")
+    r.ent("charger", 60, 25)
+    r.ent("frame", 74, 25)
+    r.ent("reel", 6, 25, a="@s3_reel_b")
+    r.ent("coin", 20, 25)
+    r.ent("coin", 22, 25)
+    r.ent("coin", 24, 25)
+    out.append(r.done())
+
+    # ---- Walking the plank ----
+    r = Draft("s3_plank", 3, (200, 0), (80, 30))
+    r.fill(0, 22, 6, 30)
+    r.plank(6, 22, 8)
+    r.plank(18, 20, 6)
+    r.plank(28, 17, 4)
+    r.plank(36, 20, 6)
+    r.nails(38, 19, 2)
+    r.ent("platform", 44, 21, a=8, b=0, c=140, d=3)
+    r.plank(58, 18, 6)
+    r.plank(68, 22, 12)
+    r.ent("flyer", 22, 10, a=6)
+    r.ent("flyer", 50, 9, a=8)
+    r.ent("thrower", 60, 17)
+    for x in (20, 22, 29, 30, 59, 61):
+        r.ent("coin", x, 19 if x < 25 else 16 if x < 35 else 17)
+    out.append(r.done())
+
+    # ---- The wreck on the rocks ----
+    r = Draft("s3_wreck", 3, (280, 0), (80, 30))
+    r.plank(0, 22, 10)
+    r.block(10, 20, 8, 10)
+    r.block(22, 16, 6, 14)
+    r.girder(30, 12, 2, 6)
+    r.block(34, 18, 10, 12)
+    r.ent("platform", 46, 18, a=6, b=1, c=80, d=4)
+    r.block(54, 14, 6, 16)
+    r.block(64, 22, 16, 8)
+    r.girder(28, 6, 6)
+    r.ent("reel", 30, 5, a="@s3_reel_c")
+    r.ent("mirror", 70, 21)
+    r.ent("walker", 38, 17)
+    r.ent("hopper", 24, 15)
+    r.ent("flyer", 50, 6, a=6)
+    r.ent("coin", 56, 13)
+    r.ent("coin", 58, 13)
+    out.append(r.done())
+
+    # ---- The Kraken's raft ----
+    r = Draft("s3_arena", 3, (360, 0), (60, 30))
+    r.fill(4, 24, 56, 30)
+    r.girder(10, 16, 8)
+    r.girder(42, 16, 8)
+    r.girder(26, 10, 8)
+    r.fill(0, 0, 60, 2)
+    r.wall(58, 2, 24, w=2)
+    r.ent("boss", 30, 23, a=3)
+    out.append(r.done())
+    return out
+
+
 def all_rooms():
-    return backlot() + stage1() + stage2()
+    return backlot() + stage1() + stage2() + stage3()

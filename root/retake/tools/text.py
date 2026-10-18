@@ -128,6 +128,44 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nThe locomotive coughs, sighs, and rolls to a stop for good.",
         "In the cab, wrapped in a red flag: a pair of editor's shears.\n\nJUMP CUT. (Press V to cut straight to your newest take.)",
     ],
+    # ---- Stage 3 ----
+    "s3_title": [
+        "THE CRIMSON TIDE\n\nA swashbuckler in four reels. Shot at night, on a sea made of canvas.",
+    ],
+    "s3_captain": [
+        "\"AVAST! Captain Blackwater, terror of the seven seas!\"",
+        "\"...also the terror of the props department. I owe them a ship.\"",
+        "\"The Kraken's two stagehands and a rubber hose, lass. But down here, the hose bites.\"",
+        "\"Strike the tentacles when they come down. They can't hurt you while they're stuck in the deck.\"",
+    ],
+    "s3_rigging_hint": [
+        "BOATSWAIN:\n\nUp the ratlines, down the other side. Rope rungs hold you from above only.",
+    ],
+    "s3_cut_hint": [
+        "EDITOR'S NOTE, scrawled on a crate:\n\nA story can skip the boring part. So can you.",
+        "(Leave a take standing somewhere, then press V to cut straight back to it.)",
+    ],
+    "s3_reel_a": [
+        "LOST REEL: \"Storyboards\" (1936)",
+        "Sketches for The Everlasting Picture. Every panel shows the same scene: the cast, bowing, as the curtain refuses to fall.",
+    ],
+    "s3_reel_b": [
+        "LOST REEL: \"Rehearsal\" (1937)",
+        "Vivian, in costume, steps out of frame.\n\nThe film shows her stepping out of frame. Then stepping back in. Then out again.",
+        "She is still doing it.",
+    ],
+    "s3_reel_c": [
+        "LOST REEL: \"Payroll, Stunt Department\" (1937)",
+        "A ledger page. Every stunt in every picture, signed for by one name.\n\nThe name has been crossed out so many times the paper tore.",
+    ],
+    "s3_boss_intro": [
+        "THE KRAKEN",
+        "(Two stagehands, forty feet of rubber hose, and a great deal of enthusiasm.)",
+    ],
+    "s3_wrap": [
+        "THAT'S A WRAP!\n\nThe tentacles go limp. Somewhere under the deck, two stagehands sigh with relief.",
+        "Tangled in the rigging: a battered black UMBRELLA.\n\n(Hold jump while falling to drift.)",
+    ],
     "test_sign": [
         "SILVERLAKE PICTURES\nSTAGE 1\n\nPLEASE KEEP OFF THE SCAFFOLDING\nDURING TAKES.",
     ],

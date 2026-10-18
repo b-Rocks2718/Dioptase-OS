@@ -110,6 +110,16 @@ WEST_BEATS = ["G", "G", "C", "G", "C", "C", "D7", "D7", "G", "G", "D7", "C", "C"
               "G", "G", "C", "G", "C", "C", "D7", "G"]
 _wb, _w1, _w2 = oompah(WEST_BEATS)
 
+# ---- Stage 3: a sea shanty for the squeezebox ----
+SHANTY_MELODY = """
+D5 - D5 - | D5 - D5 D5 | D5 - A4 - | F4 - A4 - | C5 - C5 - | C5 - C5 C5 | C5 - G4 - | E4 - G4 - |
+D5 - D5 - | D5 - D5 D5 | D5 - E5 - | F5 - G5 - | F5 - D5 - | C5 - A4 - | D5 - - - | . - - - |
+F5 - F5 - | E5 - E5 - | D5 - C5 - | A4 - - - | C5 - C5 - | D5 - E5 - | F5 - E5 - | D5 - - - |
+"""
+SHANTY_BEATS = ["Dm", "Dm", "Dm", "Dm", "C", "C", "C", "C", "Dm", "Dm", "Dm", "Dm", "C", "C", "Dm", "Dm",
+                "Dm", "C", "Dm", "Dm", "C", "C", "Dm", "Dm"]
+_sb, _s1, _s2 = oompah(SHANTY_BEATS)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -119,6 +129,8 @@ SONGS = {
                                        ("piano_chord", _c1), ("piano_chord", _c2)]},
     "stage2": {"tempo": 13, "channels": [("organ_lead", WEST_MELODY), ("tri_bass", _wb),
                                          ("piano_chord", _w1), ("piano_chord", _w2)]},
+    "stage3": {"tempo": 11, "channels": [("organ_lead", SHANTY_MELODY), ("tri_bass", _sb),
+                                         ("piano_chord", _s1), ("piano_chord", _s2)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }
