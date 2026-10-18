@@ -32,6 +32,13 @@ with down-slash pogo, masks, shrines, map, ability gates, guardians).
   fun ... there's no platformers yet on dioptase") and then answered Astra's
   poll with "A blend: exploration, precise movement, and combat."
 
+## Scale requirement (from the human, 19:55 CDT)
+
+It must be a real, complete game, not a one-level demo. The bar is DELVE:
+8 procedurally generated 3D levels, a single run takes over 10 minutes, and
+the human needed a few attempts to win. Being 2D, this game should at least
+match that scale and ideally exceed it.
+
 ## Ownership
 
 | Area | Owner |
