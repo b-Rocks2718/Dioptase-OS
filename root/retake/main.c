@@ -42,6 +42,7 @@
 static int cam_x;
 static int cam_y;
 static unsigned frame_clock;
+static int current_song = -1;
 
 static short title_ramp[4] = {0, 0x345, 0xABC, 0xEFF};
 static short dim_ramp[4] = {0, 0x123, 0x567, 0x89A};
@@ -193,6 +194,40 @@ static void draw_hud(void) {
            (frame_clock >> 4) & 1);
 }
 
+/* Music for the room Ruby is in. */
+static void choose_music(void) {
+  int song = MUSIC_STAGE1;
+  if (song != current_song) {
+    audio_music(song);
+    current_song = song;
+  }
+}
+
+/* Turn this tick's controller and game events into sound effects. */
+static void play_sfx(void) {
+  unsigned ev = g_hero.events;
+  unsigned ge = g_events;
+  if (ge & GE_DEATH) {
+    audio_sfx(SFX_DEATH);
+    return;
+  }
+  if (ev & (EV_JUMP | EV_WALLJUMP | EV_WIRE)) audio_sfx(SFX_JUMP);
+  if (ev & EV_CLAP) audio_sfx(SFX_CLAP);
+  if ((ev & EV_LAND) && !(ge & GE_ROOM)) audio_sfx(SFX_LAND);
+  if (ge & GE_KILL) audio_sfx(SFX_KILL);
+  else if (ge & GE_HIT) audio_sfx(SFX_HIT);
+  if (ge & GE_COIN) audio_sfx(SFX_COIN);
+  if (ge & GE_PICKUP) audio_sfx(SFX_PICKUP);
+  if (ge & GE_HAZARD) audio_sfx(SFX_HAZARD);
+  else if (ge & GE_HURT) audio_sfx(SFX_HURT);
+  if (ge & GE_REC_START) audio_sfx(SFX_REC_START);
+  if (ge & GE_REC_STOP) audio_sfx(SFX_REC_STOP);
+  if (ge & GE_JUMPCUT) audio_sfx(SFX_JUMPCUT);
+  if (ge & GE_SPRING) audio_sfx(SFX_SPRING);
+  if (ge & GE_GATE) audio_sfx(SFX_GATE);
+  if (ge & GE_SAVE) audio_sfx(SFX_SAVE);
+}
+
 /* Present one frame of play. */
 static void present(void) {
   render_frame(cam_x, cam_y);
@@ -229,8 +264,15 @@ static int title_screen(int have_save) {
     input_poll();
     int pressed = input_take_pressed();
     if (input_key_hit(KEY_ESC)) return -1;
-    if (pressed & IN_UP) choice = 0;
-    if ((pressed & IN_DOWN) && have_save) choice = 1;
+    if ((frame_clock & 31) == 0) audio_heartbeat();
+    if ((pressed & IN_UP) && choice != 0) {
+      choice = 0;
+      audio_sfx(SFX_SELECT);
+    }
+    if ((pressed & IN_DOWN) && have_save && choice != 1) {
+      choice = 1;
+      audio_sfx(SFX_SELECT);
+    }
     if (frame_clock > 20) ready = 1;
     if (ready && (pressed & (IN_JUMP | IN_ATTACK | IN_INTERACT))) return choice;
   }
@@ -238,6 +280,9 @@ static int title_screen(int have_save) {
 
 int main(void) {
   if (pak_open() != 0) return 1;
+  audio_start();      /* fork the synthesizer before the big buffers exist */
+  audio_music(MUSIC_TITLE);
+  current_song = MUSIC_TITLE;
   room_system_init();
   if (display_init() != 0) return 1;
   input_init();
@@ -251,16 +296,19 @@ int main(void) {
   if (fd >= 0) close(fd);
   int choice = title_screen(have_save);
   if (choice < 0) {
+    audio_stop();
     input_shutdown();
     display_shutdown();
     return 0;
   }
+  audio_sfx(SFX_CLAP);
   if (choice == 1 && game_load() == 0) {
     /* continuing */
   } else {
     card_show(SCRIPT_INTRO);
     game_new(START_ROOM);
   }
+  choose_music();
   update_camera(1);
   hud_bar_clear();
 
@@ -280,7 +328,12 @@ int main(void) {
       game_tick(held, pressed);
       pressed = 0;
       frame_clock++;
-      if (g_events & GE_ROOM) update_camera(1);
+      play_sfx();
+      if ((frame_clock & 31) == 0) audio_heartbeat();
+      if (g_events & GE_ROOM) {
+        update_camera(1);
+        choose_music();
+      }
       if (g_events & GE_SAVE) g_pending_script = SCRIPT_SAVED;
       if (g_pending_script >= 0) {
         int script = g_pending_script;
@@ -294,6 +347,7 @@ int main(void) {
     update_camera(0);
     present();
   }
+  audio_stop();
   input_shutdown();
   display_shutdown();
   return 0;

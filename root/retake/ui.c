@@ -134,11 +134,17 @@ void card_show(int script) {
   hud_hide();
   for (int c = 0; c < cards; c++) {
     draw_card((char*)(g_pak + entry[1 + c]));
+    audio_sfx(SFX_CARD);
     unsigned start = get_vga_frame_counter();
+    unsigned beat = start;
     input_poll();
     input_take_pressed();
     while (1) {
       unsigned now = get_vga_frame_counter();
+      if (now - beat >= 30) {
+        audio_heartbeat();   /* keep the synthesizer alive while the card is read */
+        beat = now;
+      }
       input_poll();
       int go = advance_pressed();
       if (go && now - start > 20) break;

@@ -38,6 +38,8 @@ import text  # noqa: E402
 import ui  # noqa: E402
 import entart  # noqa: E402
 import entities  # noqa: E402
+import music  # noqa: E402
+import songs  # noqa: E402
 import font_serif  # noqa: E402
 import font_title  # noqa: E402
 from font import GLYPHS  # noqa: E402
@@ -46,7 +48,8 @@ MAGIC = 0x314B5452  # 'RTK1' little-endian
 VERSION = 2
 HEADER_FIELDS = ["magic", "version", "size", "region_count", "region_off", "room_count", "room_off",
                  "sprite_count", "sprite_off", "font_count", "font_off", "script_count", "script_off",
-                 "hud_tile_count", "hud_tiles_off", "card_off", "image_count", "image_off"]
+                 "hud_tile_count", "hud_tiles_off", "card_off", "image_count", "image_off",
+                 "wave_count", "wave_off", "inst_count", "inst_off", "song_count", "song_off", "note_off"]
 CARD_TEXT_W = 268   # widest wrapped line on an intertitle card, in pixels
 FONTS = [("serif", font_serif), ("title", font_title)]
 T = 8
@@ -239,6 +242,15 @@ def main():
     hud_off = pack.add(pix.le16(np.concatenate([t.reshape(-1) for t in hud])))
     card_off = pack.add(pix.le16(ui.card_frame().reshape(-1)))
 
+    wave_off = pack.add(b"".join(struct.pack("<256h", *music.wave_table(w)) for w in music.WAVES))
+    inst_names = [i[0] for i in songs.INSTRUMENTS]
+    inst_off = pack.add(b"".join(
+        struct.pack("<8B", music.WAVES.index(wave), peak, decay, sustain, release, vd, vr, 0)
+        for _, wave, peak, decay, sustain, release, vd, vr in songs.INSTRUMENTS))
+    song_names = list(songs.SONGS)
+    song_offs = [pack.add(music.compile_song(songs.SONGS[n], inst_names)) for n in song_names]
+    note_off = pack.add(struct.pack("<128I", *[music.note_inc(n) for n in range(128)]))
+
     image_entries = []
     image_names = []
     for name, frames in entart.build():
@@ -255,6 +267,7 @@ def main():
     sprite_off = pack.add(b"".join(struct.pack("<2I", *e) for e in sprite_entries))
     font_off = pack.add(b"".join(struct.pack("<3I", *e) for e in font_entries))
     image_off = pack.add(b"".join(struct.pack("<3I", *e) for e in image_entries))
+    song_off = pack.add(struct.pack("<%dI" % len(song_offs), *song_offs))
     script_off = pack.add(struct.pack("<%dI" % len(script_offs), *script_offs))
     fields = {
         "magic": MAGIC, "version": VERSION, "size": len(pack.data),
@@ -265,6 +278,8 @@ def main():
         "script_count": len(script_offs), "script_off": script_off,
         "hud_tile_count": len(hud), "hud_tiles_off": hud_off, "card_off": card_off,
         "image_count": len(image_entries), "image_off": image_off,
+        "wave_count": len(music.WAVES), "wave_off": wave_off, "inst_count": len(songs.INSTRUMENTS),
+        "inst_off": inst_off, "song_count": len(song_offs), "song_off": song_off, "note_off": note_off,
     }
     struct.pack_into("<%dI" % len(HEADER_FIELDS), pack.data, 0, *[fields[f] for f in HEADER_FIELDS])
 
@@ -311,6 +326,11 @@ def main():
     for i, name in enumerate(image_names):
         lines.append(f"#define IMG_{name.upper()} {i}")
     lines.append(f"#define PAK_FLAG_COUNT {next_flag[0]}")
+    lines.append("")
+    lines.append("/* Songs (audio_music). */")
+    for i, n in enumerate(song_names):
+        lines.append(f"#define MUSIC_{n.upper()} {i}")
+    lines.append("#define MUSIC_NONE 63")
     lines.append("")
     lines.append("#endif")
     with open(os.path.join(root, "pak.h"), "w") as f:

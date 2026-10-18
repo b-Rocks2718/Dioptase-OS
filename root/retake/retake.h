@@ -116,6 +116,33 @@ int image_width(int id);
 int image_height(int id);
 void draw_prompt(int cx, int y, int clock);
 
+/* ---- audio.c ---- */
+
+#define SFX_JUMP 1
+#define SFX_LAND 2
+#define SFX_CLAP 3
+#define SFX_HIT 4
+#define SFX_KILL 5
+#define SFX_COIN 6
+#define SFX_PICKUP 7
+#define SFX_HURT 8
+#define SFX_HAZARD 9
+#define SFX_DEATH 10
+#define SFX_REC_START 11
+#define SFX_REC_STOP 12
+#define SFX_JUMPCUT 13
+#define SFX_SPRING 14
+#define SFX_GATE 15
+#define SFX_SAVE 16
+#define SFX_CARD 17
+#define SFX_SELECT 18
+
+int audio_start(void);
+void audio_sfx(int id);
+void audio_music(int song);
+void audio_heartbeat(void);
+void audio_stop(void);
+
 /* ---- ui.c ---- */
 
 int font_height(int font);

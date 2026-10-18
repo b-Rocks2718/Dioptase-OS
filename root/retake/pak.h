@@ -4,7 +4,7 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 537416
+#define PAK_SIZE 543716
 #define PAK_ROOM_COUNT 2
 
 /* Room indices into the pack's room table. */
@@ -35,6 +35,13 @@
 #define PAKH_CARD_OFF 15
 #define PAKH_IMAGE_COUNT 16
 #define PAKH_IMAGE_OFF 17
+#define PAKH_WAVE_COUNT 18
+#define PAKH_WAVE_OFF 19
+#define PAKH_INST_COUNT 20
+#define PAKH_INST_OFF 21
+#define PAKH_SONG_COUNT 22
+#define PAKH_SONG_OFF 23
+#define PAKH_NOTE_OFF 24
 
 /* Fonts. */
 #define FONT_SERIF 0
@@ -97,5 +104,12 @@
 #define IMG_SPRING_1 30
 #define IMG_SHOP_0 31
 #define PAK_FLAG_COUNT 7
+
+/* Songs (audio_music). */
+#define MUSIC_TITLE 0
+#define MUSIC_STAGE1 1
+#define MUSIC_CHASE 2
+#define MUSIC_BACKLOT 3
+#define MUSIC_NONE 63
 
 #endif
