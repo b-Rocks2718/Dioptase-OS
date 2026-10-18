@@ -126,6 +126,7 @@ extern struct Ent* g_boss;     /* the room's boss, or 0 */
 void game_new(int start_room);
 int game_load(void);
 int game_save(void);
+int game_has_save(void);
 void game_enter_room(int room, int x_px, int y_px);
 void game_tick(int held, int pressed);
 int flag_get(int id);

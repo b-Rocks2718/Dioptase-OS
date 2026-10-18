@@ -18,7 +18,6 @@
  * tools/build.py; a set flag means "already collected".
  */
 
-#define SAVE_PATH "/retake/save.dat"
 #define SAVE_MAGIC 0x31565352      /* 'RSV1' */
 
 #define HURT_INVULN 12
@@ -1565,8 +1564,7 @@ static void pickups_and_interactions(int pressed) {
           g_prog.save_x = g_hero.x >> 8;
           g_prog.save_y = g_hero.y >> 8;
           g_health = g_prog.max_health;
-          game_save();
-          g_events |= GE_SAVE;
+          if (game_save() == 0) g_events |= GE_SAVE;
           e->timer = 60;
         }
         break;
@@ -1695,30 +1693,101 @@ void game_new(int start_room) {
   game_enter_room(start_room, g_prog.save_x, g_prog.save_y);
 }
 
-/* The save file is a magic word, the pack size (so a save from a different
- * world layout is ignored rather than misread) and the Progress record. */
-int game_save(void) {
-  int fd = open(SAVE_PATH);
-  if (fd < 0) return -1;
-  unsigned head[2];
-  head[0] = SAVE_MAGIC;
-  head[1] = PAK_SIZE;
-  int ok = write(fd, head, 8) == 8;
-  ok = ok && write(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
-  close(fd);
-  return ok ? 0 : -1;
+/* ---- saves ----
+ *
+ * Two slot files (save_a.dat, save_b.dat) are written alternately, so a
+ * write cut short by a crash or a full disk can only damage the slot being
+ * written; the other still holds the previous mirror. A slot is: magic,
+ * world hash (PAK_WORLD_HASH: room order, geometry and entities, so a save
+ * from a different world layout is refused instead of misread), sequence
+ * number, a checksum of the Progress record, then the record. Loading reads
+ * both slots into scratch records, validates every field, and only then
+ * picks the newer valid one, so a bad file never touches live state.
+ * Writes are not atomic on this OS and rename cannot replace a target,
+ * which is why there are two slots rather than one renamed temp file. */
+
+#define SAVE_SLOT_A "/retake/save_a.dat"
+#define SAVE_SLOT_B "/retake/save_b.dat"
+#define SAVE_HEAD_WORDS 4
+
+static unsigned save_seq;          /* sequence number of the newest valid slot */
+
+/* Rotate-xor checksum over the Progress record (no multiplies). */
+static unsigned progress_sum(struct Progress* p) {
+  unsigned* w = (unsigned*)p;
+  int n = (int)(sizeof(struct Progress) >> 2);
+  unsigned h = 0x9E3779B9u;
+  for (int i = 0; i < n; i++) h = ((h << 5) | (h >> 27)) ^ w[i];
+  return h;
 }
 
-/* Load saved progress and enter its checkpoint, or return failure to the title menu. */
-int game_load(void) {
-  int fd = open_existing(SAVE_PATH);
+/* Whether a loaded record describes a reachable, sane game. */
+static int progress_valid(struct Progress* p) {
+  if (p->max_health < 1 || p->max_health > 9) return 0;
+  if (p->scrip < 0 || p->scrip > 9999) return 0;
+  if (p->take_slots < 1 || p->take_slots > TAKE_MAX_SLOTS) return 0;
+  if (p->take_frames < 1 || p->take_frames > TAKE_MAX_FRAMES) return 0;
+  if (p->abilities & ~(AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL)) return 0;
+  if (p->save_room < 0 || p->save_room >= pak_room_count()) return 0;
+  struct PakRoom* r = pak_room(p->save_room);
+  if (p->save_x < 0 || p->save_x > (r->w << 3) - PLAYER_W) return 0;
+  if (p->save_y < 0 || p->save_y > (r->h << 3) - PLAYER_H) return 0;
+  return 1;
+}
+
+/* Read one slot into `out`; returns its sequence number, or 0 if the slot is
+ * missing, truncated, from another world, corrupt or invalid. */
+static unsigned read_slot(char* path, struct Progress* out) {
+  int fd = open_existing(path);
+  if (fd < 0) return 0;
+  unsigned head[4];
+  int ok = read(fd, head, sizeof(head)) == (int)sizeof(head);
+  ok = ok && read(fd, out, sizeof(struct Progress)) == (int)sizeof(struct Progress);
+  close(fd);
+  if (!ok || head[0] != SAVE_MAGIC || head[1] != PAK_WORLD_HASH || head[2] == 0) return 0;
+  if (head[3] != progress_sum(out) || !progress_valid(out)) return 0;
+  return head[2];
+}
+
+int game_save(void) {
+  unsigned seq = save_seq + 1;
+  char* path = (seq & 1) ? SAVE_SLOT_A : SAVE_SLOT_B;
+  int fd = open(path);
   if (fd < 0) return -1;
-  unsigned head[2];
-  int ok = read(fd, head, 8) == 8 && head[0] == SAVE_MAGIC && head[1] == PAK_SIZE;
-  ok = ok && read(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
+  unsigned head[4];
+  head[0] = SAVE_MAGIC;
+  head[1] = PAK_WORLD_HASH;
+  head[2] = seq;
+  head[3] = progress_sum(&g_prog);
+  int ok = write(fd, head, sizeof(head)) == (int)sizeof(head);   /* a fresh open starts at offset 0 */
+  ok = ok && write(fd, &g_prog, sizeof(struct Progress)) == (int)sizeof(struct Progress);
   close(fd);
   if (!ok) return -1;
-  if (g_prog.save_room < 0 || g_prog.save_room >= pak_room_count()) return -1;
+  save_seq = seq;
+  return 0;
+}
+
+/* Whether either slot holds a loadable game (for the title's Continue). */
+int game_has_save(void) {
+  struct Progress scratch;
+  return read_slot(SAVE_SLOT_A, &scratch) || read_slot(SAVE_SLOT_B, &scratch);
+}
+
+/* Load the newest valid slot and enter its checkpoint, or fail without
+ * touching live state. */
+int game_load(void) {
+  struct Progress a;
+  struct Progress b;
+  unsigned sa = read_slot(SAVE_SLOT_A, &a);
+  unsigned sb = read_slot(SAVE_SLOT_B, &b);
+  if (!sa && !sb) return -1;
+  if (sa >= sb) {
+    g_prog = a;
+    save_seq = sa;
+  } else {
+    g_prog = b;
+    save_seq = sb;
+  }
   g_health = g_prog.max_health;
   game_enter_room(g_prog.save_room, g_prog.save_x, g_prog.save_y);
   return 0;

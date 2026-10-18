@@ -520,10 +520,7 @@ int main(int argc, char** argv) {
     if (debug_room < 0) {
       audio_music(MUSIC_TITLE);
       current_song = MUSIC_TITLE;
-      int fd = open_existing("/retake/save.dat");
-      int have_save = fd >= 0;
-      if (fd >= 0) close(fd);
-      choice = title_screen(have_save);
+      choice = title_screen(game_has_save());
       if (choice < 0) break;
       audio_sfx(SFX_CLAP);
     }
