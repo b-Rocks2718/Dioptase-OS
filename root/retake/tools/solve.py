@@ -24,6 +24,11 @@ def search(sim, goal, score, *, width=96, depth=100, quantum=6, combat=True):
     if combat:
         moves += [ATTACK, LEFT | ATTACK, RIGHT | ATTACK,
                   LEFT | JUMP | ATTACK, RIGHT | JUMP | ATTACK, DOWN | ATTACK]
+    # A pure distance heuristic often cuts a jump early to approach the goal's
+    # height, then lacks airtime to reach its x coordinate. Keep full holds as
+    # explicit candidates; short candidates still permit variable-height jumps.
+    actions = [(quantum, held) for held in moves]
+    actions += [(24, held) for held in (JUMP, LEFT | JUMP, RIGHT | JUMP) if quantum < 24]
     start = sim.snapshot()
     initial = sim.state()
     # Nodes carry exact snapshots; coarse keys only select which candidates survive.
@@ -33,10 +38,10 @@ def search(sim, goal, score, *, width=96, depth=100, quantum=6, combat=True):
     for layer in range(depth):
         candidates = {}
         for snapshot, path, _ in frontier:
-            for held in moves:
+            for duration, held in actions:
                 sim.restore(snapshot)
                 invalid = False
-                for tick in range(quantum):
+                for tick in range(duration):
                     state = sim.tick(held)
                     if state["events"] & (GE_HAZARD | GE_DEATH):
                         invalid = True
@@ -57,14 +62,14 @@ def search(sim, goal, score, *, width=96, depth=100, quantum=6, combat=True):
                 key = (state["room"], state["x"] // 512, state["y"] // 512,
                        state["vx"] // 128, state["vy"] // 128, state["ground"],
                        state["wall"], held, state["health"], bool(state["hold"]),
-                       bool(state["lock"]), state["wire"], state["boss_hp"], layer % 8)
+                       bool(state["lock"]), state["wire"], state["boss_hp"], sim.frames % 48)
                 priority = rank + layer * 0.025
                 if visited.get(key, float("inf")) <= priority:
                     continue
                 visited[key] = priority
                 old = candidates.get(key)
                 if old is None or priority < old[0]:
-                    candidates[key] = (priority, sim.snapshot(), path + [[quantum, held]], state)
+                    candidates[key] = (priority, sim.snapshot(), path + [[duration, held]], state)
         if not candidates:
             break
         chosen = sorted(candidates.values(), key=lambda item: item[0])[:width]
