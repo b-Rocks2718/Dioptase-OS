@@ -4,9 +4,9 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 1706412
-#define PAK_ROOM_COUNT 27
-#define PAK_WORLD_HASH 0x3572C185  /* CRC32 of room order, geometry and entities */
+#define PAK_SIZE 1761076
+#define PAK_ROOM_COUNT 30
+#define PAK_WORLD_HASH 0x28B10507  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -36,6 +36,9 @@
 #define ROOM_S3_PLANK 24
 #define ROOM_S3_WRECK 25
 #define ROOM_S3_ARENA 26
+#define ROOM_TOWER_BASE 27
+#define ROOM_TOWER_CLIMB 28
+#define ROOM_TOWER_BOOTH 29
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -115,7 +118,12 @@
 #define SCRIPT_S3_REEL_C 37
 #define SCRIPT_S3_BOSS_INTRO 38
 #define SCRIPT_S3_WRAP 39
-#define SCRIPT_TEST_SIGN 40
+#define SCRIPT_TOWER_OPEN 40
+#define SCRIPT_TOWER_NOTE 41
+#define SCRIPT_FINAL_INTRO 42
+#define SCRIPT_ENDING 43
+#define SCRIPT_CREDITS 44
+#define SCRIPT_TEST_SIGN 45
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -203,7 +211,12 @@
 #define IMG_TENTACLE_UP_0 69
 #define IMG_TENTACLE_DOWN_0 70
 #define IMG_BUBBLES_0 71
-#define PAK_FLAG_COUNT 79
+#define IMG_BOSS4_0 72
+#define IMG_BOSS4_1 73
+#define IMG_BOSS4_2 74
+#define IMG_BOSS4_3 75
+#define IMG_FILM_0 76
+#define PAK_FLAG_COUNT 81
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0

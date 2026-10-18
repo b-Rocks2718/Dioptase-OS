@@ -105,6 +105,7 @@ struct Progress {
 #define GE_BOSS_HIT 16384
 #define GE_BOSS_DOWN 32768
 #define GE_SLAM 65536
+#define GE_FINALE 131072  /* the Everlasting Camera is broken: roll the ending */
 
 extern struct Player g_hero;
 extern struct Takes g_takes;
