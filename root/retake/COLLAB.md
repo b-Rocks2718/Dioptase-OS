@@ -276,6 +276,14 @@ including pieces Astra would have owned; these need its eyes most.
   Opus added beat_phase/beat_parity to SimSnapshot (tests/sim.c): without
   them the catwalk route did not replay. Scripts: /tmp/opus-tools/reach.py,
   reach2.py, special.py (not yet saved as route JSON).
+- 20:10 Stages 2-5 (/tmp/opus-tools/reach_early.py): the s4 temple-gate take
+  puzzle works (blocked without a take, through with one). The unguided
+  chained beam search stalls in s2_mine (moving platforms), s3_docks
+  (the beam prefers the low planks and loses the high plank that crosses
+  the last gap), s4_canopy (an 80 px running double jump), s4_falls
+  (vertical platform) and s5_hall (pendulums need waits in the safe gaps).
+  Layouts checked by hand look passable with that stage's abilities, but
+  these need ledge waypoints before they count as proofs. Left for Astra.
 
 ## Handoff: state of the game (23:35 CDT)
 
