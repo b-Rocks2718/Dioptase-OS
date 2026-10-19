@@ -36,7 +36,9 @@
  * long loading a room, and the music then stayed off for the session. */
 #define HEARTBEAT_TIMEOUT 6000
 #define TICK_SAMPLES 250
-#define TARGET_BYTES 3000         /* ~60 ms queued in the device ring */
+#define TARGET_BYTES 3000         /* ~60 ms queued in the device ring after a refill */
+#define LOW_BYTES 1500            /* refill once the queue drains to ~30 ms */
+#define NAP_BYTES 300             /* bytes of queue spent per jiffy of nap (~6 ms of audio) */
 #define VOICES 8
 #define MUSIC_VOICES 6
 #define LEVELS 16
@@ -416,26 +418,37 @@ static void synth_main(int fd) {
         }
       }
     }
-    if (audio_buffered() > TARGET_BYTES) {
-      sleep(1);
+    /* Batch the work: when the device is ahead, nap until about LOW_BYTES
+     * remain; otherwise generate enough control ticks to refill to
+     * TARGET_BYTES in one go. Every wake costs several kernel calls and a
+     * context switch, and the profiler showed one-jiffy naps here taking
+     * most of the game core's time. A jiffy is about 4 ms; NAP_BYTES per
+     * jiffy of nap is deliberately generous so the queue never runs dry. */
+    int queued = audio_buffered();
+    if (queued > LOW_BYTES) {
+      int naps = (queued - LOW_BYTES) / NAP_BYTES;
+      sleep(naps < 1 ? 1 : naps);
       continue;
     }
-    if (++quiet > HEARTBEAT_TIMEOUT) {
-      audio_close();
-      exit(0);
-    }
-    sequencer_tick();
-    sfx_tick();
-    for (int k = 0; k < VOICES; k++) voice_control(&voices[k]);
-    mix_tick();
-    int done = 0;
-    while (done < TICK_SAMPLES * 2) {
-      int accepted = audio_write((char*)out_buf + done, TICK_SAMPLES * 2 - done);
-      if (accepted <= 0) {
-        sleep(1);
-        continue;
+    int ticks = (TARGET_BYTES - queued) / (TICK_SAMPLES * 2) + 1;
+    for (int t = 0; t < ticks; t++) {
+      if (++quiet > HEARTBEAT_TIMEOUT) {
+        audio_close();
+        exit(0);
       }
-      done += accepted;
+      sequencer_tick();
+      sfx_tick();
+      for (int k = 0; k < VOICES; k++) voice_control(&voices[k]);
+      mix_tick();
+      int done = 0;
+      while (done < TICK_SAMPLES * 2) {
+        int accepted = audio_write((char*)out_buf + done, TICK_SAMPLES * 2 - done);
+        if (accepted <= 0) {
+          sleep(1);
+          continue;
+        }
+        done += accepted;
+      }
     }
   }
 }
