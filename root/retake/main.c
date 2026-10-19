@@ -217,6 +217,8 @@ static int frame_for(int pose, int clapping_active, int x, int clock) {
 
 /* Ease the camera toward Ruby (leading a little where she faces) and keep it
  * inside the room. The visible play area is pixel rows 8..235. */
+#define SIDE_BAR 8   /* pixel-layer width of each black side bar (ui.c hud_hide) */
+
 static void update_camera(int snap) {
   int hx = (g_hero.x >> 8) + (PLAYER_W >> 1);
   int hy = (g_hero.y >> 8) + (PLAYER_H >> 1);
@@ -229,11 +231,14 @@ static void update_camera(int snap) {
     cam_x += (tx - cam_x) >> 3;
     cam_y += (ty - cam_y) >> 3;
   }
-  int max_x = g_room_pw - SCREEN_W;
+  /* The black side bars cover 8 px at each screen edge, so the camera may
+   * look 8 px past the room's sides: the room's edge then meets the bar
+   * instead of hiding under it (and Ruby with it). */
+  int max_x = g_room_pw - SCREEN_W + SIDE_BAR;
   int max_y = g_room_ph - VIEW_H;
   if (cam_x > max_x) cam_x = max_x;
   if (cam_y > max_y) cam_y = max_y;
-  if (cam_x < 0) cam_x = 0;
+  if (cam_x < -SIDE_BAR) cam_x = -SIDE_BAR;
   if (cam_y < -HUD_PIXEL_ROWS) cam_y = -HUD_PIXEL_ROWS;
   if (cam_y < 0) cam_y = 0;
 }
@@ -843,11 +848,11 @@ static void draw_frame(void) {
     shake_ticks--;
     cam_y += (shake_ticks & 2) ? 2 : -2;
     cam_x += (shake_ticks & 4) ? 1 : -1;
-    int max_x = g_room_pw > SCREEN_W ? g_room_pw - SCREEN_W : 0;
+    int max_x = g_room_pw - SCREEN_W + SIDE_BAR;
     int max_y = g_room_ph > VIEW_H ? g_room_ph - VIEW_H : 0;
     if (cam_x > max_x) cam_x = max_x;
     if (cam_y > max_y) cam_y = max_y;
-    if (cam_x < 0) cam_x = 0;
+    if (cam_x < -SIDE_BAR) cam_x = -SIDE_BAR;
     if (cam_y < 0) cam_y = 0;
   }
   view_begin(cam_x, cam_y);
@@ -888,8 +893,6 @@ static int title_screen(int have_save) {
                            choice == 1 ? title_ramp : dim_ramp);
       }
       draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
-      draw_text_centered(198, "Z jump   X clap (attack)   C record a take   E use", FONT_SERIF, dim_ramp);
-      draw_text_centered(212, "Esc pause / quit", FONT_SERIF, dim_ramp);
       canvas_show();
     }
     sprite_show(SLOT_HERO, SHEET_HERO, FR_IDLE0 + ((frame_clock >> 4) & 3), 1, 64, 116);
@@ -899,7 +902,7 @@ static int title_screen(int have_save) {
     frame_clock++;
     input_poll();
     int pressed = input_take_pressed();
-    if (input_key_hit(KEY_ESC)) return -1;
+    if (input_key_hit('q')) return -1;
     if ((frame_clock & 31) == 0) audio_heartbeat();
     if ((pressed & IN_UP) && choice != 0) {
       choice = 0;
@@ -957,7 +960,7 @@ static void play(void) {
     if (ticks > 4) ticks = 4;
     last = now;
     input_poll();
-    if (input_key_hit(KEY_ESC)) {
+    if (input_key_hit('p')) {           /* not Esc: the emulator window closes on Esc */
       if (pause_run()) return;
       pending_pressed = 0;
       last = get_vga_frame_counter();

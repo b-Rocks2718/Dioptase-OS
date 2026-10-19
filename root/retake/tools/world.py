@@ -190,7 +190,7 @@ def stage1():
     r.fill(0, 0, 40, 2)
     r.building(0, 2, 40, 15, windows="Ww")
     r.wall(38, 7, 15, w=2)
-    r.girder(22, 6, 16)                        # the beam, x 22..37, flush with the wall
+    r.girder(22, 6, 18)                        # the beam, x 22..39, roofing the wall too
     r.ent("sign", 8, 14, a="@s1_double_hint")
     r.ent("coin", 30, 5)
     r.ent("coin", 33, 5)
@@ -968,7 +968,7 @@ def stage6():
     r.girder(26, 40, 8)
     r.girder(4, 33, 8)
     r.girder(18, 26, 6)
-    r.girder(30, 26, 8)
+    r.girder(30, 26, 10)                        # runs to the edge, level with the observatory floor
     laser(r, 19, 27, 29, 60, 40, width=2)       # splits the shaft below the top deck
     r.stamp(6, 52, "C")
     r.ent("flyer", 30, 48, a=6)

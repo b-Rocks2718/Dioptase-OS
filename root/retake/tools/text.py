@@ -17,7 +17,6 @@ SCRIPTS = {
         "RUBY.\n\nStunt double. Uncredited.",
         "Nobody had ever written her name down.\n\nSo the camera never caught her.",
     
-        "THE CALL SHEET\n\nArrows or WASD: move.   Z or Space: jump.\nX: clap your clapperboard. It knocks out whatever is in front of you.\nC: start, then stop, recording a take: a double that repeats your moves.\nE: talk, read, open doors.   Esc: pause, or quit to the title.",
     ],
     "credits_tease": [
         "STUNTS: RUBY",
@@ -47,21 +46,16 @@ SCRIPTS = {
         "SAFETY LAST STREET\n\nScene 1, Take 1.",
     ],
     "s1_mark_hint": [
-        "STAGE MANAGER'S NOTE:\n\nEvery actor must hit their MARK.\nThe set won't move until somebody's standing on it.",
-        "(Press C to start recording a take. Stand on the mark, then press C again. Your take will keep standing there, and you can go on without it.)",
+        "STAGE MANAGER'S NOTE:\n\nEvery actor must hit their MARK.\nThe set won't move until somebody's standing on it.\n\n(C: start recording yourself. C again: cut.)",
     ],
     "s1_double_hint": [
-        "STUNT COORDINATOR'S NOTE:\n\nCan't reach it? Two stunt doubles are better than one.",
-        "(Record yourself jumping with C. Stand on your double's head, and jump again when it does.)",
-        "(Record a take standing still, then jump onto your own head.)",
+        "STUNT COORDINATOR'S NOTE:\n\nCan't reach it? Two stunt doubles are better than one.\n\n(C: record yourself.)",
     ],
     "s1_wall_hint": [
-        "RIGGING CREW:\n\nWall kicks only. Mind the sandbags.",
-        "(Jump while sliding down a wall to kick off it.)",
+        "RIGGING CREW:\n\nWall kicks only. Mind the sandbags.\n\n(Jump while sliding down a wall.)",
     ],
     "s1_clap_hint": [
-        "PROPS:\n\nOne clapperboard, slightly haunted.",
-        "(Press X to clap: it is your attack, and knocks out anything in front of you. Hold up or down to clap upward or below you. Clap downward on an enemy to bounce off it.)",
+        "PROPS:\n\nOne clapperboard, slightly haunted.\n\n(X: clap. Hold up or down to clap that way.)",
     ],
     "s1_comedian": [
         "\"Oh! A real person! In color, no less.\"",
@@ -145,8 +139,7 @@ SCRIPTS = {
         "BOATSWAIN:\n\nUp the ratlines, down the other side. Rope rungs hold you from above only.",
     ],
     "s3_cut_hint": [
-        "EDITOR'S NOTE, scrawled on a crate:\n\nA story can skip the boring part. So can you.",
-        "(Leave a take standing somewhere, then press V to cut straight back to it.)",
+        "EDITOR'S NOTE, scrawled on a crate:\n\nA story can skip the boring part. So can you.\n\n(V: cut to your latest take.)",
     ],
     "s3_reel_a": [
         "LOST REEL: \"Storyboards\" (1936)",

@@ -146,7 +146,7 @@ void shop_run(void) {
     }
     menu_frame(&beat);
     int p = input_take_pressed();
-    if (input_key_hit(KEY_ESC) || (p & IN_ATTACK)) break;
+    if (input_key_hit('p') || (p & IN_ATTACK)) break;
     if (p) dirty = 1;
     if ((p & IN_UP) && sel > 0) {
       sel--;
@@ -251,7 +251,7 @@ int pause_run(void) {
     }
     draw_text_centered(122, line, FONT_SERIF, dim_ramp);
     if (row2[0]) draw_text_centered(136, row2, FONT_SERIF, dim_ramp);
-    draw_text_centered(160, "Esc or Z: back to the picture", FONT_SERIF, gold_ramp);
+    draw_text_centered(160, "P or Z: back to the picture", FONT_SERIF, gold_ramp);
     draw_text_centered(176, "Q: quit to the title", FONT_SERIF, dim_ramp);
     draw_text_centered(190, "(anything since the last mirror is lost)", FONT_SERIF, dim_ramp);
     canvas_show();
@@ -263,7 +263,7 @@ int pause_run(void) {
       quit = 1;
       break;
     }
-    if (input_key_hit(KEY_ESC) || (p & (IN_JUMP | IN_INTERACT))) break;
+    if (input_key_hit('p') || (p & (IN_JUMP | IN_INTERACT))) break;
   }
   input_take_pressed();
   hud_bar_clear();

@@ -11,7 +11,7 @@
  *
  * Controls: arrows or WASD move; Z, Space or K jumps; X or J claps (attack);
  * C or L records a take; V or ; jump-cuts; E or Enter interacts; R rewinds;
- * F overcranks; Esc pauses.
+ * F overcranks; P pauses (Esc would close the emulator's window).
  */
 
 static int key_down[256];

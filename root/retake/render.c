@@ -245,17 +245,19 @@ void view_touch(int x0, int y0, int x1, int y1) {
   }
 }
 
-/* Start a frame with the camera's top-left at room pixel (cam_x, cam_y),
- * both >= 0. Scrolls the display there and restores the background under
+/* Start a frame with the camera's top-left at room pixel (cam_x, cam_y);
+ * cam_x may be down to -8 (the side bars), cam_y >= 0. Scrolls the display there and restores the background under
  * last frame's drawings and under any newly uncovered strip; if the camera
  * jumped further than the edge bars hide (or the view is invalid), restores
  * the whole window instead. */
 void view_begin(int cam_x, int cam_y) {
   cam_x0 = cam_x;
   cam_y0 = cam_y;
-  canvas_ox = cam_x & 7;
+  /* cam_x can be as low as -8; shift through a positive offset so the tile
+   * origin floors correctly whatever >> does with negative values. */
+  canvas_ox = (cam_x + 64) & 7;
   canvas_oy = cam_y & 7;
-  base_tx = cam_x >> 3;
+  base_tx = ((cam_x + 64) >> 3) - 8;
   base_ty = cam_y >> 3;
   if (canvas_row[1] == 0) {
     for (int r = 0; r < 256; r++) canvas_row[r] = r * CANVAS_W;
@@ -273,8 +275,10 @@ void view_begin(int cam_x, int cam_y) {
   }
   int sx = cam_x;
   while (sx >= 320) sx -= 320;
+  while (sx < 0) sx += 320;          /* the camera may sit up to 8 px left of the room */
   int sy = cam_y;
   while (sy >= 240) sy -= 240;
+  while (sy < 0) sy += 240;
   sx = sx ? 320 - sx : 0;          /* the scroll that shows (cam_x, cam_y) at the corner */
   sy = sy ? 240 - sy : 0;
   if (sx != scroll_x || sy != scroll_y) {
@@ -343,6 +347,7 @@ void view_end(void) {
     int ry1 = wy + 8 > win_y1 ? win_y1 - wy : 8;
     int bty = base_ty + cty;
     while (bty >= RING_TY) bty -= RING_TY;
+    while (bty < 0) bty += RING_TY;
     for (int ctx = 0; ctx < TILES_X; ctx++) {
       if (!st[ctx]) continue;
       int wx = (base_tx + ctx) << 3;
@@ -351,6 +356,7 @@ void view_end(void) {
       int rx1 = wx + 8 > win_x1 ? win_x1 - wx : 8;
       int btx = base_tx + ctx;
       while (btx >= RING_TX) btx -= RING_TX;
+      while (btx < 0) btx += RING_TX;
       unsigned short* src = g_back + canvas_row[cty << 3] + (ctx << 3);
       int frow = bty << 3;
       int fx = btx << 3;
