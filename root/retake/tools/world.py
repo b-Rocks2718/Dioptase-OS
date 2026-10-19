@@ -121,8 +121,8 @@ def stage1():
     r.building(34, 12, 50, 26, windows="W")
     r.building(54, 8, 70, 26, windows="Ww", sign=(58, 22, "K"))
     r.building(72, 14, 80, 26, windows="w")
-    r.girder(12, 19, 5)
-    r.plank(30, 20, 6)
+    r.girder(12, 21, 5)                        # 40 px up: a full jump, not a near miss
+    r.plank(30, 21, 6)
     r.girder(44, 15, 6)
     r.stamp(32, 21, "L")
     r.stamp(52, 21, "L")
@@ -167,7 +167,7 @@ def stage1():
     r.plank(28, 15, 6)                         # a one-way roof Ruby can kick up through
     r.girder(34, 15, 4)
     r.plank(8, 34, 6)                          # a side ledge with a reward
-    r.plank(14, 28, 5)
+    r.plank(14, 29, 5)
     r.ent("coin", 9, 33)
     r.ent("coin", 11, 33)
     r.ent("coin", 15, 27)
@@ -226,9 +226,9 @@ def stage1():
     r.wall(38, 2, 20, w=2)
     r.back(6, 2, 38, 20)
     r.stamp(16, 4, "C")
-    r.plank(17, 14, 6)
-    r.plank(17, 9, 6)
-    r.plank(17, 4, 6)
+    r.plank(17, 15, 6)                         # a ladder of full jumps, 40 px apart
+    r.plank(17, 10, 6)
+    r.plank(17, 5, 6)
     r.ent("mirror", 10, 19)
     r.ent("npc", 28, 19, a="@s1_comedian")
     r.ent("heart", 34, 19)
@@ -242,7 +242,7 @@ def stage1():
     r.fill(22, 58, 38, 60)
     r.back(2, 0, 38, 58)
     r.plank(16, 56, 8)                         # catches Ruby coming up from below
-    r.girder(4, 50, 8)
+    r.girder(4, 51, 8)                         # one full jump up from the entry plank
     r.girder(26, 46, 8)
     r.plank(12, 42, 6)
     r.girder(4, 37, 6)

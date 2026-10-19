@@ -659,9 +659,9 @@
     "room": "s1_clock_base",
     "rect": [
      136,
-     60,
+     68,
      168,
-     60
+     68
     ]
    }
   },
@@ -669,8 +669,8 @@
    "label": "Clock base upper ledge",
    "actions": [
     [
-     4,
-     0
+     6,
+     2
     ],
     [
      34,
@@ -681,9 +681,9 @@
     "room": "s1_clock_base",
     "rect": [
      144,
-     20,
+     28,
      168,
-     20
+     28
     ]
    }
   },
@@ -692,10 +692,10 @@
    "actions": [
     [
      6,
-     0
+     1
     ],
     [
-     43,
+     46,
      16
     ]
    ],
@@ -710,7 +710,7 @@
    }
   },
   {
-   "label": "Stand on a recorded still to reach the first clock ledge",
+   "label": "Jump up to the first clock ledge",
    "actions": [
     [
      6,
@@ -753,9 +753,9 @@
     "room": "s1_clock_climb",
     "rect": [
      70,
-     388,
+     396,
      95,
-     388
+     396
     ]
    }
   },
@@ -763,7 +763,7 @@
    "label": "Reach the outer clock wall",
    "actions": [
     [
-     38,
+     35,
      17
     ]
    ],
@@ -782,7 +782,7 @@
    "actions": [
     [
      6,
-     0
+     1
     ],
     [
      39,
