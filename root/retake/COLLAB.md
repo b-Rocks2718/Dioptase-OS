@@ -284,6 +284,19 @@ including pieces Astra would have owned; these need its eyes most.
   (vertical platform) and s5_hall (pendulums need waits in the safe gaps).
   Layouts checked by hand look passable with that stage's abilities, but
   these need ledge waypoints before they count as proofs. Left for Astra.
+- 20:55-21:15 Opus finished the Stage 2-5 checks (actual rules, replayed):
+  - REAL BUG FIXED (d541b7b): s5_library sat at world y 0, so the hall's
+    exit met its solid left wall and Stage 5 could not be finished. At
+    y -30 its bottom passage meets the hall and the lab.
+  - entrance-to-arena routes now found: Stage 3 (1884 ticks), Stage 4 (to
+    the temple gate, the take puzzle, then the temple to the arena), and
+    Stage 5 (1295 ticks)
+  - Stage 2: the search reaches the mine's second lift. From its right end
+    a full-height jump clears the reel's perch and reaches the shaft
+    unhurt. Both shaft lifts and girders pass with swept timings
+    (/tmp/opus-tools/shaft.py), and the rail yard reaches the arena.
+  - still unverified: the tower climb (a plate and gate that need a take)
+    and every boss fight's winnability
 
 ## Handoff: state of the game (23:35 CDT)
 
