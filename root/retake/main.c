@@ -700,19 +700,26 @@ static int title_screen(int have_save) {
   for (int s = 0; s < NUM_SPRITES; s++) sprite_hide(s);
   int choice = have_save ? 1 : 0;
   int ready = 0;
+  int drawn = -1;
   while (1) {
-    tl_copy_words((void*)g_pixel_fb, (void*)(g_pak + pak_header(PAKH_CARD_OFF)), (SCREEN_W * VIEW_H) >> 1);
-    draw_text_centered(46, "SILVERLAKE PICTURES PRESENTS", FONT_SERIF, dim_ramp);
-    draw_text_centered(66, "R E T A K E", FONT_TITLE, title_ramp);
-    draw_text_centered(92, "a picture in eight reels", FONT_SERIF, dim_ramp);
-    draw_text_centered(128, choice == 0 ? "> NEW PICTURE <" : "NEW PICTURE", FONT_SERIF,
-                       choice == 0 ? title_ramp : dim_ramp);
-    if (have_save) {
-      draw_text_centered(144, choice == 1 ? "> CONTINUE <" : "CONTINUE", FONT_SERIF,
-                         choice == 1 ? title_ramp : dim_ramp);
+    /* Composed off screen and redrawn only when the selection changes;
+     * redrawing it on the display every frame made it flicker. */
+    if (drawn != choice) {
+      drawn = choice;
+      canvas_card();
+      draw_text_centered(46, "SILVERLAKE PICTURES PRESENTS", FONT_SERIF, dim_ramp);
+      draw_text_centered(66, "R E T A K E", FONT_TITLE, title_ramp);
+      draw_text_centered(92, "a picture in eight reels", FONT_SERIF, dim_ramp);
+      draw_text_centered(128, choice == 0 ? "> NEW PICTURE <" : "NEW PICTURE", FONT_SERIF,
+                         choice == 0 ? title_ramp : dim_ramp);
+      if (have_save) {
+        draw_text_centered(144, choice == 1 ? "> CONTINUE <" : "CONTINUE", FONT_SERIF,
+                           choice == 1 ? title_ramp : dim_ramp);
+      }
+      draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
+      draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
+      canvas_show();
     }
-    draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
-    draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
     sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 64, 116);
     unsigned now = get_vga_frame_counter();
     while (get_vga_frame_counter() == now) {

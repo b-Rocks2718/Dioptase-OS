@@ -15,8 +15,9 @@ static short text_ramp[4] = {0, 0x234, 0x9AB, 0xDEF};
 static short dim_ramp[4] = {0, 0x123, 0x456, 0x789};
 static short gold_ramp[4] = {0, 0x123, 0x38B, 0x6CF};
 
+/* Begin a menu screen off screen; finish it with canvas_show(). */
 static void card_background(void) {
-  tl_copy_words((void*)g_pixel_fb, (void*)(g_pak + pak_header(PAKH_CARD_OFF)), (SCREEN_W * VIEW_H) >> 1);
+  canvas_card();
 }
 
 /* Wait one display frame; keep the synthesizer alive. */
@@ -132,6 +133,7 @@ void shop_run(void) {
     append(purse, num);
     draw_text_centered(190, purse, FONT_SERIF, gold_ramp);
     draw_text_centered(206, "up/down choose   Z buy   X leave", FONT_SERIF, dim_ramp);
+    canvas_show();
     }
     menu_frame(&beat);
     int p = input_take_pressed();
@@ -225,10 +227,13 @@ int pause_run(void) {
     if (g_prog.abilities & AB_WIRE) append(line, ", stunt wire");
     if (g_prog.abilities & AB_JUMPCUT) append(line, ", jump cut");
     if (g_prog.abilities & AB_GLIDE) append(line, ", umbrella");
+    if (g_prog.abilities & AB_OVERCRANK) append(line, ", overcrank");
+    if (g_prog.abilities & AB_REWIND) append(line, ", rewind");
     draw_text_centered(124, line, FONT_SERIF, dim_ramp);
     draw_text_centered(160, "Esc or Z: back to the picture", FONT_SERIF, gold_ramp);
     draw_text_centered(176, "Q: quit to the title", FONT_SERIF, dim_ramp);
     draw_text_centered(190, "(anything since the last mirror is lost)", FONT_SERIF, dim_ramp);
+    canvas_show();
   }
   while (1) {
     menu_frame(&beat);

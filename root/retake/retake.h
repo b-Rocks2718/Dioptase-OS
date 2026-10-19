@@ -105,6 +105,9 @@ void room_load(int index);
 /* ---- render.c ---- */
 
 extern volatile short* g_pixel_fb;
+extern volatile short* g_canvas;
+void canvas_card(void);
+void canvas_show(void);
 extern unsigned short* g_back;
 extern volatile short* g_tile_fb;
 extern volatile short* g_tilemap;
