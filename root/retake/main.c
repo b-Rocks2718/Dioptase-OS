@@ -306,10 +306,6 @@ static int region6_image(struct Ent* e) {
 }
 
 
-/* Back-buffer row offsets (y * SCREEN_W): the CPU has no multiplier, so
- * per-pixel effects look rows up instead of calling the software multiply. */
-static int scr_row[240];
-
 /* Fill a rectangle of the back buffer, clipped to the play area. */
 static void fill_rect(int x, int y, int w, int h, int color) {
   int x1 = x + w;
@@ -318,8 +314,10 @@ static void fill_rect(int x, int y, int w, int h, int color) {
   if (y < HUD_PIXEL_ROWS) y = HUD_PIXEL_ROWS;
   if (x1 > SCREEN_W) x1 = SCREEN_W;
   if (y1 > VIEW_H) y1 = VIEW_H;
+  if (x >= x1 || y >= y1) return;
+  view_touch(x, y, x1, y1);
   for (int yy = y; yy < y1; yy++) {
-    unsigned short* row = g_back + scr_row[yy];
+    unsigned short* row = g_back + g_row[yy];
     for (int xx = x; xx < x1; xx++) row[xx] = (unsigned short)color;
   }
 }
@@ -352,7 +350,7 @@ static void draw_laser(struct Ent* e, int ex, int ey, int ew, int eh) {
  * then `tint` added; tint channels must stay at or below 8). */
 static void light_px(int x, int y, int tint) {
   if (x < 0 || x >= SCREEN_W || y < HUD_PIXEL_ROWS || y >= VIEW_H) return;
-  unsigned short* p = g_back + scr_row[y] + x;
+  unsigned short* p = g_back + g_row[y] + x;
   *p = (unsigned short)(((*p >> 1) & 0x0777) + tint);
 }
 
@@ -368,6 +366,9 @@ static void draw_searchlight(struct Ent* e, int ex, int ey) {
   fill_rect(ex, ey + 1, 8, 6, 0x0333);
   fill_rect(ex + 1, ey + 6, 6, 2, e->state == 2 ? 0x0666 : 0x0EFF);
   if (rows <= 0) return;
+  int left = (sx < lx ? sx : lx) - 14;
+  int right = (sx > lx ? sx : lx) + 15;
+  view_touch(left, ly, right, ly + rows + 2);
   int step_x = ((sx - lx) << 8) / rows;
   int half_q8 = 2 << 8;
   int step_half = (12 << 8) / rows;
@@ -382,7 +383,7 @@ static void draw_searchlight(struct Ent* e, int ex, int ey) {
       int x1 = cx + half;
       if (x0 < 0) x0 = x0 & 1;               /* first on-screen pixel of the same dither parity */
       if (x1 >= SCREEN_W) x1 = SCREEN_W - 1;
-      unsigned short* row = g_back + scr_row[y];
+      unsigned short* row = g_back + g_row[y];
       for (int x = x0; x <= x1; x += 2) row[x] = (unsigned short)(((row[x] >> 1) & 0x0777) + tint);
     }
     cx_q8 += step_x;
@@ -425,10 +426,11 @@ static void draw_rain(void) {
     int x = (k * 53 + (int)frame_clock * 2) & 511;
     int y = ((k * 97) + (int)frame_clock * 7) & 255;
     if (x >= SCREEN_W) continue;
+    view_touch(x - 3, y, x + 1, y + 6);
     for (int j = 0; j < 6; j++) {
       int px = x - (j >> 1);
       int py = y + j;
-      if (px >= 0 && py >= HUD_PIXEL_ROWS && py < VIEW_H) g_back[scr_row[py] + px] = 0x0BA9;
+      if (px >= 0 && py >= HUD_PIXEL_ROWS && py < VIEW_H) g_back[g_row[py] + px] = 0x0BA9;
     }
   }
 }
@@ -610,7 +612,8 @@ static void draw_entities(void) {
     if (e->kind == ENT_FLYER && (current_region == 6 || current_region == 8)) {
       int wx = ex + (ew >> 1);                  /* the saucers fly on wires */
       if (wx >= 0 && wx < SCREEN_W) {
-        for (int y = HUD_PIXEL_ROWS; y < ey && y < VIEW_H; y++) g_back[scr_row[y] + wx] = 0x0999;
+        view_touch(wx, HUD_PIXEL_ROWS, wx + 1, ey);
+        for (int y = HUD_PIXEL_ROWS; y < ey && y < VIEW_H; y++) g_back[g_row[y] + wx] = 0x0999;
       }
     }
     if (e->kind == ENT_PENDULUM) {
@@ -623,10 +626,11 @@ static void draw_entities(void) {
       int sy = (by - py) * 256 / n;
       int rx = px * 256;
       int ry = py * 256;
+      view_touch(px < bx ? px : bx, py < by ? py : by, (px > bx ? px : bx) + 1, (py > by ? py : by) + 1);
       for (int k = 0; k < n; k++) {
         int x = rx >> 8;
         int y = ry >> 8;
-        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[scr_row[y] + x] = 0x0CBC;
+        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[g_row[y] + x] = 0x0CBC;
         rx += sx;
         ry += sy;
       }
@@ -648,20 +652,22 @@ static void draw_entities(void) {
         fill_rect(bx - 2, floor - 3, 5, 3, 0x0AEF);
       } else if (e->state == 0) {
         if (frame_clock & 2) {
+          view_touch(bx - 3, floor - 4, bx + 4, floor);
           for (int k = -3; k <= 3; k++) {
             int x = bx + k;
             int y = floor - 1 - (k < 0 ? -k : k);
-            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[scr_row[y] + x] = 0x0FFF;
+            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[g_row[y] + x] = 0x0FFF;
           }
         }
       } else {
         int jag = 0;
         int edge = current_region == 6 ? 0x0C3E : 0x0EDE;   /* the Emperor's rays are magenta */
+        view_touch(bx - 3, HUD_PIXEL_ROWS, bx + 4, floor);
         for (int y = HUD_PIXEL_ROWS; y < floor && y < VIEW_H; y++) {
           if ((y & 7) == 0) jag = ((y * 7 + (int)frame_clock) & 3) - 1;
           for (int w = -1; w <= 1; w++) {
             int x = bx + jag + w;
-            if (x >= 0 && x < SCREEN_W) g_back[scr_row[y] + x] = w ? edge : 0x0FFF;
+            if (x >= 0 && x < SCREEN_W) g_back[g_row[y] + x] = w ? edge : 0x0FFF;
           }
         }
       }
@@ -725,8 +731,9 @@ static void draw_boss_bar(void) {
   int x0 = 80;
   int w = 160;
   int filled = (w * hp) / total;
+  view_touch(x0 - 1, 226, x0 + w + 1, 232);
   for (int y = 226; y < 232; y++) {
-    unsigned short* row = g_back + scr_row[y];
+    unsigned short* row = g_back + g_row[y];
     for (int x = x0 - 1; x <= x0 + w; x++) {
       int edge = y == 226 || y == 231 || x == x0 - 1 || x == x0 + w;
       if (edge) row[x] = 0x0111;
@@ -843,14 +850,14 @@ static void draw_frame(void) {
     if (cam_x < 0) cam_x = 0;
     if (cam_y < 0) cam_y = 0;
   }
-  render_frame(cam_x, cam_y);
+  view_begin(cam_x, cam_y);
   draw_entities();
   draw_puffs();
   if (current_region == 7) draw_rain();
   draw_rewind_marker();
   film_fx((int)frame_clock);
   draw_boss_bar();
-  present();
+  view_end();
   draw_sprites();
   draw_hud();
   cam_x = keep_x;
@@ -1014,7 +1021,6 @@ static void play(void) {
 }
 
 int main(int argc, char** argv) {
-  for (int y = 0; y < 240; y++) scr_row[y] = y * SCREEN_W;
   parse_args(argc, argv);
   if (pak_open() != 0) return 1;
   audio_start();      /* fork the synthesizer before the big buffers exist */

@@ -93,11 +93,7 @@ extern int g_room_index;
 extern int g_room_pw;          /* room size in pixels */
 extern int g_room_ph;
 extern unsigned short* g_room_img;      /* composed room image, row stride g_room_pw */
-extern unsigned short* g_room_img_odd;  /* the same shifted left by one pixel */
-extern unsigned g_span_opaque[480];
-extern unsigned g_span_clear[480];
-extern unsigned g_span_opaque_odd[480];
-extern unsigned g_span_clear_odd[480];
+extern int g_room_serial;               /* bumped by every room_load (the image was rebuilt) */
 
 void room_system_init(void);
 void room_load(int index);
@@ -116,8 +112,20 @@ extern volatile short* g_spritemap;
 int display_init(void);
 void display_shutdown(void);
 void render_region(int region_id);
-void render_frame(int cam_x, int cam_y);
-void present(void);
+
+/* The play view scrolls in hardware: the pixel layer is a 320x240 ring
+ * buffer holding the room at (world x mod 320, world y mod 240). Each frame,
+ * between view_begin and view_end, drawing goes to the back-buffer canvas;
+ * every drawing call first marks its screen rectangle with view_touch, which
+ * restores the background under any 8x8 world tile it has not restored yet
+ * this frame. view_end copies only touched tiles to the display. */
+#define CANVAS_W 336                    /* view plus up to 7 px of tile slack each axis */
+#define CANVAS_H 256
+extern int g_row[240];                  /* g_back offset of screen row y, column 0 */
+void view_begin(int cam_x, int cam_y);
+void view_touch(int x0, int y0, int x1, int y1);
+void view_end(void);
+void view_invalidate(void);
 void film_fx(int clock);
 void sheet_load(int index);
 void sprites_init(void);

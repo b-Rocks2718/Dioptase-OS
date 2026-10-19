@@ -5,15 +5,26 @@
 #include "pak.h"
 
 /*
- * Display ownership and the per-frame compositor.
+ * Display ownership and the hardware-scrolled view.
  *
- * Each frame the visible 320x236 window of the room image is composited over
- * the region's painted backdrop, which scrolls at half the camera speed
- * (parallax). Both images have one-pixel-shifted twins so every row the asm
- * compositor reads is word aligned. The tile layer runs at tile scale 0 (8x8
- * tiles at 640x480) above the pixel layer; tile 0 is fully transparent and
- * tile 1 solid black, used for the letterbox bars. The bottom bar also
- * covers pixel rows 236-239, which user mode cannot map.
+ * The pixel layer is a 320x240 ring buffer (docs/mem_map.md): world pixel
+ * (x, y) of the current room lives at framebuffer ((x mod 320), (y mod 240))
+ * and the pixel scroll registers (set_pixel_scroll, trap 65) put the camera's
+ * corner at the screen's top-left. Each room image is composed once with the
+ * region backdrop behind it, so the background is a plain copy. Per frame:
+ *   view_begin  sets the scroll, restores the background (into the g_back
+ *               canvas) under last frame's drawings and under the strip the
+ *               camera just uncovered;
+ *   drawing     every call marks its rectangle with view_touch first, which
+ *               restores any 8x8 world tile it touches for the first time;
+ *   view_end    copies only touched tiles to the framebuffer, clipped to the
+ *               camera window. Rows 236..239 go through write_pixel_tail
+ *               (trap 66): user code cannot map them.
+ * The tile layer runs at tile scale 0 (8x8 tiles at 640x480) above the pixel
+ * layer. Black tile bars hide the view's edges: the HUD covers pixel rows
+ * 0..7, a bottom bar rows 236..239, and side bars columns 0..7 and 312..319.
+ * They are what let the scroll move up to 8 px a frame (4 px down) before
+ * the uncovered strip is drawn without the stale strip ever showing.
  */
 
 #define TILE_CLEAR 0
@@ -23,13 +34,12 @@
 
 volatile short* g_pixel_fb;
 volatile short* g_canvas;      /* where text is drawn: the display, or g_back while a card is composed */
-unsigned short* g_back;          /* the frame being drawn; present() shows it */
+unsigned short* g_back;          /* the play canvas (see view_begin), or a card being composed */
 volatile short* g_tile_fb;
 volatile short* g_tilemap;
 volatile short* g_spritemap;
 
 static unsigned short* backdrop;      /* region backdrop, in the pak */
-static unsigned short* backdrop_odd;  /* shifted left by one pixel */
 static int backdrop_w;
 static int backdrop_h;
 
@@ -66,7 +76,7 @@ int display_init(void) {
   set_vscroll(0);
   set_pixel_scale(0);
   hud_init();
-  g_back = (unsigned short*)mmap(SCREEN_W * VIEW_H * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
+  g_back = (unsigned short*)mmap(CANVAS_W * CANVAS_H * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
   if ((int)g_back == -1) {
     puts("retake: out of memory for the back buffer\n");
     return -1;
@@ -80,9 +90,14 @@ void display_shutdown(void) {
   for (int i = 0; i < FB_NUM_TILES; i++) g_tile_fb[i] = TILE_CLEAR;
 }
 
-/* Prepare the backdrop of region number `region_id`. */
+/* ---- the region backdrop ---- */
+
 static int shown_region = -1;
 
+/* Select region `region_id`'s painted backdrop. It is painted into each room
+ * image behind the room's transparent pixels, fixed to the room: a parallax
+ * layer would have to be redrawn every frame, and the hardware-scrolled view
+ * exists to redraw almost nothing. */
 void render_region(int region_id) {
   if (region_id == shown_region) return;
   shown_region = region_id;
@@ -90,75 +105,280 @@ void render_region(int region_id) {
   backdrop = (unsigned short*)(g_pak + r->backdrop_off);
   backdrop_w = (int)r->backdrop_w;
   backdrop_h = (int)r->backdrop_h;
-  int total = backdrop_w * backdrop_h;
-  if (backdrop_odd == 0) {
-    backdrop_odd = (unsigned short*)mmap(ROOM_MAX_PW * ROOM_MAX_PH * 2, MMAP_ANON, 0, MMAP_READ | MMAP_WRITE);
-  }
-  for (int i = 0; i < total - 1; i++) backdrop_odd[i] = backdrop[i + 1];
-  backdrop_odd[total - 1] = backdrop[total - 1];
 }
 
-/* Composite the room and backdrop into the back buffer for a camera whose
- * top-left is (cam_x, cam_y) in room pixels (clamped inside the room by the
- * caller). Entities are drawn over it next, then present() copies the whole
- * frame out, so the display never catches a frame with entities missing. */
-static unsigned short black_row[320];   /* letterbox for rooms smaller than the view */
-
-/* Compose the view at (cam_x, cam_y), cam_x and cam_y >= 0. Rows and
- * columns beyond the room (rooms smaller than 320x236) are drawn black
- * rather than read past the room image and its span tables. */
-void render_frame(int cam_x, int cam_y) {
-  unsigned short* room = (cam_x & 1) ? g_room_img_odd : g_room_img;
-  int rx = cam_x & ~1;
-  int bx = cam_x >> 1;
-  int max_bx = backdrop_w - SCREEN_W;
-  if (bx > max_bx) bx = max_bx;
-  unsigned short* bg = (bx & 1) ? backdrop_odd : backdrop;
-  bx &= ~1;
-  int by = cam_y >> 1;
-  int max_by = backdrop_h - VIEW_H;
-  if (by > max_by) by = max_by;
-  if (by < 0) by = 0;
-  unsigned* opaque = (cam_x & 1) ? g_span_opaque_odd : g_span_opaque;
-  unsigned* clear = (cam_x & 1) ? g_span_clear_odd : g_span_clear;
-  unsigned short* room_row = room + cam_y * g_room_pw + rx;
-  unsigned short* bg_row = bg + by * backdrop_w + bx;
-  unsigned short* dst = g_back;
-  int end_x = rx + SCREEN_W;
-  int room_end = end_x < g_room_pw ? end_x : (g_room_pw & ~1);
-  int room_rows = g_room_ph - cam_y;
-  for (int y = 0; y < VIEW_H; y++) {
-    if (y >= room_rows) {
-      tl_copy_words((void*)dst, (void*)black_row, SCREEN_W >> 1);
-      dst += SCREEN_W;
-      continue;
+/* Paint the backdrop into every transparent pixel of the room image, row by
+ * row with the asm compositor. The backdrop's bottom edge lines up with the
+ * room's floor; taller rooms repeat its top row, wider rooms repeat it. */
+static void compose_backdrop(void) {
+  int shift = backdrop_h - g_room_ph;
+  unsigned short* row = g_room_img;
+  for (int y = 0; y < g_room_ph; y++) {
+    int by = y + shift;
+    if (by < 0) by = 0;
+    if (by >= backdrop_h) by = backdrop_h - 1;
+    unsigned short* src = backdrop + by * backdrop_w;
+    int x = 0;
+    while (x < g_room_pw) {
+      int n = g_room_pw - x;
+      if (n > backdrop_w) n = backdrop_w;
+      rt_composite((void*)(row + x), (void*)(row + x), (void*)src, n >> 1);
+      x += n;
     }
-    unsigned op = opaque[cam_y + y];
-    unsigned cl = clear[cam_y + y];
-    int px = rx;
-    if (room_end < end_x) {
-      tl_copy_words((void*)(dst + (room_end - rx)), (void*)black_row, (end_x - room_end) >> 1);
-    }
-    while (px < room_end) {
-      int span = px >> 6;
-      int span_end = (span + 1) << 6;
-      if (span_end > room_end) span_end = room_end;
-      int words = (span_end - px) >> 1;
-      int off = px - rx;
-      int whole = (px & 63) == 0 && span_end - px == 64;
-      if (whole && ((op >> span) & 1)) {
-        tl_copy_words((void*)(dst + off), (void*)(room_row + off), words);
-      } else if (whole && ((cl >> span) & 1)) {
-        tl_copy_words((void*)(dst + off), (void*)(bg_row + off), words);
-      } else {
-        rt_composite((void*)(dst + off), (void*)(room_row + off), (void*)(bg_row + off), words);
-      }
-      px = span_end;
-    }
-    dst += SCREEN_W;
-    room_row += g_room_pw;
-    bg_row += backdrop_w;
+    row += g_room_pw;
   }
+}
+
+/* ---- the hardware-scrolled view ---- */
+
+#define TILES_X 42             /* CANVAS_W / 8 */
+#define TILES_Y 32             /* CANVAS_H / 8 */
+#define RING_TX 40             /* the ring buffer in 8x8 tiles */
+#define RING_TY 30
+#define TAIL_ROW 236           /* rows from here (pixels from 256 on row 236) are kernel-only */
+#define TAIL_X 256
+
+int g_row[240];
+static int canvas_row[256];          /* r * CANVAS_W */
+static int tile_index_row[32];       /* ty * TILES_X */
+static unsigned char tile_state[1344];   /* per canvas tile: 1 background restored, 2 drawn on */
+static short drawn_tx[2][1344];      /* world tiles drawn on: last frame's list and this frame's */
+static short drawn_ty[2][1344];
+static int drawn_count[2];
+static int drawn_cur;
+static int view_valid;               /* the framebuffer holds the window at (shown_x, shown_y) */
+static int composed_serial = -1;     /* room image already has its backdrop */
+static int shown_x;
+static int shown_y;
+static int scroll_x = -1;            /* values last written to the scroll registers */
+static int scroll_y = -1;
+static int cam_x0;                   /* this frame's camera and canvas origin */
+static int cam_y0;
+static int base_tx;                  /* world tile at canvas tile (0, 0) */
+static int base_ty;
+static int canvas_ox;
+static int canvas_oy;
+static unsigned short tail_rows[1280];   /* staging for framebuffer rows 236..239 */
+static int tail_lo[4];
+static int tail_hi[4];
+
+/* The next view_begin redraws everything (a card or menu used the screen). */
+void view_invalidate(void) {
+  view_valid = 0;
+}
+
+/* Fill canvas tile (ctx, cty) with the background: the room image at its
+ * world tile, or black outside the room. */
+static void restore_tile(int ctx, int cty) {
+  int wtx = base_tx + ctx;
+  int wty = base_ty + cty;
+  unsigned* dst = (unsigned*)(g_back + canvas_row[cty << 3] + (ctx << 3));
+  int stride = CANVAS_W >> 1;
+  if (wtx < 0 || wty < 0 || wtx >= g_room.w || wty >= g_room.h) {
+    for (int r = 0; r < 8; r++) {
+      dst[0] = 0;
+      dst[1] = 0;
+      dst[2] = 0;
+      dst[3] = 0;
+      dst += stride;
+    }
+    return;
+  }
+  unsigned* src = (unsigned*)(g_room_img + (g_room.row[wty] << 6) + (wtx << 3));
+  int src_stride = g_room_pw >> 1;
+  for (int r = 0; r < 8; r++) {
+    dst[0] = src[0];
+    dst[1] = src[1];
+    dst[2] = src[2];
+    dst[3] = src[3];
+    dst += stride;
+    src += src_stride;
+  }
+}
+
+/* Restore every canvas tile under screen rectangle [x0,x1) x [y0,y1) that
+ * has not been restored this frame (no drawing mark). */
+static void restore_rect(int x0, int y0, int x1, int y1) {
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 > SCREEN_W) x1 = SCREEN_W;
+  if (y1 > 240) y1 = 240;
+  if (x0 >= x1 || y0 >= y1) return;
+  int cx1 = (x1 - 1 + canvas_ox) >> 3;
+  int cy1 = (y1 - 1 + canvas_oy) >> 3;
+  for (int cty = (y0 + canvas_oy) >> 3; cty <= cy1; cty++) {
+    unsigned char* st = tile_state + tile_index_row[cty];
+    for (int ctx = (x0 + canvas_ox) >> 3; ctx <= cx1; ctx++) {
+      if (st[ctx] & 1) continue;
+      restore_tile(ctx, cty);
+      st[ctx] |= 1;
+    }
+  }
+}
+
+/* Mark screen rectangle [x0,x1) x [y0,y1) as drawn on this frame: restore
+ * the background under tiles not yet restored, and remember each tile so
+ * the next frame erases it. Call before writing any pixels into g_back. */
+void view_touch(int x0, int y0, int x1, int y1) {
+  if (x0 < 0) x0 = 0;
+  if (y0 < HUD_PIXEL_ROWS) y0 = HUD_PIXEL_ROWS;
+  if (x1 > SCREEN_W) x1 = SCREEN_W;
+  if (y1 > VIEW_H) y1 = VIEW_H;
+  if (x0 >= x1 || y0 >= y1) return;
+  int cx1 = (x1 - 1 + canvas_ox) >> 3;
+  int cy1 = (y1 - 1 + canvas_oy) >> 3;
+  int list = drawn_cur;
+  for (int cty = (y0 + canvas_oy) >> 3; cty <= cy1; cty++) {
+    unsigned char* st = tile_state + tile_index_row[cty];
+    for (int ctx = (x0 + canvas_ox) >> 3; ctx <= cx1; ctx++) {
+      int s = st[ctx];
+      if (s == 3) continue;
+      if (!(s & 1)) restore_tile(ctx, cty);
+      if (!(s & 2)) {
+        int n = drawn_count[list];
+        drawn_tx[list][n] = (short)(base_tx + ctx);
+        drawn_ty[list][n] = (short)(base_ty + cty);
+        drawn_count[list] = n + 1;
+      }
+      st[ctx] = 3;
+    }
+  }
+}
+
+/* Start a frame with the camera's top-left at room pixel (cam_x, cam_y),
+ * both >= 0. Scrolls the display there and restores the background under
+ * last frame's drawings and under any newly uncovered strip; if the camera
+ * jumped further than the edge bars hide (or the view is invalid), restores
+ * the whole window instead. */
+void view_begin(int cam_x, int cam_y) {
+  cam_x0 = cam_x;
+  cam_y0 = cam_y;
+  canvas_ox = cam_x & 7;
+  canvas_oy = cam_y & 7;
+  base_tx = cam_x >> 3;
+  base_ty = cam_y >> 3;
+  if (canvas_row[1] == 0) {
+    for (int r = 0; r < 256; r++) canvas_row[r] = r * CANVAS_W;
+    for (int t = 0; t < 32; t++) tile_index_row[t] = t * TILES_X;
+  }
+  for (int y = 0; y < 240; y++) g_row[y] = canvas_row[y + canvas_oy] + canvas_ox;
+  unsigned* st = (unsigned*)tile_state;
+  for (int i = 0; i < 336; i++) st[i] = 0;
+  drawn_cur ^= 1;
+  drawn_count[drawn_cur] = 0;
+  if (composed_serial != g_room_serial) {
+    compose_backdrop();
+    composed_serial = g_room_serial;
+    view_valid = 0;
+  }
+  int sx = cam_x;
+  while (sx >= 320) sx -= 320;
+  int sy = cam_y;
+  while (sy >= 240) sy -= 240;
+  sx = sx ? 320 - sx : 0;          /* the scroll that shows (cam_x, cam_y) at the corner */
+  sy = sy ? 240 - sy : 0;
+  if (sx != scroll_x || sy != scroll_y) {
+    set_pixel_scroll(sx, sy);
+    scroll_x = sx;
+    scroll_y = sy;
+  }
+  int dx = cam_x - shown_x;
+  int dy = cam_y - shown_y;
+  if (!view_valid || dx > 8 || dx < -8 || dy > 4 || dy < -8) {
+    restore_rect(0, 0, SCREEN_W, 240);
+    return;
+  }
+  if (dx > 0) restore_rect(SCREEN_W - dx, 0, SCREEN_W, 240);
+  if (dx < 0) restore_rect(0, 0, -dx, 240);
+  if (dy > 0) restore_rect(0, 240 - dy, SCREEN_W, 240);
+  if (dy < 0) restore_rect(0, 0, SCREEN_W, -dy);
+  int last = drawn_cur ^ 1;
+  for (int i = 0; i < drawn_count[last]; i++) {
+    int ctx = drawn_tx[last][i] - base_tx;
+    int cty = drawn_ty[last][i] - base_ty;
+    if (ctx < 0 || cty < 0 || ctx >= TILES_X || cty >= TILES_Y) continue;
+    unsigned char* s = tile_state + tile_index_row[cty] + ctx;
+    if (*s & 1) continue;
+    restore_tile(ctx, cty);
+    *s |= 1;
+  }
+}
+
+/* Store pixels [x0,x1) of framebuffer row `row` from `src`; rows from 236
+ * (pixels from 256 on row 236) are staged for write_pixel_tail. */
+static void put_row(int row, int x0, int x1, unsigned short* src) {
+  if (row < TAIL_ROW || (row == TAIL_ROW && x1 <= TAIL_X)) {
+    volatile short* dst = g_pixel_fb + row * SCREEN_W;
+    for (int x = x0; x < x1; x++) dst[x] = (short)src[x - x0];
+    return;
+  }
+  int t = row - TAIL_ROW;
+  if (row == TAIL_ROW && x0 < TAIL_X) {
+    volatile short* dst = g_pixel_fb + row * SCREEN_W;
+    for (int x = x0; x < TAIL_X; x++) dst[x] = (short)src[x - x0];
+    src += TAIL_X - x0;
+    x0 = TAIL_X;
+  }
+  unsigned short* stage = tail_rows + t * SCREEN_W;
+  for (int x = x0; x < x1; x++) stage[x] = src[x - x0];
+  if (x0 < tail_lo[t]) tail_lo[t] = x0;
+  if (x1 > tail_hi[t]) tail_hi[t] = x1;
+}
+
+/* Copy every restored or drawn tile from g_back to the framebuffer, clipped
+ * to the camera window (pixels outside it belong to the opposite edge of the
+ * ring), then flush the staged kernel-only rows. */
+void view_end(void) {
+  for (int t = 0; t < 4; t++) {
+    tail_lo[t] = SCREEN_W;
+    tail_hi[t] = 0;
+  }
+  int win_x1 = cam_x0 + SCREEN_W;
+  int win_y1 = cam_y0 + 240;
+  for (int cty = 0; cty < TILES_Y; cty++) {
+    unsigned char* st = tile_state + tile_index_row[cty];
+    int wy = (base_ty + cty) << 3;
+    if (wy >= win_y1) break;
+    int ry0 = wy < cam_y0 ? cam_y0 - wy : 0;
+    int ry1 = wy + 8 > win_y1 ? win_y1 - wy : 8;
+    int bty = base_ty + cty;
+    while (bty >= RING_TY) bty -= RING_TY;
+    for (int ctx = 0; ctx < TILES_X; ctx++) {
+      if (!st[ctx]) continue;
+      int wx = (base_tx + ctx) << 3;
+      if (wx >= win_x1) break;
+      int rx0 = wx < cam_x0 ? cam_x0 - wx : 0;
+      int rx1 = wx + 8 > win_x1 ? win_x1 - wx : 8;
+      int btx = base_tx + ctx;
+      while (btx >= RING_TX) btx -= RING_TX;
+      unsigned short* src = g_back + canvas_row[cty << 3] + (ctx << 3);
+      int frow = bty << 3;
+      int fx = btx << 3;
+      if (rx0 == 0 && rx1 == 8 && frow + 8 <= TAIL_ROW) {
+        unsigned* s = (unsigned*)(src + ry0 * CANVAS_W);
+        unsigned* d = (unsigned*)(g_pixel_fb + (frow + ry0) * SCREEN_W + fx);
+        for (int r = ry0; r < ry1; r++) {
+          d[0] = s[0];
+          d[1] = s[1];
+          d[2] = s[2];
+          d[3] = s[3];
+          s += CANVAS_W >> 1;
+          d += SCREEN_W >> 1;
+        }
+        continue;
+      }
+      for (int r = ry0; r < ry1; r++) put_row(frow + r, fx + rx0, fx + rx1, src + r * CANVAS_W + rx0);
+    }
+  }
+  for (int t = 0; t < 4; t++) {
+    if (tail_hi[t] <= tail_lo[t]) continue;
+    int row = TAIL_ROW + t;
+    write_pixel_tail((unsigned)(row * SCREEN_W + tail_lo[t]), (short*)(tail_rows + t * SCREEN_W + tail_lo[t]),
+                     (unsigned)(tail_hi[t] - tail_lo[t]));
+  }
+  shown_x = cam_x0;
+  shown_y = cam_y0;
+  view_valid = 1;
 }
 
 /* Load sheet `index` from the pak and build its mirrored frames. */
@@ -234,9 +454,10 @@ void draw_image_clipped(int id, int x, int y, int flip, int bottom) {
   int x0 = x < 0 ? 0 : x;
   int x1 = x + w > SCREEN_W ? SCREEN_W : x + w;
   if (x0 >= x1 || y0 >= y1) return;
+  view_touch(x0, y0, x1, y1);
   for (int py = y0; py < y1; py++) {
     unsigned short* row = src + (py - y) * w;
-    unsigned short* dst = g_back + py * SCREEN_W;
+    unsigned short* dst = g_back + g_row[py];
     for (int px = x0; px < x1; px++) {
       int sx = px - x;
       unsigned short c = row[flip ? w - 1 - sx : sx];
@@ -258,10 +479,11 @@ int image_height(int id) {
 /* A small bouncing arrow above an interactable, at screen (cx, y). */
 void draw_prompt(int cx, int y, int clock) {
   int bob = (clock >> 3) & 1;
+  view_touch(cx - 3, y + bob, cx + 4, y + bob + 4);
   for (int r = 0; r < 4; r++) {
     int py = y + r + bob;
     if (py < HUD_PIXEL_ROWS || py >= VIEW_H) continue;
-    unsigned short* dst = g_back + py * SCREEN_W;
+    unsigned short* dst = g_back + g_row[py];
     for (int dx = -r; dx <= r; dx++) {
       int px = cx + dx;
       if (px >= 0 && px < SCREEN_W) dst[px] = 0x0EEF;
@@ -269,7 +491,6 @@ void draw_prompt(int cx, int y, int clock) {
   }
 }
 
-/* Copy the finished back buffer to the display in one pass. */
 /* Start composing a full-screen card off screen: the card background goes
  * into the back buffer, and text draws there until canvas_show(). Drawing
  * cards and menus straight to the display showed them building up. */
@@ -280,12 +501,14 @@ void canvas_card(void) {
 
 /* Show the composed card in one copy and send text back to the display. */
 void canvas_show(void) {
-  present();
-  g_canvas = g_pixel_fb;
-}
-
-void present(void) {
+  if (scroll_x != 0 || scroll_y != 0) {
+    set_pixel_scroll(0, 0);
+    scroll_x = 0;
+    scroll_y = 0;
+  }
   tl_copy_words((void*)g_pixel_fb, (void*)g_back, (SCREEN_W * VIEW_H) >> 1);
+  g_canvas = g_pixel_fb;
+  view_valid = 0;          /* the play view is redrawn in full afterwards */
 }
 
 /* ---- film stock ---- */
@@ -299,7 +522,7 @@ static unsigned grain_rand(void) {
   return grain_seed >> 8;
 }
 
-/* Dust and scratches on the back buffer: a few dozen bright flecks each
+/* Dust and scratches on the play canvas: a few dozen bright flecks each
  * frame and, now and then, a thin vertical scratch that lingers for a few
  * frames, like a print that has been through the projector too often.
  * Brightening keeps each pixel's tint: two levels added per channel,
@@ -309,15 +532,17 @@ void film_fx(int clock) {
     unsigned r = grain_rand();
     int x = (int)(r % SCREEN_W);
     int y = HUD_PIXEL_ROWS + (int)((r >> 9) % (VIEW_H - HUD_PIXEL_ROWS));
-    unsigned short* p = g_back + y * SCREEN_W + x;
+    view_touch(x, y, x + 1, y + 1);
+    unsigned short* p = g_back + g_row[y] + x;
     unsigned short c = *p;
     *p = (unsigned short)((c & 0x0CCC) + 0x0333);
   }
   if (scratch_ticks > 0) {
     scratch_ticks--;
+    view_touch(scratch_x, HUD_PIXEL_ROWS, scratch_x + 1, VIEW_H);
     for (int y = HUD_PIXEL_ROWS; y < VIEW_H; y++) {
       if (((y + clock) & 7) == 0) continue;
-      unsigned short* p = g_back + y * SCREEN_W + scratch_x;
+      unsigned short* p = g_back + g_row[y] + scratch_x;
       *p = (unsigned short)((*p & 0x0EEE) + 0x0111);
     }
   } else if ((grain_rand() & 255) < 3) {

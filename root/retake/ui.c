@@ -173,6 +173,19 @@ void hud_hide(void) {
     g_tile_fb[x] = HT_BLACK;
     g_tile_fb[(TILE_COL_HEIGHT - 1) * TILE_ROW_WIDTH + x] = HT_BLACK;
   }
+  /* Side bars, 8 pixel-layer px each: they hide the hardware-scrolled view's
+   * seam columns while a newly uncovered strip is drawn (render.c). */
+  for (int y = 0; y < TILE_COL_HEIGHT; y++) {
+    int row = y * TILE_ROW_WIDTH;
+    g_tile_fb[row] = HT_BLACK;
+    g_tile_fb[row + 1] = HT_BLACK;
+    g_tile_fb[row + 2] = HT_BLACK;
+    g_tile_fb[row + 3] = HT_BLACK;
+    g_tile_fb[row + TILE_ROW_WIDTH - 4] = HT_BLACK;
+    g_tile_fb[row + TILE_ROW_WIDTH - 3] = HT_BLACK;
+    g_tile_fb[row + TILE_ROW_WIDTH - 2] = HT_BLACK;
+    g_tile_fb[row + TILE_ROW_WIDTH - 1] = HT_BLACK;
+  }
   hud_visible = 0;
 }
 
