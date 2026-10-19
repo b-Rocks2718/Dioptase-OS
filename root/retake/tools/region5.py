@@ -207,6 +207,35 @@ def backdrop(width, height, rng):
     return img
 
 
+def arch_tiles():
+    """Wainscot, rail, frieze and pilaster in painted-flat expressionist style."""
+    out = {}
+    for var in range(2):
+        t = tile(v(3))
+        t[0, :] = v(1)
+        t[7, :] = v(1)
+        for k in range(T):
+            x = (k + var * 4) % T
+            t[k, x] = v(6)                       # a slashed highlight
+        out[f"wain_{var}"] = t
+    t = tile(v(3))
+    t[0:2, :] = v(9)
+    t[2, :] = v(1)
+    out["wain_top"] = t
+    t = tile(v(5))
+    t[5:8, :] = v(1)
+    for x in range(T):
+        t[5 + (x % 3), x] = v(7)                 # jagged painted teeth
+    out["frieze"] = t
+    t = tile(v(4))
+    t[:, 1:3] = v(8)
+    t[:, 6:8] = v(1)
+    for y in range(0, T, 4):
+        t[y, 3:6] = v(2)
+    out["pilaster"] = t
+    return out
+
+
 STAMP_CHARS = {"P": "portrait", "G": "tombstone", "R": "dead_tree", "Z": "tesla", "L": "lamp"}
 
 
@@ -225,6 +254,7 @@ def build(font):
         tiles[f"nails_{d}"] = spikes(d)
     for var in range(4):
         tiles[f"facade_{var}"] = painted_wall(rng, var)
+    tiles.update(arch_tiles())
     lamp = region1.lamp_stamp()
     m = lamp != TRANSPARENT
     lamp[m] = np.array([v(int((c >> 4) & 15)) for c in lamp[m]], dtype=np.uint16)

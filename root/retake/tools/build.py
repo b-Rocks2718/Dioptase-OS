@@ -290,7 +290,8 @@ def main():
     wave_off = pack.add(b"".join(struct.pack("<256h", *music.wave_table(w)) for w in music.WAVES))
     inst_names = [i[0] for i in songs.INSTRUMENTS]
     inst_off = pack.add(b"".join(
-        struct.pack("<8B", music.WAVES.index(wave), peak, decay, sustain, release, vd, vr, 0)
+        struct.pack("<8B", music.NOISE_WAVE if wave == "noise" else music.WAVES.index(wave),
+                    peak, decay, sustain, release, vd, vr, 0)
         for _, wave, peak, decay, sustain, release, vd, vr in songs.INSTRUMENTS))
     song_names = list(songs.SONGS)
     song_offs = [pack.add(music.compile_song(songs.SONGS[n], inst_names)) for n in song_names]

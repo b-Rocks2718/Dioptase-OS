@@ -22,6 +22,9 @@ NOTE_OFFSETS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 
 # Waveform ids (WAVE_* in audio.c)
 WAVES = ["square", "pulse", "triangle", "saw", "piano", "organ", "sine", "reed"]
+# Instruments may name "noise" instead of a table: the synthesizer's LFSR
+# voice (WAVE_NOISE in audio.c), pitched by how often it draws a new sample.
+NOISE_WAVE = 99
 
 
 def wave_table(name):

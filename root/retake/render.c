@@ -22,6 +22,7 @@
 #define SPRITE_SHORTS 1024
 
 volatile short* g_pixel_fb;
+volatile short* g_canvas;      /* where text is drawn: the display, or g_back while a card is composed */
 unsigned short* g_back;          /* the frame being drawn; present() shows it */
 volatile short* g_tile_fb;
 volatile short* g_tilemap;
@@ -47,6 +48,7 @@ static int shown_facing[16];
 
 int display_init(void) {
   g_pixel_fb = get_pixel_fb();
+  g_canvas = g_pixel_fb;
   if ((int)g_pixel_fb == -1) {
     puts("retake: cannot map the pixel framebuffer (get_pixel_fb, trap 62, failed)\n");
     return -1;
@@ -253,6 +255,20 @@ void draw_prompt(int cx, int y, int clock) {
 }
 
 /* Copy the finished back buffer to the display in one pass. */
+/* Start composing a full-screen card off screen: the card background goes
+ * into the back buffer, and text draws there until canvas_show(). Drawing
+ * cards and menus straight to the display showed them building up. */
+void canvas_card(void) {
+  tl_copy_words((void*)g_back, (void*)(g_pak + pak_header(PAKH_CARD_OFF)), (SCREEN_W * VIEW_H) >> 1);
+  g_canvas = (volatile short*)g_back;
+}
+
+/* Show the composed card in one copy and send text back to the display. */
+void canvas_show(void) {
+  present();
+  g_canvas = g_pixel_fb;
+}
+
 void present(void) {
   tl_copy_words((void*)g_pixel_fb, (void*)g_back, (SCREEN_W * VIEW_H) >> 1);
 }

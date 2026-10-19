@@ -255,6 +255,40 @@ def backdrop(width, height, rng):
     return img
 
 
+def arch_tiles():
+    """Machinery wainscot with a hazard-striped rail, a pipe run under the
+    ceiling, and ribbed struts."""
+    out = {}
+    for var in range(2):
+        t = tile(rgb(3, 5, 7))
+        t[0, :] = rgb(1, 2, 4)
+        for y in (2, 4, 6):
+            t[y, 1:7] = rgb(1, 2, 3)              # vent slots
+        if var:
+            t[1, 6] = rgb(4, 15, 6)
+        out[f"wain_{var}"] = t
+    t = tile(rgb(2, 3, 5))
+    for x in range(T):
+        for y in range(3):
+            t[y, x] = rgb(14, 12, 2) if ((x + y) // 2) % 2 == 0 else rgb(2, 2, 2)
+    t[3, :] = rgb(1, 1, 2)
+    out["wain_top"] = t
+    t = tile(rgb(2, 4, 6))
+    t[1:6, :] = rgb(8, 9, 11)
+    t[2, :] = rgb(13, 14, 15)
+    t[5, :] = rgb(4, 5, 7)
+    t[1:6, 3] = rgb(5, 6, 8)                     # a coupling
+    out["frieze"] = t
+    t = tile(rgb(5, 7, 9))
+    t[:, 0] = rgb(1, 2, 3)
+    t[:, 7] = rgb(1, 2, 3)
+    t[:, 1] = rgb(9, 11, 13)
+    for y in range(0, T, 2):
+        t[y, 2:7] = rgb(4, 6, 8)
+    out["pilaster"] = t
+    return out
+
+
 STAMP_CHARS = {"K": "rocket", "D": "radar", "Y": "plant", "C": "console", "O": "porthole"}
 
 
@@ -272,6 +306,7 @@ def build(font):
         tiles[f"nails_{d}"] = crystals(d)
     for var in range(4):
         tiles[f"facade_{var}"] = hull(var)
+    tiles.update(arch_tiles())
     stamps = {"rocket": rocket(), "radar": radar(), "plant": alien_plant(),
               "console": console(), "porthole": porthole()}
     back = backdrop(480, 300, rng)

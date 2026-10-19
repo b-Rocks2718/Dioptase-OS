@@ -19,6 +19,9 @@ INSTRUMENTS = [
     ("tom", "triangle", 14, 2, 0, 1, 0, 0),
     ("marimba", "sine", 12, 4, 0, 2, 0, 0),
     ("theremin", "sine", 11, 0, 11, 3, 3, 4),
+    ("kick", "triangle", 15, 1, 0, 1, 0, 0),
+    ("snare", "noise", 10, 1, 0, 1, 0, 0),
+    ("hat", "noise", 5, 1, 0, 1, 0, 0),
 ]
 
 CHORDS = {
@@ -206,3 +209,56 @@ SONGS = {
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }
+
+
+# ---- Percussion ----
+# Each stage song gets a kit that follows its own bass line: bass onsets
+# alternate kick and snare (the stride "boom-chick"), and a hi-hat ticks on
+# every other row. Styles pick the parts; a song keeps at most six channels.
+KICK, SNARE, HAT = "C2", "D6", "C8"
+DRUM_STYLES = {
+    "stage1": "ks", "chase": "ksh", "stage2": "ks", "stage3": "ks", "stage4": "h",
+    "stage5": "k", "stage6": "ksh", "stage7": "h", "stage8": "ksh", "backlot": "h",
+}
+
+
+def _tokens(text):
+    return text.replace("|", " ").split()
+
+
+def drum_channels(song, style):
+    """Kick, snare and hat channels aligned to the song's bass channel (the
+    channel played by a bass instrument, else the last one)."""
+    bass = None
+    for inst, text in song["channels"]:
+        if "bass" in inst:
+            bass = text
+    if bass is None:
+        bass = song["channels"][-1][1]
+    toks = _tokens(bass)
+    n = len(toks)
+    onsets = [i for i, t in enumerate(toks) if t not in ("-", ".", "r")]
+    kick = ["-"] * n
+    snare = ["-"] * n
+    hat = ["-"] * n
+    for k, i in enumerate(onsets):
+        if k % 2 == 0 or "s" not in style:
+            kick[i] = KICK
+        else:
+            snare[i] = SNARE
+    for i in range(0, n, 2):
+        hat[i] = HAT
+    out = []
+    if "k" in style:
+        out.append(("kick", " ".join(kick)))
+    if "s" in style:
+        out.append(("snare", " ".join(snare)))
+    if "h" in style:
+        out.append(("hat", " ".join(hat)))
+    return out
+
+
+for _name, _style in DRUM_STYLES.items():
+    _song = SONGS[_name]
+    _room = 6 - len(_song["channels"])
+    _song["channels"] = _song["channels"] + drum_channels(_song, _style)[:_room]

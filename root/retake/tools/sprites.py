@@ -309,6 +309,81 @@ HERO_FRAMES = {
 }
 
 
+# ---- Extra frames, assembled from shared parts so proportions stay fixed ----
+# Head (cap, goggles pushed up, face), torsos with the scarf in two flutter
+# positions, and leg poses. Frames are bottom-aligned by frame_canvas, so a
+# shorter leg pose lowers the whole body: that is the run's bob and the
+# landing squash.
+_HEAD = HERO_FRAMES["idle0"][:8]
+_TORSO_A = HERO_FRAMES["idle0"][8:13]
+_TORSO_B = [
+    "...orrrrrro...",
+    "..oRrrkjjjjo..",
+    ".orRoojjjkjo..",
+    ".oRo..ojjjso..",
+    "......oJjJo...",
+]
+_LEGS = HERO_FRAMES["idle0"][13:]
+_LEGS_LOW = [
+    ".....oppPpo...",
+    ".....opPPPo...",
+    ".....opo.po...",
+    ".....obo.bo...",
+    "....obbo.bbo..",
+    "....ooooooooo.",
+]
+_RUN_TORSO_A = HERO_FRAMES["run0"][8:12]
+_RUN_TORSO_B = [
+    "..orrrrrrro...",
+    ".orRRkjjjjjo..",
+    "oRo.osjjjkjo..",
+    ".....oJjjjo...",
+]
+_STRIDE = HERO_FRAMES["run0"][12:18]
+_CROUCH = [
+    ".....oppPPo...",
+    "....oppoPPo...",
+    "...obbo.oPo...",
+    "...obo..obbo..",
+    "...oo...oooo..",
+]
+_PASS = [
+    ".....oppPPo...",
+    ".....oppPPo...",
+    "....oPPoopo...",
+    "...obbo.opo...",
+    "...ooo..obo...",
+    "........obbo..",
+    "........oooo..",
+]
+_SQUASH = [
+    ".....oppPPo...",
+    "....opPooPPo..",
+    "...obbo..obbo.",
+    "...oooo..oooo.",
+]
+
+
+def _swap(rows):
+    """The other leg forward: swap the near (p) and far (P) leg shades."""
+    return [r.replace("p", "#").replace("P", "p").replace("#", "P") for r in rows]
+
+
+HERO_FRAMES["idle2"] = _HEAD + _TORSO_B + _LEGS
+HERO_FRAMES["idle3"] = ["." * 14] + _HEAD + _TORSO_B + _LEGS_LOW
+HERO_FRAMES["run0"] = _HEAD + _RUN_TORSO_A + _STRIDE
+HERO_FRAMES["run1"] = _HEAD + _RUN_TORSO_A + _CROUCH
+HERO_FRAMES["run2"] = _HEAD + _RUN_TORSO_B + _PASS
+HERO_FRAMES["run3"] = _HEAD + _RUN_TORSO_B + _swap(_STRIDE)
+HERO_FRAMES["run4"] = _HEAD + _RUN_TORSO_B + _swap(_CROUCH)
+HERO_FRAMES["run5"] = _HEAD + _RUN_TORSO_A + _swap(_PASS)
+HERO_FRAMES["land"] = _HEAD + _TORSO_A + _SQUASH
+HERO_FRAMES["fall1"] = HERO_FRAMES["fall"][:9] + [
+    "..orRRkjjjjoo.",
+    ".orRojjjjkjo..",
+] + HERO_FRAMES["fall"][11:]
+
+
 def frame_canvas(rows):
     """Place an ASCII frame on a 32x32 transparent canvas, feet on FEET_Y."""
     art = pix.parse_ascii(rows, HERO_PALETTE)
@@ -324,7 +399,8 @@ def frame_canvas(rows):
     return canvas
 
 
-HERO_ORDER = ["idle0", "idle1", "run0", "run1", "run2", "jump", "fall", "clap0", "clap1", "wall", "hurt", "glide"]
+HERO_ORDER = ["idle0", "idle1", "idle2", "idle3", "run0", "run1", "run2", "run3", "run4", "run5",
+              "jump", "fall", "fall1", "land", "clap0", "clap1", "wall", "hurt", "glide"]
 
 
 def ghostify(frame, phase):

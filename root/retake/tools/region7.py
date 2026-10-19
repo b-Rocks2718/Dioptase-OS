@@ -248,6 +248,40 @@ def backdrop(width, height, rng):
     return img
 
 
+def arch_tiles():
+    """Dark wood wainscot with a pale rail, a cornice, and brick piers."""
+    out = {}
+    for var in range(2):
+        t = tile(n(3))
+        t[0, :] = n(1)
+        t[:, 0 if var == 0 else 7] = n(1)
+        t[2:6, 2:6] = n(4)
+        t[2, 2:6] = n(5)
+        out[f"wain_{var}"] = t
+    t = tile(n(3))
+    t[0, :] = n(10)
+    t[1, :] = n(6)
+    t[2, :] = n(1)
+    out["wain_top"] = t
+    t = tile(n(5))
+    t[0:2, :] = n(8)
+    t[5, :] = n(3)
+    t[6:8, :] = n(1)
+    for x in range(0, T, 2):
+        t[3, x] = n(2)                           # dentils
+    out["frieze"] = t
+    t = tile(n(4))
+    for y in range(T):
+        t[y, :] = n(4)
+        if y % 4 == 3:
+            t[y, :] = n(6)
+    t[:, 0] = n(1)
+    t[:, 1] = n(6)
+    t[:, 7] = n(1)
+    out["pilaster"] = t
+    return out
+
+
 STAMP_CHARS = {"N": "neon_glass", "A": "neon_arrow", "T": "water_tower", "H": "chimney",
                "W": "lit_window", "w": "dark_window", "B": "billboard", "L": "lamp"}
 
@@ -267,6 +301,7 @@ def build(font):
         tiles[f"nails_{d}"] = glass(d)
     for var in range(4):
         tiles[f"facade_{var}"] = wall(rng, var)
+    tiles.update(arch_tiles())
     lamp = region1.lamp_stamp()
     m = lamp != TRANSPARENT
     lamp[m] = np.array([n(int((c >> 4) & 15)) for c in lamp[m]], dtype=np.uint16)

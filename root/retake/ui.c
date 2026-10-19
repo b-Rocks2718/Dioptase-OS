@@ -71,7 +71,7 @@ int draw_text(int x, int y, char* s, int font, short* ramp) {
         src += w;
         continue;
       }
-      volatile short* row = g_pixel_fb + py * SCREEN_W;
+      volatile short* row = g_canvas + py * SCREEN_W;
       for (int gx = 0; gx < w; gx++) {
         int level = src[gx];
         int px = x + gx;
@@ -100,7 +100,7 @@ static unsigned* script_entry(int script) {
 }
 
 static void draw_card(char* text) {
-  tl_copy_words((void*)g_pixel_fb, (void*)(g_pak + pak_header(PAKH_CARD_OFF)), (SCREEN_W * VIEW_H) >> 1);
+  canvas_card();
   int lines = 1;
   for (char* p = text; *p; p++) {
     if (*p == '\n' && p[1]) lines++;
@@ -114,6 +114,7 @@ static void draw_card(char* text) {
     if (*line == '\n') line++;
     y += lh;
   }
+  canvas_show();
 }
 
 /* Whether the player asked to advance a card this frame. */

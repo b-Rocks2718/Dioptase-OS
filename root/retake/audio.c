@@ -13,7 +13,7 @@
  *
  *   1..63      play sound effect N (SFX_* in retake.h)
  *   64 + song  switch music (64 + MUSIC_NONE silences it)
- *   CMD_ALIVE  heartbeat; the child exits if it stops for 5 seconds
+ *   CMD_ALIVE  heartbeat; the child exits if it stops for 60 seconds
  *   CMD_QUIT   release the device and exit
  *
  * Synth: 8 voices (6 music channels, 2 effects). A voice is a 32-bit phase
@@ -30,7 +30,11 @@
 #define CMD_MUSIC 64
 #define CMD_ALIVE 0xFE
 #define CMD_QUIT 0xFF
-#define HEARTBEAT_TIMEOUT 500     /* control ticks (5 s) without a heartbeat */
+/* Control ticks (60 s of audio) without a heartbeat before the child gives
+ * up. It only exists to silence an orphaned synthesizer after a crash. It
+ * used to be 5 s, but with wall-clock playback a slow emulator can spend that
+ * long loading a room, and the music then stayed off for the session. */
+#define HEARTBEAT_TIMEOUT 6000
 #define TICK_SAMPLES 250
 #define TARGET_BYTES 3000         /* ~60 ms queued in the device ring */
 #define VOICES 8
@@ -146,6 +150,7 @@ static void voice_set_level(struct Voice* v, int level) {
 
 static void voice_note(struct Voice* v, struct Inst* in, int note) {
   v->wave = in->wave;
+  if (v->wave == WAVE_NOISE && v->lfsr == 0) v->lfsr = 0xACE1u;   /* music voices start unseeded */
   v->peak = in->peak;
   v->decay = in->decay;
   v->sustain = in->sustain;
