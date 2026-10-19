@@ -246,7 +246,7 @@ static void update_camera(int snap) {
 /* Region 2 dresses the same behaviors as Western characters. */
 static int region2_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER2_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER2_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER2_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER2_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER2_0 + (e->state > 0 ? 1 : 0);
@@ -259,7 +259,7 @@ static int region2_image(struct Ent* e) {
 /* Region 3 dresses them as the pirate picture's cast. */
 static int region3_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER3_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER3_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER3_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER3_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER3_0 + (e->state > 0 ? 1 : 0);
@@ -286,7 +286,7 @@ static int region4_image(struct Ent* e) {
 /* Region 5: the haunted manor. */
 static int region5_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER5_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER5_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER5_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER5_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER5_0 + (e->state > 0 ? 1 : 0);
@@ -299,7 +299,7 @@ static int region5_image(struct Ent* e) {
 /* Region 6: the moon serial. */
 static int region6_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER6_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER6_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER6_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER6_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER6_0 + (e->state > 0 ? 1 : 0);
@@ -460,7 +460,7 @@ static void draw_rewind_marker(void) {
 /* Region 7: the noir city. Straight-flying shots (b 2) are bullets. */
 static int region7_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER7_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER7_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER7_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER7_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER7_0 + (e->state > 0 ? 1 : 0);
@@ -473,7 +473,7 @@ static int region7_image(struct Ent* e) {
 /* Region 8: the revue. */
 static int region8_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER8_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER8_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER8_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER8_0 + ((frame_clock >> 3) & 1);
     case ENT_THROWER: return IMG_THROWER8_0 + (e->state > 0 ? 1 : 0);

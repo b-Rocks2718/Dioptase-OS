@@ -295,40 +295,6 @@ PAL2 = {format(i, "x"): _amber(i) for i in range(16)}
 PAL2["R"] = pix.rgb(15, 3, 2)
 
 ART2 = {
-    "walker2": [   # a masked bandit
-        ["..22222222..",
-         ".2777777772.",
-         "222222222222",
-         "...2cccc2...",
-         "...2c2c22...",
-         "...233332...",
-         "....2332....",
-         "..22555522..",
-         ".2255e55522.",
-         ".2555e5552d.",
-         ".2525995252d",
-         "..22999922..",
-         "...255552...",
-         "...252252...",
-         "..222..222..",
-         "..222..222.."],
-        ["..22222222..",
-         ".2777777772.",
-         "222222222222",
-         "...2cccc2...",
-         "...2c2c22...",
-         "...233332...",
-         "....2332....",
-         "..22555522..",
-         ".2255e5552d.",
-         ".2555e555d..",
-         ".2525995252.",
-         "..22999922..",
-         "...255552...",
-         "...25..52...",
-         "..222..222..",
-         ".222....222."],
-    ],
     "hopper2": [   # a jackrabbit
         ["...2.2......",
          "...2.2......",
@@ -368,40 +334,6 @@ ART2 = {
          "222.233332.222",
          "22...2332...22",
          "......22......"],
-    ],
-    "thrower2": [  # a prospector with dynamite
-        ["...777777...",
-         "..77777777..",
-         ".7777777777.",
-         "...2cccc2...",
-         "...2c2c22...",
-         "..2eeeeee2..",
-         "...2eeee2...",
-         "..2666666R..",
-         ".266666662R.",
-         ".26626662...",
-         ".26626662...",
-         "..26666662..",
-         "...266662...",
-         "...262262...",
-         "..222..222..",
-         "..222..222.."],
-        ["...777777.R.",
-         "..77777777R.",
-         ".7777777777.",
-         "...2cccc2...",
-         "...2c2c22...",
-         "..2eeeeee2..",
-         "...2eeee2...",
-         "..26666662..",
-         ".266666662..",
-         ".26626662...",
-         ".26626662...",
-         "..26666662..",
-         "...266662...",
-         "...262262...",
-         "..222..222..",
-         "..222..222.."],
     ],
     "charger2": [  # a longhorn steer
         ["e................e",
@@ -457,8 +389,13 @@ ORDER2 = ["walker2", "hopper2", "flyer2", "thrower2", "charger2", "shot2", "cart
 
 
 def build2():
+    import cast
+    drawn = cast.stage_humanoids(2)
     out = []
     for name in ORDER2:
+        if name in ("walker2", "thrower2"):
+            out.append((name, drawn[name[:-1]]))
+            continue
         frames = [pix.parse_ascii(rows, PAL2) for rows in ART2[name]]
         shape = frames[0].shape
         for f in frames:
@@ -480,40 +417,6 @@ PAL3 = {format(i, "x"): _blue(i) for i in range(16)}
 PAL3["R"] = pix.rgb(15, 3, 2)
 
 ART3 = {
-    "walker3": [   # a skeleton pirate with a cutlass
-        ["...222222...",
-         "..2r2222r2..".replace("r", "2"),
-         "...2eeee2...",
-         "...2e2e22...",
-         "...2eeee2...",
-         "....2ee2....",
-         "..2.2222.2..",
-         ".2e2eeee2e2c",
-         ".2e.2ee2.2c.",
-         "....2ee2.c..",
-         "....2ee2....",
-         "...222222...",
-         "...2e22e2...",
-         "...2e22e2...",
-         "..2e2..2e2..",
-         "..22....22.."],
-        ["...222222...",
-         "..22222222..",
-         "...2eeee2...",
-         "...2e2e22...",
-         "...2eeee2...",
-         "....2ee2....",
-         "..2.2222.2.c",
-         ".2e2eeee2ec.",
-         ".2e.2ee2.c..",
-         "....2ee2....",
-         "....2ee2....",
-         "...222222...",
-         "...2e22e2...",
-         "...2e2.2e2..",
-         "..2e2...2e2.",
-         "..22.....22."],
-    ],
     "hopper3": [   # a flying fish leaping from the deck
         ["............",
          "............",
@@ -553,40 +456,6 @@ ART3 = {
          ".22........22.",
          "2............2",
          ".............."],
-    ],
-    "thrower3": [  # a buccaneer with a bomb
-        ["..22222222..",
-         ".2222222222.",
-         "..2RRRRRR2..",
-         "...2cccc2...",
-         "...22c2c2...",
-         "...2cccc2...",
-         "....2222....",
-         "..27777772..",
-         ".2777777772.",
-         ".27727777722",
-         ".2772777772.",
-         "..22222222..",
-         "...277772...",
-         "...272272...",
-         "..222..222..",
-         "..222..222.."],
-        ["..22222222..",
-         ".2222222222.",
-         "..2RRRRRR2..",
-         "...2cccc2.22",
-         "...22c2c2222",
-         "...2cccc2.22",
-         "....2222.2..",
-         "..27777772..",
-         ".277777772..",
-         ".2772777772.",
-         ".2772777772.",
-         "..22222222..",
-         "...277772...",
-         "...272272...",
-         "..222..222..",
-         "..222..222.."],
     ],
     "charger3": [  # a runaway barrel
         ["....222222......",
@@ -642,8 +511,13 @@ ORDER3 = ["walker3", "hopper3", "flyer3", "thrower3", "charger3", "shot3", "raft
 
 
 def build3():
+    import cast
+    drawn = cast.stage_humanoids(3)
     out = []
     for name in ORDER3:
+        if name in ("walker3", "thrower3"):
+            out.append((name, drawn[name[:-1]]))
+            continue
         frames = [pix.parse_ascii(rows, PAL3) for rows in ART3[name]]
         shape = frames[0].shape
         for f in frames:
@@ -859,40 +733,6 @@ def _violet(level):
 PAL5 = {format(i, "x"): _violet(i) for i in range(16)}
 
 ART5 = {
-    "walker5": [   # a shambling ghoul
-        ["....2222....",
-         "...2aaaa2...",
-         "...2a2a22...",
-         "...2aaaa2...",
-         "....2aa2....",
-         "..22444422..",
-         ".24444444a2.",
-         "2a24444442a2",
-         "....4444..2.",
-         "....4444....",
-         "...244442...",
-         "...24..42...",
-         "...24..42...",
-         "..224..422..",
-         "..22....22..",
-         "............"],
-        ["....2222....",
-         "...2aaaa2...",
-         "...2a2a22...",
-         "...2aaaa2...",
-         "....2aa2....",
-         "..22444422..",
-         ".2a44444442.",
-         ".2a24444422a",
-         "..2.4444....",
-         "....4444....",
-         "...244442...",
-         "...24..42...",
-         "..224...42..",
-         ".224.....42.",
-         ".22......22.",
-         "............"],
-    ],
     "hopper5": [   # a spider
         ["............",
          "............",
@@ -925,40 +765,6 @@ ART5 = {
          ".....2..2.....",
          ".............."],
         [".............."],
-    ],
-    "thrower5": [  # a ghost with candles
-        ["...eeeeee...",
-         "..eeeeeeee..",
-         ".eee2ee2eee.",
-         ".eee2ee2eee.",
-         ".eeeeeeeeee.",
-         ".eeee22eeee.",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eee.eeee.eee",
-         "ee...ee...ee",
-         "e....e.....e",
-         "............"],
-        ["...eeeeee..f",
-         "..eeeeeeee.f",
-         ".eee2ee2eeee",
-         ".eee2ee2eee.",
-         ".eeeeeeeeee.",
-         ".eeee22eeee.",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eeeeeeeeeeee",
-         "eee.eeee.eee",
-         "ee...ee...ee",
-         "e....e.....e",
-         "............"],
     ],
     "charger5": [  # a coffin on casters
         ["...2222222222222..",
@@ -1020,8 +826,13 @@ ORDER5 = ["walker5", "hopper5", "flyer5", "thrower5", "charger5", "shot5", "blad
 
 
 def build5():
+    import cast
+    drawn = cast.stage_humanoids(5)
     out = []
     for name in ORDER5:
+        if name in ("walker5", "thrower5"):
+            out.append((name, drawn[name[:-1]]))
+            continue
         frames = [pix.parse_ascii(rows, PAL5) for rows in ART5[name]]
         shape = frames[0].shape
         for f in frames:

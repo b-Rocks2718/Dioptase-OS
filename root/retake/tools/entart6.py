@@ -4,7 +4,8 @@ Drawn with shape helpers rather than ASCII grids: tin robots, moon frogs,
 flying saucers (main.c hangs them from visible wires), ray-gun Martians,
 rocket sleds, ray blasts, the hover pad, and the boss. Like every enemy
 sheet, the art faces left; the renderer mirrors it for rightward motion.
-Sizes match the Stage 5 sheet so hitbox alignment stays familiar.
+Sizes match the Stage 5 sheet so hitbox alignment stays familiar. The
+robots and Martians are dressed on cast.py's hand-drawn walk.
 """
 import numpy as np
 
@@ -48,22 +49,6 @@ def done(img):
     return pix.outline(img, OUT)
 
 
-def robot(step):
-    """A tin robot with a cyan visor, 12x16."""
-    s = canvas(12, 16)
-    rect(s, 3, 1, 9, 6, SILVER)
-    rect(s, 3, 1, 4, 6, WHITE)
-    rect(s, 3, 3, 7, 4, CYAN)
-    rect(s, 2, 6, 10, 12, STEEL)
-    rect(s, 2, 6, 3, 12, SILVER)
-    rect(s, 5, 8, 7, 10, RED)
-    rect(s, 1, 7, 2, 11, SILVER)
-    legs = ((3, 5), (7, 9)) if step == 0 else ((2, 4), (8, 10))
-    for x0, x1 in legs:
-        rect(s, x0, 12, x1, 15, DARK)
-    return done(s)
-
-
 def frog(leap):
     """A lime moon frog with eye stalks, 12x10."""
     s = canvas(12, 10)
@@ -91,25 +76,6 @@ def saucer(blink):
     rect(s, 2, 5, 12, 6, STEEL)
     for i, x in enumerate((3, 6, 9, 11)):
         s[5, x] = YELLOW if (i + blink) % 2 else RED
-    return done(s)
-
-
-def martian(firing):
-    """A green Martian in a fishbowl helmet with a ray gun, 12x16."""
-    s = canvas(12, 16)
-    ellipse(s, 6, 4, 4.5, 3.5, CYAN)
-    ellipse(s, 6, 4.5, 3, 2.5, GREEN)
-    s[4, 4] = OUT
-    s[4, 7] = OUT
-    rect(s, 3, 8, 9, 13, MAGENTA)
-    rect(s, 3, 8, 4, 13, rgb(15, 7, 13))
-    rect(s, 4, 13, 6, 15, PURPLE)
-    rect(s, 7, 13, 9, 15, PURPLE)
-    if firing:
-        rect(s, 1, 8, 4, 10, YELLOW)
-        s[8, 1] = WHITE
-    else:
-        rect(s, 2, 10, 4, 12, YELLOW)
     return done(s)
 
 
@@ -195,11 +161,13 @@ def emperor(pose):
 
 
 def build6():
+    import cast
+    humans = cast.stage_humanoids(6)
     return [
-        ("walker6", [robot(0), robot(1)]),
+        ("walker6", humans["walker"]),
         ("hopper6", [frog(0), frog(1)]),
         ("flyer6", [saucer(0), saucer(1)]),
-        ("thrower6", [martian(0), martian(1)]),
+        ("thrower6", humans["thrower"]),
         ("charger6", [sled(0), sled(1)]),
         ("shot6", [ray_shot()]),
         ("pad6", [hover_pad()]),

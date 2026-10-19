@@ -3,7 +3,8 @@
 Noir black and white with neon touches: trench-coated thugs, alley cats,
 blowing newspapers, bottle-throwing hoods, a bruiser who charges, thrown
 bottles, tommy-gun bullets, and the boss. The art faces left, like every
-enemy sheet. Sizes follow the Stage 5 and 6 sheets.
+enemy sheet. Sizes follow the Stage 5 and 6 sheets. The hoods are
+dressed on cast.py's hand-drawn walk.
 """
 import numpy as np
 
@@ -39,28 +40,6 @@ def ellipse(img, cx, cy, rx, ry, c):
 
 def done(img):
     return pix.outline(img, OUT)
-
-
-def hood(step, throwing=False):
-    """A thug in a fedora and trench coat, 12x16."""
-    s = canvas(12, 16)
-    rect(s, 2, 1, 10, 3, n(3))          # hat brim and crown
-    rect(s, 3, 0, 9, 2, n(4))
-    rect(s, 3, 3, 8, 6, n(12))          # face, half in shadow
-    rect(s, 6, 3, 8, 6, n(7))
-    s[4, 4] = OUT
-    rect(s, 2, 6, 10, 12, n(6))         # the trench coat
-    rect(s, 2, 6, 4, 12, n(9))
-    rect(s, 5, 6, 7, 9, n(13))          # shirt and tie
-    s[7, 6] = PINK
-    s[8, 6] = PINK
-    legs = ((3, 5), (7, 9)) if step == 0 else ((2, 4), (8, 10))
-    for x0, x1 in legs:
-        rect(s, x0, 12, x1, 15, n(3))
-    if throwing:
-        rect(s, 0, 4, 3, 7, n(6))
-        rect(s, 0, 2, 2, 5, rgb(4, 9, 6))     # a bottle held high
-    return done(s)
 
 
 def cat(leap):
@@ -163,11 +142,13 @@ def fixer(pose):
 
 
 def build7():
+    import cast
+    humans = cast.stage_humanoids(7)
     return [
-        ("walker7", [hood(0), hood(1)]),
+        ("walker7", humans["walker"]),
         ("hopper7", [cat(0), cat(1)]),
         ("flyer7", [newspaper(0), newspaper(1)]),
-        ("thrower7", [hood(0), hood(1, throwing=True)]),
+        ("thrower7", humans["thrower"]),
         ("charger7", [bruiser(0), bruiser(1)]),
         ("shot7", [bottle()]),
         ("bullet7", [bullet()]),

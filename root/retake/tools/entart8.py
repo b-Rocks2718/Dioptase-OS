@@ -3,6 +3,7 @@
 Chorus dancers in top hats, a hopping tap shoe, paper stars hung on wires,
 trumpeters who blow notes, a rolling bass drum, the notes themselves, the
 paper-moon platform, and the boss. Art faces left, like every enemy sheet.
+The dancers and trumpeters are dressed on cast.py's hand-drawn walk.
 """
 import numpy as np
 
@@ -36,28 +37,6 @@ def done(img):
     return pix.outline(img, OUT)
 
 
-def dancer(kick):
-    """A chorus dancer in top hat and tails, 12x16; frame 1 kicks."""
-    s = canvas(12, 16)
-    rect(s, 4, 0, 8, 3, BLACK)
-    rect(s, 3, 3, 9, 4, BLACK)
-    rect(s, 4, 4, 8, 7, SKIN)
-    s[5, 4] = OUT
-    rect(s, 3, 7, 9, 11, BLACK)
-    rect(s, 5, 7, 7, 10, WHITE)
-    s[8, 6] = RED
-    rect(s, 9, 7, 11, 9, BLACK)
-    s[6, 10] = GOLD                     # the cane's knob
-    rect(s, 10, 7, 11, 13, GOLD)
-    if kick:
-        rect(s, 4, 11, 6, 15, BLACK)
-        rect(s, 0, 10, 4, 12, BLACK)
-    else:
-        rect(s, 3, 11, 5, 15, BLACK)
-        rect(s, 7, 11, 9, 15, BLACK)
-    return done(s)
-
-
 def tap_shoe(leap):
     """A black tap shoe with a white spat, hopping, 12x10."""
     s = canvas(12, 10)
@@ -80,21 +59,6 @@ def paper_star(spin):
         for x, y in ((7, 0), (7, 7), (2, 4), (12, 4)):
             s[y, x] = GOLD
     s[3, 6] = rgb(15, 15, 11)
-    return done(s)
-
-
-def trumpeter(blowing):
-    """A bandsman with a gold trumpet, 12x16."""
-    s = canvas(12, 16)
-    rect(s, 3, 0, 9, 3, RED)            # a shako
-    s[0, 6] = GOLD
-    rect(s, 4, 3, 8, 7, SKIN)
-    rect(s, 3, 7, 9, 12, RED)
-    rect(s, 3, 9, 9, 10, GOLD)
-    rect(s, 3, 12, 5, 15, BLACK)
-    rect(s, 7, 12, 9, 15, BLACK)
-    rect(s, 0, 5, 4, 6, GOLD)
-    rect(s, 0, 4 if blowing else 5, 2, 7 if blowing else 6, GOLD)
     return done(s)
 
 
@@ -165,11 +129,13 @@ def maestro(pose):
 
 
 def build8():
+    import cast
+    humans = cast.stage_humanoids(8)
     return [
-        ("walker8", [dancer(0), dancer(1)]),
+        ("walker8", humans["walker"]),
         ("hopper8", [tap_shoe(0), tap_shoe(1)]),
         ("flyer8", [paper_star(0), paper_star(1)]),
-        ("thrower8", [trumpeter(0), trumpeter(1)]),
+        ("thrower8", humans["thrower"]),
         ("charger8", [bass_drum(0), bass_drum(1)]),
         ("shot8", [note()]),
         ("moon8", [moon_pad()]),
