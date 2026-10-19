@@ -199,6 +199,37 @@ static void test_crumble_timing(void) {
          "a clear block reforms collision immediately, without an unsafe air tick");
 }
 
+/* Each late boss, and the Everlasting Camera, must fall to claps landed outside its guarded states. Ruby
+ * is held beside it (facing it, health restored every tick, so its attacks
+ * cannot end the run) and claps every 20 ticks; this proves the boss is
+ * hittable and its defeat fires, not that a player will win. */
+static void test_late_bosses_fall(void) {
+  int rooms[6] = {ROOM_S4_ARENA, ROOM_S5_ARENA, ROOM_S6_THRONE, ROOM_S7_PENTHOUSE, ROOM_S8_FINALE, ROOM_TOWER_BOOTH};
+  for (int i = 0; i < 6; i++) {
+    game_new(rooms[i]);
+    struct Ent* boss = entity(ENT_BOSS);
+    expect(boss != 0, "each late boss arena contains its boss");
+    if (!boss) continue;
+    int fell = 0;
+    for (int t = 0; t < 6000 && !fell; t++) {
+      g_health = g_prog.max_health;
+      if (boss->alive) {
+        int bx = boss->x / Q8;
+        int left = bx - 10 >= 16;
+        g_hero.x = (left ? bx - 10 : bx + boss->w / Q8 + 2) * Q8;
+        g_hero.y = boss->y + boss->h - PLAYER_H * Q8;
+        g_hero.vx = 0;
+        g_hero.vy = 0;
+        g_hero.facing = left ? 1 : -1;
+      }
+      int clap = (t % 20) == 0 ? IN_ATTACK : 0;
+      game_tick(clap, clap);
+      if (g_events & GE_BOSS_DOWN) fell = 1;
+    }
+    expect(fell, "a late boss can be clapped down outside its guarded states");
+  }
+}
+
 /* Run adversarial contacts before broader room solution replays. */
 int main(void) {
   if (sim_open("../retake.pak")) return 1;
@@ -209,6 +240,7 @@ int main(void) {
   test_hazard_door();
   test_spring_impulse();
   test_room_ticks();
+  test_late_bosses_fall();
   test_snapshot_replay();
   test_edit_snapshot();
   test_rewind_support();

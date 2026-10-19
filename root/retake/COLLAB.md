@@ -295,8 +295,15 @@ including pieces Astra would have owned; these need its eyes most.
     a full-height jump clears the reel's perch and reaches the shaft
     unhurt. Both shaft lifts and girders pass with swept timings
     (/tmp/opus-tools/shaft.py), and the rail yard reaches the arena.
-  - still unverified: the tower climb (a plate and gate that need a take)
-    and every boss fight's winnability
+  - tower climb: blocked at the gate without a take; with a take on the
+    mark, it reaches the booth hatch at full health (guided search)
+  - new native regression test_late_bosses_fall (tests/test_game.c):
+    Gargantua, the Monster, the Robot Emperor, the Fixer, the Maestro and
+    the Everlasting Camera each fall to claps landed outside their
+    guarded states (Ruby held beside them, health restored each tick)
+  - still unverified: winnability of bosses 1-3 (the Horse needs its brake
+    plate and the Kraken is hit through its tentacles, so the simple
+    clap test does not apply); human-like difficulty of every fight
 
 ## Handoff: state of the game (23:35 CDT)
 
