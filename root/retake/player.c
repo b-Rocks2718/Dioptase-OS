@@ -19,7 +19,8 @@
 #define COYOTE_TICKS 6
 #define BUFFER_TICKS 5
 #define HOLD_TICKS 12
-#define WALL_LOCK_TICKS 10
+#define WALL_LOCK_TICKS 6
+#define WALL_JUMP_REACH 3
 #define DROP_TICKS 12
 #define CLAP_TICKS 12
 #define CLAP_ACTIVE_MIN 9
@@ -171,6 +172,20 @@ static int wall_contact(struct Player* p, struct Room* r) {
   return 0;
 }
 
+/* Jump input may reach a nearby wall without granting support or a slide.
+ * Check nearest first and favor facing on ties. The kick lock prevents a
+ * second press from reusing the same wall before Ruby has separated. */
+static int jump_wall(struct Player* p, struct Room* r) {
+  if (p->wall_dir) return p->wall_dir;
+  if (p->wall_lock) return 0;
+  for (int distance = 1; distance <= WALL_JUMP_REACH; distance++) {
+    int reach = distance * Q8 + 1;
+    if (solid_body(r, p->x + p->facing * reach, p->y)) return p->facing;
+    if (solid_body(r, p->x - p->facing * reach, p->y)) return -p->facing;
+  }
+  return 0;
+}
+
 /* Revalidate a previous attachment against the platform's old pose, then
  * apply its delta through ordinary tile sweeps. An obstructed carry drops
  * the attachment, while the immutable projection continues through scenery.
@@ -237,13 +252,14 @@ static int can_drop(struct Player* p, struct Room* r) {
 /* Consume one buffered jump using ground grace, a wall, then the wire stunt.
  * A wall kick briefly locks horizontal input so holding into the wall cannot
  * immediately cancel its separating impulse. */
-static int try_jump(struct Player* p) {
+static int try_jump(struct Player* p, struct Room* r) {
   if (!p->jump_buffer) return 0;
+  int wall = jump_wall(p, r);
   if (p->on_ground || p->coyote) {
     p->events |= EV_JUMP;
-  } else if (p->wall_dir) {
-    p->vx = p->wall_dir < 0 ? WALL_JUMP_SPEED : -WALL_JUMP_SPEED;
-    p->facing = -p->wall_dir;
+  } else if (wall) {
+    p->vx = wall < 0 ? WALL_JUMP_SPEED : -WALL_JUMP_SPEED;
+    p->facing = -wall;
     p->wall_lock = WALL_LOCK_TICKS;
     p->events |= EV_WALLJUMP;
   } else if ((p->abilities & AB_WIRE) && p->air_jump_left) {
@@ -372,6 +388,10 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
     if (direction) p->facing = direction;
     int acceleration = p->on_ground ? RUN_ACCEL : AIR_ACCEL;
     if (!direction) acceleration = STOP_ACCEL;
+    /* An intentional reversal brakes harder than a start from rest. This
+     * reduces ledge overshoot without changing top speed or vertical jump arc. */
+    else if ((direction < 0 && p->vx > 0) || (direction > 0 && p->vx < 0))
+      acceleration += acceleration;
     p->vx = approach(p->vx, direction * RUN_SPEED, acceleration);
   }
   if ((pressed & IN_ATTACK) && !p->attack_cooldown) {
@@ -380,7 +400,7 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
     p->attack_dir = (held & IN_UP) ? 2 : ((held & IN_DOWN) ? 3 : 1);
     p->events |= EV_CLAP;
   }
-  int jumped = try_jump(p);
+  int jumped = try_jump(p, r);
   if (!(held & IN_JUMP) && p->jump_cut) {
     if (p->vy < -JUMP_CUT_SPEED) p->vy = -JUMP_CUT_SPEED;
     p->jump_hold = 0;
@@ -424,10 +444,13 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
     p->air_jump_left = 1;
     p->gliding = 0;
     if (!was_grounded) p->events |= EV_LAND;
-    try_jump(p);
+    try_jump(p, r);
   } else if (p->coyote) {
     p->coyote--;
   }
+  /* As with landing, a buffered wall jump belongs to the contact tick.
+   * Consume it before the buffer expires; movement resumes next tick. */
+  if (!p->on_ground && !jumped && p->jump_buffer) try_jump(p, r);
   if (p->jump_buffer) p->jump_buffer--;
   if (p->jump_hold) p->jump_hold--;
   if (p->gliding && !was_gliding) p->events |= EV_GLIDE;

@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "pack_sha256": "e5bb51f555b280de4488c02783410c4ce6e6c9f8f635259bac89d6d511c21d05",
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
   "start": {
     "room": "s1_clock_base",
     "x": 0,
@@ -179,20 +179,12 @@
       "label": "s1_clock_climb [48, 284, 52, 284]",
       "actions": [
         [
-          4,
-          0
-        ],
-        [
-          12,
-          17
-        ],
-        [
-          20,
+          6,
           1
         ],
         [
-          1,
-          0
+          34,
+          17
         ]
       ],
       "expect": {

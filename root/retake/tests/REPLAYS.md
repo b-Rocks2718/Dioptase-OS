@@ -18,10 +18,10 @@ restoring and comparing the entire result after a repeated simulation.
 
 The opening witness starts at the actual Stage 1 spawn and returns to the
 Backlot with the stunt wire earned from Gearhart. All 42 checkpoints pass over
-2845 ticks without damage. This is a critical-path witness, **not a first-play
+2798 ticks without damage. This is a critical-path witness, **not a first-play
 duration estimate or a full-campaign proof**. Optional collectibles and
 Stages 2 onward remain unverified. See routes/stage1-opening-report.md.
-The separate stage1-clock-local.json checks 346 ticks from explicit roof-entry
+The separate stage1-clock-local.json checks 349 ticks from explicit roof-entry
 coordinates to the clock gate's plate; it remains only a local fixture.
 
 Every witness contains sequential `[tick_count, held_input_mask]` pairs.

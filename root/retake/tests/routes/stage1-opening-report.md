@@ -2,7 +2,7 @@
 
 The committed input-only route starts at the ordinary Stage 1 spawn and
 returns to the Backlot after defeating Sergeant Gearhart and collecting the
-stunt wire. It runs 2845 simulation ticks, checks 42 checkpoints, and finishes
+stunt wire. It runs 2798 simulation ticks, checks 42 checkpoints, and finishes
 with all five health frames. Enemies, hazards, takes, gates, boss combat,
 pickups and transitions use the shipping rules throughout; no debug teleport
 or granted ability occurs. This is a critical-path completion witness, not a
@@ -20,3 +20,15 @@ Luna originally contributed the 725-to-999-tick scaffold/Double continuation
 the solver, verified the remaining traversal and combat, and checked the final
 route against the rebuilt pack. Native ASan/UBSan suites and bcc/basm build pass.
 Stages 2 onward and optional side routes still require continuous witnesses.
+
+## Movement polish revalidation
+
+After the human requested easier wall jumps and more responsive turning,
+Astra added a three-pixel wall-jump reach allowance, shortened the separating
+input lock to six ticks, and doubled braking against the held direction.
+The former 2845-tick witness passed on the old controller, then diverged with
+the new response. Twelve action segments were re-authored against exactly the
+same 42 checkpoint predicates and unchanged room geometry; recordings remain
+explicit inputs. The new route takes 2798 ticks and again finishes with five
+health, Gearhart defeated and the earned wire carried back to the hub.
+The separate local clock fixture now takes 349 ticks, with its same predicates.

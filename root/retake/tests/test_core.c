@@ -201,6 +201,78 @@ static void test_wall_and_abilities(void) {
   expect(p.gliding && p.vy <= Q8 && (p.events & EV_GLIDE), "umbrella glide slows descent and emits its start event");
 }
 
+/* Deliberate reversal must brake before a tile-wide ledge is lost, while
+ * a last-frame buffered jump must catch a newly reached wall immediately. */
+static void test_direction_and_wall_buffer(void) {
+  struct Player p;
+  make_room();
+  player_init(&p, 80, 148, 0);
+  p.vx = 512;
+  steps(&p, 4, IN_LEFT);
+  expect(p.vx < 0 && p.x < 83 * Q8,
+    "ground reversal turns within four ticks and three pixels of drift");
+  player_init(&p, 80, 60, 0);
+  p.vx = -512;
+  steps(&p, 5, IN_RIGHT);
+  expect(p.vx > 0 && p.x > 76 * Q8,
+    "air reversal turns within five ticks and four pixels of drift");
+
+  for (int y = 1; y < 20; y++) tiles[rows[y] + 20] = COL_SOLID;
+  player_init(&p, 147, 60, 0);
+  p.vx = 512;
+  p.jump_buffer = 1;
+  player_step(&p, &room, IN_RIGHT | IN_JUMP, 0);
+  expect((p.events & EV_WALLJUMP) && p.vx < 0 && p.vy < 0 && !p.jump_buffer,
+    "the last buffered frame launches when the wall comes within jump reach");
+  steps(&p, 3, IN_RIGHT | IN_JUMP);
+  expect(p.vx < 0, "stronger reversal braking does not cancel a protected wall kick");
+
+  player_init(&p, 146, 60, 0);
+  p.vx = 512;
+  p.jump_buffer = 1;
+  player_step(&p, &room, IN_RIGHT | IN_JUMP, 0);
+  player_step(&p, &room, IN_RIGHT | IN_JUMP, 0);
+  expect(!(p.events & EV_WALLJUMP) && !p.jump_buffer,
+    "a buffer that expires before reaching the wall cannot create a later jump");
+}
+
+/* A small reach margin forgives early/late presses but never supplies a
+ * phantom slide, unlimited kicks, or a jump from across a wider gap. */
+static void test_wall_forgiveness(void) {
+  struct Player p;
+  make_room();
+  for (int y = 1; y < 20; y++) tiles[rows[y] + 20] = COL_SOLID;
+  player_init(&p, 149, 100, 0);
+  p.vy = 500;
+  player_step(&p, &room, 0, 0);
+  expect(!p.wall_dir && p.vy > 500 && p.pose == POSE_FALL,
+    "jump reach alone does not slow a fall or show a wall-slide pose");
+  player_step(&p, &room, IN_JUMP, IN_JUMP);
+  expect((p.events & EV_WALLJUMP) && p.vx < 0,
+    "jumping three pixels from a right wall succeeds without directional input");
+  int returned = 0;
+  for (int i = 0; i < 32; i++) {
+    player_step(&p, &room, IN_RIGHT | IN_JUMP, 0);
+    if (p.wall_dir == 1) { returned = 1; break; }
+  }
+  expect(returned && p.y < 90 * Q8,
+    "holding toward the wall regains it above launch height within a half-second");
+  player_step(&p, &room, IN_RIGHT, 0);
+  player_step(&p, &room, IN_RIGHT | IN_JUMP, IN_JUMP);
+  expect((p.events & EV_WALLJUMP) && p.vy < 0,
+    "a fresh press after returning to the wall chains another climbing kick");
+
+  player_init(&p, 171, 60, 0);
+  player_step(&p, &room, IN_JUMP, IN_JUMP);
+  expect((p.events & EV_WALLJUMP) && p.vx > 0,
+    "the same three-pixel allowance works on the left wall");
+  player_step(&p, &room, IN_JUMP, IN_JUMP);
+  expect(!(p.events & EV_WALLJUMP), "repeated presses cannot reuse a departing wall during the kick lock");
+  player_init(&p, 148, 60, 0);
+  player_step(&p, &room, IN_JUMP, IN_JUMP);
+  expect(!(p.events & EV_WALLJUMP), "a four-pixel gap is outside the bounded wall-jump margin");
+}
+
 /* Initialize a synthetic take-sized platform with a stable non-index id. */
 static void set_platform(int x, int y, int width) {
   room.platform_count = 1;
@@ -429,14 +501,16 @@ static void emit_unsigned(unsigned value) {
 
 /* Run the same assertions and trace in native sanitizers and on Dioptase. */
 int main(void) {
-  test_forced_launch();
   failures = 0;
+  test_forced_launch();
   test_ground_and_walls();
   test_jump_height();
   test_jump_grace();
   test_oneway();
   test_corners();
   test_wall_and_abilities();
+  test_direction_and_wall_buffer();
+  test_wall_forgiveness();
   test_platforms();
   test_combat_and_placement();
   test_recordings();
