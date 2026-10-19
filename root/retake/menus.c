@@ -24,6 +24,7 @@ static void card_background(void) {
 static void menu_frame(unsigned* beat) {
   unsigned now = get_vga_frame_counter();
   while (get_vga_frame_counter() == now) {
+    sleep(1);          /* idle the core until the next frame instead of spinning */
   }
   if (now - *beat >= 30) {
     audio_heartbeat();

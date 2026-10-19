@@ -316,12 +316,14 @@ static void show_cursor_now(void){
 
 // Toggle the software cursor after its configured blink interval elapses.
 static void blink_cursor(void){
-  unsigned now = get_vga_frame_counter();
-
   if (!cursor_visible){
     erase_cursor();
     return;
   }
+
+  // Read the clock only when the cursor can blink: a full-screen program
+  // hides it, and this loop runs about a hundred times a second meanwhile.
+  unsigned now = get_vga_frame_counter();
 
   if (now - last_cursor_blink < CURSOR_BLINK_FRAMES){
     return;

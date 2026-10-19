@@ -898,6 +898,7 @@ static int title_screen(int have_save) {
     sprite_show(SLOT_HERO, SHEET_HERO, FR_IDLE0 + ((frame_clock >> 4) & 3), 1, 64, 116);
     unsigned now = get_vga_frame_counter();
     while (get_vga_frame_counter() == now) {
+      sleep(1);        /* idle the core until the next frame instead of spinning */
     }
     frame_clock++;
     input_poll();
@@ -955,7 +956,13 @@ static void play(void) {
   int fps_frames = 0;
   while (1) {
     unsigned now = get_vga_frame_counter();
-    while (now == last) now = get_vga_frame_counter();
+    /* Sleep a jiffy (about 1 ms) between looks at the frame counter rather
+     * than spinning on it: the idle core is then free for the synthesizer
+     * and the terminal, and the emulator can park it. */
+    while (now == last) {
+      sleep(1);
+      now = get_vga_frame_counter();
+    }
     int ticks = (int)(now - last);
     if (ticks > 4) ticks = 4;
     last = now;
