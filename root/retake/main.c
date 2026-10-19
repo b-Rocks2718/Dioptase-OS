@@ -159,6 +159,10 @@ static int region6_image(struct Ent* e) {
 }
 
 
+/* Back-buffer row offsets (y * SCREEN_W): the CPU has no multiplier, so
+ * per-pixel effects look rows up instead of calling the software multiply. */
+static int scr_row[240];
+
 /* Fill a rectangle of the back buffer, clipped to the play area. */
 static void fill_rect(int x, int y, int w, int h, int color) {
   int x1 = x + w;
@@ -168,7 +172,7 @@ static void fill_rect(int x, int y, int w, int h, int color) {
   if (x1 > SCREEN_W) x1 = SCREEN_W;
   if (y1 > VIEW_H) y1 = VIEW_H;
   for (int yy = y; yy < y1; yy++) {
-    unsigned short* row = g_back + yy * SCREEN_W;
+    unsigned short* row = g_back + scr_row[yy];
     for (int xx = x; xx < x1; xx++) row[xx] = (unsigned short)color;
   }
 }
@@ -201,7 +205,7 @@ static void draw_laser(struct Ent* e, int ex, int ey, int ew, int eh) {
  * then `tint` added; tint channels must stay at or below 8). */
 static void light_px(int x, int y, int tint) {
   if (x < 0 || x >= SCREEN_W || y < HUD_PIXEL_ROWS || y >= VIEW_H) return;
-  unsigned short* p = g_back + y * SCREEN_W + x;
+  unsigned short* p = g_back + scr_row[y] + x;
   *p = (unsigned short)(((*p >> 1) & 0x0777) + tint);
 }
 
@@ -227,7 +231,12 @@ static void draw_searchlight(struct Ent* e, int ex, int ey) {
     int cx = cx_q8 >> 8;
     int half = half_q8 >> 8;
     if (y >= HUD_PIXEL_ROWS) {
-      for (int x = cx - half + ((y + cx - half) & 1); x <= cx + half; x += 2) light_px(x, y, tint);
+      int x0 = cx - half + ((y + cx - half) & 1);
+      int x1 = cx + half;
+      if (x0 < 0) x0 = x0 & 1;               /* first on-screen pixel of the same dither parity */
+      if (x1 >= SCREEN_W) x1 = SCREEN_W - 1;
+      unsigned short* row = g_back + scr_row[y];
+      for (int x = x0; x <= x1; x += 2) row[x] = (unsigned short)(((row[x] >> 1) & 0x0777) + tint);
     }
     cx_q8 += step_x;
     half_q8 += step_half;
@@ -272,7 +281,7 @@ static void draw_rain(void) {
     for (int j = 0; j < 6; j++) {
       int px = x - (j >> 1);
       int py = y + j;
-      if (px >= 0 && py >= HUD_PIXEL_ROWS && py < VIEW_H) g_back[py * SCREEN_W + px] = 0x0BA9;
+      if (px >= 0 && py >= HUD_PIXEL_ROWS && py < VIEW_H) g_back[scr_row[py] + px] = 0x0BA9;
     }
   }
 }
@@ -454,7 +463,7 @@ static void draw_entities(void) {
     if (e->kind == ENT_FLYER && (current_region == 6 || current_region == 8)) {
       int wx = ex + (ew >> 1);                  /* the saucers fly on wires */
       if (wx >= 0 && wx < SCREEN_W) {
-        for (int y = HUD_PIXEL_ROWS; y < ey && y < VIEW_H; y++) g_back[y * SCREEN_W + wx] = 0x0999;
+        for (int y = HUD_PIXEL_ROWS; y < ey && y < VIEW_H; y++) g_back[scr_row[y] + wx] = 0x0999;
       }
     }
     if (e->kind == ENT_PENDULUM) {
@@ -470,7 +479,7 @@ static void draw_entities(void) {
       for (int k = 0; k < n; k++) {
         int x = rx >> 8;
         int y = ry >> 8;
-        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0CBC;
+        if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[scr_row[y] + x] = 0x0CBC;
         rx += sx;
         ry += sy;
       }
@@ -495,7 +504,7 @@ static void draw_entities(void) {
           for (int k = -3; k <= 3; k++) {
             int x = bx + k;
             int y = floor - 1 - (k < 0 ? -k : k);
-            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[y * SCREEN_W + x] = 0x0FFF;
+            if (x >= 0 && x < SCREEN_W && y >= HUD_PIXEL_ROWS && y < VIEW_H) g_back[scr_row[y] + x] = 0x0FFF;
           }
         }
       } else {
@@ -505,7 +514,7 @@ static void draw_entities(void) {
           if ((y & 7) == 0) jag = ((y * 7 + (int)frame_clock) & 3) - 1;
           for (int w = -1; w <= 1; w++) {
             int x = bx + jag + w;
-            if (x >= 0 && x < SCREEN_W) g_back[y * SCREEN_W + x] = w ? edge : 0x0FFF;
+            if (x >= 0 && x < SCREEN_W) g_back[scr_row[y] + x] = w ? edge : 0x0FFF;
           }
         }
       }
@@ -570,7 +579,7 @@ static void draw_boss_bar(void) {
   int w = 160;
   int filled = (w * hp) / total;
   for (int y = 226; y < 232; y++) {
-    unsigned short* row = g_back + y * SCREEN_W;
+    unsigned short* row = g_back + scr_row[y];
     for (int x = x0 - 1; x <= x0 + w; x++) {
       int edge = y == 226 || y == 231 || x == x0 - 1 || x == x0 + w;
       if (edge) row[x] = 0x0111;
@@ -822,6 +831,7 @@ static void play(void) {
 }
 
 int main(int argc, char** argv) {
+  for (int y = 0; y < 240; y++) scr_row[y] = y * SCREEN_W;
   parse_args(argc, argv);
   if (pak_open() != 0) return 1;
   audio_start();      /* fork the synthesizer before the big buffers exist */
