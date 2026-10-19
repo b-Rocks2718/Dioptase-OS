@@ -124,33 +124,35 @@ static int advance_pressed(void) {
   return 0;
 }
 
-/* Show every card of `script`, each until the player presses a button (after
- * a short beat, so a held key cannot skip a card unread). Takes over the
- * display; the caller redraws the game afterwards. */
+/* Show one newline-separated runtime message using the normal intertitle
+ * controls. The caller owns the text and redraws the scene after dismissal. */
+void card_message(char* text) {
+  for (int s = 0; s < NUM_SPRITES; s++) sprite_hide(s);
+  hud_hide();
+  draw_card(text);
+  audio_sfx(SFX_CARD);
+  unsigned start = get_vga_frame_counter();
+  unsigned beat = start;
+  input_poll();
+  input_take_pressed();
+  while (1) {
+    unsigned now = get_vga_frame_counter();
+    if (now - beat >= 30) {
+      audio_heartbeat();   /* keep the synthesizer alive while the card is read */
+      beat = now;
+    }
+    input_poll();
+    int go = advance_pressed();
+    if (go && now - start > 20) break;
+    sleep(1);
+  }
+}
+
+/* Read every authored card with the same key-release guard as runtime messages. */
 void card_show(int script) {
   unsigned* entry = script_entry(script);
   int cards = (int)entry[0];
-  for (int s = 0; s < NUM_SPRITES; s++) sprite_hide(s);
-  hud_hide();
-  for (int c = 0; c < cards; c++) {
-    draw_card((char*)(g_pak + entry[1 + c]));
-    audio_sfx(SFX_CARD);
-    unsigned start = get_vga_frame_counter();
-    unsigned beat = start;
-    input_poll();
-    input_take_pressed();
-    while (1) {
-      unsigned now = get_vga_frame_counter();
-      if (now - beat >= 30) {
-        audio_heartbeat();   /* keep the synthesizer alive while the card is read */
-        beat = now;
-      }
-      input_poll();
-      int go = advance_pressed();
-      if (go && now - start > 20) break;
-      sleep(1);
-    }
-  }
+  for (int c = 0; c < cards; c++) card_message((char*)(g_pak + entry[1 + c]));
 }
 
 /* ---- HUD ---- */

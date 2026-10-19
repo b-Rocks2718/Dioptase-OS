@@ -16,12 +16,13 @@ ASan. Snapshots include movers and every rule global, but exclude save-file
 contents: route search never calls game_load. Snapshots are validated by
 restoring and comparing the entire result after a repeated simulation.
 
-The opening witness starts at the actual Stage 1 spawn and reaches the
-Scaffold's third ledge via the street and a stationary take on Mark's plate.
-It takes 725 ticks without damage. This is **not a full Stage 1 solution or
-a play-duration estimate**. Stage 1's chimney, Double, rooftops, clock tower,
-boss, and optional cellar still need continuous witnesses. The scaffold's
-solid roof and low entrance were reported to Opus for an authoring fix.
+The opening witness starts at the actual Stage 1 spawn and returns to the
+Backlot with the stunt wire earned from Gearhart. All 42 checkpoints pass over
+2845 ticks without damage. This is a critical-path witness, **not a first-play
+duration estimate or a full-campaign proof**. Optional collectibles and
+Stages 2 onward remain unverified. See routes/stage1-opening-report.md.
+The separate stage1-clock-local.json checks 346 ticks from explicit roof-entry
+coordinates to the clock gate's plate; it remains only a local fixture.
 
 Every witness contains sequential `[tick_count, held_input_mask]` pairs.
 Press edges are derived from held input, so a held jump never automatically
@@ -53,13 +54,13 @@ sim.start(**route["start"])
 for segment in route["segments"]:
     sim.actions(segment["actions"])
 
-# Choose the next attainable checkpoint after fixing the chimney geometry.
-rect = [224, 300, 264, 300]
-actions = waypoint(sim, "s1_scaffold", rect, width=128, depth=100, quantum=6)
+# Choose the next checkpoint; full jump holds survive the beam's pruning.
+rect = [216, 60, 280, 60]
+actions = waypoint(sim, "s1_double", rect, width=128, depth=100, quantum=6)
 route["segments"].append({
-    "label": "Enter the scaffold chimney",
+    "label": "Reach Double's upper ledge",
     "actions": actions,
-    "expect": {"room": "s1_scaffold", "rect": rect},
+    "expect": {"room": "s1_double", "rect": rect},
 })
 with open(path, "w") as output:
     json.dump(route, output, indent=2)

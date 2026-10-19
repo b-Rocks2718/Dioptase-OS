@@ -118,6 +118,8 @@ def verify(path):
                 raise AssertionError(f"{segment['label']}: missed checkpoint {expect['rect']}: {s}")
         if s["abilities"] & expect.get("abilities", 0) != expect.get("abilities", 0):
             raise AssertionError(f"{segment['label']}: missing required ability: {s}")
+        if "boss_hp" in expect and s["boss_hp"] != expect["boss_hp"]:
+            raise AssertionError(f"{segment['label']}: unexpected boss health: {s}")
         print(f"PASS {segment['label']}: frame {sim.frames}, health {s['health']}")
     print(f"PASS {path.name}: {sim.frames} ticks ({sim.frames/60:.1f}s), {len(route['segments'])} checkpoints")
 

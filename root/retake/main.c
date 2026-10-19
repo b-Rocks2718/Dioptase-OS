@@ -596,7 +596,8 @@ static void parse_args(int argc, char** argv) {
 /* The Camera is broken: the ending, the credits, then back to the title.
  * Progress is saved first so the finished picture shows on Continue. */
 static void finale(void) {
-  game_save();
+  if (game_save() != 0)
+    card_message("RETAKE - SAVE FAILED\nThe finished picture could not be saved.\nAny earlier checkpoint is preserved.\nCheck disk space before trying again.");
   audio_music(MUSIC_TITLE);
   current_song = MUSIC_TITLE;
   card_show(SCRIPT_ENDING);
@@ -640,6 +641,12 @@ static void play(void) {
         choose_music();
       }
       if (g_events & GE_SAVE) g_pending_script = SCRIPT_SAVED;
+      if (g_events & GE_SAVE_FAILED) {
+        card_message("RETAKE - SAVE FAILED\nThe mirror could not store your picture.\nAny earlier checkpoint is preserved.\nTry again before leaving the picture.\nIf it still fails, check disk space.");
+        hud_bar_clear();
+        last = get_vga_frame_counter();
+        break;
+      }
       if (g_pending_shop) {
         g_pending_shop = 0;
         shop_run();
@@ -691,8 +698,11 @@ int main(int argc, char** argv) {
       game_new(debug_room);
       g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
       g_hero.abilities = g_prog.abilities;
-    } else if (choice == 1 && game_load() == 0) {
-      /* continuing from the last mirror */
+    } else if (choice == 1) {
+      if (game_load() != 0) {
+        card_message("RETAKE - COULD NOT CONTINUE\nNeither checkpoint could be loaded.\nYour save files are unchanged.\nReturning to the title.");
+        continue;
+      }
     } else {
       card_show(SCRIPT_INTRO);
       game_new(START_ROOM);

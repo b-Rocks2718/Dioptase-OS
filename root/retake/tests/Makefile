@@ -3,20 +3,26 @@ HOST_CC ?= cc
 BUILD_DIR := build
 CORE := ../player.c ../takes.c
 HEADERS := ../player.h ../takes.h host.h
+SIM_SAVE := ../save.c ../save.h save_io.h save_memory.h
 HOST_FLAGS := -std=c11 -Wall -Wextra -Werror -O1 -g
 SANITIZERS := -fsanitize=address,undefined -fno-omit-frame-pointer
 
 .PHONY: test clean
-test: $(BUILD_DIR)/core_test $(BUILD_DIR)/game_test
+test: $(BUILD_DIR)/core_test $(BUILD_DIR)/game_test $(BUILD_DIR)/save_test
 	./$(BUILD_DIR)/core_test
 	./$(BUILD_DIR)/game_test
+	./$(BUILD_DIR)/save_test
 
-$(BUILD_DIR)/game_test: test_game.c sim.c sim.h ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
+$(BUILD_DIR)/save_test: test_save.c sim.c sim.h $(SIM_SAVE) ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_FLAGS) $(SANITIZERS) $(CORE) test_save.c -o $@
+
+$(BUILD_DIR)/game_test: test_game.c sim.c sim.h $(SIM_SAVE) ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_FLAGS) $(SANITIZERS) $(CORE) test_game.c -o $@
 
 # ctypes authoring uses the same sources; committed routes run with UBSan too.
-$(BUILD_DIR)/sim.so: sim.c sim.h ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
+$(BUILD_DIR)/sim.so: sim.c sim.h $(SIM_SAVE) ../game.c ../game.h ../retake.h ../pak.h $(CORE) $(HEADERS) Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_FLAGS) -O2 -fPIC -shared -fsanitize=undefined -fno-sanitize-recover=all $(CORE) sim.c -o $@
 

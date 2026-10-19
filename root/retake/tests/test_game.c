@@ -121,6 +121,84 @@ static void test_snapshot_replay(void) {
          "restoring a search snapshot reproduces the entire simulation exactly");
 }
 
+/* Search backtracking must preserve delayed abilities and the moon-room rules. */
+static void test_edit_snapshot(void) {
+  struct SimSnapshot before;
+  struct SimSnapshot after;
+  struct SimSnapshot replayed;
+  game_new(ROOM_S6_GATE);
+  g_prog.abilities = AB_OVERCRANK | AB_REWIND;
+  g_hero.abilities = g_prog.abilities;
+  for (int i = 0; i < 140; i++) game_tick(i < 30 ? IN_RIGHT : 0, 0);
+  game_tick(IN_OVERCRANK, IN_OVERCRANK);
+  sim_snapshot(&before);
+  for (int i = 0; i < 20; i++) game_tick(IN_RIGHT, i == 5 ? IN_REWIND : 0);
+  sim_snapshot(&after);
+  /* Entering another region changes private state outside the Player struct. */
+  game_new(ROOM_S1_ENTRY);
+  sim_restore(&before);
+  for (int i = 0; i < 20; i++) game_tick(IN_RIGHT, i == 5 ? IN_REWIND : 0);
+  sim_snapshot(&replayed);
+  expect(memcmp(&after, &replayed, sizeof(after)) == 0,
+         "snapshots restore moon gravity, Overcrank phase and the full Rewind ring");
+}
+
+/* Rewind changes position, so departure support cannot grant a destination jump. */
+static void test_rewind_support(void) {
+  game_new(ROOM_S1_ENTRY);
+  g_prog.abilities = AB_REWIND;
+  g_hero.abilities = g_prog.abilities;
+  player_init(&g_hero, 96, 196, AB_REWIND);
+  game_tick(0, 0);
+  rewind_count = 1;
+  rewind_head = 1;
+  rewind_x[0] = 80 * Q8;
+  rewind_y[0] = 100 * Q8;
+  g_hero.wall_lock = 8;
+  game_tick(IN_REWIND | IN_JUMP | IN_RIGHT, IN_REWIND | IN_JUMP);
+  expect((g_events & GE_REWIND) && !(g_hero.events & (EV_JUMP | EV_WALLJUMP | EV_WIRE)),
+         "Rewind into open air cannot spend the departure floor's coyote jump");
+  expect(g_hero.vy >= 0 && g_hero.vx > 0 && g_hero.wall_lock == 0,
+         "Rewind clears old wall lock while retaining ordinary destination input");
+}
+
+/* Crumble warnings and absence use world ticks, and collision changes atomically. */
+static void test_crumble_timing(void) {
+  game_new(ROOM_S5_LIBRARY);
+  struct Ent* block = entity(ENT_CRUMBLE);
+  expect(block != 0, "library fixture supplies a crumble ledge");
+  if (!block) return;
+  int cell = g_room.row[block->ty] + block->tx;
+  expect(g_room.col[cell] == COL_SOLID, "crumble collision exists before the room's first player step");
+  player_init(&g_hero, block->tx * TILE, block->ty * TILE - PLAYER_H, 0);
+  game_tick(0, 0);
+  expect(block->state == 1 && block->timer == 30, "standing arms a full thirty-world-tick crumble warning");
+  for (int i = 0; i < 10; i++) game_tick(0, 0);
+  expect(block->state == 1 && block->timer == 20, "each normal tick advances a crumble timer exactly once");
+  block->timer = 30;
+  g_overcrank = 180;
+  for (int i = 0; i < 10; i++) game_tick(0, 0);
+  expect(block->state == 1 && block->timer == 25, "ten Overcrank ticks advance five crumble world ticks");
+  g_overcrank = 0;
+  block->timer = 1;
+  game_tick(0, 0);
+  expect(block->state == 2 && block->timer == 180 && g_room.col[cell] == COL_AIR,
+         "collapse removes collision and begins the complete three-second absence");
+  player_init(&g_hero, 32, 436, 0);
+  for (int i = 0; i < 10; i++) game_tick(0, 0);
+  expect(block->state == 2 && block->timer == 170, "gone time also advances exactly once per tick");
+  player_init(&g_hero, block->tx * TILE, block->ty * TILE, 0);
+  block->timer = 1;
+  game_tick(0, 0);
+  expect(block->state == 2 && g_room.col[cell] == COL_AIR,
+         "a reforming block waits while Ruby overlaps it");
+  player_init(&g_hero, 32, 436, 0);
+  block->timer = 1;
+  game_tick(0, 0);
+  expect(block->state == 0 && g_room.col[cell] == COL_SOLID,
+         "a clear block reforms collision immediately, without an unsafe air tick");
+}
+
 /* Run adversarial contacts before broader room solution replays. */
 int main(void) {
   if (sim_open("../retake.pak")) return 1;
@@ -132,6 +210,9 @@ int main(void) {
   test_spring_impulse();
   test_room_ticks();
   test_snapshot_replay();
+  test_edit_snapshot();
+  test_rewind_support();
+  test_crumble_timing();
   sim_close();
   if (!failures) puts("***PASS retake game rule regressions");
   return failures != 0;

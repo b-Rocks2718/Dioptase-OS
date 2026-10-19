@@ -117,6 +117,7 @@ struct Progress {
 #define GE_OVERCRANK 262144
 #define GE_THUNDER 524288
 #define GE_REWIND 1048576
+#define GE_SAVE_FAILED 2097152    /* mirror write was not verified; show a failure card */
 
 extern struct Player g_hero;
 extern struct Takes g_takes;
