@@ -18,16 +18,23 @@
 /* Hero animation frames, in tools/sprites.py HERO_ORDER. */
 #define FR_IDLE0 0
 #define FR_IDLE1 1
-#define FR_RUN0 2
-#define FR_RUN1 3
-#define FR_RUN2 4
-#define FR_JUMP 5
-#define FR_FALL 6
-#define FR_CLAP0 7
-#define FR_CLAP1 8
-#define FR_WALL 9
-#define FR_HURT 10
-#define FR_GLIDE 11
+#define FR_IDLE2 2
+#define FR_IDLE3 3
+#define FR_RUN0 4
+#define FR_RUN1 5
+#define FR_RUN2 6
+#define FR_RUN3 7
+#define FR_RUN4 8
+#define FR_RUN5 9
+#define FR_JUMP 10
+#define FR_FALL 11
+#define FR_FALL1 12
+#define FR_LAND 13
+#define FR_CLAP0 14
+#define FR_CLAP1 15
+#define FR_WALL 16
+#define FR_HURT 17
+#define FR_GLIDE 18
 
 #define SLOT_HERO 0
 #define SLOT_TAKE0 1
@@ -49,22 +56,129 @@ static short title_ramp[4] = {0, 0x345, 0xABC, 0xEFF};
 static short dim_ramp[4] = {0, 0x123, 0x567, 0x89A};
 static short red_ramp[4] = {0, 0x113, 0x238, 0x34F};
 
+/* ---- game feel: dust, sparks, the landing squash, hit freeze, shake ----
+ * Presentation only: none of this touches the rules in game.c, so routes,
+ * replays and saves are unaffected. Puffs live in world space at 1/16 px. */
+#define MAX_PUFFS 32
+static void fill_rect(int x, int y, int w, int h, int color);
+#define DUST 0x0CCD
+#define SPARK 0x0AFF
+#define GOLD 0x03CF
+
+struct Puff {
+  int x;
+  int y;
+  int vx;
+  int vy;
+  int life;      /* ticks left; 0 = free slot */
+  int color;
+};
+
+static struct Puff puffs[32];
+static int land_ticks;     /* ticks left to show the landing squash */
+static int shake_ticks;    /* frames of screen shake left */
+static int hitstop;        /* game ticks to hold still after a solid hit */
+static int run_dust;       /* ticks since the last running dust puff */
+
+static void puff(int x_px, int y_px, int vx, int vy, int life, int color) {
+  for (int i = 0; i < MAX_PUFFS; i++) {
+    struct Puff* p = &puffs[i];
+    if (p->life > 0) continue;
+    p->x = x_px << 4;
+    p->y = y_px << 4;
+    p->vx = vx;
+    p->vy = vy;
+    p->life = life;
+    p->color = color;
+    return;
+  }
+}
+
+/* Turn this tick's events into dust, sparks, squash, freeze and shake, and
+ * move the live puffs. Runs once after every game tick. */
+static void feel_tick(void) {
+  unsigned ev = g_hero.events;
+  unsigned ge = g_events;
+  int fx = (g_hero.x >> 8) + (PLAYER_W >> 1);
+  int fy = (g_hero.y >> 8) + PLAYER_H;
+  int face = g_hero.facing < 0 ? -1 : 1;
+  if (ge & GE_ROOM) {
+    for (int i = 0; i < MAX_PUFFS; i++) puffs[i].life = 0;
+    land_ticks = 0;
+  } else {
+    if (ev & (EV_JUMP | EV_WIRE)) {
+      puff(fx - 3, fy - 1, -7, -5, 14, DUST);
+      puff(fx + 3, fy - 1, 7, -5, 14, DUST);
+      puff(fx, fy - 1, 0, -2, 10, DUST);
+    }
+    if (ev & EV_WALLJUMP) {
+      int wx = fx - face * 5;
+      puff(wx, fy - 4, face * 6, -6, 14, DUST);
+      puff(wx, fy - 9, face * 4, -3, 12, DUST);
+    }
+    if (ev & EV_LAND) {
+      land_ticks = 5;
+      for (int k = -2; k <= 2; k++) puff(fx + k * 2, fy - 1, k * 7, -3 - (k < 0 ? -k : k), 12, DUST);
+    }
+    if (g_hero.on_ground && (g_hero.vx > 384 || g_hero.vx < -384)) {
+      if (++run_dust >= 9) {
+        run_dust = 0;
+        puff(fx - face * 3, fy - 1, -face * 5, -3, 10, DUST);
+      }
+    }
+    if (ge & (GE_HIT | GE_KILL | GE_BOSS_HIT)) {
+      hitstop = (ge & (GE_BOSS_HIT | GE_KILL)) ? 4 : 3;
+      int hx = fx + face * 10;
+      for (int k = 0; k < 6; k++) puff(hx, fy - 7, face * (6 + k * 3), -14 + k * 5, 10, SPARK);
+    }
+    if (ge & GE_COIN) {
+      for (int k = 0; k < 4; k++) puff(fx, fy - 8, (k & 1 ? 1 : -1) * (4 + k * 3), -10 - k * 2, 14, GOLD);
+    }
+  }
+  if (ge & (GE_SLAM | GE_THUNDER)) shake_ticks = 10;
+  if (ge & (GE_HURT | GE_HAZARD)) shake_ticks = 6;
+  if (ge & GE_BOSS_DOWN) shake_ticks = 24;
+  if (land_ticks > 0) land_ticks--;
+  for (int i = 0; i < MAX_PUFFS; i++) {
+    struct Puff* p = &puffs[i];
+    if (p->life <= 0) continue;
+    p->x += p->vx;
+    p->y += p->vy;
+    if (p->color == DUST) {
+      p->vx -= p->vx >> 2;      /* dust drags to a stop and drifts up */
+      if (p->vy > -3) p->vy--;
+    } else {
+      p->vy += 2;               /* sparks and coins fall */
+    }
+    p->life--;
+  }
+}
+
+/* Puffs shrink from 2x2 to a single pixel as they fade. */
+static void draw_puffs(void) {
+  for (int i = 0; i < MAX_PUFFS; i++) {
+    struct Puff* p = &puffs[i];
+    if (p->life <= 0) continue;
+    int size = p->life > 9 ? 3 : (p->life > 4 ? 2 : 1);
+    fill_rect((p->x >> 4) - cam_x, (p->y >> 4) - cam_y, size, size, p->color);
+  }
+}
+
+/* The six-frame run cycle over 64 px of travel (two strides): contact,
+ * crouch and passing poses hold for 8-12 px each. */
+static int run_seq[16] = {0, 0, 0, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 5, 5, 5};
+
 /* Animation frame for a pose; running strides advance with distance. */
 static int frame_for(int pose, int clapping_active, int x, int clock) {
   switch (pose) {
-    case POSE_RUN: {
-      int phase = (x >> 11) & 3;
-      if (phase == 0) return FR_RUN0;
-      if (phase == 2) return FR_RUN2;
-      return FR_RUN1;
-    }
+    case POSE_RUN: return FR_RUN0 + run_seq[(x >> 10) & 15];
     case POSE_RISE: return FR_JUMP;
-    case POSE_FALL: return FR_FALL;
+    case POSE_FALL: return ((clock >> 3) & 1) ? FR_FALL1 : FR_FALL;
     case POSE_WALL: return FR_WALL;
     case POSE_GLIDE: return FR_GLIDE;
     case POSE_CLAP: return clapping_active ? FR_CLAP1 : FR_CLAP0;
     case POSE_HURT: return FR_HURT;
-    default: return ((clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0;
+    default: return FR_IDLE0 + ((clock >> 4) & 3);   /* breathing, with the scarf stirring */
   }
 }
 
@@ -592,6 +706,7 @@ static void draw_sprites(void) {
   struct Hitbox box;
   int active = player_attack_box(&g_hero, &box);
   int f = frame_for(g_hero.pose, active, g_hero.x, (int)frame_clock);
+  if (land_ticks > 0 && (g_hero.pose == POSE_IDLE || g_hero.pose == POSE_RUN)) f = FR_LAND;
   if (g_hero.hurt_timer > 0 && (frame_clock & 4)) {
     sprite_hide(SLOT_HERO);
   } else {
@@ -680,10 +795,22 @@ static void play_sfx(void) {
   }
 }
 
-/* Draw and show one frame of play. */
+/* Draw and show one frame of play, shaken if something heavy just landed. */
 static void draw_frame(void) {
+  int keep_x = cam_x;
+  int keep_y = cam_y;
+  if (shake_ticks > 0) {
+    shake_ticks--;
+    cam_y += (shake_ticks & 2) ? 2 : -2;
+    cam_x += (shake_ticks & 4) ? 1 : -1;
+    if (cam_x < 0) cam_x = 0;
+    if (cam_y < 0) cam_y = 0;
+    if (cam_x > g_room_pw - SCREEN_W) cam_x = g_room_pw - SCREEN_W;
+    if (cam_y > g_room_ph - VIEW_H) cam_y = g_room_ph - VIEW_H;
+  }
   render_frame(cam_x, cam_y);
   draw_entities();
+  draw_puffs();
   if (current_region == 7) draw_rain();
   draw_rewind_marker();
   film_fx((int)frame_clock);
@@ -691,6 +818,8 @@ static void draw_frame(void) {
   present();
   draw_sprites();
   draw_hud();
+  cam_x = keep_x;
+  cam_y = keep_y;
 }
 
 /* ---- title screen ---- */
@@ -720,7 +849,7 @@ static int title_screen(int have_save) {
       draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
       canvas_show();
     }
-    sprite_show(SLOT_HERO, SHEET_HERO, ((frame_clock >> 5) & 1) ? FR_IDLE1 : FR_IDLE0, 1, 64, 116);
+    sprite_show(SLOT_HERO, SHEET_HERO, FR_IDLE0 + ((frame_clock >> 4) & 3), 1, 64, 116);
     unsigned now = get_vga_frame_counter();
     while (get_vga_frame_counter() == now) {
     }
@@ -791,10 +920,15 @@ static void play(void) {
     int held = input_held();
     int pressed = input_take_pressed();
     for (int t = 0; t < ticks; t++) {
+      if (hitstop > 0) {            /* a solid hit holds the picture for a beat */
+        hitstop--;
+        continue;
+      }
       game_tick(held, pressed);
       pressed = 0;
       frame_clock++;
       play_sfx();
+      feel_tick();
       if (g_events & GE_FINALE) {
         finale();
         return;
