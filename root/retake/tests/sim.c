@@ -130,6 +130,8 @@ struct SimSnapshot {
   int rewind_next;
   int rewind_length;
   int rewind_cooldown;
+  int beat_phase;
+  int beat_parity;
   int mover_x[8];
   int mover_y[8];
   int ent_count;
@@ -167,6 +169,8 @@ void sim_snapshot(void* dst) {
   s->rewind_next = rewind_head;
   s->rewind_length = rewind_count;
   s->rewind_cooldown = rewind_cool;
+  s->beat_phase = beat_phase;
+  s->beat_parity = beat_parity;
   memcpy(s->mover_x, mover_dx, sizeof(mover_dx));
   memcpy(s->mover_y, mover_dy, sizeof(mover_dy));
   s->ent_count = g_ent_count;
@@ -200,6 +204,8 @@ void sim_restore(void* src) {
   rewind_head = s->rewind_next;
   rewind_count = s->rewind_length;
   rewind_cool = s->rewind_cooldown;
+  beat_phase = s->beat_phase;
+  beat_parity = s->beat_parity;
   memcpy(mover_dx, s->mover_x, sizeof(mover_dx));
   memcpy(mover_dy, s->mover_y, sizeof(mover_dy));
   g_ent_count = s->ent_count;

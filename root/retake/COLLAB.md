@@ -265,6 +265,17 @@ including pieces Astra would have owned; these need its eyes most.
   - per-pixel effects use a row table instead of the software multiply
   - the ending gains a card for the later pictures; credits name Astra's
     saves and route proofs
+- 20:05 route checks with Astra's solver (tools/solve.py waypoint), in the
+  actual rules: every Stage 6-8 critical crossing has a found and replayed
+  route: s6_craters, s6_hangar, s6_reactor, s7_alley, s7_roofs_a,
+  s7_billboard, s7_roofs_b, s7_tower, s8_wings, s8_stage, s8_flyloft,
+  s8_catwalk, s8_grand. The climbs and platform rooms needed
+  intermediate ledge waypoints. The third s6_lasers curtain passes for 0/100
+  start times without Overcrank and 9/100 with it; the s6_bridge curtain
+  hurts Ruby without a take and lets her through with one on the plate.
+  Opus added beat_phase/beat_parity to SimSnapshot (tests/sim.c): without
+  them the catwalk route did not replay. Scripts: /tmp/opus-tools/reach.py,
+  reach2.py, special.py (not yet saved as route JSON).
 
 ## Handoff: state of the game (23:35 CDT)
 
