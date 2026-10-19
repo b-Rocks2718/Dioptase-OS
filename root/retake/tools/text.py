@@ -277,6 +277,81 @@ SCRIPTS = {
         "THAT'S A WRAP!\n\nThe Emperor sits down on its throne and powers off, with a sound like a sigh.",
         "In the throne's control panel, a film can spinning backward, tagged in Otto's hand:\n\nREWIND. (Press R: snap back to where you stood two seconds ago.)",
     ],
+    # ---- Stage 7 ----
+    "s7_title": [
+        "NIGHT CITY\n\nIt's always raining in this picture. Nobody remembers writing the rain in.",
+    ],
+    "s7_newsboy": [
+        "\"Extra! Extra! Stunt girl loose on the lot! Read all about it!\"",
+        "\"Not you, lady. A different stunt girl. ...Okay, it's you.\"",
+        "\"The Fixer runs this town from his penthouse. His boys work the roofs with spotlights, and whatever the light lands on, a rifle finds.\"",
+    ],
+    "s7_decoy_hint": [
+        "IN GREASE PENCIL ON A LIGHT STAND:\n\nTHE SPOT GOES TO WHOEVER'S STANDING IN IT. ANY DOUBLE WILL DO.",
+    ],
+    "s7_bartender": [
+        "\"Password?\"",
+        "\"That's not it. But you've got an honest face, and nobody's had a drink in here since the camera started rolling. Go on.\"",
+    ],
+    "s7_singer": [
+        "\"The Blue Gardenia's been closed since the camera started rolling. I still sing at nine every night. Habit.\"",
+        "\"Viv used to come up here after wrap. She'd order two coffees, drink one, and watch the door.\"",
+        "\"She was waiting for you, honey. She just never said so.\"",
+    ],
+    "s7_reel_a": [
+        "LOST REEL: \"Night City, Deleted Scene\" (1937)",
+        "Vivian Lark in a raincoat on a rooftop, saying her line to nobody: \"Some people do the falling so the rest of us can do the flying.\"",
+        "The writer cut the line. Viv said it anyway, every take.",
+    ],
+    "s7_reel_b": [
+        "LOST REEL: \"Augustin Vale, an Interview\" (1936)",
+        "\"Pictures don't die. People do. I intend to fix that.\"",
+        "The reporter laughs. Vale doesn't.",
+    ],
+    "s7_boss_intro": [
+        "THE FIXER",
+        "\"You've been a real problem, kid. And problems get fixed.\" He snaps his fingers. Somewhere, a light swings toward you.",
+    ],
+    "s7_wrap": [
+        "THAT'S A WRAP!\n\nThe Fixer straightens his hat, says \"Nice work, kid,\" and walks out into the rain like the last shot of a picture.",
+        "On his desk, a fat roll of film in a money clip, tagged in Otto's hand:\n\nLONGER TAKES. (Your doubles now remember twice as much.)",
+    ],
+    # ---- Stage 8 ----
+    "s8_title": [
+        "STARLIGHT REVUE\n\nStarring Vivian Lark. The show has been running for a very long time. Nobody has been allowed to stop clapping.",
+    ],
+    "s8_doorman": [
+        "\"Stage door's closed, miss. The show's on.\"",
+        "\"Been on since the camera started. Same number, over and over. The Maestro won't let the orchestra rest.\"",
+        "\"Miss Lark's dressing room is up past the fly loft. She asks about you. Every night.\"",
+    ],
+    "s8_beat_hint": [
+        "STAGE MANAGER'S NOTE:\n\nTHE SET CHANGES ON THE BEAT. GOLD PIECES COME AND GO. LISTEN, THEN JUMP.",
+    ],
+    "s8_viv": [
+        "\"Ruby. Of course it's you.\"",
+        "\"I'm stuck in my own picture, kid. The camera wanted a star, and I was the only one it could find.\"",
+        "\"You know what I told every reporter? 'I do all my own stunts.' I'm sorry. You did every one of them.\"",
+        "\"Go stop the show. Then climb up to the booth and tell Augustin it's a wrap. He'll hear it from you. You're the one person he never put in his picture.\"",
+    ],
+    "s8_reel_a": [
+        "LOST REEL: \"Starlight Revue, Rehearsal\" (1937)",
+        "The chorus line is out of step. Viv stops the music, climbs down off her star, and teaches the routine herself.",
+        "The Maestro says that isn't her job. She says, \"Then whose is it?\"",
+    ],
+    "s8_reel_b": [
+        "LOST REEL: \"The Prompter's Box\" (1937)",
+        "A note taped inside: \"If the show never ends, nobody has to say goodbye. - A.V.\"",
+        "Under it, in another hand: \"That's not a show, Augustin. That's a trap. - Otto, props\"",
+    ],
+    "s8_boss_intro": [
+        "THE MAESTRO",
+        "\"Places! PLACES! The show must go on, and on, and ON!\" The baton comes up, and an orchestra that has not slept in years begins again.",
+    ],
+    "s8_wrap": [
+        "THAT'S A WRAP!\n\nThe Maestro lowers his baton. The orchestra stops. For a long moment the theater is silent. Then, in the back row, one person starts to clap.",
+        "Under the podium, on a velvet cushion, a brass key tagged in Otto's hand:\n\nTHE PROJECTION BOOTH. (The tower door on the East lot will open now.)",
+    ],
     # ---- The Projection Tower ----
     "tower_open": [
         "The film slot glows. Three wrapped pictures, three reels.\n\nThe Projection Tower door swings open.",

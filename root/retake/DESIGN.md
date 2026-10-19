@@ -56,9 +56,9 @@ stage. Abilities let you return to earlier stages for secrets.
 | 3 | *The Crimson Tide*, pirate swashbuckler | blue night tint | ropes and rigging, rising water | The Kraken (prop tentacles) | Umbrella |
 | 4 | *Jungle Serial, Chapter 12* | two-strip Technicolor (red/green) | vines, crumbling temple | Gargantua (giant ape) | Overcrank |
 | 5 | *The Monster of Hollow Manor*, horror | stark B&W expressionism | darkness and lantern light, crooked sets | The Monster (lightning) | Rewind |
-| 6 | *Rocket Rangers of the Moon*, sci-fi serial | three-strip Technicolor | low gravity, sparking wires | The Robot Emperor | 3rd take slot |
-| 7 | *Night City*, noir | high-contrast B&W + neon | searchlights, rain, rooftops | The Fixer | longer takes |
-| 8 | *Starlight Revue*, musical | full Technicolor | platforms on the beat, revolving sets | The Grand Finale stage | key to the booth |
+| 6 | *Rocket Rangers of the Moon*, sci-fi serial | three-strip Technicolor | moon gravity, ray curtains, saucers on wires | The Robot Emperor | Rewind |
+| 7 | *Night City*, noir | high-contrast B&W + neon | rain, rooftops, searchlights with rifles (takes as decoys) | The Fixer | longer takes |
+| 8 | *Starlight Revue*, musical | full Technicolor | set pieces on the beat, sandbags, a paper moon | The Maestro | key to the booth |
 | ★ | The Projection Booth | everything | all verbs | The Everlasting Camera | the end |
 
 Build order: the hub plus stage 1 first, to completion (an ending that works

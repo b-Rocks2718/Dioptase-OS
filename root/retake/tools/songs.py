@@ -41,6 +41,8 @@ CHORDS = {
     "Dm/A": ("A2", "D3", "F4", "A4"),
     "Bb": ("Bb2", "F2", "D4", "F4"),
     "Gm": ("G2", "D3", "Bb4", "D5"),
+    "Cm": ("C3", "G2", "Eb4", "G4"),
+    "Ab": ("Ab2", "Eb3", "C4", "Eb4"),
 }
 
 
@@ -157,6 +159,29 @@ _sp_arp = " ".join(" ".join([CHORDS[b][2], ".", CHORDS[b][3], ".", CHORDS[b][2],
                    for b in SPACE_BEATS)
 _sp_bass = " ".join(" ".join([CHORDS[b][0], "-", "-", "-", CHORDS[b][1], "-", "-", "-"]) for b in SPACE_BEATS)
 
+# ---- Stage 7: "Night City" (a slow, smoky blues in C minor) ----
+NOIR_MELODY = """
+G4 - - - Eb5 - D5 - | C5 - - - - - . r | Ab4 - - - F5 - Eb5 - | C5 - - - - - . r |
+Eb5 - - - C5 - Ab4 - | B4 - - - D5 - F5 - | Eb5 - - - D5 - C5 - | G4 - - - - - . r |
+G5 - - - Eb5 - G5 - | F5 - - - D5 - Bb4 - | Eb5 - - - C5 - Ab4 - | D5 - - - B4 - G4 - |
+Ab4 - C5 - F5 - Ab5 - | G5 - - - F5 - D5 - | Eb5 - - - C5 - - - | - - - - - - . r |
+"""
+NOIR_BEATS = ["Cm", "Cm", "Fm", "Fm", "Ab", "G7", "Cm", "G7", "Cm", "Bb", "Ab", "G7", "Fm", "G7", "Cm", "Cm"]
+_nb = " ".join(" ".join([CHORDS[b][0], "-", CHORDS[b][1], "-", CHORDS[b][0], "-", CHORDS[b][1], "-"]) for b in NOIR_BEATS)
+_n1 = " ".join(" ".join(["r", "r", CHORDS[b][2], ".", "r", "r", CHORDS[b][2], "."]) for b in NOIR_BEATS)
+_n2 = " ".join(" ".join(["r", "r", CHORDS[b][3], ".", "r", "r", CHORDS[b][3], "."]) for b in NOIR_BEATS)
+
+# ---- Stage 8: "Starlight Revue" (a showstopper with a stride left hand) ----
+SHOW_MELODY = """
+E5 - G5 - C6 - - - | A5 - G5 - E5 - C5 - | D5 - F5 - A5 - - - | G5 - F5 - D5 - B4 - |
+C5 - E5 - G5 - C6 - | C#6 - - - A5 - G5 - | F5 - - - A5 - D6 - | B5 - - - - - . r |
+A5 - - - C6 - A5 - | Ab5 - - - C6 - Ab5 - | G5 - E5 - C5 - E5 - | G5 - - - E5 - C#5 - |
+D5 - F#5 - A5 - C6 - | B5 - - - G5 - F5 - | E5 - G5 - C6 - - - | - - - - - - . r |
+"""
+SHOW_BEATS = [b for b in ["C", "Am", "Dm", "G7", "C", "A7", "Dm", "G7",
+                          "F", "Fm", "C", "A7", "D7", "G7", "C", "C"] for _ in range(2)]
+_sb, _s1, _s2 = oompah(SHOW_BEATS)
+
 SONGS = {
     "title": {"tempo": 17, "channels": [("music_box", TITLE_MELODY), ("piano_bass", _tb),
                                         ("piano_chord", _t1), ("piano_chord", _t2)]},
@@ -174,6 +199,10 @@ SONGS = {
                                          ("tri_bass", _hbass)]},
     "stage6": {"tempo": 11, "channels": [("square_lead", SPACE_MELODY), ("marimba", _sp_arp),
                                          ("tri_bass", _sp_bass)]},
+    "stage7": {"tempo": 14, "channels": [("organ_lead", NOIR_MELODY), ("piano_chord", _n1),
+                                         ("piano_chord", _n2), ("tri_bass", _nb)]},
+    "stage8": {"tempo": 15, "channels": [("piano", SHOW_MELODY), ("piano_bass", _sb),
+                                         ("piano_chord", _s1), ("piano_chord", _s2)]},
     "backlot": {"tempo": 16, "channels": [("organ_lead", BACKLOT_LEAD), ("organ", _bl1),
                                           ("organ", _bl2), ("tri_bass", _blbass)]},
 }

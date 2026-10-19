@@ -57,10 +57,12 @@ def backlot():
             r.ent("door", x + 6, 25, a="#s5_gate", b=6, c=25, d=1 | (5 << 4))
         elif i == 1:
             r.ent("door", x + 6, 25, a="#s6_gate", b=6, c=25, d=1 | (6 << 4))
+        elif i == 2:
+            r.ent("door", x + 6, 25, a="#s7_gate", b=6, c=25, d=1 | (7 << 4))
         else:
-            r.ent("sign", x + 7, 25, a="@stage_sealed")
+            r.ent("door", x + 6, 25, a="#s8_gate", b=6, c=25, d=1 | (8 << 4))
     r.stamp(68, 11, "X")
-    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (7 << 4))
+    r.ent("door", 71, 25, a="#tower_base", b=5, c=25, d=1 | (9 << 4))
     r.stamp(16, 18, "P")
     r.stamp(48, 18, "P")
     r.stamp(65, 21, "L")
@@ -1016,6 +1018,345 @@ def stage6():
     return out
 
 
+def searchlight(r, x, y, sweep, beam, speed=96, phase=0):
+    """A searchlight whose lamp hangs in tile (x, y). Its spot sweeps `sweep`
+    tiles either side of the lamp, `beam` tiles below it, at `speed` Q8 per
+    tick, starting `phase` tiles from the left end. Whoever the cone finds,
+    Ruby or one of her takes, a rooftop rifle fires on."""
+    r.ent("searchlight", x, y, a=sweep, b=beam, c=speed, d=phase)
+
+
+def stage7():
+    """Stage 7, "Night City": rain, rooftops and fire escapes, searchlights
+    whose snipers fire at whoever the light finds (a take is a fine decoy),
+    a jazz club, and the Fixer in his penthouse."""
+    out = []
+    r = Draft("s7_gate", 7, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.back(20, 6, 40, 26)                       # a hotel front
+    for x in (22, 26, 30, 34):
+        r.stamp(x, 8, "W" if x % 8 == 6 else "w")
+        r.stamp(x, 14, "w" if x % 8 == 6 else "W")
+    r.stamp(24, 2, "N")
+    r.stamp(30, 20, "A")
+    r.stamp(15, 21, "L")
+    r.ent("door", 3, 25, a="#backlot_east", b=41, c=25)
+    r.ent("mirror", 8, 25)
+    r.ent("sign", 11, 25, a="@s7_title")
+    r.ent("npc", 24, 25, a="@s7_newsboy")
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    r = Draft("s7_alley", 7, (40, 0), (40, 30))
+    r.ground(26)
+    r.wall(38, 8, 26, w=2)                      # a dead end at street level; the way on is up
+    r.back(0, 4, 38, 26)
+    r.plank(26, 21, 8)                          # fire escapes
+    r.plank(30, 15, 8)
+    r.plank(24, 10, 6)
+    for x, y in ((4, 8), (10, 8), (4, 15), (10, 15)):
+        r.stamp(x, y, "w")
+    r.stamp(8, 21, "L")
+    r.ent("door", 18, 25, a="#s7_speakeasy", b=5, c=17)
+    r.ent("walker", 12, 25)
+    r.ent("walker", 30, 25)
+    r.ent("hopper", 33, 14)
+    r.ent("flyer", 18, 9, a=8)
+    r.ent("coin", 27, 20)
+    r.ent("coin", 31, 14)
+    out.append(r.done())
+
+    r = Draft("s7_speakeasy", 7, (0, 40), (40, 20))
+    r.fill(0, 0, 40, 2)
+    r.ground(18)
+    r.wall(0, 2, 18, w=2)
+    r.wall(38, 2, 18, w=2)
+    r.back(2, 2, 38, 18)
+    r.stamp(10, 4, "N")
+    r.stamp(28, 6, "A")
+    r.ent("door", 4, 17, a="#s7_alley", b=19, c=25)
+    r.ent("npc", 14, 17, a="@s7_bartender")
+    r.ent("reel", 34, 17, a="@s7_reel_b")
+    r.girder(22, 12, 6)
+    r.ent("frame", 25, 11)
+    r.ent("coin", 20, 17)
+    r.ent("coin", 30, 17)
+    out.append(r.done())
+
+    r = Draft("s7_roofs_a", 7, (80, 0), (80, 30))
+    r.fill(0, 8, 14, 30)
+    r.fill(20, 12, 34, 30)
+    r.fill(40, 9, 52, 30)
+    r.fill(58, 11, 80, 30)
+    for x0, x1 in ((14, 20), (34, 40), (52, 58)):
+        r.nails(x0, 29, x1 - x0)
+    r.stamp(44, 4, "T")
+    r.stamp(24, 9, "H")
+    r.stamp(66, 8, "H")
+    r.stamp(4, 2, "B")
+    searchlight(r, 48, 2, sweep=22, beam=10, speed=110)
+    r.ent("walker", 27, 11)
+    r.ent("thrower", 70, 10)
+    r.ent("flyer", 37, 5, a=6)
+    r.ent("coin", 17, 6)
+    r.ent("coin", 37, 6)
+    r.ent("coin", 55, 7)
+    out.append(r.done())
+
+    r = Draft("s7_billboard", 7, (160, -20), (40, 50))
+    r.fill(0, 31, 12, 50)                       # the roof Ruby arrives on
+    r.fill(26, 8, 40, 50)                       # a tall office block
+    r.nails(12, 49, 14)
+    r.stamp(28, 13, "B")
+    for x, y, ch in ((29, 24, "W"), (34, 24, "w"), (29, 32, "w"), (34, 32, "W"), (29, 40, "W")):
+        r.stamp(x, y, ch)
+    r.ent("platform", 16, 10, a=21, b=1, c=90, d=3)   # a window washer's scaffold
+    r.girder(12, 20, 3)
+    r.ent("flyer", 20, 16, a=8)
+    r.ent("coin", 17, 8)
+    r.ent("coin", 19, 8)
+    out.append(r.done())
+
+    r = Draft("s7_club", 7, (200, -30), (40, 30))
+    r.fill(0, 0, 40, 2)
+    r.fill(0, 18, 40, 30)                       # the Blue Gardenia, on the top floor
+    r.wall(0, 2, 12, w=2)
+    r.back(0, 2, 40, 18)
+    r.stamp(8, 4, "N")
+    r.stamp(28, 4, "N")
+    r.stamp(17, 7, "A")
+    r.ent("mirror", 6, 17)
+    r.ent("npc", 20, 17, a="@s7_singer")
+    r.ent("reel", 34, 17, a="@s7_reel_a")
+    r.ent("heart", 14, 17)
+    out.append(r.done())
+
+    r = Draft("s7_roofs_b", 7, (240, -30), (80, 30))
+    r.fill(0, 18, 28, 30)
+    r.fill(52, 18, 80, 30)
+    r.nails(28, 29, 24)
+    r.girder(36, 2, 8)
+    searchlight(r, 40, 3, sweep=16, beam=14, speed=96)
+    r.ent("platform", 29, 18, a=18, b=0, c=100, d=3)   # a slow scaffold across the gap
+    r.ent("sign", 22, 17, a="@s7_decoy_hint")
+    r.stamp(6, 15, "H")
+    r.stamp(62, 13, "T")
+    r.ent("walker", 12, 17)
+    r.ent("charger", 68, 17)
+    r.ent("flyer", 46, 8, a=8)
+    r.ent("coin", 34, 15)
+    r.ent("coin", 44, 15)
+    out.append(r.done())
+
+    r = Draft("s7_tower", 7, (320, -60), (40, 60))
+    r.fill(0, 0, 40, 2)
+    r.clear(30, 0, 36, 2)                       # up into the penthouse
+    r.fill(0, 48, 40, 60)
+    r.wall(0, 2, 40, w=2)                       # roofs_b joins at rows 40-47
+    r.wall(38, 2, 48, w=2)
+    r.back(0, 2, 40, 48)
+    for x, y, w in ((4, 42, 8), (22, 36, 8), (6, 30, 8), (24, 24, 6), (8, 18, 8), (26, 12, 8)):
+        r.girder(x, y, w)
+    r.plank(30, 6, 6)
+    searchlight(r, 20, 3, sweep=14, beam=27, speed=120)
+    r.ent("thrower", 27, 23)
+    r.ent("flyer", 14, 26, a=6)
+    r.ent("flyer", 30, 15, a=6)
+    r.ent("heart", 34, 47)
+    for x, y in ((8, 29), (10, 29), (28, 11), (30, 11)):
+        r.ent("coin", x, y)
+    out.append(r.done())
+
+    r = Draft("s7_penthouse", 7, (320, -90), (60, 30))
+    r.fill(0, 0, 60, 2)
+    r.ground(26)
+    r.clear(30, 26, 36, 30)
+    r.plank(30, 26, 6)                          # the hatch up from the tower
+    r.wall(0, 2, 26, w=2)
+    r.wall(58, 2, 26, w=2)
+    r.back(2, 2, 58, 26)
+    for x in (6, 14, 44, 52):
+        r.stamp(x, 6, "W")
+    r.stamp(27, 3, "N")
+    r.girder(8, 19, 6)
+    r.girder(46, 19, 6)
+    r.ent("boss", 48, 25, a=8)
+    out.append(r.done())
+    return out
+
+
+def beat(r, x, y, width, group):
+    """A gold set piece `width` tiles wide that is solid only on alternate
+    beats: group 0 on even beats, group 1 on odd ones."""
+    r.ent("beat", x, y, a=width, b=group)
+
+
+def stage8():
+    """Stage 8, "Starlight Revue": the show that never ends. Set pieces that
+    come and go on the beat, falling sandbags, a paper moon over the
+    orchestra pit, Vivian Lark in her dressing room, and the Maestro."""
+    out = []
+    r = Draft("s8_gate", 8, (0, 0), (40, 30))
+    r.ground(26)
+    r.wall(0, 0, 26, w=2)
+    r.back(18, 6, 40, 26)
+    r.stamp(26, 8, "S")
+    r.stamp(15, 21, "L")
+    r.ent("door", 3, 25, a="#backlot_east", b=57, c=25)
+    r.ent("mirror", 8, 25)
+    r.ent("sign", 11, 25, a="@s8_title")
+    r.ent("npc", 22, 25, a="@s8_doorman")
+    r.spawn(6, 25)
+    out.append(r.done())
+
+    r = Draft("s8_wings", 8, (40, 0), (60, 30))
+    r.fill(0, 0, 60, 2)
+    r.ground(26)
+    r.back(0, 2, 60, 26)
+    r.clear(22, 26, 34, 28)
+    r.nails(22, 28, 12)                         # a sunken trap full of prop sabres
+    r.stamp(2, 19, "C")
+    r.stamp(54, 19, "C")
+    r.ent("sign", 18, 25, a="@s8_beat_hint")
+    beat(r, 24, 24, 3, 0)
+    beat(r, 29, 24, 3, 1)
+    r.ent("sandbag", 40, 3)
+    r.ent("sandbag", 46, 3)
+    r.ent("walker", 10, 25)
+    r.ent("walker", 50, 25)
+    r.ent("coin", 25, 23)
+    r.ent("coin", 30, 23)
+    out.append(r.done())
+
+    r = Draft("s8_stage", 8, (100, 0), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.fill(0, 26, 30, 30)
+    r.fill(6, 23, 30, 26)
+    r.fill(12, 20, 30, 23)                      # steps up onto the stage
+    r.fill(50, 20, 80, 30)
+    r.nails(30, 29, 20)                         # the orchestra pit
+    r.clear(18, 20, 22, 30)
+    r.plank(18, 20, 4)                          # a trap down to the prompter's box
+    r.back(0, 2, 80, 20)
+    r.stamp(4, 6, "C")
+    r.stamp(73, 6, "C")
+    r.stamp(37, 3, "S")
+    r.stamp(56, 17, "P")
+    r.ent("platform", 31, 20, a=14, b=0, c=110, d=3)   # the paper moon
+    beat(r, 33, 15, 3, 0)
+    beat(r, 39, 12, 3, 1)
+    beat(r, 45, 15, 3, 0)
+    r.ent("walker", 24, 19)
+    r.ent("walker", 62, 19)
+    r.ent("thrower", 72, 19)
+    r.ent("coin", 40, 11)
+    r.ent("coin", 34, 14)
+    r.ent("coin", 46, 14)
+    out.append(r.done())
+
+    r = Draft("s8_prompter", 8, (110, 30), (30, 20))
+    r.fill(0, 0, 30, 2)
+    r.clear(8, 0, 12, 2)
+    r.ground(16)
+    r.wall(0, 2, 16, w=2)
+    r.wall(28, 2, 16, w=2)
+    r.back(2, 2, 28, 16)
+    for y in (12, 7, 3):
+        r.plank(8, y, 4)
+    r.ent("reel", 24, 15, a="@s8_reel_b")
+    r.ent("frame", 4, 15)
+    r.ent("hopper", 18, 15)
+    r.ent("coin", 14, 15)
+    out.append(r.done())
+
+    r = Draft("s8_flyloft", 8, (180, -30), (40, 60))
+    r.fill(0, 0, 40, 2)
+    r.fill(0, 50, 40, 60)
+    r.wall(0, 2, 42, w=2)                       # the stage joins at rows 42-49
+    r.wall(38, 2, 18, w=2)
+    r.wall(38, 26, 50, w=2)                     # the dressing rooms join at rows 18-25
+    r.back(0, 2, 40, 50)
+    r.girder(4, 44, 8)
+    r.girder(20, 39, 8)
+    beat(r, 30, 34, 4, 0)
+    beat(r, 22, 29, 4, 1)
+    r.girder(8, 25, 8)
+    r.ent("platform", 16, 25, a=12, b=0, c=110, d=3)
+    r.girder(30, 26, 8)
+    r.stamp(25, 5, "M")
+    r.ent("flyer", 26, 19, a=6)
+    r.ent("flyer", 10, 36, a=6)
+    r.ent("coin", 10, 24)
+    r.ent("coin", 12, 24)
+    out.append(r.done())
+
+    r = Draft("s8_dressing", 8, (220, -30), (40, 30))
+    r.fill(0, 0, 40, 2)
+    r.fill(0, 26, 40, 30)
+    r.wall(0, 2, 18, w=2)
+    r.wall(38, 2, 18, w=2)
+    r.back(0, 2, 40, 26)
+    r.stamp(4, 5, "S")
+    r.stamp(28, 23, "P")
+    r.ent("mirror", 8, 25)
+    r.ent("npc", 16, 25, a="@s8_viv")
+    r.ent("reel", 23, 25, a="@s8_reel_a")
+    r.ent("heart", 35, 25)
+    out.append(r.done())
+
+    r = Draft("s8_catwalk", 8, (260, -30), (80, 30))
+    r.fill(0, 0, 80, 2)
+    r.girder(0, 26, 12)
+    r.plank(16, 24, 8)
+    beat(r, 27, 22, 3, 0)
+    beat(r, 33, 22, 3, 1)
+    beat(r, 39, 22, 3, 0)
+    r.plank(45, 22, 10)
+    r.ent("platform", 57, 22, a=10, b=0, c=120, d=3)
+    r.girder(70, 26, 10)
+    r.nails(0, 29, 80)
+    r.stamp(20, 4, "S")
+    r.stamp(52, 4, "S")
+    r.ent("charger", 51, 21)
+    r.ent("flyer", 30, 12, a=8)
+    r.ent("flyer", 64, 14, a=8)
+    for x, y in ((28, 21), (34, 21), (40, 21), (60, 20)):
+        r.ent("coin", x, y)
+    out.append(r.done())
+
+    r = Draft("s8_grand", 8, (340, -30), (60, 30))
+    r.fill(0, 0, 60, 2)
+    r.fill(0, 26, 60, 30)
+    for i in range(8):
+        r.fill(10 + i * 5, 26 - i * 2, 60, 26)  # the grand staircase
+    r.stamp(2, 19, "C")
+    r.stamp(4, 6, "S")
+    r.ent("walker", 21, 23)
+    r.ent("walker", 36, 17)
+    r.ent("thrower", 50, 11)
+    r.ent("mirror", 56, 11)
+    r.ent("coin", 31, 18)
+    r.ent("coin", 41, 14)
+    out.append(r.done())
+
+    r = Draft("s8_finale", 8, (400, -44), (60, 30))
+    r.fill(0, 0, 60, 2)
+    r.ground(26)
+    r.wall(58, 2, 26, w=2)
+    r.back(0, 2, 58, 26)
+    r.stamp(4, 19, "C")
+    r.stamp(50, 19, "C")
+    r.stamp(27, 4, "S")
+    r.girder(8, 19, 6)
+    r.girder(46, 19, 6)
+    beat(r, 22, 20, 4, 0)
+    beat(r, 34, 20, 4, 1)
+    r.ent("boss", 30, 25, a=9)
+    out.append(r.done())
+    return out
+
+
 def tower():
     """The Projection Tower (region 0, east of the lot in world space)."""
     out = []
@@ -1086,4 +1427,4 @@ def tower():
 
 
 def all_rooms():
-    return backlot() + stage1() + stage2() + stage3() + stage4() + stage5() + stage6() + tower()
+    return backlot() + stage1() + stage2() + stage3() + stage4() + stage5() + stage6() + stage7() + stage8() + tower()

@@ -17,6 +17,8 @@ import region3
 import region4
 import region5
 import region6
+import region7
+import region8
 import rooms
 import world
 from font import GLYPHS
@@ -30,8 +32,8 @@ ENT_MARK = {"coin": (15, 13, 2), "walker": (15, 2, 2), "hopper": (15, 2, 2), "fl
 
 
 def main(outdir, names):
-    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS), 4: region4.build(GLYPHS), 5: region5.build(GLYPHS), 6: region6.build(GLYPHS)}
-    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS, 4: region4.STAMP_CHARS, 5: region5.STAMP_CHARS, 6: region6.STAMP_CHARS}
+    art = {0: region0.build(GLYPHS), 1: region1.build(GLYPHS), 2: region2.build(GLYPHS), 3: region3.build(GLYPHS), 4: region4.build(GLYPHS), 5: region5.build(GLYPHS), 6: region6.build(GLYPHS), 7: region7.build(GLYPHS), 8: region8.build(GLYPHS)}
+    chars = {0: region0.STAMP_CHARS, 1: rooms.STAMP_CHARS, 2: region2.STAMP_CHARS, 3: region3.STAMP_CHARS, 4: region4.STAMP_CHARS, 5: region5.STAMP_CHARS, 6: region6.STAMP_CHARS, 7: region7.STAMP_CHARS, 8: region8.STAMP_CHARS}
     all_rooms = world.all_rooms()
     regions = sorted(art)
     if names:

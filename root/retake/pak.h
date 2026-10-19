@@ -4,9 +4,9 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 2909748
-#define PAK_ROOM_COUNT 53
-#define PAK_WORLD_HASH 0x5B85BD60  /* CRC32 of room order, geometry and entities */
+#define PAK_SIZE 3667108
+#define PAK_ROOM_COUNT 71
+#define PAK_WORLD_HASH 0xA9F6A1E1  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
@@ -59,9 +59,27 @@
 #define ROOM_S6_OBSERVATORY 47
 #define ROOM_S6_BRIDGE 48
 #define ROOM_S6_THRONE 49
-#define ROOM_TOWER_BASE 50
-#define ROOM_TOWER_CLIMB 51
-#define ROOM_TOWER_BOOTH 52
+#define ROOM_S7_GATE 50
+#define ROOM_S7_ALLEY 51
+#define ROOM_S7_SPEAKEASY 52
+#define ROOM_S7_ROOFS_A 53
+#define ROOM_S7_BILLBOARD 54
+#define ROOM_S7_CLUB 55
+#define ROOM_S7_ROOFS_B 56
+#define ROOM_S7_TOWER 57
+#define ROOM_S7_PENTHOUSE 58
+#define ROOM_S8_GATE 59
+#define ROOM_S8_WINGS 60
+#define ROOM_S8_STAGE 61
+#define ROOM_S8_PROMPTER 62
+#define ROOM_S8_FLYLOFT 63
+#define ROOM_S8_DRESSING 64
+#define ROOM_S8_CATWALK 65
+#define ROOM_S8_GRAND 66
+#define ROOM_S8_FINALE 67
+#define ROOM_TOWER_BASE 68
+#define ROOM_TOWER_CLIMB 69
+#define ROOM_TOWER_BOOTH 70
 
 /* Sprite sheet indices into the pack's sprite table. */
 #define SHEET_HERO 0
@@ -167,12 +185,29 @@
 #define SCRIPT_S6_REEL_B 63
 #define SCRIPT_S6_BOSS_INTRO 64
 #define SCRIPT_S6_WRAP 65
-#define SCRIPT_TOWER_OPEN 66
-#define SCRIPT_TOWER_NOTE 67
-#define SCRIPT_FINAL_INTRO 68
-#define SCRIPT_ENDING 69
-#define SCRIPT_CREDITS 70
-#define SCRIPT_TEST_SIGN 71
+#define SCRIPT_S7_TITLE 66
+#define SCRIPT_S7_NEWSBOY 67
+#define SCRIPT_S7_DECOY_HINT 68
+#define SCRIPT_S7_BARTENDER 69
+#define SCRIPT_S7_SINGER 70
+#define SCRIPT_S7_REEL_A 71
+#define SCRIPT_S7_REEL_B 72
+#define SCRIPT_S7_BOSS_INTRO 73
+#define SCRIPT_S7_WRAP 74
+#define SCRIPT_S8_TITLE 75
+#define SCRIPT_S8_DOORMAN 76
+#define SCRIPT_S8_BEAT_HINT 77
+#define SCRIPT_S8_VIV 78
+#define SCRIPT_S8_REEL_A 79
+#define SCRIPT_S8_REEL_B 80
+#define SCRIPT_S8_BOSS_INTRO 81
+#define SCRIPT_S8_WRAP 82
+#define SCRIPT_TOWER_OPEN 83
+#define SCRIPT_TOWER_NOTE 84
+#define SCRIPT_FINAL_INTRO 85
+#define SCRIPT_ENDING 86
+#define SCRIPT_CREDITS 87
+#define SCRIPT_TEST_SIGN 88
 
 /* HUD tiles (first tile of each 16x16 icon: TL, TR, BL, BR follow). */
 #define HT_CLEAR 0
@@ -316,7 +351,39 @@
 #define IMG_BOSS7_1 125
 #define IMG_BOSS7_2 126
 #define IMG_BOSS7_3 127
-#define PAK_FLAG_COUNT 127
+#define IMG_WALKER7_0 128
+#define IMG_WALKER7_1 129
+#define IMG_HOPPER7_0 130
+#define IMG_HOPPER7_1 131
+#define IMG_FLYER7_0 132
+#define IMG_FLYER7_1 133
+#define IMG_THROWER7_0 134
+#define IMG_THROWER7_1 135
+#define IMG_CHARGER7_0 136
+#define IMG_CHARGER7_1 137
+#define IMG_SHOT7_0 138
+#define IMG_BULLET7_0 139
+#define IMG_BOSS8_0 140
+#define IMG_BOSS8_1 141
+#define IMG_BOSS8_2 142
+#define IMG_BOSS8_3 143
+#define IMG_WALKER8_0 144
+#define IMG_WALKER8_1 145
+#define IMG_HOPPER8_0 146
+#define IMG_HOPPER8_1 147
+#define IMG_FLYER8_0 148
+#define IMG_FLYER8_1 149
+#define IMG_THROWER8_0 150
+#define IMG_THROWER8_1 151
+#define IMG_CHARGER8_0 152
+#define IMG_CHARGER8_1 153
+#define IMG_SHOT8_0 154
+#define IMG_MOON8_0 155
+#define IMG_BOSS9_0 156
+#define IMG_BOSS9_1 157
+#define IMG_BOSS9_2 158
+#define IMG_BOSS9_3 159
+#define PAK_FLAG_COUNT 162
 
 /* Songs (audio_music). */
 #define MUSIC_TITLE 0
@@ -327,7 +394,9 @@
 #define MUSIC_STAGE4 5
 #define MUSIC_STAGE5 6
 #define MUSIC_STAGE6 7
-#define MUSIC_BACKLOT 8
+#define MUSIC_STAGE7 8
+#define MUSIC_STAGE8 9
+#define MUSIC_BACKLOT 10
 #define MUSIC_NONE 63
 
 #endif

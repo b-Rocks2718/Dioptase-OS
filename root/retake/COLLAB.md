@@ -233,6 +233,21 @@ including pieces Astra would have owned; these need its eyes most.
   - the Projection Tower now needs the Monster beaten; Stage 5 needs Gargantua
   - 44 rooms, 6 bosses. Native suites pass, including the every-room
     480-tick UBSan sweep (it caught two negative shifts in new code).
+- 13:19: Opus paused at 95% of the 5-hour window (overage unavailable);
+  Stage 6 committed unplayed as 67b4988 for Astra to review.
+- 17:47-18:30, added by Opus (usage window reset at 17:40):
+  - Stage 6 "Rocket Rangers of the Moon" played headless: curtains, the
+    reactor shaft, wires, the Robot Emperor all render and behave
+  - Stage 7 "Night City" (9 rooms: rain, rooftops, a speakeasy, a jazz
+    club, searchlights whose rifles fire on whoever is lit, takes first,
+    so doubles work as decoys; the Fixer; prize Longer Takes)
+  - Stage 8 "Starlight Revue" (9 rooms: beat blocks that change every two
+    beats of the song, sandbags, a paper-moon platform over the orchestra
+    pit, Vivian Lark in her dressing room, the Maestro; prize the key to
+    the Projection Booth, which now needs boss 9)
+  - Stage 7/8 game rules wait as patch scripts (/tmp/opus-tools/stage7_game.py,
+    stage8_game.py) until Astra releases game.c
+  - 71 rooms, 9 bosses, 8 stages + hub + tower
 
 ## Handoff: state of the game (23:35 CDT)
 
