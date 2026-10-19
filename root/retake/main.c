@@ -61,6 +61,7 @@ static short red_ramp[4] = {0, 0x113, 0x238, 0x34F};
  * replays and saves are unaffected. Puffs live in world space at 1/16 px. */
 #define MAX_PUFFS 32
 static void fill_rect(int x, int y, int w, int h, int color);
+static void puff(int x_px, int y_px, int vx, int vy, int life, int color);
 #define DUST 0x0CCD
 #define SPARK 0x0AFF
 #define GOLD 0x03CF
@@ -80,6 +81,36 @@ static int shake_ticks;    /* frames of screen shake left */
 static int hitstop;        /* game ticks to hold still after a solid hit */
 static int run_dust;       /* ticks since the last running dust puff */
 static int pending_pressed; /* press edges not yet given to a game tick */
+static int prev_kind[40];  /* each entity slot's kind last tick (0 = empty), to see deaths */
+static int prev_cx[40];    /* and its center, where a death burst should appear */
+static int prev_cy[40];
+static int burst_dx[8] = {16, 11, 0, -11, -16, -11, 0, 11};
+static int burst_dy[8] = {0, -11, -16, -11, 0, 11, 16, 11};
+
+/* An enemy that vanished this tick bursts into dust and sparks where it
+ * stood; a boss bursts bigger, in gold. */
+static void death_bursts(int room_changed) {
+  for (int i = 0; i < MAX_ENTS; i++) {
+    struct Ent* e = &g_ents[i];
+    int kind = (i < g_ent_count && e->alive) ? e->kind : 0;
+    int was = prev_kind[i];
+    if (!room_changed && was && kind != was) {
+      if (was >= ENT_WALKER && was <= ENT_CHARGER) {
+        for (int k = 0; k < 8; k++) puff(prev_cx[i], prev_cy[i], burst_dx[k], burst_dy[k], 14, DUST);
+        for (int k = 0; k < 3; k++) puff(prev_cx[i], prev_cy[i], burst_dx[k * 3] >> 1, -12, 10, SPARK);
+      } else if (was == ENT_BOSS) {
+        for (int k = 0; k < 16; k++)
+          puff(prev_cx[i], prev_cy[i], burst_dx[k & 7] * (1 + (k >> 3)), burst_dy[k & 7] * (1 + (k >> 3)), 20,
+               (k & 1) ? GOLD : SPARK);
+      }
+    }
+    prev_kind[i] = kind;
+    if (kind) {
+      prev_cx[i] = (e->x + (e->w >> 1)) >> 8;
+      prev_cy[i] = (e->y + (e->h >> 1)) >> 8;
+    }
+  }
+}
 
 static void puff(int x_px, int y_px, int vx, int vy, int life, int color) {
   for (int i = 0; i < MAX_PUFFS; i++) {
@@ -136,6 +167,7 @@ static void feel_tick(void) {
       for (int k = 0; k < 4; k++) puff(fx, fy - 8, (k & 1 ? 1 : -1) * (4 + k * 3), -10 - k * 2, 14, GOLD);
     }
   }
+  death_bursts((ge & GE_ROOM) != 0);
   if (ge & (GE_SLAM | GE_THUNDER)) shake_ticks = 10;
   if (ge & (GE_HURT | GE_HAZARD)) shake_ticks = 6;
   if (ge & GE_BOSS_DOWN) shake_ticks = 24;
