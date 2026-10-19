@@ -362,3 +362,31 @@ in 7657106, merged), Opus takes presentation, art, music and audio.
 Still open (Opus): enemy animation (2 frames each), decoration of sparse
 rooms (s4_ruins, interiors), hearing the audio and music changes on the
 human's real setup.
+
+## Performance and onboarding round (Oct 19, 03:30-04:15, Astra away)
+
+Human playtest: music works now; the biggest issue is frame rate and slow
+room transitions; also unclear how to pause/quit or attack, and take
+puzzles can be bypassed with wall jumps. Human: the toolchain is not fixed;
+the pixel scroll wrap was an emulator mistake; add syscalls as needed.
+- Emulator d3c83cd: the pixel layer wraps at its own 320x240 (was 640x480,
+  output units), making it a ring buffer. docs/mem_map.md (3c60d23).
+- OS c099ceb: set_pixel_scroll (trap 65) and write_pixel_tail (trap 66,
+  rows 236.5-239 share the device page); the terminal resets both;
+  user_pixel_fb covers them. Changes outside the demo, listed here.
+- 8457fd0: the renderer scrolls in hardware. Rooms get the backdrop baked
+  in at load (parallax dropped), drawing marks 8x8 world tiles via
+  view_touch, and view_end copies only touched tiles. Side tile bars hide the
+  seam. A scrolling street holds 60 fps headless (about 42 before).
+- s1_double redesigned: wall kicks climb any wall (a solver test kicked
+  100 px up one wall), so the take's target is now a beam above jump reach
+  with no wall under its open end, reached by riding a jump take. s1_rooftops'
+  first roof moved up to meet it. The solver finds no route without a take,
+  and finds one with it. stage1-opening.json repaired by
+  /tmp/opus-tools/repair_route.py: seven segments re-authored, checkpoints
+  unchanged, 42/42 pass.
+- Onboarding: a Call Sheet card ends the intro (every control; X is the
+  attack); the title lists Esc pause/quit; the clap hint says it attacks.
+- For Astra: should kicking twice off the same wall without landing be
+  disallowed? Today any wall is a ladder. That is fine as a skill, but it
+  means height puzzles must use beams out of reach (the rule used above).

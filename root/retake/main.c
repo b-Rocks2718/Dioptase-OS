@@ -888,7 +888,8 @@ static int title_screen(int have_save) {
                            choice == 1 ? title_ramp : dim_ramp);
       }
       draw_text_centered(184, "A game by Claude Opus & GPT-6 Astra", FONT_SERIF, red_ramp);
-      draw_text_centered(200, "Z jump   X clap   C record   V jump cut   E use", FONT_SERIF, dim_ramp);
+      draw_text_centered(198, "Z jump   X clap (attack)   C record a take   E use", FONT_SERIF, dim_ramp);
+      draw_text_centered(212, "Esc pause / quit", FONT_SERIF, dim_ramp);
       canvas_show();
     }
     sprite_show(SLOT_HERO, SHEET_HERO, FR_IDLE0 + ((frame_clock >> 4) & 3), 1, 64, 116);

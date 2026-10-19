@@ -16,6 +16,8 @@ SCRIPTS = {
         "Only one person on the lot was not in the picture.",
         "RUBY.\n\nStunt double. Uncredited.",
         "Nobody had ever written her name down.\n\nSo the camera never caught her.",
+    
+        "THE CALL SHEET\n\nArrows or WASD: move.   Z or Space: jump.\nX: clap your clapperboard. It knocks out whatever is in front of you.\nC: start, then stop, recording a take: a double that repeats your moves.\nE: talk, read, open doors.   Esc: pause, or quit to the title.",
     ],
     "credits_tease": [
         "STUNTS: RUBY",
@@ -50,6 +52,7 @@ SCRIPTS = {
     ],
     "s1_double_hint": [
         "STUNT COORDINATOR'S NOTE:\n\nCan't reach it? Two stunt doubles are better than one.",
+        "(Record yourself jumping with C. Stand on your double's head, and jump again when it does.)",
         "(Record a take standing still, then jump onto your own head.)",
     ],
     "s1_wall_hint": [
@@ -58,7 +61,7 @@ SCRIPTS = {
     ],
     "s1_clap_hint": [
         "PROPS:\n\nOne clapperboard, slightly haunted.",
-        "(Press X to clap. Hold up or down to clap upward or below you. Clap downward on an enemy to bounce off it.)",
+        "(Press X to clap: it is your attack, and knocks out anything in front of you. Hold up or down to clap upward or below you. Clap downward on an enemy to bounce off it.)",
     ],
     "s1_comedian": [
         "\"Oh! A real person! In color, no less.\"",

@@ -180,20 +180,26 @@ def stage1():
     out.append(r.done())
 
     # ---- Two doubles are better than one ----
+    # The way on is a beam whose underside is 6 px above the top of Ruby's
+    # highest jump from the floor, with nothing under its open end to kick
+    # off: wall kicks can climb any wall, so the only way up is to ride a
+    # take's jump and jump again from its head. The wall under the far end
+    # only climbs into the beam's underside.
     r = Draft("s1_double", 1, (200, 0), (40, 30))
-    r.fill(0, 15, 26, 30)                      # the floor Ruby arrives on
-    r.fill(26, 9, 40, 30)                      # a ledge 6 tiles up: needs a take
+    r.fill(0, 15, 40, 30)                      # the floor Ruby arrives on
     r.fill(0, 0, 40, 2)
     r.building(0, 2, 40, 15, windows="Ww")
+    r.wall(38, 7, 15, w=2)
+    r.girder(22, 6, 16)                        # the beam, x 22..37, flush with the wall
     r.ent("sign", 8, 14, a="@s1_double_hint")
-    r.ent("coin", 30, 8)
-    r.ent("coin", 33, 8)
-    r.ent("walker", 32, 8)
+    r.ent("coin", 30, 5)
+    r.ent("coin", 33, 5)
+    r.ent("walker", 32, 5)
     out.append(r.done())
 
     # ---- Rooftops: gaps, pigeons, a pie-throwing baker, a mattress ----
     r = Draft("s1_rooftops", 1, (240, 0), (80, 30))
-    r.fill(0, 9, 14, 30)
+    r.fill(0, 6, 14, 30)                       # level with the beam in s1_double
     r.fill(19, 11, 30, 30)
     r.fill(35, 9, 44, 30)
     r.fill(49, 13, 60, 30)
