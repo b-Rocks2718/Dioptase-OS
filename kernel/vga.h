@@ -31,6 +31,8 @@
 // kernel memory, a reprogrammed PIT). Pixels 256..319 of row 236 and rows
 // 237..239 therefore stay kernel-only.
 #define PIXEL_FB_USER_SIZE 0x25000
+#define PIXEL_FB_USER_PIXELS (PIXEL_FB_USER_SIZE / 2)  // 75776
+#define PIXEL_FB_PIXELS (320 * 240)                   // the whole layer
 
 #define TRANSPARENT 255
 
@@ -47,6 +49,9 @@ extern const volatile unsigned * const VGA_FRAME_COUNTER;
 
 extern volatile char * const TILE_SCALE;
 extern volatile char * const PIXEL_SCALE;
+// Pixel-layer scroll, signed 16-bit pixels; the layer wraps at 320x240.
+extern volatile short * const PIXEL_HSCROLL;
+extern volatile short * const PIXEL_VSCROLL;
 
 extern volatile short * const PIXEL_FB;
 

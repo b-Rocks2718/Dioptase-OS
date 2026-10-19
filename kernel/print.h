@@ -38,6 +38,8 @@ int console_get_text_color(void);
  */
 void console_set_tile_scale(int scale);
 void console_set_pixel_scale(int scale);
+// Write both pixel-layer scroll registers (signed pixels).
+void console_set_pixel_scroll(int x, int y);
 void console_set_tile_vscroll(int scroll);
 void console_set_tile_hscroll(int scroll);
 void console_move_tile_vscroll(int delta);

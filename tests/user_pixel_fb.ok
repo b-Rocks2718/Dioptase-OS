@@ -6,6 +6,12 @@
 ***PASS last mapped pixel reads back: got 1929 expected 1929
 ***PASS alias child exit status: got 42 expected 42
 ***PASS parent sees the child's pixel: got 2748 expected 2748
+***PASS set_pixel_scroll(3, -2): got 0 expected 0
+***PASS set_pixel_scroll(0, 0): got 0 expected 0
+***PASS write_pixel_tail at the first tail pixel: got 0 expected 0
+***PASS write_pixel_tail at the last tail pixel: got 0 expected 0
+***PASS write_pixel_tail rejects a start in the user window: got -1 expected -1
+***PASS write_pixel_tail rejects a range past the layer: got -1 expected -1
 ***PASS set_pixel_scale(1): got 0 expected 0
 ***PASS set_pixel_scale(0): got 0 expected 0
 ***PASS set foreground child: got 0 expected 0

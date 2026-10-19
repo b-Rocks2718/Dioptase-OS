@@ -9,6 +9,11 @@
  * - a child that loads the first pixel past the mapping is killed. That pixel
  *   shares page 0x7FE5000 with the PS/2, UART, PIT, SD DMA, and audio
  *   registers, so a successful load would mean user code can reach devices.
+ * - set_pixel_scroll() (trap 65) returns 0 for positive and negative offsets,
+ *   and write_pixel_tail() (trap 66) accepts the kernel-only tail (the first
+ *   and last tail pixels) but rejects ranges that start in the user window or
+ *   run past the end of the layer with -1, so the trap cannot reach user
+ *   memory-mapped devices or write past the framebuffer
  * - set_pixel_scale() returns 0, and a call from the live foreground child is
  *   reported as a display claim when the parent clears the foreground slot,
  *   which is what makes the shell ask the terminal to restore the scale.
@@ -118,6 +123,17 @@ int main(void){ /* Verify the pixel framebuffer window (bounds, aliasing, idempo
   user_test_expect_eq("parent sees the child's pixel",
     pixel_fb[PIXEL_FB_USER_PIXELS - 1], 0x0ABC);
 
+  short tail_pixels[4] = {0x0111, 0x0222, 0x0333, 0x0444};
+  user_test_expect_eq("set_pixel_scroll(3, -2)", set_pixel_scroll(3, -2), 0);
+  user_test_expect_eq("set_pixel_scroll(0, 0)", set_pixel_scroll(0, 0), 0);
+  user_test_expect_eq("write_pixel_tail at the first tail pixel",
+    write_pixel_tail(PIXEL_FB_USER_PIXELS, tail_pixels, 4), 0);
+  user_test_expect_eq("write_pixel_tail at the last tail pixel",
+    write_pixel_tail(PIXEL_FB_PIXELS - 1, tail_pixels, 1), 0);
+  user_test_expect_eq("write_pixel_tail rejects a start in the user window",
+    write_pixel_tail(PIXEL_FB_USER_PIXELS - 1, tail_pixels, 2), -1);
+  user_test_expect_eq("write_pixel_tail rejects a range past the layer",
+    write_pixel_tail(PIXEL_FB_PIXELS - 1, tail_pixels, 2), -1);
   user_test_expect_eq("set_pixel_scale(1)", set_pixel_scale(1), 0);
   user_test_expect_eq("set_pixel_scale(0)", set_pixel_scale(0), 0);
   test_pixel_scale_claim();

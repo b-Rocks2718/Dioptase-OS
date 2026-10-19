@@ -144,6 +144,22 @@ volatile short* get_pixel_fb(void);
 // terminal restores 0 after a foreground program that changed it exits.
 int set_pixel_scale(unsigned scale);
 
+// Write both pixel-layer scroll registers and return 0. Framebuffer pixel
+// (x, y) appears at screen ((x + sx) mod 320, (y + sy) mod 240): the layer is a
+// ring buffer, so a scrolling program redraws only the strip coming into view
+// (docs/mem_map.md). The terminal restores (0, 0) after a foreground program
+// that changed it exits.
+int set_pixel_scroll(int x, int y);
+
+// The last pixel index of the pixel layer plus one (320 * 240).
+#define PIXEL_FB_PIXELS 76800
+
+// Copy `count` pixels from `src` into framebuffer pixels first..first+count-1,
+// which must lie in [PIXEL_FB_USER_PIXELS, PIXEL_FB_PIXELS): the part of the
+// layer get_pixel_fb() cannot map. Returns 0, or -1 with errno EINVAL for a
+// range outside that tail or EFAULT for an unreadable `src`.
+int write_pixel_tail(unsigned first, short* src, unsigned count);
+
 int signal_child(int child, int signal);
 
 int request_priority(int priority);

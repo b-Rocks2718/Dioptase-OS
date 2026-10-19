@@ -406,8 +406,9 @@ static void cursor_home(void){
 // - Tile scale, pixel scale, and both scroll registers match terminal startup
 //   state.
 // - The built-in text tiles are loaded and every sprite is hidden.
-// - The user-mapped part of the pixel framebuffer is black, so a program's
-//   last frame cannot show through transparent tiles later.
+// - The whole pixel framebuffer is black (the user-mapped part directly, the
+//   kernel-only tail through write_pixel_tail), so a program's last frame
+//   cannot show through transparent tiles later, and pixel scroll is (0, 0).
 // - Raw keyboard mode is off.
 // - The visible framebuffer, cursor, scrolling, color, saved cursor, wrapping,
 //   and blink state match a freshly cleared terminal.
@@ -418,9 +419,14 @@ static void reset_display_state(void){
       PIXEL_FB[i] = 0;
     }
   }
+  // The kernel-only tail (end of row 236, rows 237..239) shows once a program
+  // scrolls the pixel layer vertically, so clear it through the kernel too.
+  static short black_tail[1024];   // PIXEL_FB_PIXELS - PIXEL_FB_USER_PIXELS (bcc needs a literal size)
+  write_pixel_tail(PIXEL_FB_USER_PIXELS, black_tail, PIXEL_FB_PIXELS - PIXEL_FB_USER_PIXELS);
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
   set_pixel_scale(TERMINAL_DEFAULT_PIXEL_SCALE);
+  set_pixel_scroll(0, 0);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 
@@ -993,6 +999,7 @@ int main(void){
   load_text_tiles();
   set_tile_scale(TERMINAL_DEFAULT_TILE_SCALE);
   set_pixel_scale(TERMINAL_DEFAULT_PIXEL_SCALE);
+  set_pixel_scroll(0, 0);
   set_hscroll(TERMINAL_SCROLL_ORIGIN);
   set_vscroll(TERMINAL_SCROLL_ORIGIN);
 

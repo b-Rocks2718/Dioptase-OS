@@ -80,6 +80,13 @@ enum TrapCode {
   TRAP_SET_PIXEL_SCALE = 63,
   // Pin the calling thread to one core, or let it run anywhere again.
   TRAP_PIN_CORE = 64,
+  // Write both pixel-layer scroll registers (signed pixels). The layer wraps
+  // at its own 320x240 size (docs/mem_map.md), so it can scroll as a ring.
+  TRAP_SET_PIXEL_SCROLL = 65,
+  // Copy user pixels into the kernel-only tail of the pixel framebuffer
+  // (pixels PIXEL_FB_USER_PIXELS..PIXEL_FB_PIXELS-1, see vga.h), which a
+  // vertically scrolled layer brings on screen.
+  TRAP_WRITE_PIXEL_TAIL = 66,
 };
 
 #define SEEK_SET 0

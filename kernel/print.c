@@ -285,6 +285,16 @@ void console_set_pixel_scale(int scale){
   console_lock_release(interrupt_state);
 }
 
+// Set both pixel-layer scroll offsets under the console lock, like the
+// other display registers, so a concurrent console update cannot interleave
+// with the pair. Only the low 16 bits of each value reach the device.
+void console_set_pixel_scroll(int x, int y){
+  unsigned interrupt_state = console_lock_acquire();
+  *PIXEL_HSCROLL = (short)x;
+  *PIXEL_VSCROLL = (short)y;
+  console_lock_release(interrupt_state);
+}
+
 // Set the VGA tile vertical scroll offset.
 void console_set_tile_vscroll(int scroll){
   unsigned interrupt_state = console_lock_acquire();

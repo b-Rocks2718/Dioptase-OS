@@ -2069,6 +2069,49 @@ int handle_unmask_signal(int signal){
   return 0;
 }
 
+// Pixels copied per chunk by handle_write_pixel_tail: a 128-byte stack buffer.
+#define PIXEL_TAIL_CHUNK 64
+
+// Copy `count` pixels from user memory into framebuffer pixels
+// first..first+count-1. The whole range must lie in the kernel-only tail
+// [PIXEL_FB_USER_PIXELS, PIXEL_FB_PIXELS): the end of row 236 and rows
+// 237..239 share page 0x7FE5000 with device registers, so user code cannot map
+// them (vga.h), yet a vertically scrolled pixel layer shows them.
+//
+// Preconditions: kernel mode, called from the trap path of the current thread
+// with interrupts as the trap entry left them. No lock is held: framebuffer
+// stores need no serialization (user code writes the rest of the layer
+// directly), and copy_from_user may fault on an unmapped user page, which must
+// not happen under a spinlock. The copy goes through a small stack chunk.
+// Postconditions: returns 0 after storing every pixel; returns -1 with EINVAL
+// (and stores nothing) if the range leaves the tail, or -1 with EFAULT if a
+// source chunk is unreadable (pixels before that chunk are already stored).
+static int handle_write_pixel_tail(unsigned first, short* src, unsigned count){
+  if (first < PIXEL_FB_USER_PIXELS || first > PIXEL_FB_PIXELS ||
+      count > PIXEL_FB_PIXELS - first){
+    set_syscall_error(EINVAL);
+    return -1;
+  }
+  struct TCB* tcb = get_current_tcb();
+  short chunk[PIXEL_TAIL_CHUNK];
+  unsigned done = 0;
+  while (done < count){
+    unsigned n = count - done;
+    if (n > PIXEL_TAIL_CHUNK){
+      n = PIXEL_TAIL_CHUNK;
+    }
+    if (copy_from_user(chunk, src + done, n * 2, tcb) != 0){
+      set_syscall_error(EFAULT);
+      return -1;
+    }
+    for (unsigned k = 0; k < n; ++k){
+      PIXEL_FB[first + done + k] = chunk[k];
+    }
+    done += n;
+  }
+  return 0;
+}
+
 // Dispatch user-mode trap requests after trap_handler_ has preserved
 // the hardware trap frame and switched into the kernel C calling convention
 int trap_handler(unsigned code,
@@ -2285,6 +2328,15 @@ int trap_handler(unsigned code,
       claim_foreground_display();
       console_set_pixel_scale(arg1);
       return 0;
+    }
+    case TRAP_SET_PIXEL_SCROLL: {
+      claim_foreground_display();
+      console_set_pixel_scroll(arg1, arg2);
+      return 0;
+    }
+    case TRAP_WRITE_PIXEL_TAIL: {
+      claim_foreground_display();
+      return handle_write_pixel_tail((unsigned)arg1, (short*)arg2, (unsigned)arg3);
     }
     case TRAP_SIGNAL_CHILD: {
       return handle_signal_child(arg1, arg2);

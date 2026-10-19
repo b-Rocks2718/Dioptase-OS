@@ -16,6 +16,8 @@ const volatile char * const VGA_STATUS = (const volatile char *)0x7FE5B46;
 const volatile unsigned * const VGA_FRAME_COUNTER = (const volatile unsigned *)0x7FE5B48;
 volatile char * const TILE_SCALE = (volatile char *)0x7FE5B44;
 volatile char * const PIXEL_SCALE = (volatile char *)0x7FE5B54;
+volatile short * const PIXEL_HSCROLL = (volatile short *)0x7FE5B50;
+volatile short * const PIXEL_VSCROLL = (volatile short *)0x7FE5B52;
 
 volatile short * const PIXEL_FB = (volatile short *)0x7FC0000;
 

@@ -1972,6 +1972,83 @@ set_pixel_scale.errno_done:
 
   ret
 
+  .global set_pixel_scroll
+# Marshal arguments and issue the set pixel scroll system-call wrapper.
+set_pixel_scroll:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 65
+  trap
+  cmp  r2, r0
+  bz   set_pixel_scroll.errno_done
+  sw   r2, [errno]
+set_pixel_scroll.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
+  .global write_pixel_tail
+# Marshal arguments and issue the write pixel tail system-call wrapper.
+write_pixel_tail:
+  push r20
+  push r21
+  push r22
+  push r23
+  push r24
+  push r25
+  push r26
+  push r27
+  push r28
+  push bp
+  push ra
+
+  # Trap ABI uses r2-r8 for trap arguments.
+  mov  r4, r3
+  mov  r3, r2
+  mov  r2, r1
+  movi r1, 66
+  trap
+  cmp  r2, r0
+  bz   write_pixel_tail.errno_done
+  sw   r2, [errno]
+write_pixel_tail.errno_done:
+  pop ra
+  pop bp
+  pop r28
+  pop r27
+  pop r26
+  pop r25
+  pop r24
+  pop r23
+  pop r22
+  pop r21
+  pop r20
+
+  ret
+
   .global signal_child
 # Marshal arguments and issue the signal child system-call wrapper.
 signal_child:

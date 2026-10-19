@@ -386,6 +386,8 @@ MMIO register behavior and pixel/tile formats come from `../../docs/mem_map.md`.
 | `46` | `get_spritemap()` | none | Maps the sprite MMIO region into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. |
 | `62` | `get_pixel_fb()` | none | Maps the user-visible part of the pixel framebuffer (pixels `0..75775`, see below) into user space and returns the user pointer, or `(short*)-1` if no virtual range is available. |
 | `63` | `set_pixel_scale(scale)` | `scale` | Writes the pixel-scale register and returns `0`. Hardware displays each pixel at `2**(scale+1)` screen pixels (`../../docs/mem_map.md`). |
+| `65` | `set_pixel_scroll(x, y)` | `x`, `y` | Writes both pixel-layer scroll registers (signed pixels) and returns `0`. Framebuffer pixel `(px, py)` is shown at `((px + x) mod 320, (py + y) mod 240)`, so the layer scrolls as a ring buffer (`../../docs/mem_map.md`). Claims the display like the other display traps; the terminal restores `(0, 0)`. |
+| `66` | `write_pixel_tail(first, src, count)` | `first`, `src`, `count` | Copies `count` 16-bit pixels from user `src` to framebuffer pixels `first..first+count-1`, which must lie in `PIXEL_FB_USER_PIXELS..76799` (the part `get_pixel_fb()` cannot map). Returns `0`, or `-1` with `EINVAL` for a range outside that tail or `EFAULT` for an unreadable `src` (earlier 64-pixel chunks may already be stored). |
 
 The four display mapping getters are idempotent within one process: repeating
 an exact getter returns the same pointer and does not reserve another virtual
@@ -405,6 +407,8 @@ allocator during process teardown.
 2,048 framebuffer bytes share page `0x7FE5000` with the PS/2, UART, PIT, SD
 DMA, audio, and sprite-control registers, and mapping that page would give user
 code control of those devices, so the rest of row `236` and rows `237..239` are
-not reachable from user mode. The pixel layer is drawn under the tile layer
+not reachable from user mode except through `write_pixel_tail()` (trap 66),
+which a program needs once it scrolls the layer vertically with
+`set_pixel_scroll()` and those rows come into view. The pixel layer is drawn under the tile layer
 (tile pixels `0xFXXX` are transparent); its format and scale
 register are described in `../../docs/mem_map.md`.
