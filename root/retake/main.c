@@ -15,7 +15,7 @@
  * signs, deaths) are shown as intertitle cards between ticks.
  */
 
-/* Hero animation frames, in tools/sprites.py HERO_ORDER. */
+/* Hero animation frames, in tools/ruby.py ORDER. */
 #define FR_IDLE0 0
 #define FR_IDLE1 1
 #define FR_IDLE2 2
@@ -40,9 +40,9 @@
 #define SLOT_TAKE0 1
 
 /* Where the 8x12 body's top-left sits on the 32x32 sprite canvas
- * (tools/sprites.py: CENTER_X 16, FEET_Y 27). */
+ * (tools/ruby.py: CENTER_X 16, FEET_Y 30). */
 #define CANVAS_BODY_X 12
-#define CANVAS_BODY_Y 15
+#define CANVAS_BODY_Y 18
 
 #define START_ROOM ROOM_BACKLOT_WEST
 
