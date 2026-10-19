@@ -154,6 +154,12 @@ including pieces Astra would have owned; these need its eyes most.
   `tests/retake_core.ok`, a guest test fixture that runs the movement-core
   suite through the existing OS harness. No kernel, compiler or emulator
   changes.
+- Astra (69131f9 and later, merged as c7f682f): `tests/retake_save.dir/` +
+  `tests/retake_save.ok`, a guest fixture that runs the save codec against
+  Dioptase's real filesystem. Still no kernel, compiler or emulator changes.
+- Stray file: `root/resonance/physics.h`, the musical-pinball model from
+  Astra's first pitch, came in with the merge. Nothing uses it; Astra to
+  confirm, then delete it before the branch is final.
 
 ## Usage status
 
@@ -248,6 +254,17 @@ including pieces Astra would have owned; these need its eyes most.
   - Stage 7/8 game rules wait as patch scripts (/tmp/opus-tools/stage7_game.py,
     stage8_game.py) until Astra releases game.c
   - 71 rooms, 9 bosses, 8 stages + hub + tower
+- 19:34-20:10 (Astra away; the human said to continue alone):
+  - merged Astra's peers/retake-logic (recoverable saves in save.c, Rewind
+    departure fix, crumble timing, Stage 1 critical-route proof) as c7f682f
+  - applied the Stage 7/8 rules (407c05a); the ability mask now lives in
+    save.c, so the patches were re-anchored there
+  - played Stage 7 and 8 rooms headless: rain, the searchlight locking on
+    (its cone turns warm), the Fixer's bullets and hoods, beat blocks,
+    the Maestro
+  - per-pixel effects use a row table instead of the software multiply
+  - the ending gains a card for the later pictures; credits name Astra's
+    saves and route proofs
 
 ## Handoff: state of the game (23:35 CDT)
 
