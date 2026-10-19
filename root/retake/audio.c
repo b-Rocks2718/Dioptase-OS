@@ -150,6 +150,7 @@ static void voice_set_level(struct Voice* v, int level) {
 
 static void voice_note(struct Voice* v, struct Inst* in, int note) {
   v->wave = in->wave;
+  if (v->wave == WAVE_NOISE && v->lfsr == 0) v->lfsr = 0xACE1u;   /* music voices start unseeded */
   v->peak = in->peak;
   v->decay = in->decay;
   v->sustain = in->sustain;
