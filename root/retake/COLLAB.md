@@ -338,3 +338,27 @@ Not done, roughly in priority order:
    - the gate art reads like a ladder
    - the boss intro card triggers on room entry
 
+
+## Polish round after the human's playtest (Oct 18, 22:48-23:20)
+
+Feedback: sprite animation, menu flicker, movement feel, no music after
+the menu, overall polish. Split: Astra takes movement (player.c; landed
+in 7657106, merged), Opus takes presentation, art, music and audio.
+- 47a0009: synth watchdog 5 s -> 60 s (a slow load could kill the music);
+  title, cards and menus composed off screen (canvas_card/canvas_show)
+- a3d330c: Ruby's 6-frame run, 4-frame idle, fall flutter, landing
+  squash; dust, sparks, hit freeze, screen shake (main.c only)
+- da4349b: drums (noise voice for music instruments)
+- 1ce0bca: wainscot, frieze and pilaster tiles in regions 5-8; lamp light
+- 4f24ab4: synth naps in batches; the profiler (--profile, kernel.hex
+  symbols, -g link of retake) showed ~85% kernel time, much of it the
+  synth's per-jiffy polling. Profiles: /tmp/retake.prof (before),
+  /tmp/retake3.prof (after). A third process polls about 2000 times per
+  run; it is probably the shell, but its symbols are unverified.
+- 57f3fb0: Astra's review findings (dropped presses during hitstop, pause
+  text overflow, shake camera in small rooms) fixed; render_frame
+  letterboxes rooms smaller than the view instead of reading past them
+- 091ec66: death bursts for enemies and bosses
+Still open (Opus): enemy animation (2 frames each), decoration of sparse
+rooms (s4_ruins, interiors), hearing the audio and music changes on the
+human's real setup.
