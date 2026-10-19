@@ -19,7 +19,7 @@
  * tools/build.py; a set flag means "already collected".
  */
 
-#define HURT_INVULN 12
+#define HURT_INVULN 24       /* an enemy's flinch after a hit: knocked back and harmless */
 #define POGO_SPEED 900
 #define SPRING_SPEED 1500
 #define WALKER_SPEED 112
@@ -646,7 +646,7 @@ static void damage(struct Ent* e, int from_x, int amount) {
   e->hurt = HURT_INVULN;
   g_events |= GE_HIT;
   int dir = from_x < e->x + (e->w >> 1) ? 1 : -1;
-  if (e->kind != ENT_FLYER) e->vx = dir * 256;
+  if (e->kind != ENT_FLYER) e->vx = dir * 640;
   if (e->hp <= 0) {
     g_events |= GE_KILL;
     int kind = e->kind;
@@ -2179,8 +2179,8 @@ static void combat(void) {
         hurt_hero(e);
         e->alive = 0;
         e->kind = ENT_NONE;
-      } else if (!(e->kind == ENT_CHARGER && e->state == 3)) {
-        hurt_hero(e);
+      } else if (!(e->kind == ENT_CHARGER && e->state == 3) && !e->hurt) {
+        hurt_hero(e);       /* a flinching enemy cannot hurt Ruby */
       }
     }
   }
@@ -2293,12 +2293,34 @@ static void pickups_and_interactions(int pressed) {
   }
 }
 
+/* A struck ground enemy slides back through its flinch and does nothing
+ * else: no patrol, rush or throw. Walls and ledge edges stop the slide
+ * (these enemies do not fall), and the push decays each tick. */
+static void knockback(struct Ent* e) {
+  int py = e->y >> 8;
+  int w = e->w >> 8;
+  int h = e->h >> 8;
+  int nx = (e->x + e->vx) >> 8;
+  int edge = e->vx > 0 ? nx + w - 1 : nx;
+  if (e->vx == 0 || solid_px(edge, py + h - 2) || solid_px(edge, py + 1) || !floor_px(edge, py + h + 1)) {
+    e->vx = 0;
+    return;
+  }
+  e->x += e->vx;
+  e->vx -= e->vx >> 2;
+}
+
 /* Advance each live actor once and decrement its shared hit protection timer. */
 static void step_entities(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
     if (!e->alive) continue;
     if (e->hurt) e->hurt--;
+    if (e->hurt && (e->kind == ENT_WALKER || e->kind == ENT_THROWER || e->kind == ENT_CHARGER ||
+                    (e->kind == ENT_HOPPER && e->vy == 0))) {
+      knockback(e);
+      continue;
+    }
     switch (e->kind) {
       case ENT_WALKER: step_walker(e); break;
       case ENT_CHARGER: step_charger(e); break;

@@ -339,8 +339,13 @@ static void test_combat_and_placement(void) {
   make_room();
   player_init(&p, 32, 148, 0);
   player_step(&p, &room, 0, IN_ATTACK);
-  expect(player_attack_box(&p, &box) && box.x == 40 * Q8, "clapper attack is active immediately on the facing side");
-  steps(&p, 4, 0);
+  /* The side box starts 2 px inside the leading edge (x 32 + 8 - 2), so an
+   * enemy already touching Ruby is in reach; the snap stays live 6 ticks.
+   * Both widened after playtesting found the clap too short to trade hits. */
+  expect(player_attack_box(&p, &box) && box.x == 38 * Q8, "clapper attack is active immediately on the facing side");
+  steps(&p, 5, 0);
+  expect(player_attack_box(&p, &box), "clapper snap is still live five ticks after the press");
+  steps(&p, 1, 0);
   expect(p.attack_timer > 0 && !player_attack_box(&p, &box), "clapper recovery animation does not keep damaging enemies");
   expect(player_hurt(&p, -1) && p.vx > 0 && (p.events & EV_HURT), "damage recoils away from its source");
   expect(!player_hurt(&p, 1) && p.vx > 0, "invulnerability rejects a second hit and preserves recoil");

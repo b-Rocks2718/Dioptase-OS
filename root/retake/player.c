@@ -23,7 +23,7 @@
 #define WALL_JUMP_REACH 3
 #define DROP_TICKS 12
 #define CLAP_TICKS 12
-#define CLAP_ACTIVE_MIN 9
+#define CLAP_ACTIVE_MIN 7      /* the snap hits for the first 6 of CLAP_TICKS */
 #define CLAP_COOLDOWN 18
 #define HURT_TICKS 60
 #define BODY_W 2048
@@ -461,15 +461,18 @@ void player_step(struct Player* p, struct Room* r, int held, int pressed) {
 /* Common live/projected attack geometry; directed claps extend beyond the
  * body without making the player itself a damaging contact rectangle. */
 void clapper_box(int x, int y, int facing, int dir, struct Hitbox* b) {
-  b->w = 12 * Q8;
-  b->h = 12 * Q8;
-  b->x = x - 2 * Q8;
-  b->y = y - 12 * Q8;
+  /* Up (and the default): 16x14 centered over the body. Down: the same
+   * under the feet. Side: 20x14 from just inside the leading edge, so an
+   * enemy already touching Ruby is still in reach. */
+  b->w = 16 * Q8;
+  b->h = 14 * Q8;
+  b->x = x - 4 * Q8;
+  b->y = y - 14 * Q8;
   if (dir == 1) {
-    b->w = 14 * Q8;
-    b->h = 10 * Q8;
-    b->x = facing > 0 ? x + BODY_W : x - 14 * Q8;
-    b->y = y + Q8;
+    b->w = 20 * Q8;
+    b->h = 14 * Q8;
+    b->x = facing > 0 ? x + BODY_W - 2 * Q8 : x - 18 * Q8;
+    b->y = y - Q8;
   } else if (dir == 3) {
     b->y = y + BODY_H;
   }
