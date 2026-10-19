@@ -102,6 +102,11 @@ void render_region(int region_id) {
  * top-left is (cam_x, cam_y) in room pixels (clamped inside the room by the
  * caller). Entities are drawn over it next, then present() copies the whole
  * frame out, so the display never catches a frame with entities missing. */
+static unsigned short black_row[320];   /* letterbox for rooms smaller than the view */
+
+/* Compose the view at (cam_x, cam_y), cam_x and cam_y >= 0. Rows and
+ * columns beyond the room (rooms smaller than 320x236) are drawn black
+ * rather than read past the room image and its span tables. */
 void render_frame(int cam_x, int cam_y) {
   unsigned short* room = (cam_x & 1) ? g_room_img_odd : g_room_img;
   int rx = cam_x & ~1;
@@ -120,14 +125,24 @@ void render_frame(int cam_x, int cam_y) {
   unsigned short* bg_row = bg + by * backdrop_w + bx;
   unsigned short* dst = g_back;
   int end_x = rx + SCREEN_W;
+  int room_end = end_x < g_room_pw ? end_x : (g_room_pw & ~1);
+  int room_rows = g_room_ph - cam_y;
   for (int y = 0; y < VIEW_H; y++) {
+    if (y >= room_rows) {
+      tl_copy_words((void*)dst, (void*)black_row, SCREEN_W >> 1);
+      dst += SCREEN_W;
+      continue;
+    }
     unsigned op = opaque[cam_y + y];
     unsigned cl = clear[cam_y + y];
     int px = rx;
-    while (px < end_x) {
+    if (room_end < end_x) {
+      tl_copy_words((void*)(dst + (room_end - rx)), (void*)black_row, (end_x - room_end) >> 1);
+    }
+    while (px < room_end) {
       int span = px >> 6;
       int span_end = (span + 1) << 6;
-      if (span_end > end_x) span_end = end_x;
+      if (span_end > room_end) span_end = room_end;
       int words = (span_end - px) >> 1;
       int off = px - rx;
       int whole = (px & 63) == 0 && span_end - px == 64;

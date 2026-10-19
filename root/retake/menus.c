@@ -46,6 +46,15 @@ static void number_text(char* buf, int value) {
 }
 
 /* Copy src after dst's NUL; returns dst. */
+/* Append `src` to `dst` without passing `cap` bytes (NUL included); text
+ * that does not fit is cut off rather than written past the buffer. */
+static void append_cap(char* dst, char* src, int cap) {
+  int n = 0;
+  while (dst[n]) n++;
+  while (*src && n < cap - 1) dst[n++] = *src++;
+  dst[n] = 0;
+}
+
 static char* append(char* dst, char* src) {
   char* d = dst;
   while (*d) d++;
@@ -222,14 +231,26 @@ int pause_run(void) {
     append(line, num);
     append(line, " min");
     draw_text_centered(106, line, FONT_SERIF, text_ramp);
+    /* The ability list wraps onto a second row; both rows are bounded. */
+    char* names[7];
+    int count = 0;
+    names[count++] = "clap, record";
+    if (g_prog.abilities & AB_WIRE) names[count++] = "stunt wire";
+    if (g_prog.abilities & AB_JUMPCUT) names[count++] = "jump cut";
+    if (g_prog.abilities & AB_GLIDE) names[count++] = "umbrella";
+    if (g_prog.abilities & AB_OVERCRANK) names[count++] = "overcrank";
+    if (g_prog.abilities & AB_REWIND) names[count++] = "rewind";
+    char row2[64];
     line[0] = 0;
-    append(line, "Abilities: clap, record");
-    if (g_prog.abilities & AB_WIRE) append(line, ", stunt wire");
-    if (g_prog.abilities & AB_JUMPCUT) append(line, ", jump cut");
-    if (g_prog.abilities & AB_GLIDE) append(line, ", umbrella");
-    if (g_prog.abilities & AB_OVERCRANK) append(line, ", overcrank");
-    if (g_prog.abilities & AB_REWIND) append(line, ", rewind");
-    draw_text_centered(124, line, FONT_SERIF, dim_ramp);
+    row2[0] = 0;
+    append_cap(line, "Abilities: ", 64);
+    for (int i = 0; i < count; i++) {
+      char* target = i < 4 ? line : row2;
+      if (i > 0 && i != 4) append_cap(target, ", ", 64);
+      append_cap(target, names[i], 64);
+    }
+    draw_text_centered(122, line, FONT_SERIF, dim_ramp);
+    if (row2[0]) draw_text_centered(136, row2, FONT_SERIF, dim_ramp);
     draw_text_centered(160, "Esc or Z: back to the picture", FONT_SERIF, gold_ramp);
     draw_text_centered(176, "Q: quit to the title", FONT_SERIF, dim_ramp);
     draw_text_centered(190, "(anything since the last mirror is lost)", FONT_SERIF, dim_ramp);

@@ -79,13 +79,14 @@ static int land_ticks;     /* ticks left to show the landing squash */
 static int shake_ticks;    /* frames of screen shake left */
 static int hitstop;        /* game ticks to hold still after a solid hit */
 static int run_dust;       /* ticks since the last running dust puff */
+static int pending_pressed; /* press edges not yet given to a game tick */
 
 static void puff(int x_px, int y_px, int vx, int vy, int life, int color) {
   for (int i = 0; i < MAX_PUFFS; i++) {
     struct Puff* p = &puffs[i];
     if (p->life > 0) continue;
-    p->x = x_px << 4;
-    p->y = y_px << 4;
+    p->x = x_px * 16;              /* may be negative near the left edge */
+    p->y = y_px * 16;
     p->vx = vx;
     p->vy = vy;
     p->life = life;
@@ -187,7 +188,7 @@ static int frame_for(int pose, int clapping_active, int x, int clock) {
 static void update_camera(int snap) {
   int hx = (g_hero.x >> 8) + (PLAYER_W >> 1);
   int hy = (g_hero.y >> 8) + (PLAYER_H >> 1);
-  int tx = hx - (SCREEN_W >> 1) + (g_hero.facing << 4);
+  int tx = hx - (SCREEN_W >> 1) + g_hero.facing * 16;
   int ty = hy - 122;
   if (snap) {
     cam_x = tx;
@@ -803,10 +804,12 @@ static void draw_frame(void) {
     shake_ticks--;
     cam_y += (shake_ticks & 2) ? 2 : -2;
     cam_x += (shake_ticks & 4) ? 1 : -1;
+    int max_x = g_room_pw > SCREEN_W ? g_room_pw - SCREEN_W : 0;
+    int max_y = g_room_ph > VIEW_H ? g_room_ph - VIEW_H : 0;
+    if (cam_x > max_x) cam_x = max_x;
+    if (cam_y > max_y) cam_y = max_y;
     if (cam_x < 0) cam_x = 0;
     if (cam_y < 0) cam_y = 0;
-    if (cam_x > g_room_pw - SCREEN_W) cam_x = g_room_pw - SCREEN_W;
-    if (cam_y > g_room_ph - VIEW_H) cam_y = g_room_ph - VIEW_H;
   }
   render_frame(cam_x, cam_y);
   draw_entities();
@@ -899,6 +902,8 @@ static void finale(void) {
 
 /* Play from the current game state until the player quits to the title. */
 static void play(void) {
+  pending_pressed = 0;
+  hitstop = 0;
   update_camera(1);
   hud_bar_clear();
   choose_music();
@@ -914,18 +919,21 @@ static void play(void) {
     input_poll();
     if (input_key_hit(KEY_ESC)) {
       if (pause_run()) return;
+      pending_pressed = 0;
       last = get_vga_frame_counter();
       continue;
     }
     int held = input_held();
-    int pressed = input_take_pressed();
+    /* Press edges wait here until a game tick consumes them, so a tap made
+     * while a hit freeze skips every tick of a frame is not lost. */
+    pending_pressed |= input_take_pressed();
     for (int t = 0; t < ticks; t++) {
       if (hitstop > 0) {            /* a solid hit holds the picture for a beat */
         hitstop--;
         continue;
       }
-      game_tick(held, pressed);
-      pressed = 0;
+      game_tick(held, pending_pressed);
+      pending_pressed = 0;
       frame_clock++;
       play_sfx();
       feel_tick();
@@ -948,6 +956,7 @@ static void play(void) {
       if (g_pending_shop) {
         g_pending_shop = 0;
         shop_run();
+        pending_pressed = 0;
         last = get_vga_frame_counter();
         break;
       }
@@ -956,6 +965,7 @@ static void play(void) {
         g_pending_script = -1;
         card_show(script);
         hud_bar_clear();
+        pending_pressed = 0;
         last = get_vga_frame_counter();
         break;
       }
