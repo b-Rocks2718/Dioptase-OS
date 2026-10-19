@@ -37,6 +37,9 @@
 #define OVERCRANK_TICKS 180
 #define OVERCRANK_COOLDOWN 480
 #define ROBOT_HP 22
+#define FIXER_HP 24
+#define MAESTRO_HP 26
+#define BEAT_TICKS 72            /* two beats of the Stage 8 song (tempo 15 at 100 Hz, 4 rows a beat) */
 #define MOON_LIFT 14             /* Q8/tick^2 of gravity handed back on moon sets */
 #define MOON_FALL_SPEED 704      /* and a gentler terminal velocity there */
 #define REWIND_TICKS 120         /* how far back Rewind reaches: two seconds */
@@ -57,6 +60,8 @@ int g_switch[16];
 struct Ent* g_boss;
 int g_overcrank;
 static int overcrank_cool;
+static int beat_phase;         /* ticks into the current beat; advances only on unfrozen ticks */
+static int beat_parity;        /* which beat-block group is solid */
 static int moon_gravity;       /* this room is a moon set (region 6) */
 static int rewind_x[128];      /* Ruby's recent positions (Q8), a ring indexed mod 128 */
 static int rewind_y[128];
@@ -196,8 +201,18 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_PENDULUM: w = 12; h = 8; break;
     case ENT_BOLT: w = 10; h = 8; break;
     case ENT_LASER: w = 4; h = 8; break;      /* sized from a and d after setup */
+    case ENT_SEARCHLIGHT: w = 8; h = 8; break;
+    case ENT_BEAT: w = 8 * (a > 0 ? a : 1); h = 8; break;
     case ENT_BOSS:
-      if (a == 7) {
+      if (a == 9) {
+        w = 20;
+        h = 50;
+        e->hp = MAESTRO_HP;
+      } else if (a == 8) {
+        w = 18;
+        h = 40;
+        e->hp = FIXER_HP;
+      } else if (a == 7) {
         w = 32;
         h = 52;
         e->hp = ROBOT_HP;
@@ -273,6 +288,14 @@ static void boss_rewards(int boss, int tx) {
     ability = AB_REWIND;
     script = SCRIPT_S6_WRAP;
     home_tx = 25;
+  } else if (boss == 8) {
+    ability = AB_LONG_TAKES;
+    script = SCRIPT_S7_WRAP;
+    home_tx = 41;
+  } else if (boss == 9) {
+    ability = AB_BOOTH_KEY;
+    script = SCRIPT_S8_WRAP;
+    home_tx = 57;
   } else if (boss != 1) {
     return;
   }
@@ -314,6 +337,21 @@ static void spawn_room_entities(void) {
       e->c = e->c > 0 ? e->c : 128;
       e->dir = 1;
       e->state = 0;                /* distance travelled along the axis, Q8 */
+    }
+    if (kind == ENT_BEAT) {
+      e->x = (r[1] << 3) << 8;
+      e->y = (r[2] << 3) << 8;
+      e->state = 0;              /* solid now? */
+      e->anim = 0;               /* collision not yet written for this visit */
+    }
+    if (kind == ENT_SEARCHLIGHT) {
+      int lx = (r[1] << 3) + 4;
+      e->x = (r[1] << 3) << 8;
+      e->y = (r[2] << 3) << 8;
+      e->vx = (lx - (e->a << 3) + (e->d << 3)) << 8;   /* the spot's x, Q8 */
+      e->vy = 0;
+      e->dir = 1;
+      e->state = 0;
     }
     if (kind == ENT_LASER) {
       int tiles = ((e->d >> 8) & 15) + 1;
@@ -416,6 +454,33 @@ static void update_gates(void) {
       if (e->timer != 0) g_events |= GE_GATE;
       e->state = want;
       e->timer = 1;
+    }
+  }
+}
+
+/* Beat blocks: group (b & 1) is solid while it matches beat_parity. Like a
+ * gate, a block never materializes through Ruby; it waits for her to leave.
+ * e->timer carries the ticks left in this beat for the renderer's warning. */
+static void update_beats(void) {
+  struct Hitbox hb;
+  hero_box(&hb);
+  for (int i = 0; i < g_ent_count; i++) {
+    struct Ent* e = &g_ents[i];
+    if (!e->alive || e->kind != ENT_BEAT) continue;
+    int want = (e->b & 1) == beat_parity ? 1 : 0;
+    struct Hitbox bb;
+    ent_box(e, &bb);
+    if (want && !e->state && hitbox_overlap(&hb, &bb)) want = 0;
+    e->timer = BEAT_TICKS - beat_phase;
+    if (want == e->state && e->anim) continue;
+    e->anim = 1;
+    e->state = want;
+    int w = e->a > 0 ? e->a : 1;
+    for (int k = 0; k < w; k++) {
+      int tx = e->tx + k;
+      if (tx < 0 || tx >= g_room.w || e->ty < 0 || e->ty >= g_room.h) continue;
+      int cell = g_room.row[e->ty] + tx;
+      g_room.col[cell] = want ? COL_SOLID : g_pak[pak_room(g_room_index)->col_off + cell];
     }
   }
 }
@@ -1330,10 +1395,10 @@ static void step_pendulum(struct Ent* e) {
 
 /* A strike outside the arena walls would be invisible and unfair, so columns
  * within 8 px of either room edge are skipped. */
-static void spawn_bolt(int x_px, int floor_px) {
-  if (x_px < 8 || x_px > g_room_pw - 8) return;
+static struct Ent* spawn_bolt(int x_px, int floor_px) {
+  if (x_px < 8 || x_px > g_room_pw - 8) return 0;
   struct Ent* b = ent_alloc();
-  if (!b) return;
+  if (!b) return 0;
   ent_setup(b, ENT_BOLT, 0, 0, 0, 0, 0, -1);
   b->x = (x_px - 5) << 8;
   b->y = 0;
@@ -1341,6 +1406,7 @@ static void spawn_bolt(int x_px, int floor_px) {
   b->c = floor_px;
   b->state = 0;
   b->timer = 40;
+  return b;
 }
 
 static void step_bolt(struct Ent* e) {
@@ -1534,8 +1600,324 @@ static void step_robot(struct Ent* e) {
   if (e->x + e->w > (g_room_pw - 16) << 8) e->x = ((g_room_pw - 16) << 8) - e->w;
 }
 
+/* ---- searchlights ----
+ * The lamp hangs in its spawn tile; its spot (e->vx, the Q8 x at the beam's
+ * end, b tiles below the lamp) sweeps a tiles either side at c Q8/tick. The
+ * cone runs from the lamp to the spot, a few pixels wide at the lamp and 28
+ * at the spot. When Ruby or a take stands in it the light locks on (state
+ * 1, e->vy names the target: 1 Ruby, 2 + slot a take) and follows; after
+ * SEARCH_LOCK ticks a rooftop rifle strikes the target's column (a bolt with
+ * a SEARCH_AIM warning) and the light rests (state 2). Takes are checked
+ * before Ruby, so a double standing in the light draws the fire. */
+#define SEARCH_LOCK 30
+#define SEARCH_AIM 20
+#define SEARCH_REST 50
+
+static int lit_x;      /* the last find_lit target's center x and feet y (px) */
+static int lit_feet;
+
+/* Whether a body whose top-left is (x, y) in Q8 is inside e's cone. */
+static int in_cone(struct Ent* e, int x, int y) {
+  int lx = (e->tx << 3) + 4;
+  int ly = (e->ty << 3) + 8;
+  int span = e->b << 3;
+  int cx = (x >> 8) + (PLAYER_W >> 1);
+  int cy = (y >> 8) + (PLAYER_H >> 1);
+  if (span <= 0 || cy < ly || cy > ly + span + 4) return 0;
+  int t = ((cy - ly) << 8) / span;          /* 0..256 along the beam */
+  if (t > 256) t = 256;
+  int beam_x = lx + ((((e->vx >> 8) - lx) * t) >> 8);
+  int half = 2 + ((12 * t) >> 8) + (PLAYER_W >> 1);
+  int dx = cx - beam_x;
+  if (dx < 0) dx = -dx;
+  return dx <= half;
+}
+
+/* Who stands in the light: 0 nobody, 1 Ruby, 2 + slot a take. */
+static int find_lit(struct Ent* e) {
+  for (int s = 0; s < g_takes.slot_limit; s++) {
+    struct Take* t = &g_takes.slots[s];
+    if (!t->active) continue;
+    struct TakeFrame* f = &t->frames[t->cursor];
+    if (in_cone(e, f->x, f->y)) {
+      lit_x = (f->x >> 8) + (PLAYER_W >> 1);
+      lit_feet = (f->y >> 8) + PLAYER_H;
+      return 2 + s;
+    }
+  }
+  if (in_cone(e, g_hero.x, g_hero.y)) {
+    lit_x = (g_hero.x >> 8) + (PLAYER_W >> 1);
+    lit_feet = (g_hero.y >> 8) + PLAYER_H;
+    return 1;
+  }
+  return 0;
+}
+
+static void step_searchlight(struct Ent* e) {
+  int lx = (e->tx << 3) + 4;
+  int left = (lx - (e->a << 3)) << 8;
+  int right = (lx + (e->a << 3)) << 8;
+  int speed = e->c > 0 ? e->c : 96;
+  if (e->state == 2) {
+    if (--e->timer <= 0) e->state = 0;
+    return;
+  }
+  int who = find_lit(e);
+  if (e->state == 0) {
+    e->vx += e->dir * speed;
+    if (e->vx < left) {
+      e->vx = left;
+      e->dir = 1;
+    }
+    if (e->vx > right) {
+      e->vx = right;
+      e->dir = -1;
+    }
+    if (who) {
+      e->state = 1;
+      e->timer = SEARCH_LOCK;
+      e->vy = who;
+    }
+    return;
+  }
+  if (!who) {                                 /* lost them: back to sweeping */
+    e->state = 0;
+    return;
+  }
+  e->vy = who;
+  int goal = lit_x << 8;
+  int step = speed << 1;
+  if (e->vx < goal - step) e->vx += step;
+  else if (e->vx > goal + step) e->vx -= step;
+  else e->vx = goal;
+  if (e->vx < left) e->vx = left;
+  if (e->vx > right) e->vx = right;
+  if (--e->timer <= 0) {
+    struct Ent* shot = spawn_bolt(lit_x, lit_feet);
+    if (shot) shot->timer = SEARCH_AIM;
+    e->state = 2;
+    e->timer = SEARCH_REST;
+  }
+}
+
+/* ---- the Fixer (boss 8) ----
+ * States: 0 intro, 70 ducked behind the furniture (claps do nothing), 71
+ * rising with the tommy gun (the telegraph), 72 firing a burst of straight
+ * bullets at Ruby's chest height (three, four once he is hurt; jump them),
+ * 73 whistling two hoods in through the skylights, 74 crossing the office.
+ * e->c is the floor height, e->b the side he is holding (0 left, 1 right). */
+#define F_DUCK 70
+#define F_AIM 71
+#define F_FIRE 72
+#define F_WHISTLE 73
+#define F_CROSS 74
+
+static void fixer_bullet(struct Ent* e) {
+  struct Ent* s = ent_alloc();
+  if (!s) return;
+  ent_setup(s, ENT_SHOT, 0, 0, 0, 2, 0, -1);  /* b 2 flies straight */
+  s->x = e->dir < 0 ? e->x - (6 << 8) : e->x + e->w;
+  s->y = e->c + e->h - (10 << 8);
+  s->vx = e->dir * 900;
+  s->vy = 0;
+  s->timer = 100;
+}
+
+static void step_fixer(struct Ent* e) {
+  int angry = e->hp <= FIXER_HP / 2;
+  switch (e->state) {
+    case B_INTRO:
+      boss_intro(e->a, SCRIPT_S7_BOSS_INTRO);
+      e->c = e->y;
+      e->b = e->x > (g_room_pw << 7) ? 1 : 0;
+      e->state = F_DUCK;
+      e->timer = 60;
+      break;
+    case F_DUCK:
+      if (--e->timer <= 0) {
+        int pick = boss_cycle % 4;
+        boss_cycle++;
+        if (pick == 1) {
+          e->state = F_WHISTLE;
+          e->timer = 40;
+        } else if (pick == 3) {
+          e->state = F_CROSS;
+          e->b ^= 1;
+        } else {
+          e->state = F_AIM;
+          e->timer = angry ? 20 : 30;
+        }
+      }
+      break;
+    case F_AIM:
+      e->dir = g_hero.x < e->x ? -1 : 1;
+      if (--e->timer <= 0) {
+        e->state = F_FIRE;
+        e->timer = 36;
+      }
+      break;
+    case F_FIRE:
+      if (e->timer % (angry ? 9 : 12) == 0) fixer_bullet(e);
+      if (--e->timer <= 0) {
+        e->state = F_DUCK;
+        e->timer = angry ? 50 : 70;
+      }
+      break;
+    case F_WHISTLE:
+      if (e->timer == 20) {
+        int live = 0;
+        for (int i = 0; i < g_ent_count; i++)
+          if (g_ents[i].alive && g_ents[i].kind == ENT_WALKER) live++;
+        for (int k = live; k < 2; k++) {
+          struct Ent* m = ent_alloc();
+          if (m) ent_setup(m, ENT_WALKER, k ? g_room.w - 6 : 5, 3, 0, 0, 0, -1);
+        }
+      }
+      if (--e->timer <= 0) {
+        e->state = F_DUCK;
+        e->timer = 60;
+      }
+      break;
+    case F_CROSS: {
+      int goal = (e->b ? g_room_pw - 120 : 104) << 8;
+      int step = angry ? 640 : 480;
+      e->dir = goal < e->x ? -1 : 1;
+      if (e->x < goal - step) e->x += step;
+      else if (e->x > goal + step) e->x -= step;
+      else {
+        e->x = goal;
+        e->state = F_DUCK;
+        e->timer = 40;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/* ---- the Maestro (boss 9) ----
+ * States: 0 intro, 80 conducting (fans of three notes at Ruby), 81 the
+ * chorus line (dancers march in from the far wing), 82 the lights (stage
+ * lights drop on Ruby's column and either side), 83 a bow (claps count
+ * double), 84 striding to the other podium. e->c is the floor height and
+ * e->b the side he holds (0 left, 1 right). */
+#define M9_CONDUCT 80
+#define M9_CHORUS 81
+#define M9_LIGHTS 82
+#define M9_BOW 83
+#define M9_STRIDE 84
+
+static void maestro_note(struct Ent* e, int spread) {
+  struct Ent* f = ent_alloc();
+  if (!f) return;
+  ent_setup(f, ENT_SHOT, 0, 0, 0, 2, 0, -1);  /* b 2 flies straight */
+  f->x = e->x + (e->dir < 0 ? -(6 << 8) : e->w);
+  f->y = e->y + (8 << 8);
+  int dx = (g_hero.x - f->x) >> 8;
+  int dy = (g_hero.y + (6 << 8) - f->y) >> 8;
+  int ax = dx < 0 ? -dx : dx;
+  int ay = dy < 0 ? -dy : dy;
+  int big = ax > ay ? ax : ay;
+  if (big < 1) big = 1;
+  f->vx = (dx * 640) / big;
+  f->vy = (dy * 640) / big + spread;
+  f->timer = 120;
+}
+
+static void maestro_next(struct Ent* e) {
+  int pick = boss_cycle % 4;
+  boss_cycle++;
+  if (pick == 0) {
+    e->state = M9_CHORUS;
+    e->timer = 50;
+  } else if (pick == 1) {
+    e->state = M9_LIGHTS;
+    e->timer = 60;
+  } else if (pick == 2) {
+    e->state = M9_STRIDE;
+    e->b ^= 1;
+  } else {
+    e->state = M9_BOW;
+    e->timer = 70;
+  }
+}
+
+static void step_maestro(struct Ent* e) {
+  int angry = e->hp <= MAESTRO_HP / 2;
+  switch (e->state) {
+    case B_INTRO:
+      boss_intro(e->a, SCRIPT_S8_BOSS_INTRO);
+      e->c = e->y;
+      e->b = e->x > (g_room_pw << 7) ? 1 : 0;
+      e->state = M9_CONDUCT;
+      e->timer = 70;
+      break;
+    case M9_CONDUCT:
+      e->dir = g_hero.x < e->x ? -1 : 1;
+      if (e->timer == 60 || e->timer == 30 || (angry && e->timer == 45)) {
+        maestro_note(e, -160);
+        maestro_note(e, 0);
+        maestro_note(e, 160);
+      }
+      if (--e->timer <= 0) maestro_next(e);
+      break;
+    case M9_CHORUS:
+      if (e->timer == 30) {
+        int live = 0;
+        for (int i = 0; i < g_ent_count; i++)
+          if (g_ents[i].alive && g_ents[i].kind == ENT_WALKER) live++;
+        for (int k = live; k < 3; k++) {
+          struct Ent* m = ent_alloc();
+          if (m) ent_setup(m, ENT_WALKER, e->b ? 3 + k * 2 : g_room.w - 4 - k * 2, e->ty, 0, 0, 0, -1);
+        }
+      }
+      if (--e->timer <= 0) {
+        e->state = M9_CONDUCT;
+        e->timer = 70;
+      }
+      break;
+    case M9_LIGHTS:
+      if (e->timer == 50) {
+        int floor = (e->c + e->h) >> 8;
+        int hx = (g_hero.x >> 8) + 4;
+        spawn_bolt(hx, floor);
+        spawn_bolt(hx - 56, floor);
+        spawn_bolt(hx + 56, floor);
+      }
+      if (--e->timer <= 0) {
+        e->state = M9_CONDUCT;
+        e->timer = 70;
+      }
+      break;
+    case M9_STRIDE: {
+      int goal = (e->b ? g_room_pw - 120 : 88) << 8;
+      int step = angry ? 768 : 640;
+      e->dir = goal < e->x ? -1 : 1;
+      if (e->x < goal - step) e->x += step;
+      else if (e->x > goal + step) e->x -= step;
+      else {
+        e->x = goal;
+        e->state = M9_CONDUCT;
+        e->timer = 70;
+      }
+      break;
+    }
+    case M9_BOW:
+      if (--e->timer <= 0) {
+        e->state = M9_CONDUCT;
+        e->timer = 70;
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 static void step_boss(struct Ent* e) {
-  if (e->a == 7) step_robot(e);
+  if (e->a == 9) step_maestro(e);
+  else if (e->a == 8) step_fixer(e);
+  else if (e->a == 7) step_robot(e);
   else if (e->a == 6) step_monster(e);
   else if (e->a == 5) step_ape(e);
   else if (e->a == 4) step_camera(e);
@@ -1546,6 +1928,8 @@ static void step_boss(struct Ent* e) {
 
 /* Whether claps land on the boss now, and how hard. */
 static int boss_hit_value(struct Ent* e) {
+  if (e->a == 9) return e->state == B_INTRO ? 0 : (e->state == M9_BOW ? 2 : 1);
+  if (e->a == 8) return (e->state == B_INTRO || e->state == F_DUCK) ? 0 : 1;
   if (e->a == 7 || e->a == 6 || e->a == 5) return e->state == B_INTRO ? 0 : 1;
   if (e->a == 4) return e->state == C_OPEN ? 1 : 0;
   if (e->a == 3) return 0;     /* the puppeteer is hit through its tentacles */
@@ -1850,6 +2234,10 @@ static void pickups_and_interactions(int pressed) {
           if (g_prog.take_slots < 3) g_prog.take_slots = 3;
           takes_init(&g_takes, g_prog.take_slots, g_prog.take_frames);
         }
+        if (e->a & AB_LONG_TAKES) {
+          g_prog.take_frames = TAKE_MAX_FRAMES;
+          takes_init(&g_takes, g_prog.take_slots, g_prog.take_frames);
+        }
         g_prog.abilities |= e->a;
         g_hero.abilities = g_prog.abilities;
         flag_set(e->flag);
@@ -1923,6 +2311,7 @@ static void step_entities(void) {
       case ENT_TENTACLE: step_tentacle(e); break;
       case ENT_PENDULUM: step_pendulum(e); break;
       case ENT_LASER: step_laser(e); break;
+      case ENT_SEARCHLIGHT: step_searchlight(e); break;
       case ENT_BOLT: step_bolt(e); break;
       case ENT_WAVE: step_wave(e); break;
       case ENT_CRUMBLE: break;  /* update_crumbles owns both its timer and collision */
@@ -2005,9 +2394,16 @@ void game_tick(int held, int pressed) {
       }
     }
   }
-  if (!frozen) step_entities();
+  if (!frozen) {
+    step_entities();
+    if (++beat_phase >= BEAT_TICKS) {   /* Overcrank slows the set changes too */
+      beat_phase = 0;
+      beat_parity ^= 1;
+    }
+  }
   update_switches();
   update_gates();
+  update_beats();
   update_crumbles(frozen);
   combat();
   if (g_health <= 0) {
@@ -2034,6 +2430,8 @@ static void reset_session_state(void) {
   g_overcrank = 0;
   overcrank_cool = 0;
   rewind_cool = 0;
+  beat_phase = 0;
+  beat_parity = 0;
   g_hero.vx = 0;
   g_hero.vy = 0;
   g_hero.facing = 1;

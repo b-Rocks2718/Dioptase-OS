@@ -46,10 +46,17 @@
 #define ENT_BOLT 27      /* a lightning strike: warns, then strikes its column (spawned) */
 #define ENT_LASER 28     /* ray curtain: a beam tiles, b on ticks (0 steady), c off ticks,
                             d phase | (width-1) << 8 | (switch+1) << 12 */
-#define ENT_KINDS 29
+#define ENT_SEARCHLIGHT 29  /* sweeping light: a sweep tiles each side, b beam tiles, c speed Q8/tick,
+                               d starting offset tiles; a rifle fires on whoever it finds */
+#define ENT_BEAT 30      /* set piece solid on alternate beats: a width tiles, b group 0/1 */
+#define ENT_KINDS 31
 
 /* Not a movement ability: the third take reel, granted like one. */
 #define AB_EXTRA_REEL 256
+/* Not a movement ability either: takes may run to TAKE_MAX_FRAMES. */
+#define AB_LONG_TAKES 512
+/* The Maestro's prize; the tower door itself checks his defeat flag. */
+#define AB_BOOTH_KEY 1024
 
 #define MAX_ENTS 40
 #define MAX_FLAGS 2048

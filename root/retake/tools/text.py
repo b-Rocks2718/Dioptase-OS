@@ -354,7 +354,7 @@ SCRIPTS = {
     ],
     # ---- The Projection Tower ----
     "tower_open": [
-        "The film slot glows. Three wrapped pictures, three reels.\n\nThe Projection Tower door swings open.",
+        "The film slot glows. Eight pictures wrapped, eight reels in the can.\n\nThe Projection Tower door swings open.",
     ],
     "tower_note": [
         "A note pinned to the stair rail, in a careful hand:",

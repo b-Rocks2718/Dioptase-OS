@@ -131,7 +131,7 @@ static int checkpoint_valid(struct Progress* p) {
 
 /* Numeric bounds reflect actual upgrade rules; flag words are opaque bitsets. */
 static int save_progress_valid(struct Progress* p) {
-  int allowed = AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL;
+  int allowed = AB_JUMPCUT | AB_WIRE | AB_GLIDE | AB_REWIND | AB_OVERCRANK | AB_EXTRA_REEL | AB_LONG_TAKES | AB_BOOTH_KEY;
   int max_health = SAVE_SHOP_HEALTH;
   for (int i = 0; i < pak_room_count(); i++) {
     struct PakRoom* room = pak_room(i);
