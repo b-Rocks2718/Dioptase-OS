@@ -428,5 +428,16 @@ slower laptop.
 - 720bd9c, 502d357: tools/cast.py, hand-drawn humanoids with a four-frame
   walk; Stage 1 cast redrawn whole; every picture's walkers and throwers
   dressed on it. Hitboxes unchanged.
-- Next: critters and chargers of pictures 2-8; later-picture puzzles with
-  new take mechanics.
+- b81e3e5: slates (ENT_SLATE 31), clapper switches that any clap, Ruby's
+  or a take's, holds for b ticks; Overcrank halves their drain. Introduced
+  at s2_mine_mouth: a hatch over the shaft held 1 s by a slate 170 px
+  away (search: route with a take, none without). Engine rule in Astra's
+  area: please review mark_slate/update_switches in game.c.
+- Also b81e3e5: stage1-clock-local.json was stale since 392bcee (ladder
+  lowered a row); repaired, all 15 routes pass.
+- Survey: after Stage 1 only s4_temple_gate, s6_bridge and tower_climb use
+  takes on purpose. Planned set pieces in uncovered rooms: s5_crypt (two
+  slates and Ruby, after Extra Reel; may need gates that want two
+  switches), s6_bridge (slate dims the curtains), a searchlight decoy with
+  a slate in Stage 7, and the jump cut as a bookmark in Stage 3.
+- Next after that: critters and chargers of pictures 2-8.
