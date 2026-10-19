@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s7_roofs_a",
+    "x": 8,
+    "y": 52,
+    "abilities": 287
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s7_billboard [0, 200, 90, 240]",
+      "actions": [
+        [
+          120,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          120,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          64,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s7_billboard",
+        "rect": [
+          0,
+          200,
+          90,
+          240
+        ]
+      }
+    }
+  ]
+}

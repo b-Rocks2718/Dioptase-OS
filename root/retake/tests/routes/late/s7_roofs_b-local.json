@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s7_roofs_b",
+    "x": 8,
+    "y": 132,
+    "abilities": 287
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s7_tower [0, 340, 80, 380]",
+      "actions": [
+        [
+          48,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          96,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          80,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s7_tower",
+        "rect": [
+          0,
+          340,
+          80,
+          380
+        ]
+      }
+    }
+  ]
+}

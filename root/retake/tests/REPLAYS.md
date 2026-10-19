@@ -73,3 +73,10 @@ then search from that exact state. Example on a plate: `[[6,0], [1,32],
 does not invent recordings. The next full replay verifies those inputs too.
 Use `Sim.start(room, x=..., y=..., abilities=...)` only for labeled local
 fixtures; a chain of teleported local successes is not a campaign proof.
+
+## Movement polish: later regions
+
+`tests/routes/late/*.json` now stores 13 local Stage 6–8 fixtures, including
+moving pads, climbs, searchlight crossing and beat blocks. They replay with
+the tuned controller at full health. See `routes/late/README.md` for scope;
+these fixtures grant stage abilities and do not prove campaign progression.

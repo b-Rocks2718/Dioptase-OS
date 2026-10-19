@@ -1,0 +1,174 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s6_reactor",
+    "x": 24,
+    "y": 436,
+    "abilities": 279
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s6_reactor [32, 346, 90, 358]",
+      "actions": [
+        [
+          6,
+          16
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "expect": {
+        "room": "s6_reactor",
+        "rect": [
+          32,
+          346,
+          90,
+          358
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_reactor [208, 298, 266, 310]",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          30,
+          16
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          16
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ]
+      ],
+      "expect": {
+        "room": "s6_reactor",
+        "rect": [
+          208,
+          298,
+          266,
+          310
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_reactor [32, 242, 90, 254]",
+      "actions": [
+        [
+          24,
+          17
+        ],
+        [
+          24,
+          16
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          48,
+          17
+        ],
+        [
+          5,
+          1
+        ]
+      ],
+      "expect": {
+        "room": "s6_reactor",
+        "rect": [
+          32,
+          242,
+          90,
+          254
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_reactor [144, 186, 186, 198]",
+      "actions": [
+        [
+          37,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s6_reactor",
+        "rect": [
+          144,
+          186,
+          186,
+          198
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_observatory [0, 150, 80, 200]",
+      "actions": [
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ]
+      ],
+      "expect": {
+        "room": "s6_observatory",
+        "rect": [
+          0,
+          150,
+          80,
+          200
+        ]
+      }
+    }
+  ]
+}

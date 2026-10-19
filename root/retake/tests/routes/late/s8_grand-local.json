@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s8_grand",
+    "x": 8,
+    "y": 196,
+    "abilities": 799
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s8_finale [0, 150, 80, 200]",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          48,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          44,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s8_finale",
+        "rect": [
+          0,
+          150,
+          80,
+          200
+        ]
+      }
+    }
+  ]
+}

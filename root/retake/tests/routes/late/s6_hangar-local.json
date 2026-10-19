@@ -1,0 +1,94 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s6_hangar",
+    "x": 8,
+    "y": 196,
+    "abilities": 279
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s6_hangar [224, 146, 248, 158]",
+      "actions": [
+        [
+          96,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          37,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s6_hangar",
+        "rect": [
+          224,
+          146,
+          248,
+          158
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_hangar [400, 130, 424, 142]",
+      "actions": [
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ]
+      ],
+      "expect": {
+        "room": "s6_hangar",
+        "rect": [
+          400,
+          130,
+          424,
+          142
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s6_reactor [0, 400, 80, 440]",
+      "actions": [
+        [
+          6,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          104,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s6_reactor",
+        "rect": [
+          0,
+          400,
+          80,
+          440
+        ]
+      }
+    }
+  ]
+}

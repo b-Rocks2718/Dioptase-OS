@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s8_catwalk",
+    "x": 8,
+    "y": 196,
+    "abilities": 799
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s8_catwalk [360, 154, 426, 166]",
+      "actions": [
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          48,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          48,
+          18
+        ],
+        [
+          17,
+          16
+        ]
+      ],
+      "expect": {
+        "room": "s8_catwalk",
+        "rect": [
+          360,
+          154,
+          426,
+          166
+        ]
+      }
+    },
+    {
+      "label": "Local traversal: s8_grand [0, 150, 80, 200]",
+      "actions": [
+        [
+          6,
+          2
+        ],
+        [
+          120,
+          18
+        ],
+        [
+          5,
+          2
+        ]
+      ],
+      "expect": {
+        "room": "s8_grand",
+        "rect": [
+          0,
+          150,
+          80,
+          200
+        ]
+      }
+    }
+  ]
+}

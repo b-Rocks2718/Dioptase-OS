@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s6_craters",
+    "x": 8,
+    "y": 196,
+    "abilities": 279
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s6_lasers [0, 150, 80, 200]",
+      "actions": [
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          120,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          112,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s6_lasers",
+        "rect": [
+          0,
+          150,
+          80,
+          200
+        ]
+      }
+    }
+  ]
+}

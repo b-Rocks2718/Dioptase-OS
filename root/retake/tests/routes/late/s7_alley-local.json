@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "pack_sha256": "6e300acb439f0f2618c92eb210c5cc0d0177c5ff1acd62fcb54770e0d665083a",
+  "start": {
+    "room": "s7_alley",
+    "x": 8,
+    "y": 196,
+    "abilities": 287
+  },
+  "segments": [
+    {
+      "label": "Local traversal: s7_roofs_a [0, 30, 60, 56]",
+      "actions": [
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          72,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          6,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          6,
+          2
+        ],
+        [
+          34,
+          18
+        ]
+      ],
+      "expect": {
+        "room": "s7_roofs_a",
+        "rect": [
+          0,
+          30,
+          60,
+          56
+        ]
+      }
+    }
+  ]
+}
