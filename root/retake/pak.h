@@ -4,7 +4,7 @@
 
 #define PAK_MAGIC 0x314B5452
 #define PAK_VERSION 2
-#define PAK_SIZE 3712320
+#define PAK_SIZE 3744064
 #define PAK_ROOM_COUNT 71
 #define PAK_WORLD_HASH 0x44DF5A58  /* CRC32 of room order, geometry and entities */
 

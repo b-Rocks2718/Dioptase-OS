@@ -172,11 +172,28 @@ def compose(room, tiles, stamps, stamp_chars=None):
                 fill[y][x] = True
             elif ch in chars and x > 0:
                 fill[y][x] = fill[y][x - 1]
+    # Regions that provide architecture tiles get structure on their walls:
+    # a wainscot band in the three rows above a floor (railed on top), a
+    # frieze under ceilings, and pilasters every 12 tiles between them.
+    arch = "wain_0" in tiles
+
+    def solid_at(x, y):
+        return y >= room.h or (0 <= y and room.map[y][x] == "#")
+
     for y in range(room.h):
         for x in range(room.w):
             if fill[y][x]:
                 v = (x * 7 + y * 13) % 4
-                img[y * T:(y + 1) * T, x * T:(x + 1) * T] = tiles[f"facade_{v}"]
+                name = f"facade_{v}"
+                if arch:
+                    below = [k for k in (1, 2, 3) if solid_at(x, y + k)]
+                    if below:
+                        name = "wain_top" if below[0] == 3 else f"wain_{x % 2}"
+                    elif y > 0 and solid_at(x, y - 1):
+                        name = "frieze"
+                    elif x % 12 == 6:
+                        name = "pilaster"
+                img[y * T:(y + 1) * T, x * T:(x + 1) * T] = tiles[name]
     # facade edges: a lit cornice line on top, dark lines on the sides
     for y in range(room.h):
         for x in range(room.w):
@@ -197,6 +214,24 @@ def compose(room, tiles, stamps, stamp_chars=None):
             name = chars.get(room.deco[y][x])
             if name:
                 pix.blit(img, stamps[name], x * T, y * T)
+    # 2b. lamps throw soft pools of light onto whatever is behind them
+    lamp_char = next((c for c, n in chars.items() if n == "lamp"), None)
+    if lamp_char:
+        yy, xx = np.mgrid[0:H, 0:W]
+        for y in range(room.h):
+            for x in range(room.w):
+                if room.deco[y][x] != lamp_char:
+                    continue
+                cx, cy = x * T + 4, y * T + 6
+                d2 = (xx - cx) ** 2 + ((yy - cy) * 3 // 2) ** 2
+                for radius, lift in ((44, 1), (26, 1)):
+                    m = (d2 <= radius * radius) & (img != TRANSPARENT)
+                    if m.any():
+                        vals = img[m].astype(np.int32)
+                        r = np.minimum((vals & 15) + lift, 15)
+                        gg = np.minimum(((vals >> 4) & 15) + lift, 15)
+                        b = np.minimum(((vals >> 8) & 15) + (lift if radius < 30 else 0), 15)
+                        img[m] = (b << 8) | (gg << 4) | r
     # 3. drop shadows of foreground solids onto the background (down-right)
     solid = np.zeros((H, W), dtype=bool)
     for y in range(room.h):

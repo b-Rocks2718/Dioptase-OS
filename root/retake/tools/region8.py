@@ -17,8 +17,8 @@ T = 8
 rgb = pix.rgb
 GOLD = rgb(15, 12, 3)
 GOLD_DARK = rgb(10, 7, 1)
-VELVET = rgb(10, 1, 3)
-VELVET_DARK = rgb(5, 0, 2)
+VELVET = rgb(7, 0, 2)
+VELVET_DARK = rgb(4, 0, 1)
 OUT = rgb(2, 0, 1)
 
 
@@ -113,7 +113,7 @@ def velvet(var):
         if fold in (0, 1):
             t[:, x] = VELVET_DARK
         elif fold == 4:
-            t[:, x] = rgb(13, 2, 4)
+            t[:, x] = rgb(9, 1, 3)
     if var == 3:
         t[2:5, 4] = GOLD
     return t
@@ -221,6 +221,36 @@ def backdrop(width, height, rng):
     return img
 
 
+def arch_tiles():
+    """Gold-trimmed wood wainscot, a gilded rail and molding, fluted columns."""
+    out = {}
+    for var in range(2):
+        t = tile(rgb(5, 2, 1))
+        t[0, :] = rgb(3, 1, 0)
+        t[2:7, 1 + var * 4:3 + var * 4] = rgb(7, 3, 1)
+        t[1, :] = GOLD_DARK
+        out[f"wain_{var}"] = t
+    t = tile(rgb(5, 2, 1))
+    t[0, :] = GOLD
+    t[1, :] = GOLD_DARK
+    t[2, :] = OUT
+    out["wain_top"] = t
+    t = tile(VELVET_DARK)
+    t[0:3, :] = GOLD_DARK
+    t[1, :] = GOLD
+    for x in range(0, T, 2):
+        t[3:5, x] = GOLD_DARK                    # dentils
+    out["frieze"] = t
+    t = tile(GOLD_DARK)
+    t[:, 1] = GOLD
+    t[:, 3] = rgb(13, 10, 2)
+    t[:, 5] = rgb(8, 5, 1)
+    t[:, 0] = OUT
+    t[:, 7] = OUT
+    out["pilaster"] = t
+    return out
+
+
 STAMP_CHARS = {"S": "star", "C": "curtain", "M": "paper_moon", "P": "piano", "L": "lamp"}
 
 
@@ -239,6 +269,7 @@ def build(font):
         tiles[f"nails_{d}"] = sabres(d)
     for var in range(4):
         tiles[f"facade_{var}"] = velvet(var)
+    tiles.update(arch_tiles())
     lamp = region1.lamp_stamp()
     m = lamp != TRANSPARENT
     lamp[m] = np.where(lamp[m] == lamp[m].max(), GOLD, lamp[m])
