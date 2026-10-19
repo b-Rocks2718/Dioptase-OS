@@ -366,10 +366,14 @@ def stage2():
     r.fill(0, 20, 26, 30)                       # level with the canyon's right mesa
     r.fill(30, 20, 40, 30)
     r.clear(26, 20, 30, 30)                     # the shaft down into the mine
-    r.plank(26, 20, 4)
     r.wall(38, 0, 20, w=2)
     r.stamp(27, 9, "N")
     r.stamp(8, 12, "C")
+    # The shaft's hatch holds for one second after the slate by the canyon
+    # is clapped: 170 px away, too far to run. A take claps it for her.
+    for x in range(26, 30):
+        r.ent("gate", x, 20, a=1, b=1)
+    r.ent("slate", 3, 19, a=1, b=60)
     r.ent("mirror", 6, 19)
     r.ent("sign", 14, 19, a="@s2_cart_hint")
     r.ent("walker", 20, 19)

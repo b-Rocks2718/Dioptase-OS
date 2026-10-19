@@ -56,6 +56,43 @@ static void test_gate_obstruction(void) {
   expect(gate->state == 0, "gate closes after Ruby has cleared its column");
 }
 
+/* A slate is a momentary switch: any clap, Ruby's or a take's, holds its
+ * switch for b ticks and then lets the gate close. This is what makes
+ * timing puzzles possible where a plate would only need a parked take. */
+static void test_slate_hold(void) {
+  game_new(ROOM_S1_MARK);
+  struct Ent* gate = entity(ENT_GATE);
+  struct Ent* slate = ent_alloc();
+  expect(gate && slate, "Mark fixture has its gate and room for a slate");
+  if (!gate || !slate) return;
+  ent_setup(slate, ENT_SLATE, 5, 25, gate->a, 30, 0, -1);
+  player_init(&g_hero, 24, 196, 0);
+  game_tick(IN_ATTACK, IN_ATTACK);
+  expect(slate->timer == 30 && (g_events & GE_HIT) != 0, "Ruby's clap marks a slate for its hold time");
+  game_tick(0, 0);
+  expect(gate->state == 1, "a marked slate opens its gate on the next tick");
+  int ticks = 0;
+  while (slate->timer > 0 && ticks < 60) {
+    game_tick(0, 0);
+    ticks++;
+  }
+  game_tick(0, 0);
+  expect(slate->timer == 0 && gate->state == 0, "the gate closes once the slate's hold runs out");
+
+  game_tick(0, IN_RECORD);
+  game_tick(IN_ATTACK, IN_ATTACK);
+  for (int i = 0; i < 12; i++) game_tick(0, 0);
+  game_tick(0, IN_RECORD);
+  player_init(&g_hero, 264, 196, 0);
+  slate->timer = 0;
+  int marked = 0;
+  for (int i = 0; i < 40 && !marked; i++) {
+    game_tick(0, 0);
+    marked = slate->timer > 0;
+  }
+  expect(marked, "a take replaying a clap marks the slate while Ruby is across the room");
+}
+
 /* Defeat is persistent, so its uncollected ability and exit must be too. */
 static void test_boss_rewards(void) {
   game_new(ROOM_S1_CLOCK_TOP);
@@ -276,6 +313,7 @@ int main(void) {
   test_up_exit();
   test_blocked_exit();
   test_gate_obstruction();
+  test_slate_hold();
   test_boss_rewards();
   test_hazard_door();
   test_spring_impulse();

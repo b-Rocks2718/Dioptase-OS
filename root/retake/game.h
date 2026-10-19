@@ -49,7 +49,11 @@
 #define ENT_SEARCHLIGHT 29  /* sweeping light: a sweep tiles each side, b beam tiles, c speed Q8/tick,
                                d starting offset tiles; a rifle fires on whoever it finds */
 #define ENT_BEAT 30      /* set piece solid on alternate beats: a width tiles, b group 0/1 */
-#define ENT_KINDS 31
+#define ENT_SLATE 31     /* clapper switch: a switch id, b hold ticks (0: SLATE_HOLD); a clap from
+                            Ruby or any take holds the switch down for that long, restarting on
+                            every clap; e->timer counts the hold down */
+#define SLATE_HOLD 180   /* default ticks a clapped slate holds its switch */
+#define ENT_KINDS 32
 
 /* Not a movement ability: the third take reel, granted like one. */
 #define AB_EXTRA_REEL 256

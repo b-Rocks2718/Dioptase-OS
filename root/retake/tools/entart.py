@@ -244,7 +244,8 @@ ART = {
 }
 
 ORDER = ["coin", "heart", "frame", "reel", "ability", "mirror", "sign", "npc", "plate", "gate",
-         "door", "walker", "hopper", "flyer", "thrower", "charger", "shot", "sandbag", "spring", "shop"]
+         "door", "walker", "hopper", "flyer", "thrower", "charger", "shot", "sandbag", "spring", "shop",
+         "slate"]
 
 
 def build():

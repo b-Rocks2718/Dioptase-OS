@@ -401,6 +401,20 @@ static void draw_searchlight(struct Ent* e, int ex, int ey) {
   }
 }
 
+/* A slate: sticks open while it waits; shut, with a white bar draining
+ * above it, while it holds its switch. The bar blinks for its last half
+ * second so a player waiting at a gate knows to go. */
+static void draw_slate(struct Ent* e, int ex, int ey, int ew, int eh) {
+  int x = ex + ((ew - 16) >> 1);
+  int y = ey + eh - 24;
+  draw_image(IMG_SLATE_0 + (e->timer > 0 ? 1 : 0), x, y, 0);
+  if (e->timer <= 0) return;
+  int hold = e->b > 0 ? e->b : SLATE_HOLD;
+  int fill = e->timer * 14 / hold;
+  fill_rect(x + 1, y - 4, 14, 2, 0x0222);
+  if (e->timer > 30 || (frame_clock & 4)) fill_rect(x + 1, y - 4, fill, 2, 0x0FFF);
+}
+
 /* A beat block: gold tiles with a star while solid, a dotted outline while
  * gone; either way it blinks through the last 18 ticks before it changes. */
 static void draw_beat(struct Ent* e, int ex, int ey) {
@@ -612,6 +626,10 @@ static void draw_entities(void) {
     }
     if (e->kind == ENT_BEAT) {
       draw_beat(e, ex, ey);
+      continue;
+    }
+    if (e->kind == ENT_SLATE) {
+      draw_slate(e, ex, ey, ew, eh);
       continue;
     }
     if (e->kind == ENT_FLYER && (current_region == 6 || current_region == 8)) {

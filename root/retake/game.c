@@ -39,6 +39,7 @@
 #define ROBOT_HP 22
 #define FIXER_HP 24
 #define MAESTRO_HP 26
+#define SLATE_REARM 16           /* a clap still touching a fresh mark makes no new sound */
 #define BEAT_TICKS 72            /* two beats of the Stage 8 song (tempo 15 at 100 Hz, 4 rows a beat) */
 #define MOON_LIFT 14             /* Q8/tick^2 of gravity handed back on moon sets */
 #define MOON_FALL_SPEED 704      /* and a gentler terminal velocity there */
@@ -203,6 +204,7 @@ static void ent_setup(struct Ent* e, int kind, int tx, int ty, int a, int b, int
     case ENT_LASER: w = 4; h = 8; break;      /* sized from a and d after setup */
     case ENT_SEARCHLIGHT: w = 8; h = 8; break;
     case ENT_BEAT: w = 8 * (a > 0 ? a : 1); h = 8; break;
+    case ENT_SLATE: w = 12; h = 16; break;
     case ENT_BOSS:
       if (a == 9) {
         w = 20;
@@ -2072,6 +2074,18 @@ static void update_switches(void) {
     e->state = pressed;
     if (pressed) g_switch[e->a & 15] = 1;
   }
+  /* A clapped slate holds its switch while its timer runs (combat() sets the
+   * timer; step_entities counts it down, at half speed under overcrank). */
+  for (int i = 0; i < g_ent_count; i++) {
+    struct Ent* e = &g_ents[i];
+    if (e->alive && e->kind == ENT_SLATE && e->timer > 0) g_switch[e->a & 15] = 1;
+  }
+}
+
+/* Mark a slate: its switch holds for the full time again from this tick. */
+static void mark_slate(struct Ent* e) {
+  if (e->timer < (e->b > 0 ? e->b : SLATE_HOLD) - SLATE_REARM) g_events |= GE_HIT;
+  e->timer = e->b > 0 ? e->b : SLATE_HOLD;
 }
 
 /* Resolve live and recorded clapper hits, then enemy contacts and any live pogo. */
@@ -2093,6 +2107,17 @@ static void combat(void) {
       struct Hitbox wb;
       ent_box(e, &wb);
       if (hitbox_overlap(&hb, &wb)) hurt_hero(e);
+      continue;
+    }
+    if (e->kind == ENT_SLATE) {
+      /* Only a clap marks it; walking into it does nothing. */
+      struct Hitbox sb;
+      ent_box(e, &sb);
+      int hit = has_live && hitbox_overlap(&live, &sb);
+      for (int s = 0; s < TAKE_MAX_SLOTS && !hit; s++) {
+        if (has_film[s] && hitbox_overlap(&film[s], &sb)) hit = 1;
+      }
+      if (hit) mark_slate(e);
       continue;
     }
     if (e->kind == ENT_PENDULUM || (e->kind == ENT_BOLT && e->state == 1) ||

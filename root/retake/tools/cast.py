@@ -442,6 +442,33 @@ def pie(colors):
     return _sheet(PIE, colors)
 
 
+def slate():
+    """The clapper switch on its tripod, 16x24: sticks open while it waits,
+    shut while it holds its switch. Plain black and white with a wood stand,
+    so it reads the same in every picture's stock."""
+    black, white, chalk = pix.rgb(1, 1, 1), pix.rgb(15, 15, 15), pix.rgb(11, 11, 11)
+    wood, wood_dark, out = pix.rgb(9, 6, 3), pix.rgb(5, 3, 2), pix.rgb(0, 0, 0)
+    frames = []
+    for shut in (False, True):
+        img = pix.new_image(16, 24)
+        img[9:17, 2:14] = black                      # the board
+        for y, x0, x1 in ((11, 3, 9), (13, 3, 12), (15, 3, 7), (15, 9, 12)):
+            img[y, x0:x1] = chalk                    # scene, take, roll
+        for x in range(2, 14):                       # the fixed stick
+            for y in (7, 8):
+                img[y, x] = white if ((x - y) // 2) % 2 else black
+        for x in range(2, 14):                       # the hinged stick
+            top = 5 if shut else 5 - ((x - 2) * 5) // 11
+            for y in (top, top + 1):
+                img[y, x] = white if ((x + y) // 2) % 2 else black
+        for k in range(7):                           # the tripod
+            img[17 + k, 7:9] = wood
+            img[17 + k, max(1, 6 - k // 2 - k // 3)] = wood_dark
+            img[17 + k, min(14, 9 + k // 2 + k // 3)] = wood_dark
+        frames.append(pix.outline(img, out))
+    return frames
+
+
 def stage1():
     """The silent comedy's cast in sepia: Keystone cops, a pastry chef with
     custard pies, a bullfrog, pigeons, and a runaway jalopy."""
@@ -459,6 +486,7 @@ def stage1():
         "flyer": pigeon(bird),
         "charger": jalopy(car),
         "shot": pie(custard),
+        "slate": slate(),
     }
 
 
