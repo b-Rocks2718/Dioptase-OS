@@ -527,9 +527,9 @@ static int ent_image(struct Ent* e) {
     case ENT_NPC: return IMG_NPC_0;
     case ENT_PLATE: return IMG_PLATE_0 + (e->state ? 1 : 0);
     case ENT_DOOR: return e->d ? -1 : IMG_DOOR_0;   /* d: the room art already shows the door */
-    case ENT_WALKER: return IMG_WALKER_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER_0 + ((e->x >> 10) & 3);   /* a step every 4 px */
     case ENT_HOPPER: return IMG_HOPPER_0 + (e->vy != 0 ? 1 : 0);
-    case ENT_FLYER: return IMG_FLYER_0 + ((frame_clock >> 3) & 1);
+    case ENT_FLYER: return IMG_FLYER_0 + ((frame_clock >> 2) & 3);  /* four wingbeat frames */
     case ENT_THROWER: return IMG_THROWER_0 + (e->state > 0 ? 1 : 0);
     case ENT_CHARGER: return IMG_CHARGER_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
     case ENT_SHOT: return IMG_SHOT_0;
