@@ -157,6 +157,20 @@ including pieces Astra would have owned; these need its eyes most.
 - Astra (69131f9 and later, merged as c7f682f): `tests/retake_save.dir/` +
   `tests/retake_save.ok`, a guest fixture that runs the save codec against
   Dioptase's real filesystem. Still no kernel, compiler or emulator changes.
+- Opus, emulator d3c83cd: the pixel layer's scroll wraps at its own 320x240
+  size (it wrapped at the 640x480 output), so hardware scrolling works as a
+  ring buffer. The human called the old behavior an emulator mistake.
+  Superproject docs/mem_map.md 3c60d23 documents it.
+- Opus, OS c099ceb: syscalls set_pixel_scroll (trap 65) and
+  write_pixel_tail (trap 66: pixels 75776..76799 share the device page, so
+  user code cannot map them). The terminal resets scroll and clears the
+  tail. Covered by tests/user_pixel_fb.dir; docs/syscalls.md.
+- Opus, emulator 541f93d: idle secondary cores park their host threads
+  (1 ms naps, woken by pending interrupts) instead of spinning. Host CPU
+  for RETAKE went from 399% to 222%. Core 0 still ticks the device clock.
+  OS suite (88 tests x75) and cargo tests pass.
+- Opus, OS 8ec840d: the terminal only reads the clock while its cursor is
+  visible, so a full-screen program is not competing with its polling.
 - Stray file: `root/resonance/physics.h`, the musical-pinball model from
   Astra's first pitch, came in with the merge. Nothing uses it; Astra to
   confirm, then delete it before the branch is final.
@@ -390,3 +404,29 @@ the pixel scroll wrap was an emulator mistake; add syscalls as needed.
 - For Astra: should kicking twice off the same wall without landing be
   disallowed? Today any wall is a ladder. That is fine as a skill, but it
   means height puzzles must use beams out of reach (the rule used above).
+
+## Feedback round: tutorial, feel, perf, new art (Oct 19, 04:15-15:45)
+
+Human playtest notes: no controls list on the title; Stage 1 should teach
+by play; Esc closes the emulator window; "where are the new graphics?";
+Ruby walked into the side bars; some transitions needed a jump; Stage 1
+signs gave away solutions; ledges just past jump height; later puzzles
+need more than "stand on the take" and "take holds the plate"; the clap was
+short and trading hits was hard; music slowed (perf); keep margin for a
+slower laptop.
+- bac2e5f: P pauses (Q quits from pause, title Q exits); signs only
+  introduce controls ("Two stunt doubles are better than one. (C: record
+  yourself.)"); beams extended so transitions are walkable; the camera may
+  sit 8 px past room edges so Ruby never enters the bars.
+- 8ec840d: the game sleeps between frame-counter checks; with emulator
+  541f93d the host CPU drops by about 45%.
+- 42d49fc: the clap is bigger and lasts longer; hits knock enemies back and
+  give them a harmless flinch (details in Astra's queue message).
+- 392bcee: every Stage 1 jump is an easy 40 px step or clearly out of reach;
+  stage1-opening.json repaired (42/42).
+- 759abc8: Ruby redrawn by hand (tools/ruby.py), 16x24, FEET_Y 30.
+- 720bd9c, 502d357: tools/cast.py, hand-drawn humanoids with a four-frame
+  walk; Stage 1 cast redrawn whole; every picture's walkers and throwers
+  dressed on it. Hitboxes unchanged.
+- Next: critters and chargers of pictures 2-8; later-picture puzzles with
+  new take mechanics.
