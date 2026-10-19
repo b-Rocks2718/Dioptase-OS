@@ -1,5 +1,5 @@
 /*
- * Regression tests for shipping game rules with generated Stage 1 rooms.
+ * Regression tests for shipping game rules with the generated campaign rooms.
  * Fixtures set up specific contacts; all assertions advance the actual tick
  * or room lifecycle. These are rule regressions, not campaign solution proofs.
  */
@@ -199,6 +199,46 @@ static void test_crumble_timing(void) {
          "a clear block reforms collision immediately, without an unsafe air tick");
 }
 
+/* Active beat ledges must support an arrival before the first player sweep;
+ * later phase changes may never fill the tile occupied by Ruby. */
+static void test_beat_collision(void) {
+  game_new(ROOM_S8_FLYLOFT);
+  struct Ent* block = entity(ENT_BEAT);
+  expect(block != 0, "flyloft fixture supplies an alternating beat ledge");
+  if (!block) return;
+  int tx = block->tx;
+  int ty = block->ty;
+  beat_parity = block->b & 1;
+  beat_phase = 0;
+  game_enter_room(ROOM_S8_FLYLOFT, tx * TILE, ty * TILE - PLAYER_H);
+  block = entity(ENT_BEAT);
+  int cell = g_room.row[ty] + tx;
+  expect(block->state == 1 && g_room.col[cell] == COL_SOLID,
+         "active beat collision exists immediately on room entry");
+  int y = g_hero.y;
+  game_tick(0, 0);
+  expect(g_hero.on_ground && g_hero.y == y,
+         "Ruby arriving on an active beat ledge cannot fall through its first tick");
+
+  beat_parity ^= 1;
+  update_beats();
+  expect(!block->state && g_room.col[cell] == COL_AIR,
+         "an inactive beat restores its underlying air collision");
+  player_init(&g_hero, tx * TILE, ty * TILE, 0);
+  beat_parity ^= 1;
+  update_beats();
+  expect(!block->state && g_room.col[cell] == COL_AIR,
+         "a beat becoming active waits for Ruby to leave its interior");
+  player_init(&g_hero, 24, 388, 0);
+  update_beats();
+  expect(block->state && g_room.col[cell] == COL_SOLID,
+         "a deferred beat publishes collision as soon as its interior is clear");
+  beat_phase = 0;
+  g_overcrank = 180;
+  for (int i = 0; i < 10; i++) game_tick(0, 0);
+  expect(beat_phase == 5, "beat phase advances on five of ten Overcrank ticks");
+}
+
 /* Each late boss, and the Everlasting Camera, must fall to claps landed outside its guarded states. Ruby
  * is held beside it (facing it, health restored every tick, so its attacks
  * cannot end the run) and claps every 20 ticks; this proves the boss is
@@ -245,6 +285,7 @@ int main(void) {
   test_edit_snapshot();
   test_rewind_support();
   test_crumble_timing();
+  test_beat_collision();
   sim_close();
   if (!failures) puts("***PASS retake game rule regressions");
   return failures != 0;

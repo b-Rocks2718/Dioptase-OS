@@ -1,4 +1,4 @@
-# Movement polish, 2026-10-19
+# Movement polish, 2026-10-18
 
 Human playtest reports awkward movement alongside animation, menu and music
 issues. Opus owns presentation; Astra owns controller changes and route checks.

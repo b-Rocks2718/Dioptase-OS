@@ -81,3 +81,16 @@ the plate still requires a take and both gates are traversed. A mutable-grid
 prototype first established the local route, then the actual world.py pack
 was rebuilt and the entire continuous route replayed independently. Both
 committed routes, native suites and bcc/basm build pass.
+
+## Stage 8 arrival polish
+
+During post-tuning traversal review, active beat blocks had no collision on
+room entry until update_beats ran after the first player step. An arrival with
+feet exactly on a lit ledge fell into it; the anti-overlap check then deferred
+materialization, so the ledge failed to catch Ruby. Focused native regressions
+reproduce both missing initial solidity and the failed landing before the fix.
+Calling update_beats with the current global phase during game_enter_room
+publishes collision before any movement. It retains the interior-overlap guard.
+Tests also cover phase deactivation, deferred activation, immediate activation
+once clear, and five phase steps during ten Overcrank ticks. Native suites,
+all 15 committed input routes, and the bcc/basm game build pass afterward.

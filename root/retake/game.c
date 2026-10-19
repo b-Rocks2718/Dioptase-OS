@@ -509,6 +509,7 @@ void game_enter_room(int room, int x_px, int y_px) {
   spawn_room_entities();
   update_gates();
   update_crumbles(1);           /* collision must exist before the first player sweep */
+  update_beats();              /* publish the current phase before arrival movement */
   entry_x = x_px;
   entry_y = y_px;
   mark_visited(room);
