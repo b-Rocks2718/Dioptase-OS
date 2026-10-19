@@ -766,7 +766,9 @@ def stage5():
     r.ent("heart", 72, 17)
     out.append(r.done())
 
-    r = Draft("s5_library", 5, (200, 0), (40, 60))
+    # Placed so its bottom passage meets the hall's floor on the left and the
+    # lab's floor on the right; the climb above is the way to the reel.
+    r = Draft("s5_library", 5, (200, -30), (40, 60))
     r.wall(0, 0, 52, w=2)
     r.wall(38, 0, 46, w=2)
     r.ground(56)

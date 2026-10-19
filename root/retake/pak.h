@@ -6,7 +6,7 @@
 #define PAK_VERSION 2
 #define PAK_SIZE 3667364
 #define PAK_ROOM_COUNT 71
-#define PAK_WORLD_HASH 0xB2463848  /* CRC32 of room order, geometry and entities */
+#define PAK_WORLD_HASH 0x44DF5A58  /* CRC32 of room order, geometry and entities */
 
 /* Room indices into the pack's room table. */
 #define ROOM_BACKLOT_WEST 0
