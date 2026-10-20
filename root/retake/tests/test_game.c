@@ -93,6 +93,32 @@ static void test_slate_hold(void) {
   expect(marked, "a take replaying a clap marks the slate while Ruby is across the room");
 }
 
+/* A gate with a switch mask opens only while every listed switch is held;
+ * its release switch opens it alone (the lever on the far side). */
+static void test_gate_all_switches(void) {
+  game_new(ROOM_S1_MARK);
+  struct Ent* gate = entity(ENT_GATE);
+  expect(gate != 0, "Mark fixture contains its gate");
+  if (!gate) return;
+  player_init(&g_hero, 24, 196, 0);
+  gate->c = (1 << 2) | (1 << 3);
+  gate->d = 5;
+  for (int i = 0; i < MAX_SWITCHES; i++) g_switch[i] = 0;
+  g_switch[gate->a] = 1;
+  g_switch[2] = 1;
+  update_gates();
+  expect(gate->state == 0, "a gate wanting three switches stays shut while one is missing");
+  g_switch[3] = 1;
+  update_gates();
+  expect(gate->state == 1, "the gate opens once all three switches are held together");
+  for (int i = 0; i < MAX_SWITCHES; i++) g_switch[i] = 0;
+  update_gates();
+  expect(gate->state == 0, "the gate shuts again when its switches are released");
+  g_switch[4] = 1;
+  update_gates();
+  expect(gate->state == 1, "the release switch opens the gate by itself");
+}
+
 /* Defeat is persistent, so its uncollected ability and exit must be too. */
 static void test_boss_rewards(void) {
   game_new(ROOM_S1_CLOCK_TOP);
@@ -314,6 +340,7 @@ int main(void) {
   test_blocked_exit();
   test_gate_obstruction();
   test_slate_hold();
+  test_gate_all_switches();
   test_boss_rewards();
   test_hazard_door();
   test_spring_impulse();

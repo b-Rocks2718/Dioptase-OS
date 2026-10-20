@@ -436,6 +436,10 @@ static void update_gates(void) {
     struct Ent* e = &g_ents[i];
     if (!e->alive || e->kind != ENT_GATE || e->tx < 0 || e->tx >= g_room.w) continue;
     int open = g_switch[e->a & 15];
+    for (int k = 0; k < MAX_SWITCHES; k++) {
+      if (((e->c >> k) & 1) && !g_switch[k]) open = 0;
+    }
+    if (e->d > 0 && g_switch[(e->d - 1) & 15]) open = 1;
     /* A released plate may close behind Ruby, but never through her. Takes
      * are projections, so their overlap does not prevent a gate closing. */
     struct Hitbox hb;

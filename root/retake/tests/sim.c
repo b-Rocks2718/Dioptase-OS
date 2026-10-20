@@ -247,5 +247,9 @@ void sim_state(int* out) {
 void sim_fixture(int room, int x, int y, int abilities) {
   game_new(room);
   g_prog.abilities = abilities;
+  /* The reel upgrades act when picked up (pickups_and_interactions), so a
+   * fixture that claims them gets their take limits too. */
+  if (abilities & AB_EXTRA_REEL) g_prog.take_slots = 3;
+  if (abilities & AB_LONG_TAKES) g_prog.take_frames = TAKE_MAX_FRAMES;
   game_enter_room(room, x, y);
 }

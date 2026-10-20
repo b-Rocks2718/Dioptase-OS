@@ -387,6 +387,7 @@ def stage2():
     r.clear(26, 0, 30, 2)                       # the way back up to the mouth
     r.fill(26, 26, 30, 30)
     r.fill(66, 26, 80, 30)                      # level with the shaft's floor
+    r.ent("mirror", 20, 21)                     # past the hatch, so retries skip it
     r.ent("platform", 30, 22, a=10, b=0, c=120, d=4)
     r.ent("platform", 46, 18, a=8, b=0, c=150, d=4)
     r.girder(58, 14, 6)
@@ -830,9 +831,18 @@ def stage5():
     r.nails(36, 25, 6)
     r.girder(16, 20, 10)
     r.girder(34, 19, 10)
-    r.ent("platform", 54, 20, a=10, b=0, c=110, d=3)
+    # The generator: the door to the Monster wants three slates held at
+    # once, a lamp each. They stand too far apart for Ruby alone (one second
+    # of hold each), so this is the first door for more than one take.
+    r.block(76, 2, 4, 20)
+    r.ent("gate", 76, 22, a=1, b=4, c=(1 << 2) | (1 << 3), d=5)
+    r.ent("plate", 77, 25, a=4)                 # releases the door from inside
+    r.ent("mirror", 78, 25)                     # so a lost fight need not redo it
+    r.ent("slate", 17, 19, a=1, b=60)
+    r.ent("slate", 42, 18, a=2, b=60)
+    r.ent("slate", 73, 25, a=3, b=60)
     r.ent("npc", 12, 25, a="@s5_igor")
-    r.ent("mirror", 70, 25)
+    r.ent("mirror", 64, 25)
     r.ent("reel", 40, 18, a="@s5_reel_b")
     r.ent("walker", 26, 25)
     r.ent("thrower", 46, 25)

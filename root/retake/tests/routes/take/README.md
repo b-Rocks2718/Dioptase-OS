@@ -15,3 +15,11 @@ separate claim, checked by `check_escapes.py` with Astra's bounded search
   any clap can reach (y 183, wire unused) at three x positions and finds no
   cut-free route back to the pier, the landing, or the wreck. The reef in
   the seam columns keeps the room's edge from serving as a wall to kick up.
+- `s5_lab-generator.json`: the door to the Monster wants three slates held
+  at once (a lamp each), each holding one second and too far apart for Ruby
+  alone. Two takes clap the first two from the girders; Ruby claps the third
+  by the door. `check_escapes.py` finds no route to the arena without takes.
+  One take can also do it: a loop that claps both girder slates wraps
+  straight from the second back to the first, so their holds overlap. With
+  a 114-tick loop, Ruby clapping the third slate got through for 37 of 50
+  tried waits (checked once by hand, not part of the suite).

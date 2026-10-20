@@ -26,7 +26,9 @@
 #define ENT_SIGN 7       /* a: script (interact) */
 #define ENT_NPC 8        /* a: script, b: look (interact) */
 #define ENT_PLATE 9      /* a: switch id, pressed by Ruby or any take */
-#define ENT_GATE 10      /* a: switch id, b: height in tiles; solid unless its switch is pressed */
+#define ENT_GATE 10      /* a: switch id, b: height in tiles, c: mask of further switches that must
+                            be held with a, d: release switch id + 1 that opens it alone (0 none);
+                            solid unless open */
 #define ENT_DOOR 11      /* a: target room, b: target tx, c: target ty (interact) */
 #define ENT_WALKER 12    /* patrols, turns at walls and ledges */
 #define ENT_HOPPER 13    /* hops toward Ruby */

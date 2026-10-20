@@ -401,6 +401,18 @@ static void draw_searchlight(struct Ent* e, int ex, int ey) {
   }
 }
 
+/* A gate that wants several switches wears a lamp for each, top down,
+ * lit while that switch is held, so the player can see which are missing. */
+static void draw_gate_lamps(struct Ent* e, int ex, int ey) {
+  int y = ey + 1;
+  for (int k = 0; k < MAX_SWITCHES; k++) {
+    if (k != (e->a & 15) && !((e->c >> k) & 1)) continue;
+    fill_rect(ex + 2, y, 4, 4, 0x0111);
+    fill_rect(ex + 3, y + 1, 2, 2, g_switch[k] ? 0x07EF : 0x0334);
+    y += 6;
+  }
+}
+
 /* A slate: sticks open while it waits; shut, with a white bar draining
  * above it, while it holds its switch. The bar blinks for its last half
  * second so a player waiting at a gate knows to go. */
@@ -721,6 +733,7 @@ static void draw_entities(void) {
       if (e->state) continue;                     /* open: slid out of view */
       int h = e->b > 0 ? e->b : 1;
       for (int k = 0; k < h; k++) draw_image(IMG_GATE_0, ex, ey + (k << 3), 0);
+      if (e->c) draw_gate_lamps(e, ex, ey);
       continue;
     }
     int img = ent_image(e);

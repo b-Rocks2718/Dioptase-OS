@@ -1,0 +1,166 @@
+{
+ "format": 1,
+ "pack_sha256": "6514b68f670606be083966f7e8133607c45676d8002d43a7fb43f5f8c843b634",
+ "start": {
+  "room": "s5_lab",
+  "x": 96,
+  "y": 196,
+  "abilities": 263
+ },
+ "segments": [
+  {
+   "label": "Climb onto the left girder beside the first slate",
+   "actions": [
+    [
+     6,
+     16
+    ],
+    [
+     6,
+     2
+    ],
+    [
+     24,
+     18
+    ],
+    [
+     24,
+     16
+    ],
+    [
+     3,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s5_lab",
+    "rect": [
+     148,
+     148,
+     156,
+     148
+    ]
+   }
+  },
+  {
+   "label": "Record a take clapping the first slate",
+   "actions": [
+    [
+     1,
+     1
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     1,
+     64
+    ],
+    [
+     14,
+     0
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     1,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s5_lab",
+    "rect": [
+     140,
+     148,
+     156,
+     148
+    ]
+   }
+  },
+  {
+   "label": "Cross to the right girder beside the second slate",
+   "actions": [
+    [
+     84,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s5_lab",
+    "rect": [
+     312,
+     140,
+     322,
+     140
+    ]
+   }
+  },
+  {
+   "label": "Record a second take clapping the second slate",
+   "actions": [
+    [
+     1,
+     2
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     1,
+     64
+    ],
+    [
+     14,
+     0
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     1,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s5_lab",
+    "rect": [
+     312,
+     140,
+     330,
+     140
+    ]
+   }
+  },
+  {
+   "label": "Clap the third slate and walk through the generator door",
+   "actions": [
+    [
+     120,
+     18
+    ],
+    [
+     6,
+     82
+    ],
+    [
+     35,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s5_arena",
+    "rect": [
+     0,
+     150,
+     120,
+     200
+    ]
+   }
+  }
+ ]
+}

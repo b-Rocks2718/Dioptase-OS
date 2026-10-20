@@ -29,5 +29,18 @@ def s3_plank():
     return escapes
 
 
+def s5_lab():
+    """Without takes, no route through the generator door to the arena."""
+    sim = Sim()
+    sim.start("s5_lab", 96, 196, S3 | 4 | 256)
+    try:
+        waypoint(sim, "s5_arena", [0, 150, 120, 200], width=160, depth=110, quantum=6)
+        print("ESCAPE s5_lab: reached the arena without a take")
+        return 1
+    except RuntimeError:
+        print("no route s5_lab: generator door without takes")
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(1 if s3_plank() else 0)
+    sys.exit(1 if s3_plank() + s5_lab() else 0)
