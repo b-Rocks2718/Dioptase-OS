@@ -441,3 +441,23 @@ slower laptop.
   switches), s6_bridge (slate dims the curtains), a searchlight decoy with
   a slate in Stage 7, and the jump cut as a bookmark in Stage 3.
 - Next after that: critters and chargers of pictures 2-8.
+
+## Take set pieces (Oct 19, 20:40-21:05, Astra away for the week)
+
+Each has a route proof in tests/routes/take/ and a bounded "can it be
+skipped" search in tests/routes/take/check_escapes.py (see its README).
+- 5537d53 Stage 3, s3_plank: the sea stack's cave is held by a slate on a
+  piling deep in the water. The sea clears takes, so the clap needs a still
+  left on dry land and a cut back to it before the landing. A reef in the
+  seam columns stops the room edge serving as a kickable wall.
+- bf67db7 Stage 5, s5_lab: gates gain c (mask of further switches, a lamp
+  each) and d (release switch + 1). The door to the Monster wants three
+  slates held at once, too far apart for Ruby: two takes and Ruby, or one
+  take whose loop wraps from one girder slate straight to the other.
+  Mirrors added past the S2 hatch and the S5 door so boss retries skip them.
+- c93af5e Stage 7, s7_club: searchlights gain a no-rifle bit and a show
+  switch held while locked on a take. The bouncer's door opens only while
+  the stage spot is on a performer: leave a still on the bandstand. Rain
+  stops in roofed rooms. A mirror on roofs_b past the door.
+- tests/sim.c fixtures apply Extra Reel and Long Takes' limits (Astra: your
+  file; the pickup rule is mirrored, routes unchanged).
