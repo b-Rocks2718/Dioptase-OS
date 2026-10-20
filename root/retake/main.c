@@ -937,17 +937,30 @@ static int title_screen(int have_save) {
 }
 
 /* Debug launch: "retake room=N" starts a new game in room N (skipping the
- * title and intro) with every ability, for testing deep rooms. */
+ * title and intro) with every ability, for testing deep rooms. "x=PX" and
+ * "y=PY" also place Ruby there (body top-left, pixels) if she fits. */
 static int debug_room = -1;
+static int debug_x = -1;
+static int debug_y = -1;
+
+/* The decimal value after a "name=" prefix, or -1 if the argument is not it. */
+static int debug_arg(char* a, char* name) {
+  while (*name) {
+    if (*a++ != *name++) return -1;
+  }
+  int n = 0;
+  for (; *a >= '0' && *a <= '9'; a++) n = n * 10 + (*a - '0');
+  return n;
+}
 
 static void parse_args(int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
-    char* a = argv[i];
-    if (a[0] == 'r' && a[1] == 'o' && a[2] == 'o' && a[3] == 'm' && a[4] == '=') {
-      int n = 0;
-      for (char* p = a + 5; *p >= '0' && *p <= '9'; p++) n = n * 10 + (*p - '0');
-      if (n < PAK_ROOM_COUNT) debug_room = n;
-    }
+    int n = debug_arg(argv[i], "room=");
+    if (n >= 0 && n < PAK_ROOM_COUNT) debug_room = n;
+    n = debug_arg(argv[i], "x=");
+    if (n >= 0) debug_x = n;
+    n = debug_arg(argv[i], "y=");
+    if (n >= 0) debug_y = n;
   }
 }
 
@@ -1074,6 +1087,7 @@ int main(int argc, char** argv) {
       game_new(debug_room);
       g_prog.abilities = AB_JUMPCUT | AB_WIRE | AB_GLIDE;
       g_hero.abilities = g_prog.abilities;
+      if (debug_x >= 0 && debug_y >= 0) player_place(&g_hero, &g_room, debug_x * Q8, debug_y * Q8);
     } else if (choice == 1) {
       if (game_load() != 0) {
         card_message("RETAKE - COULD NOT CONTINUE\nNeither checkpoint could be loaded.\nYour save files are unchanged.\nReturning to the title.");

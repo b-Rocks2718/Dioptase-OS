@@ -1,0 +1,200 @@
+{
+ "format": 1,
+ "pack_sha256": "ff0508f9fac315bc1e1ff88c05d0bb9287e24a0e266e598e0f6a9f2b54215208",
+ "start": {
+  "room": "s3_plank",
+  "x": 16,
+  "y": 164,
+  "abilities": 3
+ },
+ "segments": [
+  {
+   "label": "Cross the planks to the end of the pier",
+   "actions": [
+    [
+     24,
+     18
+    ],
+    [
+     6,
+     2
+    ],
+    [
+     48,
+     18
+    ],
+    [
+     6,
+     2
+    ],
+    [
+     48,
+     18
+    ],
+    [
+     6,
+     2
+    ],
+    [
+     6,
+     17
+    ],
+    [
+     24,
+     18
+    ],
+    [
+     24,
+     16
+    ],
+    [
+     24,
+     18
+    ],
+    [
+     6,
+     2
+    ],
+    [
+     38,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s3_plank",
+    "rect": [
+     448,
+     124,
+     504,
+     124
+    ]
+   }
+  },
+  {
+   "label": "Jump the open water to the landing under the sea stack",
+   "actions": [
+    [
+     24,
+     18
+    ],
+    [
+     6,
+     0
+    ],
+    [
+     48,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s3_plank",
+    "rect": [
+     584,
+     124,
+     600,
+     124
+    ]
+   }
+  },
+  {
+   "label": "Leave a still on the landing",
+   "actions": [
+    [
+     1,
+     32
+    ],
+    [
+     3,
+     0
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     2,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s3_plank",
+    "rect": [
+     584,
+     124,
+     600,
+     124
+    ]
+   }
+  },
+  {
+   "label": "Fall into the sea and clap the slate on the piling",
+   "actions": [
+    [
+     10,
+     1
+    ],
+    [
+     22,
+     0
+    ],
+    [
+     1,
+     65
+    ],
+    [
+     8,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s3_plank",
+    "rect": [
+     540,
+     190,
+     600,
+     232
+    ]
+   }
+  },
+  {
+   "label": "Cut back to the still before the landing",
+   "actions": [
+    [
+     1,
+     128
+    ],
+    [
+     2,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s3_plank",
+    "rect": [
+     584,
+     124,
+     600,
+     124
+    ]
+   }
+  },
+  {
+   "label": "Walk through the open cave into the wreck",
+   "actions": [
+    [
+     60,
+     2
+    ]
+   ],
+   "expect": {
+    "room": "s3_wreck",
+    "rect": [
+     0,
+     100,
+     160,
+     132
+    ]
+   }
+  }
+ ]
+}

@@ -549,18 +549,33 @@ def stage3():
     r.plank(36, 20, 6)
     r.nails(38, 19, 2)
     r.ent("platform", 44, 21, a=8, b=0, c=140, d=3)
-    r.plank(58, 18, 6)
-    r.plank(68, 22, 12)
+    # The end of the pier, open water, and a sea stack whose cave is gated.
+    # The cave's slate stands on a broken piling deep in the water: too low
+    # to climb back from with the wire, and no wall near enough to kick off.
+    # Clapping it means falling into the sea, so the clap has to be cut
+    # away from before the landing (a take left on dry land to cut back to).
+    r.plank(56, 17, 8)
+    r.plank(74, 17, 6)
+    r.block(76, 0, 4, 13)
+    r.ent("gate", 76, 13, a=1, b=4)
+    r.ent("plate", 77, 16, a=1)                 # lets Ruby out when she comes back
+    for y in range(18, 30):                     # a reef at the seam: the room's edge
+        r.nails(78, y, 2, d="<")                # would otherwise be a wall to kick up
+    r.girder(69, 29, 1, 1)
+    r.nails(69, 28, 1)
+    r.ent("slate", 69, 27, a=1, b=150)
+    r.ent("sign", 58, 16, a="@s3_landing_hint")
     r.ent("flyer", 22, 10, a=6)
     r.ent("flyer", 50, 9, a=8)
-    r.ent("thrower", 60, 17)
-    for x in (20, 22, 29, 30, 59, 61):
-        r.ent("coin", x, 19 if x < 25 else 16 if x < 35 else 17)
+    for x in (20, 22, 29, 30):
+        r.ent("coin", x, 19 if x < 25 else 16)
+    for x, y in ((65, 18), (66, 21), (67, 24)):   # a trail down to the slate
+        r.ent("coin", x, y)
     out.append(r.done())
 
     # ---- The wreck on the rocks ----
     r = Draft("s3_wreck", 3, (280, 0), (80, 30))
-    r.plank(0, 22, 10)
+    r.plank(0, 17, 10)                          # level with the sea stack's cave
     r.block(10, 20, 8, 10)
     r.block(22, 16, 6, 14)
     r.girder(30, 12, 2, 6)

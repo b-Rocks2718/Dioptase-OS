@@ -141,6 +141,9 @@ SCRIPTS = {
     "s3_cut_hint": [
         "EDITOR'S NOTE, scrawled on a crate:\n\nA story can skip the boring part. So can you.\n\n(V: cut to your latest take.)",
     ],
+    "s3_landing_hint": [
+        "STUNT COORDINATOR'S NOTE:\n\nThe audience never sees the landing.",
+    ],
     "s3_reel_a": [
         "LOST REEL: \"Storyboards\" (1936)",
         "Sketches for The Everlasting Picture. Every panel shows the same scene: the cast, bowing, as the curtain refuses to fall.",
