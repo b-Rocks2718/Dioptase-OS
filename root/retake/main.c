@@ -1015,13 +1015,12 @@ static void play(void) {
   int fps_frames = 0;
   while (1) {
     unsigned now = get_vga_frame_counter();
-    /* Sleep a jiffy (about 1 ms) between looks at the frame counter rather
-     * than spinning on it: the idle core is then free for the synthesizer
-     * and the terminal, and the emulator can park it. */
-    while (now == last) {
-      sleep(1);
-      now = get_vga_frame_counter();
-    }
+    /* Spin on the frame counter. Measured in the mine mouth (headless, idle
+     * host): spinning holds 58 fps, napping a jiffy per look 36, and napping
+     * then yielding 33, because sleep and yield hand the core to another
+     * thread that keeps it past the flip. The emulator still parks the idle
+     * secondary cores, so this costs one host thread. */
+    while (now == last) now = get_vga_frame_counter();
     int ticks = (int)(now - last);
     if (ticks > 4) ticks = 4;
     last = now;

@@ -42,6 +42,8 @@ volatile short* g_spritemap;
 static unsigned short* backdrop;      /* region backdrop, in the pak */
 static int backdrop_w;
 static int backdrop_h;
+#define BACKDROP_MAX_H 512
+static int backdrop_row[BACKDROP_MAX_H];   /* pixel offset of each backdrop row */
 
 /* A sprite sheet from the pak plus left-facing copies made at load. */
 struct SheetCache {
@@ -105,27 +107,36 @@ void render_region(int region_id) {
   backdrop = (unsigned short*)(g_pak + r->backdrop_off);
   backdrop_w = (int)r->backdrop_w;
   backdrop_h = (int)r->backdrop_h;
+  if (backdrop_h > BACKDROP_MAX_H) backdrop_h = BACKDROP_MAX_H;
+  int offset = 0;
+  for (int y = 0; y < backdrop_h; y++) {   /* row offsets without a software multiply */
+    backdrop_row[y] = offset;
+    offset += backdrop_w;
+  }
 }
 
-/* Paint the backdrop into every transparent pixel of the room image, row by
- * row with the asm compositor. The backdrop's bottom edge lines up with the
- * room's floor; taller rooms repeat its top row, wider rooms repeat it. */
+/* Paint the backdrop into every transparent pixel of the room image, one
+ * tile row (8 pixels) at a time with the asm compositor, walking the image
+ * in its own column-of-tiles order. The backdrop's bottom edge lines up
+ * with the room's floor; taller rooms repeat its top row, wider rooms
+ * repeat it (backdrop widths are multiples of 8, so a tile never straddles
+ * the seam). */
 static void compose_backdrop(void) {
   int shift = backdrop_h - g_room_ph;
-  unsigned short* row = g_room_img;
-  for (int y = 0; y < g_room_ph; y++) {
-    int by = y + shift;
-    if (by < 0) by = 0;
-    if (by >= backdrop_h) by = backdrop_h - 1;
-    unsigned short* src = backdrop + by * backdrop_w;
-    int x = 0;
-    while (x < g_room_pw) {
-      int n = g_room_pw - x;
-      if (n > backdrop_w) n = backdrop_w;
-      rt_composite((void*)(row + x), (void*)(row + x), (void*)src, n >> 1);
-      x += n;
+  unsigned short* tile = g_room_img;
+  int bx = 0;
+  for (int tx = 0; tx < g_room.w; tx++) {
+    for (int ty = 0; ty < g_room.h; ty++) {
+      for (int r = 0; r < 8; r++) {
+        int by = (ty << 3) + r + shift;
+        if (by < 0) by = 0;
+        if (by >= backdrop_h) by = backdrop_h - 1;
+        rt_composite((void*)tile, (void*)tile, (void*)(backdrop + backdrop_row[by] + bx), 4);
+        tile += 8;
+      }
     }
-    row += g_room_pw;
+    bx += 8;
+    if (bx >= backdrop_w) bx -= backdrop_w;
   }
 }
 
@@ -184,15 +195,14 @@ static void restore_tile(int ctx, int cty) {
     }
     return;
   }
-  unsigned* src = (unsigned*)(g_room_img + (g_room.row[wty] << 6) + (wtx << 3));
-  int src_stride = g_room_pw >> 1;
+  unsigned* src = (unsigned*)(g_room_img + g_room_col_base[wtx] + (wty << 6));
   for (int r = 0; r < 8; r++) {
     dst[0] = src[0];
     dst[1] = src[1];
     dst[2] = src[2];
     dst[3] = src[3];
     dst += stride;
-    src += src_stride;
+    src += 4;
   }
 }
 

@@ -92,7 +92,12 @@ extern struct Room g_room;
 extern int g_room_index;
 extern int g_room_pw;          /* room size in pixels */
 extern int g_room_ph;
-extern unsigned short* g_room_img;      /* composed room image, row stride g_room_pw */
+extern unsigned short* g_room_img;      /* composed room image, one 8x8 tile (64 pixels, row
+                                           by row) after another, column by column: tile
+                                           (tx, ty) starts at g_room_col_base[tx] + (ty << 6).
+                                           A scrolled-in column then reads contiguous memory,
+                                           which matters with a 16-entry FIFO TLB. */
+extern int g_room_col_base[ROOM_MAX_W]; /* pixel offset of each tile column in g_room_img */
 extern int g_room_serial;               /* bumped by every room_load (the image was rebuilt) */
 
 void room_system_init(void);

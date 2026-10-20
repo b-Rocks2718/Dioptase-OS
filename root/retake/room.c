@@ -14,6 +14,7 @@ int g_room_index = -1;
 int g_room_pw;
 int g_room_ph;
 unsigned short* g_room_img;
+int g_room_col_base[ROOM_MAX_W];
 int g_room_serial;
 
 static unsigned char room_col[ROOM_MAX_TILES];
@@ -57,25 +58,22 @@ void room_load(int index) {
   }
   for (int i = 0; i < w * h; i++) room_col[i] = col[i];
 
-  /* blocks -> image: each block is 8 rows of 4 words */
+  /* blocks -> image: a block is already 64 pixels row by row, the image's
+   * tile layout, so each tile is one 32-word copy (columns of tiles, see
+   * retake.h). The grid is stored row by row. */
+  int base = 0;
+  for (int tx = 0; tx < w; tx++) {
+    g_room_col_base[tx] = base;
+    base += h << 6;
+  }
   int g = 0;
-  int row_base = 0;
-  int stride_words = pw >> 1;
   for (int ty = 0; ty < h; ty++) {
     for (int tx = 0; tx < w; tx++) {
       unsigned* src = (unsigned*)(blocks + (grid[g] << 6));
-      unsigned* dst = (unsigned*)(g_room_img + row_base + (tx << 3));
-      for (int y = 0; y < 8; y++) {
-        dst[0] = src[0];
-        dst[1] = src[1];
-        dst[2] = src[2];
-        dst[3] = src[3];
-        src += 4;
-        dst += stride_words;
-      }
+      unsigned* dst = (unsigned*)(g_room_img + g_room_col_base[tx] + (ty << 6));
+      for (int k = 0; k < 32; k++) dst[k] = src[k];
       g++;
     }
-    row_base += pw << 3;
   }
 
   g_room_serial++;   /* the renderer composes the backdrop in and redraws */

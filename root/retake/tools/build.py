@@ -227,6 +227,11 @@ def main():
         blocks = np.concatenate([b.reshape(-1) for b in block_tables[r]]) if block_tables[r] else np.zeros(0)
         boff = pack.add(pix.le16(blocks))
         back = regions[r][2]
+        # render.c composes the backdrop into the room image a tile row
+        # (8 px) at a time and indexes rows through a 512-entry table.
+        if back.shape[1] % 8 or back.shape[0] > 512:
+            raise SystemExit(f"build.py: region {r} backdrop is {back.shape[1]}x{back.shape[0]}; "
+                             "width must be a multiple of 8 and height at most 512")
         doff = pack.add(pix.le16(back.reshape(-1)))
         region_entries.append((len(block_tables[r]), boff, back.shape[1], back.shape[0], doff, r))
 
