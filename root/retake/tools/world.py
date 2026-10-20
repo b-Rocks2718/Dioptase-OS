@@ -90,6 +90,8 @@ def stage1():
     r.ent("sign", 24, 25, a="@s1_clap_hint")
     r.ent("walker", 36, 25)
     r.stamp(28, 21, "L")
+    r.stamp(6, 22, "O")                        # set dressing: posters, a hydrant
+    r.stamp(16, 24, "Y")
     r.spawn(6, 25)
     out.append(r.done())
 
@@ -126,6 +128,11 @@ def stage1():
     r.girder(44, 15, 6)
     r.stamp(32, 21, "L")
     r.stamp(52, 21, "L")
+    r.stamp(10, 24, "U")                       # set dressing at street level
+    r.stamp(37, 22, "Q")
+    r.stamp(40, 24, "V")
+    r.stamp(55, 24, "Y")
+    r.stamp(64, 21, "O")
     r.ent("walker", 16, 25)
     r.ent("walker", 42, 25)
     r.ent("sandbag", 46, 16)
@@ -147,6 +154,8 @@ def stage1():
     r.building(32, 12, 40, 26, windows="W")
     r.ent("sign", 12, 25, a="@s1_mark_hint")
     r.ent("plate", 20, 25, a=1)
+    r.stamp(24, 22, "Q")
+    r.stamp(16, 24, "U")
     r.ent("coin", 34, 25)
     r.ent("coin", 36, 25)
     out.append(r.done())
@@ -192,6 +201,8 @@ def stage1():
     r.wall(38, 7, 15, w=2)
     r.girder(22, 6, 18)                        # the beam, x 22..39, roofing the wall too
     r.ent("sign", 8, 14, a="@s1_double_hint")
+    r.stamp(16, 11, "O")
+    r.stamp(3, 13, "U")
     r.ent("coin", 30, 5)
     r.ent("coin", 33, 5)
     r.ent("walker", 32, 5)

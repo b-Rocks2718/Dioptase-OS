@@ -212,6 +212,94 @@ def lamp_stamp():
     return s
 
 
+def on_ground(s):
+    """Pad a prop with transparent rows on top to whole tiles, so a stamp
+    placed by its top-left tile stands on the floor below it."""
+    pad = -s.shape[0] % 8
+    out = pix.new_image(s.shape[1], s.shape[0] + pad)
+    out[pad:, :] = s
+    return out
+
+
+def poster_film_stamp():
+    """A Silverlake Pictures one-sheet pasted on a wall, 20x28: a woman in
+    an aviator cap against a spotlight, the title in tiny lines below."""
+    s = pix.new_image(20, 28, g(2))
+    s[1:27, 1:19] = g(12)
+    for y in range(2, 18):
+        for x in range(2, 18):
+            d = (x - 10) ** 2 + (y - 7) ** 2
+            s[y, x] = g(14) if d < 30 else g(10) if d < 70 else g(7)
+    for y, x0, x1, lv in ((5, 8, 12, 3), (6, 7, 13, 3), (7, 7, 13, 4), (8, 8, 12, 5),
+                          (9, 9, 11, 5), (10, 7, 13, 3), (11, 6, 14, 3), (12, 6, 14, 3),
+                          (13, 6, 14, 3), (14, 7, 13, 3), (15, 7, 13, 3), (16, 7, 13, 3)):
+        s[y, x0:x1] = g(lv)                     # the silhouette
+    s[6, 11:13] = g(9)                          # goggles catching the light
+    for y, x0, x1 in ((19, 4, 16), (21, 3, 17), (23, 6, 14), (25, 8, 12)):
+        s[y, x0:x1] = g(4)                      # title and credits
+    s[0, 3:6] = g(0)                            # a torn top corner
+    return s
+
+
+def poster_wanted_stamp():
+    """A WANTED bill, 16x22: a sketched face and lines of small print."""
+    s = pix.new_image(16, 22, g(3))
+    s[1:21, 1:15] = g(13)
+    s[2:4, 3:13] = g(4)                         # the WANTED headline
+    for y in range(6, 14):
+        for x in range(5, 11):
+            if (x - 7.5) ** 2 / 9 + (y - 9.5) ** 2 / 16 <= 1:
+                s[y, x] = g(9)
+    s[9, 6] = g(2)
+    s[9, 9] = g(2)
+    s[12, 6:10] = g(5)
+    s[6:8, 4:12] = g(4)                         # a bowler hat
+    for y in (15, 17, 19):
+        s[y, 3:13] = g(7)
+    return s
+
+
+def hydrant_stamp():
+    """A fire hydrant, 8x12."""
+    s = pix.new_image(8, 12)
+    s[0, 3:5] = g(6)
+    s[1:3, 2:6] = g(8)
+    s[3:11, 2:6] = g(7)
+    s[3:11, 2] = g(10)
+    s[5:7, 0:8] = g(6)
+    s[5:7, 0] = g(9)
+    s[11, 1:7] = g(4)
+    return pix.outline(s, g(1))
+
+
+def trash_can_stamp():
+    """A dented ash can with its lid, 10x14."""
+    s = pix.new_image(10, 14)
+    s[1:3, 0:10] = g(9)
+    s[0, 4:6] = g(7)
+    s[3:14, 1:9] = g(7)
+    for y in (5, 9, 12):
+        s[y, 1:9] = g(5)
+    s[3:14, 1] = g(9)
+    s[7, 6] = g(5)                              # a dent
+    return pix.outline(s, g(1))
+
+
+def mailbox_stamp():
+    """A street mailbox on short legs, 10x15."""
+    s = pix.new_image(10, 15)
+    for y in range(0, 4):
+        half = 2 + y
+        s[y, 5 - half:5 + half] = g(6)
+    s[4:12, 0:10] = g(6)
+    s[4:12, 0] = g(9)
+    s[5, 2:8] = g(2)                            # the slot
+    s[8:10, 3:7] = g(10)                        # the plate
+    s[12:15, 1] = g(3)
+    s[12:15, 8] = g(3)
+    return pix.outline(s, g(1))
+
+
 def clock_stamp():
     """The big clock face (homage to Safety Last!), 40x40."""
     n = 40
@@ -329,6 +417,11 @@ def build(font):
         "sign_hotel": sign_stamp("HOTEL", font),
         "sign_bank": sign_stamp("BANK", font),
         "sign_cafe": sign_stamp("CAFE", font),
+        "poster_film": poster_film_stamp(),
+        "poster_wanted": poster_wanted_stamp(),
+        "hydrant": on_ground(hydrant_stamp()),
+        "trash_can": on_ground(trash_can_stamp()),
+        "mailbox": on_ground(mailbox_stamp()),
     }
     back = backdrop(480, 236, rng)
     return tiles, stamps, back

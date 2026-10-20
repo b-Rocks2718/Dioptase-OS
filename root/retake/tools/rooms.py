@@ -50,6 +50,8 @@ MAP_CODES = {
 STAMP_CHARS = {
     "W": "window_lit", "w": "window_dark", "D": "door", "L": "lamp",
     "C": "clock", "H": "sign_hotel", "K": "sign_bank", "F": "sign_cafe",
+    "O": "poster_film", "Q": "poster_wanted", "Y": "hydrant", "U": "trash_can",
+    "V": "mailbox",
 }
 
 
