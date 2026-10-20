@@ -273,7 +273,7 @@ static int region3_image(struct Ent* e) {
 /* Region 4: the jungle serial's menagerie. */
 static int region4_image(struct Ent* e) {
   switch (e->kind) {
-    case ENT_WALKER: return IMG_WALKER4_0 + ((e->x >> 11) & 1);
+    case ENT_WALKER: return IMG_WALKER4_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER4_0 + (e->vy != 0 ? 1 : 0);
     case ENT_FLYER: return IMG_FLYER4_0 + ((frame_clock >> 2) & 3);
     case ENT_THROWER: return IMG_THROWER4_0 + (e->state > 0 ? 1 : 0);

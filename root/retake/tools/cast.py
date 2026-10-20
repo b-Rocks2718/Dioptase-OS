@@ -235,6 +235,17 @@ HEADS = {
         "..SssMsss.",
         "...SsssS..",
     ],
+    "monkey": [                   # big ears, a pale face mask, a grin
+        "...hhhh...",
+        "..hhhhhh..",
+        "HhhSsssh..",
+        "HhhseSes..",
+        "hhhsssssS.",
+        "..hssMMs..",
+        "..hhsssh..",
+        "...hhhh...",
+        "....hh....",
+    ],
     "shako": [                    # a bandsman's plumed shako
         "......w...",
         "..hhhhw...",
@@ -490,6 +501,16 @@ FISH = [                          # a flying fish leaping, fins spread then fold
 ]
 
 
+PLANT = [                         # a snapping flower on its stalk, shut then spitting
+    ["....AAAAA.....", "...AAwAwAA....", "..AAAqAAqAA...", "..AAAAAAAAA...", "...AAAAAAA....",
+     "....AAAAA.....", "......c.......", "..LL..c..LL...", ".LLLL.c.LLLL..", "..LLLLcLLLL...",
+     "......c.......", "......c.......", "....CCCCC.....", "...CCCCCCC...."],
+    ["....AAAA......", "...AAqAAAw....", "..AAAAA.w.....", "..AA..........", "..AAA.w.......",
+     "...AAAAAw.....", "......c.......", "..LL..c..LL...", ".LLLL.c.LLLL..", "..LLLLcLLLL...",
+     "......c.......", "......c.......", "....CCCCC.....", "...CCCCCCC...."],
+]
+
+
 def frog(colors):
     return _sheet(FROG, colors)
 
@@ -643,7 +664,16 @@ def stage_critters(stage):
                 "charger": _sheet(BARREL, dress(t, c=6, C=4, L=8, b=2))}
     if stage == 4:
         red, teal = rgb(14, 3, 2), rgb(2, 11, 9)
-        return {"hopper": _sheet(FROG, dress(night, raw={"o": rgb(1, 1, 1), "c": red, "C": rgb(9, 1, 1),
+        fur = dress(night, raw={"o": rgb(1, 1, 1), "c": rgb(8, 4, 2), "C": rgb(5, 2, 1),
+                                "L": rgb(11, 6, 3), "w": rgb(8, 4, 2), "p": rgb(8, 4, 2),
+                                "P": rgb(5, 2, 1), "b": rgb(4, 2, 1), "G": rgb(8, 4, 2),
+                                "h": rgb(8, 4, 2), "H": rgb(5, 2, 1), "s": rgb(15, 11, 8),
+                                "S": rgb(12, 8, 5), "e": rgb(1, 1, 1), "M": rgb(4, 1, 1),
+                                "T": None, "k": rgb(5, 2, 1)})
+        flower = dress(night, raw={"o": rgb(1, 1, 1), "A": red, "w": rgb(15, 15, 13),
+                                   "q": rgb(15, 13, 2), "c": rgb(2, 9, 3), "L": teal,
+                                   "C": rgb(6, 3, 1)})
+        return {"walker": walker("monkey", fur), "thrower": _sheet(PLANT, flower),"hopper": _sheet(FROG, dress(night, raw={"o": rgb(1, 1, 1), "c": red, "C": rgb(9, 1, 1),
                                                          "L": rgb(15, 8, 3), "w": rgb(15, 15, 6),
                                                          "e": rgb(1, 1, 1), "M": rgb(4, 1, 1),
                                                          "k": rgb(6, 1, 1), "s": rgb(15, 12, 8)})),

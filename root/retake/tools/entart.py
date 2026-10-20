@@ -416,74 +416,6 @@ PAL4 = {format(i, "x"): _red4(i) for i in range(16)}
 PAL4.update({chr(ord("A") + i): _teal4(i) for i in range(16)})
 
 ART4 = {
-    "walker4": [   # a monkey
-        ["...2222.....",
-         "..266662....",
-         ".26c66c62...",
-         ".26aaaa62...",
-         "..2a22a2....",
-         "...2aa2.....",
-         "..226622....",
-         ".26666662...",
-         "2626666262..",
-         "2.266662.2..",
-         "...2662...2.",
-         "...2662..22.",
-         "..262262....",
-         "..2.22.2....",
-         ".22....22...",
-         ".2......2..."],
-        ["...2222.....",
-         "..266662....",
-         ".26c66c62...",
-         ".26aaaa62...",
-         "..2a22a2....",
-         "...2aa2.....",
-         "..226622....",
-         ".26666662...",
-         ".2666666262.",
-         "..2666622..2",
-         "...2662...2.",
-         "...2662.....",
-         "...26262....",
-         "...2.2.2....",
-         "..22..22....",
-         "..2....2...."],
-    ],
-    "thrower4": [  # a carnivorous plant that spits seeds
-        ["...999999...",
-         "..9cccccc9..",
-         ".9c9c99c9c9.",
-         ".9cccccccc9.",
-         "..9c9999c9..",
-         "...999999...",
-         "....2HH2....",
-         ".....HH.....",
-         "..HH.HH.HH..",
-         ".HKKHHHHKKH.",
-         "..HHHHHHHH..",
-         ".....HH.....",
-         ".....HH.....",
-         "....HHHH....",
-         "...AAAAAA...",
-         "..AAAAAAAA.."],
-        ["..99999999..",
-         ".9cccccccc9.",
-         "9c9c9999c9c9",
-         "9cc2.22.2cc9",
-         ".9cccccccc9.",
-         "..99999999..",
-         "....2HH2....",
-         ".....HH.....",
-         "..HH.HH.HH..",
-         ".HKKHHHHKKH.",
-         "..HHHHHHHH..",
-         ".....HH.....",
-         ".....HH.....",
-         "....HHHH....",
-         "...AAAAAA...",
-         "..AAAAAAAA.."],
-    ],
     "shot4": [     # a spat seed
         ["..KK..",
          ".KOOK.",
@@ -520,7 +452,7 @@ def build4():
     drawn = cast.stage_critters(4)
     out = []
     for name in ORDER4:
-        if name in ("hopper4", "flyer4", "charger4"):
+        if name in ("walker4", "hopper4", "flyer4", "thrower4", "charger4"):
             out.append((name, drawn[name[:-1]]))
             continue
         frames = [pix.parse_ascii(rows, PAL4) for rows in ART4[name]]
