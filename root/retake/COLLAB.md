@@ -484,3 +484,23 @@ second: the emulator's VGA frame ticks on the host clock. With an idle host:
   view_touch) and hot pages evicted by FIFO. A recency-based TLB policy in
   the emulator (and hardware) would help every program; that is a
   toolchain proposal for the human, not done.
+
+## LRU TLB (Oct 20, human approved)
+
+- Emulator 9d4b355: the TLB replaces its least recently used entry (hits
+  and fills are uses; tlbr and faults are not), same-class preference kept.
+  The profiler's flush shadow follows it without touching the hit path.
+  docs/ISA.md f4ae07e states the policy. Hardware: Dioptase-Pipe-Full's
+  src/tlb.v replaces round-robin and needs the same policy to match (not
+  changed by us). Cargo tests 200+3 pass (two new).
+- 26c6580: picture 4's monkey and plant redrawn; every walker and thrower
+  is now hand-drawn.
+- Measured after LRU (same scrolling-street script, profiler): TLB misses
+  802k (FIFO, row-major room) -> 417k (LRU, tiled room). Street running 57
+  fps, mine mouth idle 54-58 (single samples near the 60 cap are noisy).
+  The rest are canvas and framebuffer rows; tiling the canvas would mean
+  rewriting every drawing routine's addressing, not worth it at this rate.
+- OS suite under LRU: first run 87/88 tests clean, threads_rw_lock failed 1
+  of its 75 runs (no log kept); a second full run was 88/88 clean, and
+  threads_rw_lock alone passed 150/150 under LRU and 150/150 under the old
+  FIFO emulator. Not reproduced; noted in case it recurs.
