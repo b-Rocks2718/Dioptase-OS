@@ -467,3 +467,20 @@ skipped" search in tests/routes/take/check_escapes.py (see its README).
 - Considered and shelved: a Stage 8 "pyramid of takes" to a balcony. Any
   wall within ~200 px can be climbed and the balcony dropped onto from
   above, and no Stage 8 room has a wide enough wall-free floor.
+
+## Performance check (Oct 19, 21:05-21:15)
+
+The HUD frame counter in debug launches (top right) is real frames per
+second: the emulator's VGA frame ticks on the host clock. With an idle host:
+- Regression found and fixed (850a2cd): napping between frame-counter
+  checks (8ec840d) overshot the flip; mine mouth 36 -> 58 fps by spinning.
+- Profile of the scrolling street (emulator --profile with --user-symbols
+  of a -g link): about 750 TLB misses a frame at ~530 instructions each,
+  roughly half the game core's frame budget. The TLB has 16 entries and the
+  emulator evicts oldest-first. Half the misses were restore_tile reading a
+  row-major room image; it is now stored tile by tile in column order.
+  Street while running: 30 -> 55 fps; rainy roof 57 -> 60; club 60.
+- Remaining: misses on canvas and framebuffer rows (view_end, view_begin,
+  view_touch) and hot pages evicted by FIFO. A recency-based TLB policy in
+  the emulator (and hardware) would help every program; that is a
+  toolchain proposal for the human, not done.
