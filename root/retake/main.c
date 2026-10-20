@@ -248,7 +248,7 @@ static int region2_image(struct Ent* e) {
   switch (e->kind) {
     case ENT_WALKER: return IMG_WALKER2_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER2_0 + (e->vy != 0 ? 1 : 0);
-    case ENT_FLYER: return IMG_FLYER2_0 + ((frame_clock >> 3) & 1);
+    case ENT_FLYER: return IMG_FLYER2_0 + ((frame_clock >> 2) & 3);
     case ENT_THROWER: return IMG_THROWER2_0 + (e->state > 0 ? 1 : 0);
     case ENT_CHARGER: return IMG_CHARGER2_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
     case ENT_SHOT: return e->b ? IMG_COAL_0 : IMG_SHOT2_0;
@@ -261,7 +261,7 @@ static int region3_image(struct Ent* e) {
   switch (e->kind) {
     case ENT_WALKER: return IMG_WALKER3_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER3_0 + (e->vy != 0 ? 1 : 0);
-    case ENT_FLYER: return IMG_FLYER3_0 + ((frame_clock >> 3) & 1);
+    case ENT_FLYER: return IMG_FLYER3_0 + ((frame_clock >> 2) & 3);
     case ENT_THROWER: return IMG_THROWER3_0 + (e->state > 0 ? 1 : 0);
     case ENT_CHARGER: return IMG_CHARGER3_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
     case ENT_SHOT: return IMG_SHOT3_0;
@@ -275,7 +275,7 @@ static int region4_image(struct Ent* e) {
   switch (e->kind) {
     case ENT_WALKER: return IMG_WALKER4_0 + ((e->x >> 11) & 1);
     case ENT_HOPPER: return IMG_HOPPER4_0 + (e->vy != 0 ? 1 : 0);
-    case ENT_FLYER: return IMG_FLYER4_0 + ((frame_clock >> 3) & 1);
+    case ENT_FLYER: return IMG_FLYER4_0 + ((frame_clock >> 2) & 3);
     case ENT_THROWER: return IMG_THROWER4_0 + (e->state > 0 ? 1 : 0);
     case ENT_CHARGER: return IMG_CHARGER4_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
     case ENT_SHOT: return IMG_SHOT4_0;
@@ -288,7 +288,7 @@ static int region5_image(struct Ent* e) {
   switch (e->kind) {
     case ENT_WALKER: return IMG_WALKER5_0 + ((e->x >> 10) & 3);
     case ENT_HOPPER: return IMG_HOPPER5_0 + (e->vy != 0 ? 1 : 0);
-    case ENT_FLYER: return IMG_FLYER5_0 + ((frame_clock >> 3) & 1);
+    case ENT_FLYER: return IMG_FLYER5_0 + ((frame_clock >> 2) & 3);
     case ENT_THROWER: return IMG_THROWER5_0 + (e->state > 0 ? 1 : 0);
     case ENT_CHARGER: return IMG_CHARGER5_0 + (e->state == 2 ? ((frame_clock >> 2) & 1) : 0);
     case ENT_SHOT: return IMG_SHOT5_0;

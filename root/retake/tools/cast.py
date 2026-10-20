@@ -426,6 +426,70 @@ PIE = [                           # a custard pie in flight (facing right)
 ]
 
 
+BAT = [                           # wings up, level, down, level
+    ["C............C", "CC..........CC", "CCC..c..c..CCC", ".CCCcccccccCC.", "..CCcecceccC..",
+     "...cccccccc...", "....c.cc.c....", ".............."],
+    ["..............", "..............", "C....c..c....C", "CCCCcccccccCCC", ".CCCceccecCCC.",
+     "...cccccccc...", "....c.cc.c....", ".............."],
+    ["..............", "..............", ".....c..c.....", "....cccccc....", "...CcecceC....",
+     "..CCCccccCCC..", ".CCC.c..c.CCC.", "CC..........CC"],
+    ["..............", "..............", "C....c..c....C", "CCCCcccccccCCC", ".CCCceccecCCC.",
+     "...cccccccc...", "....c.cc.c....", ".............."],
+]
+STEER = [                         # a longhorn at a gallop (facing right)
+    ["...................ww.", "..................w...", ".....cccccccc...hhw...",
+     "...cccLLLLLLccchhhh...", ".CcccLLLLLLLLcchhehh..", "CC.cccccccccccchhhhhs.",
+     "C..cccccccccccchhhhss.", "...CCcccccccccc.hh....", "...CC.CC....CC.CC.....",
+     "...CC.CC....CC.CC.....", "...bb.bb....bb.bb....."],
+    ["...................ww.", "..................w...", ".....cccccccc...hhw...",
+     "...cccLLLLLLccchhhh...", ".CcccLLLLLLLLcchhehh..", "CC.cccccccccccchhhhhs.",
+     "C..cccccccccccchhhhss.", "...CCcccccccccc.hh....", "....CC.CC..CC..CC.....",
+     "...CC...CC.CC...CC....", "..bb....bb.bb....bb..."],
+]
+RHINO = [                         # an armored rhinoceros (facing right)
+    [".....cccccccccc.......", "...ccLLLLLLLLLLcc..w..", "..cccLLLLLLLLLLLccchw.",
+     ".Cccccccccccccccchhhh.", "CC.ccccccccccccchehhh.", "...CcccccccccccChhh...",
+     "...CCC.CC...CCC.CC....", "...CCC.CC...CCC.CC....", "...bbb.bb...bbb.bb...."],
+    [".....cccccccccc.......", "...ccLLLLLLLLLLcc..w..", "..cccLLLLLLLLLLLccchw.",
+     ".Cccccccccccccccchhhh.", "CC.ccccccccccccchehhh.", "...CcccccccccccChhh...",
+     "....CCC.CC..CCC.CC....", "...CCC...CCCCC...CC...", "..bbb....bbbb....bb..."],
+]
+BARREL = [                        # a runaway barrel, its hoops rolling round
+    ["...cccccccc...", ".ccLbLLLLbLcc.", "cccLbLLLLbLccc", "cccLbLLLLbLccc",
+     "cccCbCCCCbCccc", "cccCbCCCCbCccc", ".ccCbCCCCbCcc.", "...cccccccc..."],
+    ["...cccccccc...", ".cbLLLLbLLLbc.", "cbcLLLLbLLLcbc", "cbcLLLLbLLLcbc",
+     "cbcCCCCbCCCcbc", "cbcCCCCbCCCcbc", ".cbCCCCbCCCbc.", "...cccccccc..."],
+]
+COFFIN = [                        # a coffin on squeaking casters
+    ["..cccccccccccccccc....", ".cLLLLLLLLLLLLLLLLcc..", "cLLLLwLLLLLLLLLLLLLcc.",
+     "cLLLwwwLLLLLLLLLLLLLc.", "cLLLLwLLLLLLLLLLLLLcc.", ".cCCCCCCCCCCCCCCCCcc..",
+     "..cccccccccccccccc....", "...bB..........bB.....", "...Bb..........Bb....."],
+    ["..cccccccccccccccc....", ".cLLLLLLLLLLLLLLLLcc..", "cLLLLwLLLLLLLLLLLLLcc.",
+     "cLLLwwwLLLLLLLLLLLLLc.", "cLLLLwLLLLLLLLLLLLLcc.", ".cCCCCCCCCCCCCCCCCcc..",
+     "..cccccccccccccccc....", "...Bb..........Bb.....", "...bB..........bB....."],
+]
+RABBIT = [                        # a jackrabbit, sitting then mid-bound (facing right)
+    ["........hh....", "........hh.h..", "........hhhh..", ".......hhhhh..", "......ccccehs.",
+     "...ccccccccc..", "..cLLLLLccc...", ".ccLLLLLLcc...", "wcccccccccc...", "..cc..ccccc...",
+     "..bb..bbbbbb.."],
+    ["..........hh..", ".........hhhh.", "........ccehs.", "....ccccccc...", "..cLLLLLccc...",
+     "wccLLLLLcc....", "..cccccc......", "...cc..cc.....", "..bb....bb....", "..............",
+     ".............."],
+]
+SPIDER = [                        # a hairy spider, legs scuttling
+    ["......cc......", ".k...cccc...k.", "..k.ccececk.k.", "...kccccccck..", ".kkkccLLccckkk",
+     "k...ccccccc..k", "...k.cccc..k..", "..k........k..", ".k..........k."],
+    ["......cc......", "..k..cccc..k..", ".k..ccececk..k", "k..kccccccck..", "..kkccLLccckk.",
+     ".k..ccccccc.k.", "k..k.cccc..k.k", "...k.......k..", "..k.........k."],
+]
+FISH = [                          # a flying fish leaping, fins spread then folded
+    ["....CC........", "...CLLC.......", "..CLLLC.......", "..ccccccccc...", "wcLLLLLLLLcce.",
+     "wccccccccccGG.", "..CCCCcccc....", "....CC........"],
+    ["..............", "..............", "..............", "..ccccccccc...", "wcLLLLLLLLcce.",
+     "wccccccccccGG.", "..CLLLCcc.....", "..CLLC........"],
+]
+
+
 def frog(colors):
     return _sheet(FROG, colors)
 
@@ -564,15 +628,53 @@ def stage_humanoids(stage):
     raise ValueError(f"cast.py: picture {stage} has no humanoid cast")
 
 
+def stage_critters(stage):
+    """Hopper, flyer and charger sheets for pictures 2-5, in each one's stock."""
+    rgb = pix.rgb
+    if stage == 2:
+        t = amber
+        return {"hopper": _sheet(RABBIT, dress(t, c=9, C=7, L=12, h=9, s=11, w=14, e=0, b=4)),
+                "flyer": _sheet(PIGEON, dress(t, c=3, C=2, L=5, h=11, A=13, e=0, G=12, k=6)),
+                "charger": _sheet(STEER, dress(t, c=6, C=4, L=8, h=5, e=0, s=10, w=14, b=1))}
+    if stage == 3:
+        t = blue
+        return {"hopper": _sheet(FISH, dress(t, c=10, C=7, L=13, e=0, w=8, G=14)),
+                "flyer": _sheet(PIGEON, dress(t, c=14, C=8, L=11, h=14, A=13, e=0, G=15, k=9)),
+                "charger": _sheet(BARREL, dress(t, c=6, C=4, L=8, b=2))}
+    if stage == 4:
+        red, teal = rgb(14, 3, 2), rgb(2, 11, 9)
+        return {"hopper": _sheet(FROG, dress(night, raw={"o": rgb(1, 1, 1), "c": red, "C": rgb(9, 1, 1),
+                                                         "L": rgb(15, 8, 3), "w": rgb(15, 15, 6),
+                                                         "e": rgb(1, 1, 1), "M": rgb(4, 1, 1),
+                                                         "k": rgb(6, 1, 1), "s": rgb(15, 12, 8)})),
+                "flyer": _sheet(PIGEON, dress(night, raw={"o": rgb(1, 1, 1), "c": rgb(3, 12, 4),
+                                                          "C": rgb(2, 5, 13), "L": red, "h": red,
+                                                          "A": rgb(15, 13, 2), "e": rgb(1, 1, 1),
+                                                          "G": rgb(15, 14, 9), "k": rgb(6, 5, 4)})),
+                "charger": _sheet(RHINO, dress(night, raw={"o": rgb(1, 1, 1), "c": rgb(7, 8, 8),
+                                                           "C": rgb(4, 5, 5), "L": rgb(10, 11, 11),
+                                                           "h": rgb(8, 9, 9), "e": rgb(1, 1, 1),
+                                                           "w": rgb(15, 14, 11), "b": rgb(3, 3, 3)}))}
+    if stage == 5:
+        t = violet
+        return {"hopper": _sheet(SPIDER, dress(t, c=3, L=6, e=15, k=2)),
+                "flyer": _sheet(BAT, dress(t, c=4, C=2, e=15)),
+                "charger": _sheet(COFFIN, dress(t, c=3, C=2, L=6, w=12, b=1, B=8))}
+    raise ValueError(f"cast.py: picture {stage} has no redrawn critters")
+
+
 def preview_all(path):
     rows = []
-    for stage in (2, 3, 5, 6, 7, 8):
-        cast = stage_humanoids(stage)
-        frames = cast["walker"] + cast["thrower"]
-        rows.append(np.concatenate([np.pad(f, ((0, 0), (0, 2)), constant_values=pix.TRANSPARENT)
+    for stage in (2, 3, 4, 5):
+        cast = stage_critters(stage)
+        frames = cast["hopper"] + cast["flyer"] + cast["charger"]
+        h = max(f.shape[0] for f in frames)
+        rows.append(np.concatenate([np.pad(f, ((h - f.shape[0], 0), (0, 2)), constant_values=pix.TRANSPARENT)
                                     for f in frames], axis=1))
-    sheet = np.concatenate([np.pad(r, ((0, 2), (0, 0)), constant_values=pix.TRANSPARENT) for r in rows], axis=0)
-    pix.write_png(path, sheet, scale=5, background=(120, 110, 100))
+    width = max(r.shape[1] for r in rows)
+    sheet = np.concatenate([np.pad(r, ((0, 2), (0, width - r.shape[1])), constant_values=pix.TRANSPARENT)
+                            for r in rows], axis=0)
+    pix.write_png(path, sheet, scale=4, background=(120, 110, 100))
 
 
 def preview(path):
