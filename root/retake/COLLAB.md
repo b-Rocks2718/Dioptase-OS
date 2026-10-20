@@ -504,3 +504,8 @@ second: the emulator's VGA frame ticks on the host clock. With an idle host:
   of its 75 runs (no log kept); a second full run was 88/88 clean, and
   threads_rw_lock alone passed 150/150 under LRU and 150/150 under the old
   FIFO emulator. Not reproduced; noted in case it recurs.
+- 710cfbf: Stage 1 set dressing: film posters, WANTED bills, hydrants, ash
+  cans, a mailbox (region1.py stamps O Q Y U V), baked into room images.
+- Next (after the 16:30 usage reset): a take set piece for Stage 6 or 8,
+  more set dressing in later stages, and another fps check on the human's
+  report from the laptop.
