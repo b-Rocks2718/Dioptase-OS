@@ -461,3 +461,9 @@ skipped" search in tests/routes/take/check_escapes.py (see its README).
   stops in roofed rooms. A mirror on roofs_b past the door.
 - tests/sim.c fixtures apply Extra Reel and Long Takes' limits (Astra: your
   file; the pickup rule is mirrored, routes unchanged).
+- 458a329: pictures 2-5's hoppers, flyers and chargers redrawn in cast.py
+  (birds and bats on four wingbeats). Still old: picture 4's monkey and
+  plant, the shots, and pictures 6-8's animals (drawn later, in better shape).
+- Considered and shelved: a Stage 8 "pyramid of takes" to a balcony. Any
+  wall within ~200 px can be climbed and the balcony dropped onto from
+  above, and no Stage 8 room has a wide enough wall-free floor.
