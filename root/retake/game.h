@@ -49,7 +49,9 @@
 #define ENT_LASER 28     /* ray curtain: a beam tiles, b on ticks (0 steady), c off ticks,
                             d phase | (width-1) << 8 | (switch+1) << 12 */
 #define ENT_SEARCHLIGHT 29  /* sweeping light: a sweep tiles each side, b beam tiles, c speed Q8/tick,
-                               d starting offset tiles; a rifle fires on whoever it finds */
+                               d starting offset tiles | no rifle << 8 | (show switch + 1) << 12;
+                               a rifle fires on whoever it finds unless the bit is set, and the
+                               show switch is held while the light is on a take */
 #define ENT_BEAT 30      /* set piece solid on alternate beats: a width tiles, b group 0/1 */
 #define ENT_SLATE 31     /* clapper switch: a switch id, b hold ticks (0: SLATE_HOLD); a clap from
                             Ruby or any take holds the switch down for that long, restarting on

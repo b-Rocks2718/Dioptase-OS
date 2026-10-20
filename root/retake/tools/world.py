@@ -1057,12 +1057,16 @@ def stage6():
     return out
 
 
-def searchlight(r, x, y, sweep, beam, speed=96, phase=0):
+def searchlight(r, x, y, sweep, beam, speed=96, phase=0, rifle=True, show=None):
     """A searchlight whose lamp hangs in tile (x, y). Its spot sweeps `sweep`
     tiles either side of the lamp, `beam` tiles below it, at `speed` Q8 per
     tick, starting `phase` tiles from the left end. Whoever the cone finds,
-    Ruby or one of her takes, a rooftop rifle fires on."""
-    r.ent("searchlight", x, y, a=sweep, b=beam, c=speed, d=phase)
+    Ruby or one of her takes, a rooftop rifle fires on (rifle=False: the
+    light just stays on them). While it is on a take it holds switch
+    `show`. Packed into d as phase | no rifle << 8 | (show+1) << 12."""
+    assert 0 <= phase < 256 and (show is None or 0 <= show < 7)
+    d = phase | ((0 if rifle else 1) << 8) | ((0 if show is None else show + 1) << 12)
+    r.ent("searchlight", x, y, a=sweep, b=beam, c=speed, d=d)
 
 
 def stage7():
@@ -1165,10 +1169,18 @@ def stage7():
     r.stamp(8, 4, "N")
     r.stamp(28, 4, "N")
     r.stamp(17, 7, "A")
+    # The bandstand and its spot. The back door to the roofs is the
+    # bouncer's: it opens only while the spot is on a performer, and only a
+    # take will stand on stage for it. The spot carries no rifle.
+    r.block(16, 15, 10, 3)
+    r.block(36, 2, 4, 12)
+    r.ent("gate", 36, 14, a=1, b=4, d=3)
+    r.ent("plate", 37, 17, a=2)                 # lets Ruby back in from the roof
+    searchlight(r, 24, 2, sweep=8, beam=15, speed=128, rifle=False, show=1)
     r.ent("mirror", 6, 17)
-    r.ent("npc", 20, 17, a="@s7_singer")
-    r.ent("reel", 34, 17, a="@s7_reel_a")
-    r.ent("heart", 14, 17)
+    r.ent("npc", 21, 14, a="@s7_singer")
+    r.ent("reel", 33, 17, a="@s7_reel_a")
+    r.ent("heart", 12, 17)
     out.append(r.done())
 
     r = Draft("s7_roofs_b", 7, (240, -30), (80, 30))
@@ -1179,6 +1191,7 @@ def stage7():
     searchlight(r, 40, 3, sweep=16, beam=14, speed=96)
     r.ent("platform", 29, 18, a=18, b=0, c=100, d=3)   # a slow scaffold across the gap
     r.ent("sign", 22, 17, a="@s7_decoy_hint")
+    r.ent("mirror", 3, 17)                      # past the club's door, for retries
     r.stamp(6, 15, "H")
     r.stamp(62, 13, "T")
     r.ent("walker", 12, 17)

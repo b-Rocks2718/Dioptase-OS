@@ -23,3 +23,7 @@ separate claim, checked by `check_escapes.py` with Astra's bounded search
   straight from the second back to the first, so their holds overlap. With
   a 114-tick loop, Ruby clapping the third slate got through for 37 of 50
   tried waits (checked once by hand, not part of the suite).
+- `s7_club-spotlight.json`: the club's back door opens only while the stage
+  spot (no rifle) is locked on a take. Ruby leaves a still on the bandstand,
+  the spot finds it and stays, and she walks out to the roofs.
+  `check_escapes.py` finds no route out of the club without a take.

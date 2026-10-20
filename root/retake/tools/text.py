@@ -296,6 +296,7 @@ SCRIPTS = {
         "\"The Blue Gardenia's been closed since the camera started rolling. I still sing at nine every night. Habit.\"",
         "\"Viv used to come up here after wrap. She'd order two coffees, drink one, and watch the door.\"",
         "\"She was waiting for you, honey. She just never said so.\"",
+        "\"And Lou on the back door? He only looks away when somebody's in the spotlight.\"",
     ],
     "s7_reel_a": [
         "LOST REEL: \"Night City, Deleted Scene\" (1937)",

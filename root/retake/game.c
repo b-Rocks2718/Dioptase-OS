@@ -350,7 +350,7 @@ static void spawn_room_entities(void) {
       int lx = (r[1] << 3) + 4;
       e->x = (r[1] << 3) << 8;
       e->y = (r[2] << 3) << 8;
-      e->vx = (lx - (e->a << 3) + (e->d << 3)) << 8;   /* the spot's x, Q8 */
+      e->vx = (lx - (e->a << 3) + ((e->d & 255) << 3)) << 8;   /* the spot's x, Q8 */
       e->vy = 0;
       e->dir = 1;
       e->state = 0;
@@ -1615,7 +1615,9 @@ static void step_robot(struct Ent* e) {
  * 1, e->vy names the target: 1 Ruby, 2 + slot a take) and follows; after
  * SEARCH_LOCK ticks a rooftop rifle strikes the target's column (a bolt with
  * a SEARCH_AIM warning) and the light rests (state 2). Takes are checked
- * before Ruby, so a double standing in the light draws the fire. */
+ * before Ruby, so a double standing in the light draws the fire. A light
+ * without a rifle (d bit 8, the club's stage spot) simply stays on whoever
+ * it found; its show switch (d bits 12-14) is held while that is a take. */
 #define SEARCH_LOCK 30
 #define SEARCH_AIM 20
 #define SEARCH_REST 50
@@ -1700,6 +1702,10 @@ static void step_searchlight(struct Ent* e) {
   if (e->vx < left) e->vx = left;
   if (e->vx > right) e->vx = right;
   if (--e->timer <= 0) {
+    if ((e->d >> 8) & 1) {                    /* no rifle: the spot just holds */
+      e->timer = SEARCH_LOCK;
+      return;
+    }
     struct Ent* shot = spawn_bolt(lit_x, lit_feet);
     if (shot) shot->timer = SEARCH_AIM;
     e->state = 2;
@@ -2083,6 +2089,11 @@ static void update_switches(void) {
   for (int i = 0; i < g_ent_count; i++) {
     struct Ent* e = &g_ents[i];
     if (e->alive && e->kind == ENT_SLATE && e->timer > 0) g_switch[e->a & 15] = 1;
+    /* A light holds its show switch while it is locked on a take. */
+    if (e->alive && e->kind == ENT_SEARCHLIGHT && e->state == 1 && e->vy >= 2) {
+      int sw = ((e->d >> 12) & 7) - 1;
+      if (sw >= 0) g_switch[sw] = 1;
+    }
   }
 }
 

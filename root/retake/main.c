@@ -451,6 +451,21 @@ static void draw_beat(struct Ent* e, int ex, int ey) {
   }
 }
 
+/* Whether the current room has a roof: its top row solid all the way
+ * across (the speakeasy and the club). Recomputed once per room load. */
+static int room_indoors(void) {
+  static int serial = -1;
+  static int indoors;
+  if (serial != g_room_serial) {
+    serial = g_room_serial;
+    indoors = 1;
+    for (int x = 0; x < g_room.w; x++) {
+      if (g_room.col[g_room.row[0] + x] != COL_SOLID) indoors = 0;
+    }
+  }
+  return indoors;
+}
+
 /* Night City's rain: short slanted streaks that fall a little each frame. */
 static void draw_rain(void) {
   for (int k = 0; k < 44; k++) {
@@ -889,7 +904,7 @@ static void draw_frame(void) {
   view_begin(cam_x, cam_y);
   draw_entities();
   draw_puffs();
-  if (current_region == 7) draw_rain();
+  if (current_region == 7 && !room_indoors()) draw_rain();
   draw_rewind_marker();
   film_fx((int)frame_clock);
   draw_boss_bar();

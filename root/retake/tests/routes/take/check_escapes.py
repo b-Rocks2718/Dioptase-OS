@@ -42,5 +42,18 @@ def s5_lab():
         return 0
 
 
+def s7_club():
+    """Without a take in the spotlight, no route out the bouncer's door."""
+    sim = Sim()
+    sim.start("s7_club", 40, 132, S3 | 4 | 8 | 16 | 256)
+    try:
+        waypoint(sim, "s7_roofs_b", [0, 120, 100, 140], width=160, depth=110, quantum=6)
+        print("ESCAPE s7_club: reached the roofs without a take")
+        return 1
+    except RuntimeError:
+        print("no route s7_club: bouncer's door without a take")
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(1 if s3_plank() + s5_lab() else 0)
+    sys.exit(1 if s3_plank() + s5_lab() + s7_club() else 0)

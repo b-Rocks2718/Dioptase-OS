@@ -1,0 +1,78 @@
+{
+ "format": 1,
+ "pack_sha256": "e68164e3f8fd27cb956650ee0841d3a1cee8bf9505398ccc206107b062e642e9",
+ "start": {
+  "room": "s7_club",
+  "x": 40,
+  "y": 132,
+  "abilities": 287
+ },
+ "segments": [
+  {
+   "label": "Climb onto the bandstand",
+   "actions": [
+    [
+     59,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s7_club",
+    "rect": [
+     150,
+     108,
+     180,
+     108
+    ]
+   }
+  },
+  {
+   "label": "Leave a still on stage for the spotlight",
+   "actions": [
+    [
+     1,
+     32
+    ],
+    [
+     3,
+     0
+    ],
+    [
+     1,
+     32
+    ],
+    [
+     1,
+     0
+    ]
+   ],
+   "expect": {
+    "room": "s7_club",
+    "rect": [
+     150,
+     108,
+     180,
+     108
+    ]
+   }
+  },
+  {
+   "label": "Slip out the bouncer's door while the spot is on the take",
+   "actions": [
+    [
+     104,
+     18
+    ]
+   ],
+   "expect": {
+    "room": "s7_roofs_b",
+    "rect": [
+     0,
+     120,
+     100,
+     140
+    ]
+   }
+  }
+ ]
+}

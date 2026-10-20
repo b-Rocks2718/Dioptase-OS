@@ -119,6 +119,34 @@ static void test_gate_all_switches(void) {
   expect(gate->state == 1, "the release switch opens the gate by itself");
 }
 
+/* The club's stage spot holds its show switch only while it is locked on a
+ * take, never on Ruby, and having no rifle it never fires at either. */
+static void test_spotlight_show(void) {
+  game_new(ROOM_S7_CLUB);
+  struct Ent* spot = entity(ENT_SEARCHLIGHT);
+  expect(spot != 0, "club fixture contains the stage spot");
+  if (!spot) return;
+  int sw = ((spot->d >> 12) & 7) - 1;
+  expect(sw >= 0 && ((spot->d >> 8) & 1), "the stage spot has a show switch and no rifle");
+  spot->state = 1;
+  spot->vy = 2;
+  update_switches();
+  expect(g_switch[sw] == 1, "a spot locked on a take holds its show switch");
+  spot->vy = 1;
+  update_switches();
+  expect(g_switch[sw] == 0, "a spot locked on Ruby does not");
+  player_init(&g_hero, 232, 132, 0);
+  spot->vx = (232 + (PLAYER_W >> 1)) << 8;
+  spot->state = 0;
+  int locked = 0;
+  for (int i = 0; i < 80; i++) {
+    game_tick(0, 0);
+    if (spot->state == 1 && spot->vy == 1) locked++;
+  }
+  expect(locked > SEARCH_LOCK, "the spot finds Ruby on the club floor and stays on her");
+  expect(entity(ENT_BOLT) == 0, "a spot without a rifle never fires");
+}
+
 /* Defeat is persistent, so its uncollected ability and exit must be too. */
 static void test_boss_rewards(void) {
   game_new(ROOM_S1_CLOCK_TOP);
@@ -341,6 +369,7 @@ int main(void) {
   test_gate_obstruction();
   test_slate_hold();
   test_gate_all_switches();
+  test_spotlight_show();
   test_boss_rewards();
   test_hazard_door();
   test_spring_impulse();
